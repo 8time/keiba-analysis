@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+altair
+matplotlib
+plotly
+requests
+beautifulsoup4
+lxml
+google-generativeai
+python-dotenv
+graphviz
