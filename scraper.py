@@ -58,6 +58,63 @@ def get_race_ids_for_date(date_str=None):
     
     return list(dict.fromkeys(race_ids))
 
+def get_race_list_for_date(date_str=None):
+    """Scrapes race IDs + race names for a given date from race_list_sub.html.
+    Returns list of dicts: {race_id, race_name, race_num}
+    """
+    if not date_str:
+        date_str = datetime.now().strftime("%Y%m%d")
+
+    url = f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        # race_list_sub.html is UTF-8 (meta charset=UTF-8)
+        html = response.content.decode('utf-8', errors='replace')
+    except Exception as e:
+        print(f"Error fetching race list: {e}")
+        return []
+
+
+    soup = BeautifulSoup(html, 'html.parser')
+    results = []
+
+    items = soup.find_all('li', class_='RaceList_DataItem')
+    for item in items:
+        link = item.find('a')
+        if not link or 'href' not in link.attrs:
+            continue
+        m = re.search(r'race_id=(\d+)', link['href'])
+        if not m:
+            continue
+        race_id = m.group(1)
+
+        # Race name is in span.ItemTitle
+        race_name = ""
+        title_span = item.find('span', class_='ItemTitle')
+        if title_span:
+            race_name = title_span.text.strip()
+
+        # Race number from Race_Num div
+        race_num = ""
+        num_div = item.find('div', class_='Race_Num')
+        if num_div:
+            # Extract just the "XR" part ignoring nested spans
+            txt = num_div.get_text(strip=True)
+            m2 = re.search(r'(\d+R)', txt)
+            if m2:
+                race_num = m2.group(1)
+
+        results.append({
+            "race_id": race_id,
+            "race_name": race_name if race_name else race_num or race_id,
+            "race_num": race_num,
+        })
+
+    return results
+
 def validate_horse_name(name):
     if not name or "系" in name: return False
     return True

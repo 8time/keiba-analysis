@@ -10,3 +10,4 @@ lxml
 google-generativeai
 python-dotenv
 graphviz
+tabulate
