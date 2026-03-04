@@ -1,0 +1,2622 @@
+
+<!-- block=odds_view__ranking (d) -->
+<!-- <form id="odds_wakuren_select_form" method="post" name="odds_wakuren_select_form"  action="../odds/index.html?race_id=202610011011&type=&housiki=c99#housiki_select2"> -->
+<input type="hidden" name="action" value="view">
+<input type="hidden" id = "submit_action" name="submit_action" value="odds">
+<div class="RaceOddsArea">
+<div class="RaceOddsMenu">
+<ul>
+<li class="MenuText">方式選択 </li>
+<li><a href="javascript:void(0)" class="" onclick="SwitchingDisplay('b7','c0');return false;">オッズ一覧</a></li>
+<li><a href="javascript:void(0)" class="" id="btn_c1" onclick="SwitchingDisplay('b7','c1');return false;">通常／フォーメーション</a></li>
+<li><a href="javascript:void(0)" class="" id="btn_c3m" onclick="SwitchingDisplay('b7','c3');return false;">ながし</a></li>
+<li><a href="javascript:void(0)" class="" id="btn_c2" onclick="SwitchingDisplay('b7','c2');return false;">ボックス</a></li>
+<li><a href="javascript:void(0)" class="Active" id="btn_c99" onclick="SwitchingDisplay('b7','c99');return false;">人気順</a></li>
+</ul>
+</div>
+</div>
+<div class="Axis_Horse_Container">
+<div class="Axis_Horse_selectbox">
+<select name="Horse" id="ninki_select" onchange="view_3odds_ranking('b7', 202610011011)">
+<option value="" selected="selected"><span class="Num">1-100</span>人気</option>
+<option value="0"><span class="Num">1-100</span>人気</option><option value="100"><span class="Num">101-200</span>人気</option><option value="200"><span class="Num">201-300</span>人気</option><option value="300"><span class="Num">301-400</span>人気</option><option value="400"><span class="Num">401-500</span>人気</option><option value="500"><span class="Num">501-600</span>人気</option><option value="-1"><span class="Num">下位100</span>人気</option>
+</select>
+</div><!-- /.Axis_Horse_selectbox -->
+</div><!-- /.Axis_Horse_selectbox -->
+<script>
+$(function() {
+Axis_Horse_selectbox = function(select, obj){
+var set_selectbox = function(){
+var value = jQuery(this).find('option:selected').html();
+jQuery(select).find(obj).find('span').html(value);
+}
+jQuery(select).find('select').each(set_selectbox).on('change', set_selectbox);
+}
+jQuery(function(){
+Axis_Horse_selectbox('.Axis_Horse_selectbox', '.Inner');
+});
+});
+</script>
+<div class="RaceOdds_HorseList RaceOdds_Popularity mb18 RaceOdds_HorseList_b7">
+<table class="RaceOdds_HorseList_Table Ninki Odds_Type_b7">
+<tbody>
+<tr class="col_label col_label_b7">
+<th class="Ninki" rowspan="2">人<br>気</th>
+<th class="Check" rowspan="2">選択</th>
+<th class="name_combination" rowspan="2">組み合わせ</th>
+<th class="odds odds_b7" rowspan="2">オッズ</th>
+<th class="top1 " colspan="2">1頭目</th>
+<th class="top2 " colspan="2">2頭目</th>
+<th class="top3" colspan="2">3頭目</th>
+
+</tr>
+<tr  class="col_label_sub col_label_sub_b7">
+<th class="sub-even">馬番</th>
+<th class="sub-odd">馬名</th>
+<th class="sub-even">馬番</th>
+<th class="sub-odd">馬名</th>
+<th class="sub-even">馬番</th>
+<th class="sub-odd">馬名</th>
+
+</tr>
+
+
+
+
+<tr id="ninki-data_1">
+<td class="Ninki"><span id="Ninki-1">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_1" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 1); view_check_count_ranking();">
+<label for="check_1" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-1">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_2">
+<td class="Ninki"><span id="Ninki-2">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_2" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 2); view_check_count_ranking();">
+<label for="check_2" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-2">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_3">
+<td class="Ninki"><span id="Ninki-3">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_3" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 3); view_check_count_ranking();">
+<label for="check_3" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-3">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_4">
+<td class="Ninki"><span id="Ninki-4">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_4" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 4); view_check_count_ranking();">
+<label for="check_4" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-4">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_5">
+<td class="Ninki"><span id="Ninki-5">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_5" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 5); view_check_count_ranking();">
+<label for="check_5" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-5">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_6">
+<td class="Ninki"><span id="Ninki-6">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_6" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 6); view_check_count_ranking();">
+<label for="check_6" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-6">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_7">
+<td class="Ninki"><span id="Ninki-7">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_7" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 7); view_check_count_ranking();">
+<label for="check_7" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-7">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_8">
+<td class="Ninki"><span id="Ninki-8">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_8" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 8); view_check_count_ranking();">
+<label for="check_8" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-8">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_9">
+<td class="Ninki"><span id="Ninki-9">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_9" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 9); view_check_count_ranking();">
+<label for="check_9" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-9">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_10">
+<td class="Ninki"><span id="Ninki-10">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_10" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 10); view_check_count_ranking();">
+<label for="check_10" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-10">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_11">
+<td class="Ninki"><span id="Ninki-11">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_11" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 11); view_check_count_ranking();">
+<label for="check_11" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-11">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_12">
+<td class="Ninki"><span id="Ninki-12">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_12" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 12); view_check_count_ranking();">
+<label for="check_12" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-12">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_13">
+<td class="Ninki"><span id="Ninki-13">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_13" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 13); view_check_count_ranking();">
+<label for="check_13" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-13">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_14">
+<td class="Ninki"><span id="Ninki-14">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_14" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 14); view_check_count_ranking();">
+<label for="check_14" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-14">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_15">
+<td class="Ninki"><span id="Ninki-15">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_15" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 15); view_check_count_ranking();">
+<label for="check_15" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-15">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_16">
+<td class="Ninki"><span id="Ninki-16">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_16" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 16); view_check_count_ranking();">
+<label for="check_16" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-16">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_17">
+<td class="Ninki"><span id="Ninki-17">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_17" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 17); view_check_count_ranking();">
+<label for="check_17" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-17">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_18">
+<td class="Ninki"><span id="Ninki-18">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_18" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 18); view_check_count_ranking();">
+<label for="check_18" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-18">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_19">
+<td class="Ninki"><span id="Ninki-19">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_19" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 19); view_check_count_ranking();">
+<label for="check_19" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-19">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_20">
+<td class="Ninki"><span id="Ninki-20">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_20" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 20); view_check_count_ranking();">
+<label for="check_20" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-20">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_21">
+<td class="Ninki"><span id="Ninki-21">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_21" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 21); view_check_count_ranking();">
+<label for="check_21" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-21">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_22">
+<td class="Ninki"><span id="Ninki-22">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_22" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 22); view_check_count_ranking();">
+<label for="check_22" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-22">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_23">
+<td class="Ninki"><span id="Ninki-23">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_23" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 23); view_check_count_ranking();">
+<label for="check_23" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-23">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_24">
+<td class="Ninki"><span id="Ninki-24">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_24" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 24); view_check_count_ranking();">
+<label for="check_24" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-24">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_25">
+<td class="Ninki"><span id="Ninki-25">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_25" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 25); view_check_count_ranking();">
+<label for="check_25" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-25">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_26">
+<td class="Ninki"><span id="Ninki-26">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_26" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 26); view_check_count_ranking();">
+<label for="check_26" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-26">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_27">
+<td class="Ninki"><span id="Ninki-27">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_27" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 27); view_check_count_ranking();">
+<label for="check_27" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-27">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_28">
+<td class="Ninki"><span id="Ninki-28">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_28" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 28); view_check_count_ranking();">
+<label for="check_28" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-28">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_29">
+<td class="Ninki"><span id="Ninki-29">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_29" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 29); view_check_count_ranking();">
+<label for="check_29" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-29">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_30">
+<td class="Ninki"><span id="Ninki-30">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_30" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 30); view_check_count_ranking();">
+<label for="check_30" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-30">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_31">
+<td class="Ninki"><span id="Ninki-31">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_31" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 31); view_check_count_ranking();">
+<label for="check_31" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-31">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_32">
+<td class="Ninki"><span id="Ninki-32">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_32" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 32); view_check_count_ranking();">
+<label for="check_32" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-32">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_33">
+<td class="Ninki"><span id="Ninki-33">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_33" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 33); view_check_count_ranking();">
+<label for="check_33" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-33">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_34">
+<td class="Ninki"><span id="Ninki-34">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_34" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 34); view_check_count_ranking();">
+<label for="check_34" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-34">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_35">
+<td class="Ninki"><span id="Ninki-35">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_35" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 35); view_check_count_ranking();">
+<label for="check_35" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-35">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_36">
+<td class="Ninki"><span id="Ninki-36">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_36" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 36); view_check_count_ranking();">
+<label for="check_36" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-36">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_37">
+<td class="Ninki"><span id="Ninki-37">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_37" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 37); view_check_count_ranking();">
+<label for="check_37" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-37">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_38">
+<td class="Ninki"><span id="Ninki-38">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_38" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 38); view_check_count_ranking();">
+<label for="check_38" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-38">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_39">
+<td class="Ninki"><span id="Ninki-39">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_39" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 39); view_check_count_ranking();">
+<label for="check_39" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-39">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_40">
+<td class="Ninki"><span id="Ninki-40">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_40" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 40); view_check_count_ranking();">
+<label for="check_40" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-40">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_41">
+<td class="Ninki"><span id="Ninki-41">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_41" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 41); view_check_count_ranking();">
+<label for="check_41" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-41">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_42">
+<td class="Ninki"><span id="Ninki-42">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_42" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 42); view_check_count_ranking();">
+<label for="check_42" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-42">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_43">
+<td class="Ninki"><span id="Ninki-43">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_43" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 43); view_check_count_ranking();">
+<label for="check_43" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-43">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_44">
+<td class="Ninki"><span id="Ninki-44">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_44" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 44); view_check_count_ranking();">
+<label for="check_44" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-44">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_45">
+<td class="Ninki"><span id="Ninki-45">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_45" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 45); view_check_count_ranking();">
+<label for="check_45" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-45">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_46">
+<td class="Ninki"><span id="Ninki-46">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_46" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 46); view_check_count_ranking();">
+<label for="check_46" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-46">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_47">
+<td class="Ninki"><span id="Ninki-47">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_47" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 47); view_check_count_ranking();">
+<label for="check_47" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-47">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_48">
+<td class="Ninki"><span id="Ninki-48">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_48" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 48); view_check_count_ranking();">
+<label for="check_48" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-48">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_49">
+<td class="Ninki"><span id="Ninki-49">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_49" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 49); view_check_count_ranking();">
+<label for="check_49" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-49">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_50">
+<td class="Ninki"><span id="Ninki-50">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_50" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 50); view_check_count_ranking();">
+<label for="check_50" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-50">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_51">
+<td class="Ninki"><span id="Ninki-51">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_51" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 51); view_check_count_ranking();">
+<label for="check_51" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-51">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_52">
+<td class="Ninki"><span id="Ninki-52">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_52" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 52); view_check_count_ranking();">
+<label for="check_52" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-52">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_53">
+<td class="Ninki"><span id="Ninki-53">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_53" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 53); view_check_count_ranking();">
+<label for="check_53" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-53">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_54">
+<td class="Ninki"><span id="Ninki-54">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_54" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 54); view_check_count_ranking();">
+<label for="check_54" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-54">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_55">
+<td class="Ninki"><span id="Ninki-55">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_55" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 55); view_check_count_ranking();">
+<label for="check_55" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-55">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_56">
+<td class="Ninki"><span id="Ninki-56">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_56" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 56); view_check_count_ranking();">
+<label for="check_56" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-56">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_57">
+<td class="Ninki"><span id="Ninki-57">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_57" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 57); view_check_count_ranking();">
+<label for="check_57" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-57">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_58">
+<td class="Ninki"><span id="Ninki-58">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_58" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 58); view_check_count_ranking();">
+<label for="check_58" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-58">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_59">
+<td class="Ninki"><span id="Ninki-59">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_59" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 59); view_check_count_ranking();">
+<label for="check_59" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-59">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_60">
+<td class="Ninki"><span id="Ninki-60">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_60" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 60); view_check_count_ranking();">
+<label for="check_60" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-60">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_61">
+<td class="Ninki"><span id="Ninki-61">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_61" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 61); view_check_count_ranking();">
+<label for="check_61" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-61">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_62">
+<td class="Ninki"><span id="Ninki-62">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_62" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 62); view_check_count_ranking();">
+<label for="check_62" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-62">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_63">
+<td class="Ninki"><span id="Ninki-63">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_63" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 63); view_check_count_ranking();">
+<label for="check_63" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-63">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_64">
+<td class="Ninki"><span id="Ninki-64">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_64" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 64); view_check_count_ranking();">
+<label for="check_64" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-64">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_65">
+<td class="Ninki"><span id="Ninki-65">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_65" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 65); view_check_count_ranking();">
+<label for="check_65" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-65">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_66">
+<td class="Ninki"><span id="Ninki-66">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_66" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 66); view_check_count_ranking();">
+<label for="check_66" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-66">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_67">
+<td class="Ninki"><span id="Ninki-67">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_67" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 67); view_check_count_ranking();">
+<label for="check_67" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-67">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_68">
+<td class="Ninki"><span id="Ninki-68">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_68" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 68); view_check_count_ranking();">
+<label for="check_68" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-68">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_69">
+<td class="Ninki"><span id="Ninki-69">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_69" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 69); view_check_count_ranking();">
+<label for="check_69" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-69">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_70">
+<td class="Ninki"><span id="Ninki-70">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_70" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 70); view_check_count_ranking();">
+<label for="check_70" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-70">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_71">
+<td class="Ninki"><span id="Ninki-71">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_71" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 71); view_check_count_ranking();">
+<label for="check_71" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-71">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_72">
+<td class="Ninki"><span id="Ninki-72">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_72" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 72); view_check_count_ranking();">
+<label for="check_72" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-72">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_73">
+<td class="Ninki"><span id="Ninki-73">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_73" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 73); view_check_count_ranking();">
+<label for="check_73" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-73">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_74">
+<td class="Ninki"><span id="Ninki-74">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_74" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 74); view_check_count_ranking();">
+<label for="check_74" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-74">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_75">
+<td class="Ninki"><span id="Ninki-75">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_75" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 75); view_check_count_ranking();">
+<label for="check_75" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-75">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_76">
+<td class="Ninki"><span id="Ninki-76">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_76" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 76); view_check_count_ranking();">
+<label for="check_76" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-76">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_77">
+<td class="Ninki"><span id="Ninki-77">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_77" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 77); view_check_count_ranking();">
+<label for="check_77" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-77">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_78">
+<td class="Ninki"><span id="Ninki-78">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_78" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 78); view_check_count_ranking();">
+<label for="check_78" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-78">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_79">
+<td class="Ninki"><span id="Ninki-79">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_79" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 79); view_check_count_ranking();">
+<label for="check_79" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-79">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_80">
+<td class="Ninki"><span id="Ninki-80">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_80" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 80); view_check_count_ranking();">
+<label for="check_80" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-80">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_81">
+<td class="Ninki"><span id="Ninki-81">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_81" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 81); view_check_count_ranking();">
+<label for="check_81" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-81">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_82">
+<td class="Ninki"><span id="Ninki-82">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_82" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 82); view_check_count_ranking();">
+<label for="check_82" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-82">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_83">
+<td class="Ninki"><span id="Ninki-83">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_83" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 83); view_check_count_ranking();">
+<label for="check_83" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-83">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_84">
+<td class="Ninki"><span id="Ninki-84">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_84" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 84); view_check_count_ranking();">
+<label for="check_84" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-84">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_85">
+<td class="Ninki"><span id="Ninki-85">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_85" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 85); view_check_count_ranking();">
+<label for="check_85" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-85">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_86">
+<td class="Ninki"><span id="Ninki-86">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_86" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 86); view_check_count_ranking();">
+<label for="check_86" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-86">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_87">
+<td class="Ninki"><span id="Ninki-87">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_87" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 87); view_check_count_ranking();">
+<label for="check_87" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-87">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_88">
+<td class="Ninki"><span id="Ninki-88">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_88" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 88); view_check_count_ranking();">
+<label for="check_88" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-88">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_89">
+<td class="Ninki"><span id="Ninki-89">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_89" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 89); view_check_count_ranking();">
+<label for="check_89" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-89">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_90">
+<td class="Ninki"><span id="Ninki-90">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_90" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 90); view_check_count_ranking();">
+<label for="check_90" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-90">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_91">
+<td class="Ninki"><span id="Ninki-91">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_91" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 91); view_check_count_ranking();">
+<label for="check_91" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-91">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_92">
+<td class="Ninki"><span id="Ninki-92">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_92" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 92); view_check_count_ranking();">
+<label for="check_92" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-92">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_93">
+<td class="Ninki"><span id="Ninki-93">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_93" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 93); view_check_count_ranking();">
+<label for="check_93" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-93">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_94">
+<td class="Ninki"><span id="Ninki-94">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_94" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 94); view_check_count_ranking();">
+<label for="check_94" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-94">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_95">
+<td class="Ninki"><span id="Ninki-95">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_95" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 95); view_check_count_ranking();">
+<label for="check_95" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-95">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_96">
+<td class="Ninki"><span id="Ninki-96">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_96" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 96); view_check_count_ranking();">
+<label for="check_96" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-96">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_97">
+<td class="Ninki"><span id="Ninki-97">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_97" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 97); view_check_count_ranking();">
+<label for="check_97" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-97">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_98">
+<td class="Ninki"><span id="Ninki-98">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_98" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 98); view_check_count_ranking();">
+<label for="check_98" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-98">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_99">
+<td class="Ninki"><span id="Ninki-99">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_99" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 99); view_check_count_ranking();">
+<label for="check_99" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-99">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr><tr id="ninki-data_100">
+<td class="Ninki"><span id="Ninki-100">-</spna></td>
+<td class="Check_Odd">
+<input type="checkbox" class="HorseCheck_Select" id="check_100" name="" value="" onclick="update_cart_checkbox_ranking('bet_202610011011', this.value, 1, '', this.checked, 100); view_check_count_ranking();">
+<label for="check_100" class="Check01Btn_Off"></label>
+</td>
+<td>
+<div class="Combi01">
+<ul class="fc">
+<li><span class="UmaBan"><span id="umaban_1">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_2">-</span></span></li>
+<li><span class="Hyphen"></span></li>
+<li><span class="UmaBan"><span id="umaban_3">-</span></span></li>
+</ul>
+</div>
+</td>
+<td class="Name_Odds"><span id="odds-100">---.-</spna></td>
+<td><span id="umaban_1_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_1"></span></td>
+<td><span id="umaban_2_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_2"></span></td>
+<td><span id="umaban_3_2">-</span></td>
+<td class="Horse_Name Txt_L"><span id="horseName_3"></span></td>
+</tr>
+
+</tbody>
+</table><!-- / .RaceOdds_Ninki_Table -->
+</div><!-- /.RaceOdds_HorseList -->
+<!-- </form> -->
+<div style="display:none;" id="free_odds_limit_overlay"></div>
+<div class="RaceInfo_Notice mt18">
+<ul class="RaceInfo_Notice01">
+<li>※結果・成績・オッズなどのデータは、必ず主催者発表のものと照合しご確認ください。</li>
+</ul>
+</div>
+<script language="JavaScript" type="text/JavaScript">
+$(function(){
+if($("[id^='ninki-data_']").length) {
+$('.InputFixedArea_Wrap').show();
+$('.InputFixedArea01').show();
+$('.InputFixedArea01').addClass("Sticky");
+} else {
+$('.InputFixedArea_Wrap').hide()
+$('.InputFixedArea01').removeClass("Sticky");
+}
+})
+//===========================================================
+// 選択方式の表示切り替え処理
+//===========================================================
+function SwitchingDisplay(type,housiki)
+{
+// location.href = "../odds/index.html?type=" + type + "&race_id=202610011011&housiki=" + housiki + "#odds_view";
+$("#odds_view_result").html('');
+var url = "../odds/odds_get_form.html?type=" + type + "&race_id=202610011011&housiki=" + housiki;
+$.ajax({
+type: "GET",
+url: url,
+data: null,
+cache: false,
+success: function(data)
+{
+window.history.pushState(null,null, url.replace('odds_get_form','index'));
+$("#odds_view_form").html(data); // show response from the php script.
+}
+});
+}
+function view_3odds_ranking(type, housiki)
+{
+umaban = $('#ninki_select').val();
+$("#odds_view_result").html('');
+var url = "../odds/odds_get_form.html?type=" + type + "&race_id=202610011011&housiki=c99&ninki=" + umaban;
+$.ajax({
+type: "GET",
+url: url,
+data: null,
+cache: false,
+success: function(data)
+{
+$("#odds_view_form").html(data); // show response from the php script.
+}
+});
+}
+</script>
+<!-- オッズ -->
+<script>
+var horse_list = JSON.parse('{"1":{"Bamei":"\u30de\u30c6\u30f3\u30ed\u30a6\u30aa\u30ea\u30aa\u30f3","Bamei9":"\u30de\u30c6\u30f3\u30ed\u30a6\u30aa\u30ea\u30aa\u30f3","Umaban":1},"2":{"Bamei":"\u30d3\u30fc\u30a2\u30b9\u30c8\u30cb\u30c3\u30b7\u30c9","Bamei9":"\u30d3\u30fc\u30a2\u30b9\u30c8\u30cb\u30c3\u30b7\u30c9","Umaban":2},"3":{"Bamei":"\u30a8\u30a2\u30d5\u30a1\u30f3\u30c7\u30a3\u30bf","Bamei9":"\u30a8\u30a2\u30d5\u30a1\u30f3\u30c7\u30a3\u30bf","Umaban":3},"4":{"Bamei":"\u30b7\u30e7\u30a6\u30ca\u30f3\u30a2\u30c7\u30a4\u30d6","Bamei9":"\u30b7\u30e7\u30a6\u30ca\u30f3\u30a2\u30c7\u30a4\u30d6","Umaban":4},"5":{"Bamei":"\u30d8\u30ea\u30aa\u30b9","Bamei9":"\u30d8\u30ea\u30aa\u30b9","Umaban":5},"6":{"Bamei":"\u30d1\u30ec\u30cf","Bamei9":"\u30d1\u30ec\u30cf","Umaban":6},"7":{"Bamei":"\u30b7\u30eb\u30c8\u30db\u30eb\u30f3","Bamei9":"\u30b7\u30eb\u30c8\u30db\u30eb\u30f3","Umaban":7},"8":{"Bamei":"\u30e9\u30b1\u30de\u30fc\u30c0","Bamei9":"\u30e9\u30b1\u30de\u30fc\u30c0","Umaban":8},"9":{"Bamei":"\u30ca\u30e0\u30e9\u30a8\u30a4\u30cf\u30d6","Bamei9":"\u30ca\u30e0\u30e9\u30a8\u30a4\u30cf\u30d6","Umaban":9},"10":{"Bamei":"\u30b1\u30a4\u30a2\u30a4\u30bb\u30ca","Bamei9":"\u30b1\u30a4\u30a2\u30a4\u30bb\u30ca","Umaban":10},"11":{"Bamei":"\u30a8\u30d4\u30d5\u30a1\u30cb\u30fc","Bamei9":"\u30a8\u30d4\u30d5\u30a1\u30cb\u30fc","Umaban":11},"12":{"Bamei":"\u30bb\u30f3\u30c4\u30d6\u30e9\u30c3\u30c9","Bamei9":"\u30bb\u30f3\u30c4\u30d6\u30e9\u30c3\u30c9","Umaban":12},"13":{"Bamei":"\u30ac\u30a4\u30a2\u30e1\u30f3\u30c6","Bamei9":"\u30ac\u30a4\u30a2\u30e1\u30f3\u30c6","Umaban":13},"14":{"Bamei":"\u30a8\u30e9\u30c8\u30fc","Bamei9":"\u30a8\u30e9\u30c8\u30fc","Umaban":14},"15":{"Bamei":"\u30ea\u30ab\u30f3\u30ab\u30d6\u30fc\u30eb","Bamei9":"\u30ea\u30ab\u30f3\u30ab\u30d6\u30fc\u30eb","Umaban":15},"16":{"Bamei":"\u30bf\u30ac\u30ce\u30c7\u30e5\u30fc\u30c9","Bamei9":"\u30bf\u30ac\u30ce\u30c7\u30e5\u30fc\u30c9","Umaban":16}}');
+var cart_item_id_prefix = 'a1-10-11';
+var odds_type = '7';
+var bet_type = 'b7'
+//チェックボックス
+var _odds_ranking_cart_group_bet = 'bet_202610011011';
+var _odds_ranking_page_race_id = '202610011011';
+var _cart_group_bet  = 'bet_202610011011';
+var _odds_ranking_bet_type = 'b7';
+$(function(){
+$.oddsUpdate({
+apiUrl:'/api/api_get_jra_odds.html',
+raceId:'202610011011',
+isPremium:'0',
+sort:'ninki',
+oddsType: odds_type,
+autoUpdate :false,
+compress : true,
+callbackApiOverrideView:function(_this, _resp){
+console.log('function callbackApiOverrideView');
+var data = _resp.data;
+$('[id^="ninki-data_"]').each(function(i){
+var data_key = $(this).attr('id').split('_')[1];
+var row = data['odds'][odds_type][data_key];
+if(odds_type == '3' || odds_type == '4' || odds_type == '5' || odds_type == '6') {
+//枠連、馬連、ワイド、馬単
+var uno = row[3];
+var kumiA = Number(uno.slice(0,2));
+var kumiB = Number(uno.slice(2,4));
+if (odds_type == '3') {
+$(this).find('#umaban_1').parent().addClass("Waku" + kumiA);
+$(this).find('#umaban_2').parent().addClass("Waku" + kumiB);
+}
+$(this).find('#umaban_1').html(kumiA);
+$(this).find('#umaban_2').html(kumiB);
+$(this).find('#umaban_1_2').html(kumiA);
+$(this).find('#umaban_2_2').html(kumiB);
+$(this).find('#horseName_1').html(horse_list[kumiA]['Bamei']);
+$(this).find('#horseName_2').html(horse_list[kumiB]['Bamei']);
+var item_id = sprintf('%s_%s_c0_%d_%d', cart_item_id_prefix, bet_type, kumiA, kumiB );
+} else {
+//３連複、３連単
+var uno = row[3];
+var kumiA = Number(uno.slice(0,2));
+var kumiB = Number(uno.slice(2,4));
+var kumiC = Number(uno.slice(4));
+$(this).find('#umaban_1').html(kumiA);
+$(this).find('#umaban_2').html(kumiB);
+$(this).find('#umaban_3').html(kumiC);
+$(this).find('#umaban_1_2').html(kumiA);
+$(this).find('#umaban_2_2').html(kumiB);
+$(this).find('#umaban_3_2').html(kumiC);
+$(this).find('#horseName_1').html(horse_list[kumiA]['Bamei']);
+$(this).find('#horseName_2').html(horse_list[kumiB]['Bamei']);
+$(this).find('#horseName_3').html(horse_list[kumiC]['Bamei']);
+var item_id = sprintf('%s_%s_c0_%d_%d_%d', cart_item_id_prefix, bet_type, kumiA, kumiB, kumiC );
+}
+$('#odds-'+data_key).html(row[0]);
+//10倍以下は赤
+if(row[0] <= 10) {
+$('#odds-'+data_key).addClass('Odds_Ninki');
+}
+$('#Ninki-'+data_key).html(row[2]);
+if(odds_type == '5') {
+$(this).find('#odds_min_Hyphen').show();
+$('#odds-min-'+data_key).html(row[1]);
+if(row[1] <= 10) {
+$('#odds-min-'+data_key).addClass('Odds_Ninki');
+}
+}
+$('#check_'+data_key).val(item_id);
+});
+},
+callbackApiComplete:function(_this,_odds_status,_data){
+$('.Check01Btn_Off').show();
+cart_get_itemlist( _odds_ranking_cart_group_bet, init_select_kaime_ranking );
+}
+});
+});
+</script>
+<div class="InputFixedArea_Wrap" >
+<div class="InputFixedArea01 Odds" style="position: fixed; bottom: 0px; transition: all 0.2s ease 0s; left: 0px;">
+<dl class="TotalBetDL">
+<dd id="caution_50bet" style="display: none;">
+<font color="#f20">件数オーバー(1度の投票は255件まで)</font>
+</dd>
+<dt id="total_bet">選択済み：<span id="odds_select">0</span>件</dt>
+</dl>
+<div class="InputBtnBox">
+<!-- <a href="?pid=bet&race_id=201905020212"> -->
+<a href="../ipat/dispatch.html?race_id=202610011011" target="_blank" class="SubmitBtn" id="action_bet">金額入力へすすむ</a>
+<button class="AddBtn" type="button" onclick="location.href='../odds/index.html?race_id=202610011011'"><span class="Icon_addBtn"></span>買い目追加</button>
+</div><!-- /.InputBtnBox -->
+</div><!-- /.InputFixedArea01 -->
+</div>

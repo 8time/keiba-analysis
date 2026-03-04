@@ -1,0 +1,46 @@
+DEBUG API STRUCTURE
+Found 22 items.
+Item 0: tag=li, class=[], id=None
+  Content: トップ
+Item 1: tag=li, class=[], id=None
+  Content: ニュース
+Item 2: tag=li, class=None, id=None
+  Content: レース
+Item 3: tag=li, class=None, id=None
+  Content: A I
+Item 4: tag=li, class=None, id=None
+  Content: 予想
+Item 5: tag=li, class=None, id=None
+  Content: UMAIビルダー
+Item 6: tag=li, class=[], id=None
+  Content: コラム
+Item 7: tag=li, class=None, id=None
+  Content: netkeibaTV
+Item 8: tag=li, class=None, id=None
+  Content: 地方競馬
+Item 9: tag=li, class=None, id=None
+  Content: データベース
+Item 10: tag=li, class=None, id=None
+  Content: ショップ
+Item 11: tag=li, class=None, id=None
+  Content: 競馬新聞
+Item 12: tag=li, class=None, id=None
+  Content: 俺プロ
+Item 13: tag=li, class=[], id=None
+  Content: 一口馬主
+Item 14: tag=li, class=None, id=None
+  Content: POG
+Item 15: tag=li, class=None, id=None
+  Content: 競馬広場
+Item 16: tag=li, class=[], id=None
+  Content: お気に入り馬
+Item 17: tag=li, class=[], id=None
+  Content: メモ
+Item 18: tag=li, class=None, id=None
+  Content: まとめ
+Item 19: tag=li, class=[], id=None
+  Content: イベント
+Item 20: tag=li, class=None, id=None
+  Content: マイページ
+Item 21: tag=li, class=None, id=None
+  Content: アカウント
