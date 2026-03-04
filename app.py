@@ -3045,8 +3045,8 @@ if nav == "📚 RMHS分析":
 # ──────────────────────────────────────────────
 if nav == "🏇 過去走R理論スキャン":
     st.header("🏇 指定場 過去走R理論スキャン")
-    st.markdown("指定した日付の**特定の競馬場（1か所・約12レース）**を対象に、全出走馬の**過去5走**を自動スキャンし、R理論（Rebound）に合致する「次走注目馬」を抽出します。")
-    st.warning("⚠️ **注意**: アクセス制限(BAN)対策として1レースごとに2秒の待機時間を設けています。1場のスキャン（12レース）には約30～40秒かかります。")
+    st.markdown("指定した日付の**全競馬場（全レース）**または特定の競馬場を対象に、全出走馬の**過去5走**を自動スキャンし、R理論（Rebound）に合致する「次走注目馬」を抽出します。")
+    st.warning("⚠️ **注意**: アクセス制限(BAN)対策として1レースごとに2秒の待機時間を設けています。全場スキャン（約36レース）には約2分、1場のスキャン（12レース）には約40秒かかります。")
     
     col_d1, col_d2 = st.columns([3, 1])
     with col_d1:
@@ -3087,71 +3087,69 @@ if nav == "🏇 過去走R理論スキャン":
                 return f"{name} ({count}レース)"
             
             st.markdown("---")
-            col_v1, col_v2 = st.columns([3, 1])
+            col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
             with col_v1:
-                selected_v_code = st.selectbox("スキャンする対象の競馬場を選択してください", v_options, format_func=format_venue)
+                selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue)
             with col_v2:
                 st.write("")
-                run_scan_btn = st.button("🚀 選択した競馬場をスキャン", use_container_width=True, type="primary")
+                run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary")
+            with col_v3:
+                st.write("")
+                run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True)
             
-            if run_scan_btn and selected_v_code:
-                target_races = venues[selected_v_code]
+            # Helper to run scan logic
+            def perform_scan(target_races, label):
                 total_races = len(target_races)
+                st.success(f"✅ {label} の {total_races} レースをスキャン開始します...")
                 
-                v_name_display = VENUE_NAMES.get(selected_v_code, selected_v_code)
-                st.success(f"✅ {v_name_display} の {total_races} レースをスキャン開始します...")
-                
-                # Progress UI
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                
                 extracted_horses = []
                 
-                # Loop through target races
                 for i, race_info in enumerate(target_races):
                     r_id = race_info['race_id']
                     r_name = race_info['race_name']
                     r_num = race_info['race_num']
                     
-                    status_text.text(f"⏳ スキャン中... ({i+1}/{total_races}): {r_num} {r_name}")
+                    v_code = r_id[4:6] if len(r_id) == 12 else "Unknown"
+                    v_name = VENUE_NAMES.get(v_code, v_code)
                     
-                    # Fetch detailed race data (contains PastRuns)
+                    status_text.text(f"⏳ スキャン中... ({i+1}/{total_races}): {v_name} {r_num} {r_name}")
+                    
                     df_race = scraper.get_race_data(r_id)
-                    
                     if not df_race.empty:
-                        # Scan each horse's past runs
                         for index, row in df_race.iterrows():
                             past_runs = row.get('PastRuns', [])
-                            
-                            # Loop through up to 5 past runs
                             for p_idx, run in enumerate(past_runs[:5]):
-                                # Analyze theory
                                 if theory_rmhs.RMHSAnalyzer.analyze_past_run_for_r(run):
-                                    # Hit!
                                     extracted_horses.append({
-                                        '競馬場・R': f"{row['Venue']} {r_num}",
+                                        '競馬場・R': f"{v_name} {r_num}",
                                         '馬番': row['Umaban'],
                                         '馬名': row['Name'],
                                         '予想オッズ': row.get('Odds', 0.0),
                                         '合致した過去走': run.get('Date', 'Unknown'),
                                         '過去走成績': f"{run.get('Rank')}着 (通過:{run.get('Passing')} 上がり:{run.get('Agari')} 差:{run.get('Margin')})"
                                     })
-                                    break # Found a match in one of the past runs, no need to check older ones for this horse
+                                    break
                     
-                    # Update progress
                     progress_bar.progress((i + 1) / total_races)
-                    
-                    # Sleep to prevent BAN!
                     if i < total_races - 1:
                         time.sleep(2.0)
-                        
-                status_text.text(f"✅ スキャン完了！ {v_name_display} の全 {total_races} レースのチェックが終わりました。")
-                progress_bar.empty()
                 
-                # Display Results
-                if extracted_horses:
-                    st.subheader(f"🎯 R理論（Rebound） 次走注目馬 ({len(extracted_horses)}頭)")
-                    df_extracted = pd.DataFrame(extracted_horses)
-                    st.dataframe(df_extracted, use_container_width=True)
-                else:
-                    st.info("該当する馬は見つかりませんでした。")
+                status_text.text(f"✅ スキャン完了！ {label} のチェックが終わりました。")
+                progress_bar.empty()
+                return extracted_horses
+
+            results = []
+            if run_all_scan_btn:
+                all_races = [r for venue_races in venues.values() for r in venue_races]
+                results = perform_scan(all_races, "全開催場")
+            elif run_single_scan_btn and selected_v_code:
+                results = perform_scan(venues[selected_v_code], VENUE_NAMES.get(selected_v_code, selected_v_code))
+            
+            if results:
+                st.subheader(f"🎯 R理論（Rebound） 次走注目馬 ({len(results)}頭)")
+                df_extracted = pd.DataFrame(results)
+                st.dataframe(df_extracted, use_container_width=True)
+            elif run_all_scan_btn or run_single_scan_btn:
+                st.info("該当する馬は見つかりませんでした。")
