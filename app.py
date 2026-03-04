@@ -38,15 +38,15 @@ st.markdown("""
 <style>
     /* Darken sidebar background */
     [data-testid="stSidebar"] {
-        background-color: #121212;
+        background-color: #121212 !important;
     }
-    /* Optional: Ensure navigation labels are white/readable */
-    [data-testid="stSidebar"] .st-emotion-cache-17l686q {
-        color: white;
+    /* Force white text for all elements in sidebar */
+    [data-testid="stSidebar"] * {
+        color: white !important;
     }
-    /* Radio button item styling */
-    [data-testid="stSidebar"] .st-emotion-cache-1647it7 {
-        color: #ddd;
+    /* Specifically target radio button labels which can be stubborn */
+    [data-testid="stSidebar"] .stRadio label p {
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
