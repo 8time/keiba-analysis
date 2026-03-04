@@ -1,5 +1,6 @@
 import sys, io
 import os
+import streamlit as st
 from dotenv import load_dotenv
 import google.genai as genai
 from google.genai import types as genai_types
@@ -16,7 +17,6 @@ if not GEMINI_API_KEY:
     st.error("API Key not found. Please set GEMINI_API_KEY in .env or Streamlit Secrets.")
     st.stop()
 import importlib
-import streamlit as st
 import pandas as pd
 import time
 import math
