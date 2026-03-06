@@ -1,5 +1,15 @@
 import sys, io
 import os
+import logging
+
+# Configure logging to handle Streamlit and sub-module output safely
+logging.basicConfig(level=logging.INFO)
+# Silence noisy internal logs
+logging.getLogger("scrapling").setLevel(logging.ERROR)
+logging.getLogger("browserforge").setLevel(logging.ERROR)
+logging.getLogger("curl_cffi").setLevel(logging.ERROR)
+logger = logging.getLogger(__name__)
+
 import streamlit as st
 from dotenv import load_dotenv
 import google.genai as genai
@@ -11,7 +21,10 @@ load_dotenv()
 # API Key Management (Priority: st.secrets > .env)
 # On Streamlit Cloud, set this in: Settings -> Secrets
 # For local dev, use .env file: GEMINI_API_KEY="your_key"
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+try:
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+except Exception:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
     st.error("API Key not found. Please set GEMINI_API_KEY in .env or Streamlit Secrets.")
@@ -48,6 +61,10 @@ st.markdown("""
     [data-testid="stSidebar"] .stRadio label p {
         color: white !important;
     }
+    /* Force black text for buttons in sidebar (Cache Clear button) */
+    [data-testid="stSidebar"] button p {
+        color: black !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -70,7 +87,9 @@ with st.sidebar:
             "📊 History & Review",
             "🧪 新ロジックテスト(FEW+マクリ)",
             "📚 RMHS分析",
-            "🏇 過去走R理論スキャン"
+            "🏇 過去走R理論スキャン",
+            "💾 ロジック置き場",
+            "🔬 実験その３(馬番パターン)",
         ],
         label_visibility="collapsed"
     )
@@ -892,6 +911,74 @@ if nav == "🏠 Single Race Analysis":
         )
 
     analyze_btn = st.button("🚀 Analyze Race & Generate Map", type="primary")
+
+    # --- Recent Races History List (Shortcut) ---
+    import history_manager
+    df_h_main = history_manager.load_history()
+    if not df_h_main.empty:
+        with st.expander("📁 最近解析したレース履歴から読み込む", expanded=False):
+            # State for main tab history actions
+            if 'main_race_action_confirm' not in st.session_state:
+                st.session_state.main_race_action_confirm = None
+
+            def execute_main_race_action():
+                conf = st.session_state.main_race_action_confirm
+                if not conf: return
+                rid = conf["rid"]
+                # Load: Set input and trigger analysis flag
+                st.session_state.main_race_id_input = str(rid)
+                st.session_state.tab1_analyzed_id = str(rid)
+                st.session_state.main_race_action_confirm = None
+                st.rerun()
+
+            main_h_confirm = st.session_state.main_race_action_confirm
+            if main_h_confirm:
+                rid = main_h_confirm["rid"]
+                st.warning(f"Race ID: {rid} を解析用に読み込みますか？")
+                c_my, c_mn = st.columns(2)
+                with c_my: st.button("✅ 実行", on_click=execute_main_race_action, use_container_width=True, key="main_race_conf_yes")
+                with c_mn: st.button("❌ キャンセル", on_click=lambda: st.session_state.update({"main_race_action_confirm": None}), use_container_width=True, key="main_race_conf_no")
+
+            # Prepare list (Last 5 races)
+            df_h_unique = df_h_main.drop_duplicates(subset=['RaceID']).copy()
+            # Sort by Date (assume YYYY/MM/DD)
+            df_h_unique = df_h_unique.sort_values(by=['Date', 'RaceNum'], ascending=[False, False]).head(5)
+            main_race_list = df_h_unique[['RaceID', 'Date', 'RaceTitle', 'Venue']].to_dict('records')
+
+            # CSS
+            css_rules_m = ["<style>"]
+            for i, r in enumerate(main_race_list):
+                bg = "#ffffff" if i % 2 == 0 else "#f5f5f5"
+                css_rules_m.append(f"""
+                    div[data-testid="stVerticalBlock"]:has(.main-race-row-{i}) div[data-testid="stHorizontalBlock"] {{
+                        background-color: {bg} !important;
+                        padding: 6px 10px;
+                        border-radius: 4px;
+                        align-items: center;
+                    }}
+                    div[data-testid="stVerticalBlock"]:has(.main-race-row-{i}) * {{
+                        color: #333333 !important;
+                    }}
+                """)
+            css_rules_m.append("</style>")
+            st.markdown("\n".join(css_rules_m), unsafe_allow_html=True)
+
+            for i, r in enumerate(main_race_list):
+                rid = r['RaceID']
+                title = r.get('RaceTitle') or f"Race {rid}"
+                date = r.get('Date') or "---"
+                venue = r.get('Venue') or ""
+                
+                mc1, mc2, mc3 = st.columns([6, 3, 1])
+                with mc1:
+                    st.markdown(f"<span class='main-race-row-{i}'>🏇 **{title}** <small style='color:#666'>({rid})</small></span>", unsafe_allow_html=True)
+                with mc2:
+                    st.caption(f"{date} {venue}")
+                with mc3:
+                    if st.button("📂", key=f"btn_main_hload_{rid}", help="読み込む", disabled=(main_h_confirm is not None)):
+                        st.session_state.main_race_action_confirm = {"action": "load", "rid": rid}
+                        st.rerun()
+
     if analyze_btn:
         st.session_state['tab1_analyzed_id'] = race_id_input
         
@@ -1737,7 +1824,10 @@ if nav == "🏠 Single Race Analysis":
 
 
             except Exception as e:
+                import traceback
                 st.error(f"An error occurred: {e}")
+                st.exception(e)
+                logger.error(f"Analysis Failed: {traceback.format_exc()}")
 
 # Tab 2 placeholder logic
 if nav == "🔍 Race Scanner (Batch)":
@@ -2100,8 +2190,11 @@ if nav == "📊 History & Review":
         st.session_state['history_extracted'] = False
 
     display_btn = st.button("✨ 解析＆結果を表示", type="primary", key="history_display_btn")
+    auto_triggered = st.session_state.get('history_auto_run', False)
     
-    if display_btn and display_race_id:
+    if (display_btn or auto_triggered) and display_race_id:
+        if auto_triggered:
+            st.session_state.history_auto_run = False
         with st.spinner("データ取得・解析中..."):
             try:
                 # 1. Fetch Race Data
@@ -2434,43 +2527,129 @@ if nav == "📊 History & Review":
                 st.info("相関分析には、着順データ（ActualRank）を含む5件以上のレコードが必要です。")
         
         # Display Improvements
-        st.subheader("✨ Race History")
-        
-        # 1. Date Filter (Month)
+        # 1. Date Filter (Restored)
         if 'Date' in df_history.columns:
-            # Extract YYYY-MM
-            # Handle potential parse errors or mixed formats
             try:
                 df_history['YearMonth'] = pd.to_datetime(df_history['Date'], errors='coerce').dt.strftime('%Y-%m')
             except:
                 df_history['YearMonth'] = "Unknown"
-                
             months = sorted(df_history['YearMonth'].dropna().unique(), reverse=True)
             if not months: months = ["All"]
-            
-            selected_month = st.selectbox("✨ Select Month", ["All"] + list(months))
-            
+            selected_month = st.selectbox("✨ Select Month Filter", ["All"] + list(months), key="history_month_filter")
             if selected_month != "All":
                 df_display = df_history[df_history['YearMonth'] == selected_month].copy()
             else:
                 df_display = df_history.copy()
         else:
             df_display = df_history.copy()
-            
-        # 2. Sorting (Date Desc, RaceNum Asc)
+
+        # 2. Sorting
         if 'RaceNum' in df_display.columns:
-            # Ensure RaceNum is int
             df_display['RaceNum'] = pd.to_numeric(df_display['RaceNum'], errors='coerce').fillna(0)
             df_display = df_display.sort_values(by=['Date', 'RaceNum'], ascending=[False, True])
         else:
             df_display = df_display.sort_values(by='Date', ascending=False)
-        
-        # Drop temp col
-        if 'YearMonth' in df_display.columns:
-            df_display = df_display.drop(columns=['YearMonth'])
 
-        # Show Table
-        st.dataframe(df_display, use_container_width=True)
+        st.subheader("📁 Register/Load History List")
+        
+        # --- State Management for History Actions ---
+        if 'race_action_confirm' not in st.session_state:
+            st.session_state.race_action_confirm = None
+
+        def execute_race_action():
+            conf = st.session_state.race_action_confirm
+            if not conf: return
+            rid = conf["rid"]
+            act = conf["action"]
+            
+            if act == "load":
+                # Load: Set input and trigger analysis flag
+                st.session_state.history_display_race_id = rid
+                st.session_state.history_auto_run = True
+                st.success(f"Race ID {rid} をセットしました。")
+            elif act == "delete":
+                # Delete: Remove from CSV
+                df_h = history_manager.load_history()
+                if not df_h.empty:
+                    df_h = df_h[df_h['RaceID'].astype(str) != str(rid)]
+                    df_h.to_csv("race_history.csv", index=False, encoding='utf-8')
+                    st.success(f"Race ID {rid} の記録を削除しました。")
+            
+            st.session_state.race_action_confirm = None
+
+        def cancel_race_action():
+            st.session_state.race_action_confirm = None
+
+        history_confirm = st.session_state.race_action_confirm
+        if history_confirm:
+            rid = history_confirm["rid"]
+            act = history_confirm["action"]
+            if act == "load":
+                st.warning(f"Race ID: {rid} を表示用に読み込みますか？")
+            else:
+                st.error(f"Race ID: {rid} の履歴データを完全に削除しますか？")
+            
+            cy, cn = st.columns(2)
+            with cy: st.button("✅ 実行", on_click=execute_race_action, use_container_width=True, key="race_conf_yes")
+            with cn: st.button("❌ キャンセル", on_click=cancel_race_action, use_container_width=True, key="race_conf_no")
+            st.write("")
+
+        # Prepare unique race list
+        df_display_unique = df_display.drop_duplicates(subset=['RaceID']).copy()
+        race_list = df_display_unique[['RaceID', 'Date', 'RaceTitle', 'Venue']].to_dict('records')
+
+        if not race_list:
+            st.info("条件に一致する履歴はありません。")
+        else:
+            # Header
+            rh1, rh2, rh3, rh4 = st.columns([5, 3, 1, 1])
+            with rh1: st.caption("レース名 / ID")
+            with rh2: st.caption("開催日 / 場所")
+            st.divider()
+
+            # Dynamic CSS for Race List Marker
+            css_rules_h = ["<style>"]
+            for i, r in enumerate(race_list):
+                bg = "#ffffff" if i % 2 == 0 else "#f5f5f5"
+                css_rules_h.append(f"""
+                    div[data-testid="stHorizontalBlock"]:has(.race-row-{i}) {{
+                        background-color: {bg} !important;
+                        padding: 8px 12px;
+                        border-radius: 4px;
+                        align-items: center;
+                    }}
+                    div[data-testid="stHorizontalBlock"]:has(.race-row-{i}) * {{
+                        color: #333333 !important;
+                    }}
+                    div[data-testid="stHorizontalBlock"]:has(.race-row-{i}) button {{
+                        margin: 0;
+                        padding: 4px 8px;
+                    }}
+                """)
+            css_rules_h.append("</style>")
+            st.markdown("\n".join(css_rules_h), unsafe_allow_html=True)
+
+            for i, r in enumerate(race_list):
+                rid = r['RaceID']
+                title = r.get('RaceTitle') or f"Race {rid}"
+                date = r.get('Date') or "---"
+                venue = r.get('Venue') or ""
+                
+                c1, c2, c3, c4 = st.columns([5, 3, 1, 1])
+                with c1:
+                    st.markdown(f"<span class='race-row-{i}'>🏇 **{title}** <br> <small style='color:#666'>{rid}</small></span>", unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"📅 {date} <br> 📍 {venue}", unsafe_allow_html=True)
+                with c3:
+                    if st.button("📂", key=f"btn_hload_{rid}", help="読み込む", disabled=(history_confirm is not None)):
+                        st.session_state.race_action_confirm = {"action": "load", "rid": rid}
+                        st.rerun()
+                with c4:
+                    if st.button("🗑️", key=f"btn_hdel_{rid}", help="削除", disabled=(history_confirm is not None)):
+                        st.session_state.race_action_confirm = {"action": "delete", "rid": rid}
+                        st.rerun()
+
+        st.divider()
 
         # Metrics Calculation
         # Clean data for stats
@@ -2546,7 +2725,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
     st.markdown("既存の予測スコアをベースに、「枠順バイアス」「馬体重仕上がり」「マクリ地力指数」を統合した検証用スコアリングです。")
     
     df = st.session_state.get('df')
-    current_input_id = st.session_state.get('main_race_id_input', '')
+    current_input_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
     
     # Consistency check: Ensure the loaded data matches the current input ID
     is_consistent = False
@@ -2582,14 +2761,14 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         # 1. Influence Weights Initialization (Updated defaults for Robustness)
         if 'score_weights' not in st.session_state:
             st.session_state['score_weights'] = {
-                "Base": 25.0,        # Safety Net: Increased
-                "Popularity": 15.0,  # Safety Net: Increased
-                "DIY1": 15.0, 
-                "DIY2": 15.0, 
-                "UIndex": 10.0, 
-                "Jockey": 10.0, 
-                "Training": 5.0,
-                "Weight": 5.0, 
+                "Base": 0.0,
+                "Popularity": 0.0,
+                "DIY1": 0.0, 
+                "DIY2": 0.0, 
+                "UIndex": 0.0, 
+                "Jockey": 0.0, 
+                "Training": 0.0,
+                "Weight": 0.0, 
                 "LaboIndex": 0.0, 
                 "Bloodline": 0.0
             }
@@ -2674,7 +2853,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         
         # 3. Playwright Action Button (Full Automation)
         if st.button("🚀 Playwrightで全てのデータ取得・計算を一括実行", key="btn_pw_test", type="primary"):
-            race_id = st.session_state.get('main_race_id_input', '')
+            race_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
             with st.status("📊 統合データ処理中...", expanded=True) as status:
                 st.write("1. Playwrightブラウザ起動... [馬体重/調教/血統/U指数/ラボ] をスキャンしています")
                 top10_umaban = df_test.head(10)['Umaban'].tolist()
@@ -3153,3 +3332,358 @@ if nav == "🏇 過去走R理論スキャン":
                 st.dataframe(df_extracted, use_container_width=True)
             elif run_all_scan_btn or run_single_scan_btn:
                 st.info("該当する馬は見つかりませんでした。")
+
+# ──────────────────────────────────────────────
+# 💾 ロジック置き場
+# ──────────────────────────────────────────────
+if nav == "💾 ロジック置き場":
+    st.header("💾 ロジック置き場")
+    st.caption("AI(antigravity)への指示や各種設定メモを一か所に保存・参照するためのスペースです。")
+    
+    import json
+    LOGIC_FILE = "saved_logic_notes.json"
+    
+    def load_logics():
+        if os.path.exists(LOGIC_FILE):
+            try:
+                with open(LOGIC_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def save_logics(data):
+        with open(LOGIC_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    logics = load_logics()
+    
+    # 日付が新しい順にソート（最新のものから表示）
+    sorted_keys = sorted(logics.keys(), key=lambda k: logics[k].get("date", ""), reverse=True)
+    
+    # Session state for inputs
+    if 'logic_name_input' not in st.session_state:
+        st.session_state.logic_name_input = ""
+    if 'logic_memo_input' not in st.session_state:
+        st.session_state.logic_memo_input = ""
+    if 'logic_ag_input' not in st.session_state:
+        st.session_state.logic_ag_input = ""
+    
+    # State for confirmation flow
+    if 'action_confirm' not in st.session_state:
+        st.session_state.action_confirm = None
+        
+    def execute_action():
+        act = st.session_state.action_confirm
+        if act:
+            k = act["key"]
+            if act["action"] == "load":
+                entry = logics.get(k, {})
+                st.session_state.logic_name_input = k
+                st.session_state.logic_memo_input = entry.get("memo", "")
+                st.session_state.logic_ag_input = entry.get("ag_prompt", "")
+            elif act["action"] == "delete":
+                if k in logics:
+                    del logics[k]
+                    save_logics(logics)
+        st.session_state.action_confirm = None
+        
+    def cancel_action():
+        st.session_state.action_confirm = None
+
+    st.subheader("📁 保存済みロジック一覧")
+    
+    confirm_state = st.session_state.action_confirm
+    if confirm_state:
+        k = confirm_state["key"]
+        act = confirm_state["action"]
+        if act == "load":
+            st.warning(f"「{k}」を読み込みますか？ 現在の入力内容は上書きされます。")
+        else:
+            st.error(f"「{k}」を削除しますか？ この操作は元に戻せません。")
+            
+        c_yes, c_no = st.columns(2)
+        with c_yes:
+            st.button("✅ はい", on_click=execute_action, key="confirm_action_yes", use_container_width=True)
+        with c_no:
+            st.button("❌ キャンセル", on_click=cancel_action, key="confirm_action_no", use_container_width=True)
+        st.write("")
+
+    if not logics:
+        st.info("保存されたロジックはありません。")
+    else:
+        # Header for the list
+        hc1, hc2, hc3, hc4 = st.columns([5, 3, 1, 1])
+        with hc1: st.caption("名前")
+        with hc2: st.caption("最終更新日時")
+        st.divider()
+        
+        # 動的にCSSを生成して交互の背景色を確実に設定する
+        css_rules = ["<style>"]
+        for i, k in enumerate(sorted_keys):
+            bg = "#ffffff" if i % 2 == 0 else "#f5f5f5"
+            css_rules.append(f"""
+                div[data-testid="stHorizontalBlock"]:has(.logic-row-{i}) {{
+                    background-color: {bg} !important;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    align-items: center;
+                }}
+                /* 背景が明るいので文字色を暗く固定 */
+                div[data-testid="stHorizontalBlock"]:has(.logic-row-{i}) p,
+                div[data-testid="stHorizontalBlock"]:has(.logic-row-{i}) span,
+                div[data-testid="stHorizontalBlock"]:has(.logic-row-{i}) div {{
+                    color: #333333 !important;
+                }}
+                /* ボタンの余白を詰める */
+                div[data-testid="stHorizontalBlock"]:has(.logic-row-{i}) button {{
+                    margin: 0;
+                    padding: 4px 8px;
+                }}
+            """)
+        css_rules.append("</style>")
+        st.markdown("\n".join(css_rules), unsafe_allow_html=True)
+        
+        for i, k in enumerate(sorted_keys):
+            c1, c2, c3, c4 = st.columns([5, 3, 1, 1])
+            with c1:
+                st.markdown(f"<span class='logic-row-{i}'>📄 **{k}**</span>", unsafe_allow_html=True)
+            with c2:
+                st.caption(logics[k].get("date", ""))
+            with c3:
+                if st.button("📂", key=f"btn_load_{k}", help="読み込む", disabled=(confirm_state is not None)):
+                    st.session_state.action_confirm = {"action": "load", "key": k}
+                    st.rerun()
+            with c4:
+                if st.button("🗑️", key=f"btn_del_{k}", help="削除する", disabled=(confirm_state is not None)):
+                    st.session_state.action_confirm = {"action": "delete", "key": k}
+                    st.rerun()
+
+    st.divider()
+    
+    st.subheader("✍️ エディタ")
+    
+    # "Clear" button to act like the previous "新規作成"
+    if st.button("✨ 新規作成 (クリア)", use_container_width=False):
+        st.session_state.logic_name_input = ""
+        st.session_state.logic_memo_input = ""
+        st.session_state.logic_ag_input = ""
+        st.rerun()
+
+    new_name = st.text_input("💻 ロジック名", key="logic_name_input")
+    
+    nc1, nc2 = st.columns(2)
+    with nc1:
+        new_memo = st.text_area("📝 メモ", height=250, key="logic_memo_input", placeholder="このロジックの概要や使用条件などを記録します...")
+    with nc2:
+        new_ag = st.text_area("🤖 antigravityへの指示", height=250, key="logic_ag_input", placeholder="プロンプトや設定項目など、エージェントへ引き継ぐ指示を記録...")
+        
+    date_display = ""
+    if new_name and new_name in logics:
+        date_display = logics[new_name].get("date", "")
+        
+    if date_display:
+        st.caption(f"最終更新日時: {date_display}")
+        
+    if st.button("💾 保存する", type="primary"):
+        if not new_name.strip():
+            st.error("ロジック名を入力してください。")
+        else:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logics[new_name.strip()] = {
+                "memo": new_memo,
+                "ag_prompt": new_ag,
+                "date": now_str
+            }
+            save_logics(logics)
+            st.success(f"「{new_name}」を保存しました！({now_str})")
+            time.sleep(1)
+            st.rerun()
+
+
+
+# ──────────────────────────────────────────────
+# 🔬 実験その3: 馬番パターンスキャナー Pro v2.0
+# ──────────────────────────────────────────────
+if nav == "🔬 実験その３(馬番パターン)":
+    st.header("🔬 実験その３: 馬番ポジション・パターンスキャナー Pro v2.0")
+    st.markdown("""
+    同日同場のレース間で、騎手・厩舎の **馬番配置** に特定のパターンを検出し、**穴馬候補をスコアリング**するツールです。
+
+    #### 検出パターン (v2.0)
+    | パターン | 条件 |
+    |---|---|
+    | **P1: 裏同士** | 異なる頭数のレース間で裏番号が一致 |
+    | **P2: 裏表逆** | 一方の馬番 = 他方の裏番号 |
+    | **P3: 一の位一致** | 馬番の一の位が同じ |
+    | **P4: 表循環** | 大頭数側の馬番を小頭数で循環させると一致 |
+    | **P4: 裏循環** | 大頭数側の裏番を小頭数で循環させた値が小頭数側の裏番と一致 |
+
+    #### スコアリング (v2.0)
+    | ボーナス | 条件 | 加点 |
+    |---|---|---|
+    | Base | パターン1種類ごと | +1 |
+    | Overlap | 3種類以上同時検出 | +3 |
+    | Strategic Entry | 当日のEntity出走がちょうど2回 | +3 |
+    | Longshot | 7人気以上 or オッズ20倍以上 | +1 |
+    | Best Period | 開催日数3〜8日目 | +1 |
+    """)
+
+    st.divider()
+
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        seed_url = st.text_input(
+            "🔗 ベースURL (当日の任意のレースURL)",
+            placeholder="https://race.netkeiba.com/race/shutuba.html?race_id=202608020201",
+            key="rpps_seed_url"
+        )
+        max_races = st.slider("📋 スキャンするレース数 (1R〜NR)", min_value=1, max_value=12, value=12, key="rpps_max_races")
+        entity = st.radio("👤 比較対象", options=["jockey", "trainer", "both"], index=0,
+                          format_func=lambda x: {"jockey": "🏇 騎手", "trainer": "🏋 厩舎", "both": "🔀 両方"}.get(x, x),
+                          key="rpps_entity", horizontal=True)
+        min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
+
+    with col_r:
+        st.info("""
+        **使い方**:
+        1. 当日の任意のレースURL（netkeiba 出馬表）を貼り付けてください。
+        2. スキャン範囲（1R〜12Rなど）と比較対象（騎手 or 厩舎）を設定。
+        3. 「🔍 スキャン開始」ボタンを押してください。
+
+        **スコア目安**:
+        - 🔴 7以上: 超注目穴馬
+        - 🟠 5〜6: 要警戒穴馬
+        - 🟡 3〜4: 気になる馬
+        - ⚪ 1〜2: 参考程度
+        """)
+
+    st.divider()
+
+    if 'rpps_result_df' not in st.session_state:
+        st.session_state.rpps_result_df = None
+
+    scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not seed_url, key="rpps_scan_btn")
+
+    if scan_btn and seed_url:
+        import race_position_scanner as rpps
+        # Reload module to pick up any changes
+        import importlib
+        importlib.reload(rpps)
+        
+        urls = rpps.build_urls_from_seed(seed_url, max_races)
+        st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def update_progress(idx, total, msg):
+            if total > 0:
+                progress_bar.progress((idx + 1) / total)
+            status_text.caption(msg)
+
+        with st.spinner("スクレイピング・パターン検出中... (しばらくお待ちください)"):
+            try:
+                df_result = rpps.run_scan(
+                    urls=urls,
+                    entity=entity,
+                    min_patterns=int(min_patterns),
+                    output_csv=None,
+                    progress_callback=update_progress,
+                )
+                st.session_state.rpps_result_df = df_result
+            except Exception as e:
+                st.error(f"エラーが発生しました: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+        progress_bar.empty()
+        status_text.empty()
+
+    # --- Result Display ---
+    df_res = st.session_state.rpps_result_df
+    if df_res is not None:
+        if df_res.empty:
+            st.warning("パターンが検出された馬はいませんでした。スキャン範囲や比較対象を変えてお試しください。")
+        else:
+            st.success(f"✅ {len(df_res)} 頭の候補を検出しました！")
+            
+            # Highlight warning rows
+            if "warning" in df_res.columns and df_res["warning"].any():
+                st.warning("⚠️ 取消/除外馬が含まれるレースがあります。警告列を確認してください。")
+
+            st.subheader("📊 スコアランキング (スコア降順)")
+
+            def color_score(val):
+                if val >= 7: return "background-color: #8B0000; color: white; font-weight: bold"
+                if val >= 5: return "background-color: #cc0000; color: white; font-weight: bold"
+                if val >= 3: return "background-color: #ff9900; color: black"
+                if val >= 2: return "background-color: #ffff66; color: black"
+                return ""
+
+            def color_best_period(val):
+                return "background-color: #ccffcc; color: black" if val else ""
+
+            try:
+                style_cols = {"score": color_score}
+                if "is_best_period" in df_res.columns:
+                    style_cols["is_best_period"] = color_best_period
+                styled_res = df_res.style.applymap(lambda v: color_score(v), subset=["score"])
+                if "is_best_period" in df_res.columns:
+                    styled_res = styled_res.applymap(color_best_period, subset=["is_best_period"])
+
+                # Display only readable columns
+                display_cols = [c for c in [
+                    "race_id", "race_number", "horse_number", "horse_name",
+                    "jockey", "trainer", "patterns", "score",
+                    "odds", "rank", "is_best_period", "warning"
+                ] if c in df_res.columns]
+
+                st.dataframe(
+                    df_res[display_cols].style.applymap(
+                        color_score, subset=["score"] if "score" in display_cols else []
+                    ),
+                    column_config={
+                        "race_id": st.column_config.TextColumn("Race ID"),
+                        "race_number": st.column_config.NumberColumn("R", format="%dR"),
+                        "horse_number": st.column_config.NumberColumn("馬番"),
+                        "horse_name": st.column_config.TextColumn("馬名"),
+                        "jockey": st.column_config.TextColumn("騎手"),
+                        "trainer": st.column_config.TextColumn("厩舎"),
+                        "patterns": st.column_config.TextColumn("検出パターン"),
+                        "score": st.column_config.NumberColumn("🔥 スコア"),
+                        "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
+                        "rank": st.column_config.NumberColumn("人気", format="%d位"),
+                        "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
+                        "warning": st.column_config.TextColumn("⚠️ 警告"),
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            except Exception as e_disp:
+                st.warning(f"スタイルエラー: {e_disp}")
+                st.dataframe(df_res, use_container_width=True)
+
+            # CSV download
+            csv_bytes = df_res.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
+            st.download_button(
+                label="💾 CSVダウンロード",
+                data=csv_bytes,
+                file_name="pattern_scan_result.csv",
+                mime="text/csv",
+                key="rpps_csv_download"
+            )
+
+            st.divider()
+            st.subheader("📈 パターン別 検出数")
+            all_patterns = []
+            for pats in df_res.get("patterns", pd.Series()):
+                if pats:
+                    all_patterns.extend(str(pats).split(","))
+            if all_patterns:
+                pat_series = pd.Series(all_patterns).value_counts()
+                st.bar_chart(pat_series)
+
+# ──────────────────────────────────────────────
+# --- Footer ---
+st.divider()
+st.caption("Keiba Analysis v2.5 - Powered by Streamlit & Gemini API")

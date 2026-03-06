@@ -13,3 +13,4 @@ playwright
 python-dotenv
 graphviz
 tabulate
+scrapling

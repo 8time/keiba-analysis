@@ -1,9 +1,5 @@
-import sys, io
-try:
-    # sys.stdout.reconfigure(encoding='utf-8')
-    pass
-except:
-    pass
+import logging
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import numpy as np
@@ -511,7 +507,7 @@ def calculate_battle_score(df):
     # [Placeholder] Separating logic by difficulty
     # df = calculate_solid_race(df) # or calculate_rough_race(df)
     
-    print("\n======== BATTLE SCORE CALCULATION LOG (New Spec) ========")
+    logger.info("======== BATTLE SCORE CALCULATION LOG (New Spec) ========")
     
     for i, row in df.iterrows():
         speed_val = row.get('SpeedIndex', 0.0)
@@ -560,10 +556,10 @@ def calculate_battle_score(df):
         
         try:
              horse_name = df.at[i, 'Name']
-             print(f"{horse_name}: Base({base_score:.1f}) + Bonus({bonus_points})[{', '.join(bonus_log)}] = {total_score:.1f}")
+             logger.info(f"{horse_name}: Base({base_score:.1f}) + Bonus({bonus_points})[{', '.join(bonus_log)}] = {total_score:.1f}")
         except: pass
 
-    print("====================================================\n")
+    logger.info("====================================================")
     
     # 5. Sorting & Ranking
     df = df.sort_values('BattleScore', ascending=False).reset_index(drop=True)
@@ -603,9 +599,9 @@ def calculate_battle_score(df):
                 if results:
                     mapped_odds = temp_df['Name'].map(lambda n: results.get(n, {}).get('ResultOdds', 0.0))
                     temp_df['Odds'] = mapped_odds
-                    print(f"Debug [NeverPlaced]: Fetched odds for {len(results)} horses.")
+                    logger.debug(f"Debug [NeverPlaced]: Fetched odds for {len(results)} horses.")
         except Exception as e:
-            print(f"Debug [NeverPlaced] Error fetching odds: {e}")
+            logger.debug(f"Debug [NeverPlaced] Error fetching odds: {e}")
 
     temp_df['Odds'] = pd.to_numeric(temp_df['Odds'], errors='coerce').fillna(9999.0)
     temp_df.loc[temp_df['Odds'] == 0, 'Odds'] = 9999.0

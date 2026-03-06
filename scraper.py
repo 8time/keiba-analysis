@@ -13,8 +13,23 @@ import pandas as pd
 import numpy as np
 import re
 from datetime import datetime
-import time
 import random
+import asyncio
+from scrapling import DynamicFetcher
+import logging
+logger = logging.getLogger(__name__)
+# Silence Scrapling's internal noisy warnings/logs
+logging.getLogger("scrapling").setLevel(logging.ERROR)
+# Silence browserforge and curl-cffi if needed
+logging.getLogger("browserforge").setLevel(logging.ERROR)
+logging.getLogger("curl_cffi").setLevel(logging.ERROR)
+
+# Ensure Proactor Event Loop on Windows for Scrapling/Playwright subprocesses
+if sys.platform == 'win32':
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
 
 def fetch_html(url):
     """Fetches HTML with robust encoding handling."""
@@ -32,7 +47,7 @@ def fetch_html(url):
                 continue
         return content.decode('euc-jp', errors='replace')
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        logger.error(f"Error fetching {url}: {e}")
         return None
 
 def get_race_ids_for_date(date_str=None):
@@ -42,7 +57,7 @@ def get_race_ids_for_date(date_str=None):
     
     url = f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}"
     
-    html = fetch_html(url)
+    html = fetch_html_with_playwright(url)
     if not html: return []
     
     soup = BeautifulSoup(html, 'html.parser')
@@ -60,23 +75,18 @@ def get_race_ids_for_date(date_str=None):
 
 def get_race_list_for_date(date_str=None):
     """Scrapes race IDs + race names for a given date from race_list_sub.html.
+    Uses Scrapling via fetch_html_with_playwright to ensure JS is executed.
     Returns list of dicts: {race_id, race_name, race_num}
     """
     if not date_str:
         date_str = datetime.now().strftime("%Y%m%d")
 
     url = f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        # race_list_sub.html is UTF-8 (meta charset=UTF-8)
-        html = response.content.decode('utf-8', errors='replace')
-    except Exception as e:
-        print(f"Error fetching race list: {e}")
+    
+    html = fetch_html_with_playwright(url)
+    if not html:
+        logger.warning("Error fetching race list via Scrapling.")
         return []
-
 
     soup = BeautifulSoup(html, 'html.parser')
     results = []
@@ -101,7 +111,6 @@ def get_race_list_for_date(date_str=None):
         race_num = ""
         num_div = item.find('div', class_='Race_Num')
         if num_div:
-            # Extract just the "XR" part ignoring nested spans
             txt = num_div.get_text(strip=True)
             m2 = re.search(r'(\d+R)', txt)
             if m2:
@@ -121,37 +130,53 @@ def validate_horse_name(name):
 
 def fetch_html_with_playwright(url, wait_time=4000):
     """
-    Fetches HTML content using Playwright to handle JS-rendered pages.
+    Fetches HTML content via a SUBPROCESS to avoid 'Playwright Sync API inside asyncio loop' error.
+    This guarantees no conflict with Streamlit's internal loop.
     """
+    import subprocess
+    import sys
+    
+    python_exe = sys.executable 
+    # Fallback to the one we know works if sys.executable is the store stub
+    if "WindowsApps" in python_exe:
+        python_exe = r"C:\Users\kimnhaty\AppData\Local\Programs\Python\Python313\python.exe"
+    
+    helper_path = os.path.join(os.path.dirname(__file__), "fetch_helper.py")
+    
     try:
-        import asyncio
-        from playwright.async_api import async_playwright
-        import sys
-
-        async def fetch():
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                # Set a common user agent to avoid some blocks
-                await page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-                await page.goto(url, wait_until='domcontentloaded')
-                await page.wait_for_timeout(wait_time)
-                content = await page.content()
-                await browser.close()
-                return content
-
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        # We must use shell=False for safety, and capture output
+        # Use env with utf-8 forced too
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
+        result = subprocess.run(
+            [python_exe, helper_path, url],
+            capture_output=True,
+            text=False, # We receive bytes to handle encoding ourselves
+            timeout=70,
+            env=env
+        )
+        
+        if result.returncode == 0:
+            content = result.stdout
+            if not content:
+                logger.warning(f"Subprocess returned empty stdout for {url}")
+                return None
             
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            html = loop.run_until_complete(fetch())
-            return html
-        finally:
-            loop.close()
+            # Try decoding the result
+            for enc in ['utf-8', 'euc-jp', 'shift_jis']:
+                try:
+                    html = content.decode(enc)
+                    if "</html" in html.lower():
+                        return html
+                except: continue
+            return content.decode('utf-8', errors='replace')
+        else:
+            err_msg = result.stderr.decode('utf-8', errors='replace')
+            logger.error(f"Subprocess fetch failed for {url}: {err_msg}")
+            return None
     except Exception as e:
-        print(f"Playwright fetching failed for {url}: {e}")
+        logger.error(f"Error spawning fetch subprocess for {url}: {e}")
         return None
 
 def fetch_sanrenpuku_odds(race_id):
@@ -232,11 +257,11 @@ def fetch_sanrenpuku_odds(race_id):
                 item['Rank'] = i + 1
 
             if results:
-                print(f"人気データ取得成功。{len(results)}件のオッズを取得しました。")
+                logger.debug(f"人気データ取得成功。{len(results)}件のオッズを取得しました。")
                 return results
 
         # If API returned no data (e.g., before odds open), fallback to HTML scraping
-        print(f"オッズ未発表 (status={data.get('status','-')}, reason={data.get('reason','-')}) - API失敗、HTMLから取得を試みます")
+        logger.debug(f"オッズ未発表 (status={data.get('status','-')}, reason={data.get('reason','-')}) - API失敗、HTMLから取得を試みます")
 
         html_url = f"https://race.netkeiba.com/odds/index.html?type=b7&race_id={race_id}&housiki=c99"
         
@@ -279,20 +304,20 @@ def fetch_sanrenpuku_odds(race_id):
         
         # 2. If 0 results, try Playwright (handles JS-rendered pages and Cloudflare checks)
         if not html_results:
-            print("通常のリクエストではオッズが0件でした。JSレンダリング考慮しブラウザを起動して再取得します...")
+            logger.debug("通常のリクエストではオッズが0件でした。JSレンダリング考慮しブラウザを起動して再取得します...")
             pw_html = fetch_html_with_playwright(html_url)
             if pw_html:
                 html_results = parse_table_html(pw_html)
 
         if html_results:
-            print(f"HTMLスクレイピング成功。{len(html_results)}件のオッズを取得しました。")
+            logger.debug(f"HTMLスクレイピング成功。{len(html_results)}件のオッズを取得しました。")
             return html_results
 
-        print("HTMLスクレイピングでもオッズを取得できませんでした。")
+        logger.warning("HTMLスクレイピングでもオッズを取得できませんでした。")
         return []
 
     except Exception as e:
-        print(f"Error fetching Sanrenpuku odds: {e}")
+        logger.error(f"Error fetching Sanrenpuku odds: {e}")
         return []
 
 def fetch_win_odds(race_id):
@@ -334,11 +359,13 @@ def fetch_win_odds(race_id):
                         u = int(k)
                         results[u] = float(v) if v and v not in ['---.-', '0'] else 0.0
                     except: pass
-            return results
+            return pd.Series(results)
     except Exception as e:
-        print(f"Error fetching win odds: {e}")
+        logger.error(f"Error fetching win odds: {e}")
+        return pd.Series({})
     # If API failed or returned empty results, try HTML scraping with Playwright
-    print(f"Win Odds API failed or no data. Trying Playwright fallback...")
+    if data is None or 'data' not in data:
+        logger.warning("Win Odds API failed or no data. Trying Playwright fallback...")
     html_url = f"https://race.netkeiba.com/odds/index.html?type=b1&race_id={race_id}"
     pw_html = fetch_html_with_playwright(html_url)
     
@@ -362,18 +389,18 @@ def fetch_win_odds(race_id):
                                     results[u] = float(m.group(1))
                         except: continue
                 if results:
-                    print(f"Playwrightスクレイピング成功: {len(results)}件の単勝オッズを取得しました。")
-                    return results
+                    logger.debug(f"Playwrightスクレイピング成功: {len(results)}件の単勝オッズを取得しました。")
+                return pd.Series(results)
 
-    return {}
+    return pd.Series({})
 
 def fetch_popularity(race_id):
     """
     Fetches real-time popularity ranking from the Top Popularity (上位人気 / type=b0) tab.
     Returns dict: {umaban: int (popularity rank)}
     """
-    url = f"https://race.netkeiba.com/odds/index.html?type=b0&race_id={race_id}"
-    print(f"Fetching popularity from: {url}")
+    url = f"https://race.netkeiba.com/odds/index.html?race_id={race_id}"
+    logger.debug(f"Fetching popularity from: {url}")
     
     # This page is almost entirely JS-rendered
     pw_html = fetch_html_with_playwright(url)
@@ -399,7 +426,7 @@ def fetch_popularity(race_id):
                 except: continue
                 
     if pop_map:
-        print(f"Playwrightスクレイピング成功: {len(pop_map)}頭の人気順を取得しました。")
+        logger.debug(f"Playwrightスクレイピング成功: {len(pop_map)}頭の人気順を取得しました。")
     return pop_map
 
 def fetch_comprehensive_result(race_id):
@@ -620,276 +647,54 @@ def fetch_race_result(race_id):
 
 def fetch_advanced_data_playwright(race_id, top_horse_ids=None):
     """
-    Uses Playwright to fetch advanced data: Weight, Training Evaluation, and Pedigree.
-    Returns dict: {Umaban: {'WeightStr': str, 'TrainingScore': float, 'BloodlineFlag': str, 'HorseID': str}}
+    Uses a SUBPROCESS to fetch advanced data (Weight, Training, U-Index) via adv_fetch_helper.py.
+    This avoids asyncio loop conflicts with Streamlit.
     """
     if top_horse_ids is None:
         top_horse_ids = []
-        
-    import asyncio
-    from playwright.async_api import async_playwright
-    import sys
     
-    advanced_data = {}
-
-    async def _run_scraper():
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+    import subprocess
+    import json
+    
+    python_exe = sys.executable
+    helper_path = os.path.join(os.path.dirname(__file__), "adv_fetch_helper.py")
+    
+    top_ids_str = ",".join(map(str, top_horse_ids))
+    
+    cmd = [python_exe, helper_path, str(race_id)]
+    if top_ids_str:
+        cmd.append(top_ids_str)
+        
+    try:
+        logger.info(f"Spawning advanced fetcher: {cmd}")
+        # Use a longer timeout for advanced fetching as it visits multiple pages
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=180
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"Advanced fetcher failed with code {result.returncode}: {result.stderr}")
+            return {}
             
-            # Check for saved session
-            session_path = "auth_session.json"
-            if os.path.exists(session_path):
-                print(f"Debug: Restoring session from {session_path}")
-                context = await browser.new_context(
-                    storage_state=session_path,
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-                )
-            else:
-                print(f"Debug: No session file found at {session_path}. Run create_session.py first for paywalled data.")
-                context = await browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-                )
-            page = await context.new_page()
-            
-            # --- 1. Fetch Weight and HorseID from shutuba.html ---
-            shutuba_url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
-            print(f"Debug: Navigating to {shutuba_url}")
-            try:
-                await page.goto(shutuba_url, wait_until='domcontentloaded', timeout=15000)
-                print(f"Debug: Current URL after goto: {page.url}")
-                try:
-                    await page.wait_for_selector('table.Shutuba_Table, table.RaceTable01', timeout=10000)
-                except:
-                    print("Debug: Shutuba table not found within timeout")
-                
-                # --- 1.1 Extract Race Date ASAP (before navigating away) ---
-                date_str = ""
-                try:
-                    # Try og:description meta tag (Very robust)
-                    meta_desc_loc = page.locator('meta[property="og:description"]')
-                    if await meta_desc_loc.count() > 0:
-                        meta_desc = await meta_desc_loc.get_attribute('content', timeout=3000)
-                        if meta_desc:
-                            m_date = re.search(r'(\d{4})年(\d+)月(\d+)日', meta_desc)
-                            if m_date:
-                                date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
-                    
-                    # Try page title
-                    if not date_str:
-                        title = await page.title()
-                        m_date = re.search(r'(\d{4})年(\d+)月(\d+)日', title)
-                        if m_date:
-                            date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
-                    
-                    # Fallback to navigation bar
-                    if not date_str:
-                        nav_loc = page.locator('div.RaceList_DateSelect dd.Active a')
-                        if await nav_loc.count() > 0:
-                            date_loc = await nav_loc.first.text_content(timeout=3000)
-                            if date_loc:
-                                m_date = re.search(r'(\d+)月(\d+)日', date_loc)
-                                if m_date: date_str = f"{year}{m_date.group(1).zfill(2)}{m_date.group(2).zfill(2)}"
-                    
-                    print(f"Debug: Extracted date_str: {date_str}")
-                except Exception as e:
-                    print(f"Debug: date extraction error: {e}")
-
-                rows = await page.locator('table.Shutuba_Table tr.HorseList, table.RaceTable01 tr.HorseList, table.Shutuba_Table tr, table.RaceTable01 tr').all()
-                print(f"Debug: Netkeiba rows found: {len(rows)}")
-                for row in rows:
-                    try:
-                        umaban_loc = row.locator('td[class*="Umaban"], td.Umaban, td.umaban')
-                        if await umaban_loc.count() > 0:
-                            umaban_text = await umaban_loc.first.text_content(timeout=1000)
-                            m_num = re.search(r'(\d+)', umaban_text)
-                            umaban = int(m_num.group(1)) if m_num else 0
-                            
-                            weight_loc = row.locator('td.Weight, td.Weight_Info')
-                            weight_str = await weight_loc.first.text_content(timeout=1000) if await weight_loc.count() > 0 else ""
-                            
-                            horse_link_loc = row.locator('td.HorseInfo a, td.Horse_Info a, td.Horse a')
-                            horse_id = ""
-                            if await horse_link_loc.count() > 0:
-                                horse_link = await horse_link_loc.first.get_attribute('href', timeout=1000)
-                                if horse_link:
-                                    m_id = re.search(r'horse/(\d+)', horse_link)
-                                    if m_id: horse_id = m_id.group(1)
-                                
-                            if umaban > 0 and umaban not in advanced_data:
-                                advanced_data[umaban] = {
-                                    'WeightStr': weight_str.strip() if weight_str else "",
-                                    'TrainingScore': 0.0,
-                                    'BloodlineFlag': "",
-                                    'TrainingEval': "",
-                                    'HorseID': horse_id,
-                                    'UIndex': 0.0,
-                                    'LaboIndex': 0.0
-                                }
-                    except Exception as e:
-                        pass
-                print(f"Debug: advanced_data keys: {list(advanced_data.keys())}")
-            except Exception as e:
-                print(f"Playwright shutuba error: {e}")
-
-            # --- 2. Fetch Training Evaluation from oikiri.html ---
-            oikiri_url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
-            try:
-                await page.goto(oikiri_url, wait_until='domcontentloaded', timeout=20000)
-                try:
-                    await page.wait_for_selector('table.Oikiri_Table, table.RaceTable01', timeout=5000)
-                except: pass
-                
-                rows = await page.locator('tr.HorseList, table.RaceTable01 tr').all()
-                for row in rows:
-                    try:
-                        umaban_loc = row.locator('td.Umaban, td:first-child')
-                        if await umaban_loc.count() > 0:
-                            umaban_text = await umaban_loc.first.text_content(timeout=1000)
-                            umaban = int(re.search(r'(\d+)', umaban_text).group(1)) if re.search(r'(\d+)', umaban_text) else 0
-                            
-                            # Robust Training Grade Search
-                            eval_str = await row.locator('td[class^="Rank_"], td.OikiriEvaluation, td.sk__rank, td.Evaluation').first.text_content(timeout=2000) if await row.locator('td[class^="Rank_"], td.OikiriEvaluation, td.sk__rank, td.Evaluation').count() > 0 else ""
-                            if not eval_str:
-                                # Fallback: search all td for A, B, C, D Single characters
-                                td_texts = await row.locator('td').all_text_contents()
-                                for t in td_texts:
-                                    t = t.strip()
-                                    if len(t) == 1 and t in "ABCD":
-                                        eval_str = t
-                                        break
-                            
-                            eval_str = eval_str.strip().upper() if eval_str else ""
-                            match_grade = re.search(r'([A-D])', eval_str)
-                            eval_grade = match_grade.group(1) if match_grade else ""
-
-                            score_bonus = 0.0
-                            if eval_grade == 'A': score_bonus = 100.0 # Standardize to 100-base for weighting
-                            elif eval_grade == 'B': score_bonus = 70.0
-                            elif eval_grade == 'C': score_bonus = 40.0
-                            elif eval_grade == 'D': score_bonus = 10.0
-                            
-                            if umaban > 0 and umaban in advanced_data:
-                                advanced_data[umaban]['TrainingScore'] = score_bonus
-                                advanced_data[umaban]['TrainingEval'] = eval_grade
-                    except: pass
-            except Exception as e:
-                print(f"Playwright oikiri error: {e}")
-
-            # --- 3. Fetch Bloodline for ALL horses in advanced_data ---
-            target_horse_ids = [(u, advanced_data[u]['HorseID']) for u in advanced_data if advanced_data[u]['HorseID']]
-            for u, h_id in target_horse_ids:
-                pedigree_url = f"https://db.netkeiba.com/horse/ped/{h_id}/"
-                try:
-                    await page.goto(pedigree_url, wait_until='domcontentloaded', timeout=10000)
-                    blood_table_loc = page.locator('.blood_table')
-                    if await blood_table_loc.count() > 0:
-                        blood_table = await blood_table_loc.first.text_content(timeout=3000)
-                        blood_table = blood_table if blood_table else ""
-                        found_flags = []
-                        if 'Nijinsky' in blood_table or 'ニジンスキー' in blood_table: found_flags.append('Nijinsky')
-                        if 'Sunday Silence' in blood_table or 'サンデーサイレンス' in blood_table: found_flags.append('SS')
-                        if 'Roberto' in blood_table or 'ロベルト' in blood_table: found_flags.append('Roberto')
-                        for u, horse_data in advanced_data.items():
-                            if horse_data['HorseID'] == h_id:
-                                horse_data['BloodlineFlag'] = ",".join(found_flags)
-                                print(f"Debug: Horse {u} BloodlineFlag={horse_data['BloodlineFlag']}")
-                                break
-                except: pass
-
-            # --- 4. Fetch External Indices (U-Index & Labo-Index) ---
-            if len(race_id) == 12 and date_str:
-                year = race_id[:4]
-                venue = race_id[4:6]
-                kaisai = race_id[6:8]
-                day = race_id[8:10]
-                race_num = race_id[10:12]
-                
-                # Umanity
-                u_code = f"{date_str}{venue}{kaisai}{day}{race_num}"
-                # The horse list and U-Index are in the iframe contents: race_8_1.php
-                u_url = f"https://umanity.jp/racedata/race_8_1.php?code={u_code}"
-                print(f"Debug: Fetching Umanity: {u_url}")
-                try:
-                    await page.goto(u_url, wait_until='load', timeout=30000)
-                    await asyncio.sleep(5) 
-                    print(f"Debug: Umanity Title: {await page.title()}")
-                    
-                    rows = await page.locator('tr.odd-row, tr.even-row').all()
-                    print(f"Debug: Umanity horse rows total: {len(rows)}")
-                    
-                    for row in rows:
-                        try:
-                            cells = await row.locator('td').all()
-                            if len(cells) >= 4:
-                                u_text = await cells[1].text_content() 
-                                val_text = await cells[3].text_content()
-                                
-                                m_num = re.search(r'(\d+)', u_text or '')
-                                if m_num:
-                                    u_num = int(m_num.group(1))
-                                    if u_num in advanced_data:
-                                        m_val = re.search(r'(\d+\.?\d*)', val_text or '')
-                                        if m_val:
-                                            advanced_data[u_num]['UIndex'] = float(m_val.group(1))
-                                            # print(f"Debug: Horse {u_num} UIndex={m_val.group(1)}")
-                                        elif "**" in (val_text or ""):
-                                            advanced_data[u_num]['UIndex'] = 0.0
-                        except: pass
-                except Exception as e:
-                    print(f"Debug: Umanity error: {e}")
-
-                # Keibalab (Labo Index / Omega Index)
-                l_code = f"{date_str}{venue}{race_num}"
-                l_url = f"https://www.keibalab.jp/db/race/{l_code}/umabashira.html?kind=yoko"
-                print(f"Debug: Fetching Keibalab: {l_url}")
-                try:
-                    lpage = await context.new_page()
-                    await lpage.goto(l_url, wait_until='load', timeout=30000)
-                    await asyncio.sleep(5)
-                    print(f"Debug: Keibalab Title: {await lpage.title()}")
-                    
-                    horse_rows = await lpage.locator('tr').all()
-                    print(f"Debug: Keibalab tr rows: {len(horse_rows)}")
-                    
-                    for row in horse_rows:
-                        try:
-                            umaban_td = row.locator('td.umabanBox')
-                            shisu_td = row.locator('td.shisuBox')
-                            
-                            if await umaban_td.count() > 0 and await shisu_td.count() > 0:
-                                u_text = await umaban_td.first.text_content()
-                                s_text = await shisu_td.first.text_content()
-                                
-                                m_num = re.search(r'(\d+)', u_text or '')
-                                if m_num:
-                                    l_num = int(m_num.group(1))
-                                    if l_num in advanced_data:
-                                        m_val = re.search(r'(\d+\.?\d*)', s_text or '')
-                                        if m_val:
-                                            advanced_data[l_num]['LaboIndex'] = float(m_val.group(1))
-                                            # print(f"Debug: Horse {l_num} LaboIndex={m_val.group(1)}")
-                        except: pass
-                    await lpage.close()
-                except Exception as e:
-                    print(f"Debug: Keibalab error: {e}")
-
-            await browser.close()
-            
-    import threading
-
-    def _start_async_scraper():
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Parse JSON from stdout
         try:
-            loop.run_until_complete(_run_scraper())
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_start_async_scraper)
-    thread.start()
-    thread.join()
+            data = json.loads(result.stdout)
+            # Keys in JSON are strings, convert Umaban keys back to int
+            return {int(k): v for k, v in data.items()}
+        except json.JSONDecodeError:
+            logger.error(f"Failed to decode advanced data JSON: {result.stdout[:200]}")
+            return {}
+            
+    except subprocess.TimeoutExpired:
+        logger.error(f"Advanced fetcher timed out for Race {race_id}")
+        return {}
+    except Exception as e:
+        logger.error(f"Error in fetch_advanced_data_playwright: {e}")
+        return {}
         
     return advanced_data
 
@@ -897,9 +702,9 @@ def get_race_data(race_id):
     """Main function to scrape race card data with ROBUST EXTRACTION."""
     # Use shutuba_past.html to ensure we get past performance data
     url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
-    print(f"Fetching Race Data: {url}")
+    logger.info(f"Fetching Race Data: {url}")
     
-    html = fetch_html(url)
+    html = fetch_html_with_playwright(url)
     if not html: return pd.DataFrame()
     
     soup = BeautifulSoup(html, 'html.parser')
@@ -921,16 +726,12 @@ def get_race_data(race_id):
             text01 = data01.text.strip()
             # Distance (e.g. 芝1200m or 1200m)
             # Find digits followed by 'm'
-            match_dist = re.search(r'(\d+)m', text01)
+            match_dist = re.search(r'([芝ダ障])?(\d+)m', text01)
             if match_dist:
-                race_dist = int(match_dist.group(1))
+                race_dist = int(match_dist.group(2))
+                race_surf = match_dist.group(1) if match_dist.group(1) else '芝' # Default to 芝 if not specified
             
-            # Surface
-            if '芝' in text01: race_surf = '芝'
-            elif 'ダ' in text01: race_surf = 'ダ'
-            elif '障' in text01: race_surf = '障'
-            
-            print(f"Debug: Extracted Distance={race_dist}, Surface={race_surf}")
+            logger.debug(f"Debug: Extracted Distance={race_dist}, Surface={race_surf}")
     
     # Fallback to RaceData02 if 01 failed? 
     # Usually 01 has it: "15:00 芝1200m (右) 天候:晴 馬場:良"
@@ -944,13 +745,21 @@ def get_race_data(race_id):
     popularity_map = fetch_popularity(race_id) # NEW: Real-time popularity from type=b0
     
     # --- Horses ---
-    table = soup.find('table', class_='Shutuba_Table')
+    # Robust table detection: search for any of the common classes or the sort_table ID
+    table = soup.find('table', id='sort_table')
     if not table:
-         table = soup.find('table', class_='RaceTable01')
+        table = soup.find('table', class_=re.compile(r'Shutuba_Table|RaceTable01'))
     
-    if not table: return pd.DataFrame()
+    if not table:
+        logger.warning(f"No race table found for ID {race_id}. HTML sample: {str(soup)[:500]}")
+        return pd.DataFrame()
     
+    # In some pages, rows might be in tbody, but find_all finds them all.
     rows = table.find_all('tr', class_='HorseList')
+    if not rows:
+        # Emergency fallback: find ANY tr with Jockey/HorseInfo inside
+        rows = [tr for tr in table.find_all('tr') if tr.find('td', class_=re.compile(r'Jockey|Horse'))]
+        
     horses = []
     
     for row in rows:
@@ -963,13 +772,39 @@ def get_race_data(race_id):
             'CurrentSurface': race_surf
         }
         
-        # Umaban
-        waku_td = row.find('td', class_='Waku')
-        h_data['Umaban'] = int(waku_td.text.strip()) if waku_td and waku_td.text.strip().isdigit() else 0
+        # Umaban (Horse Number) - Robust version
+        # On shutuba_past.html: <td class="Waku">1</td> is Umaban, <td class="Waku1"> is Waku.
+        # On shutuba.html: <td class="Umaban"> is Umaban.
+        uma_td = row.find('td', class_=re.compile(r'^Umaban$|^umaban$|^Waku$'))
+        if uma_td:
+            m_uma = re.search(r'(\d+)', uma_td.text.strip())
+            h_data['Umaban'] = int(m_uma.group(1)) if m_uma else 0
+        else:
+            # Fallback for bracket-based pages: Umaban might be the second numeric td
+            numeric_tds = [td for td in row.find_all('td') if td.text.strip().isdigit()]
+            if len(numeric_tds) >= 2:
+                h_data['Umaban'] = int(numeric_tds[1].text.strip())
+            else:
+                h_data['Umaban'] = 0
+        
+        # Waku (Bracket Number)
+        # Often class starts with Waku (Waku1, Waku2...) or is just Waku
+        waku_td = row.find('td', class_=re.compile(r'Waku|waku'))
+        if waku_td:
+            # If we used Waku for Umaban, we might need to find another one for Bracket
+            # Usually the bracket is the FIRST cell
+            m_waku = re.search(r'(\d+)', waku_td.text.strip())
+            h_data['Waku'] = int(m_waku.group(1)) if m_waku else 1
+        else:
+            h_data['Waku'] = 1
         
         # Name
-        h_info = row.find('td', class_='HorseInfo')
-        if not h_info: h_info = row.find('td', class_='Horse_Info')
+        # We need to be careful NOT to match 'Horse_Select' or 'Horse_Info_ItemWrap'
+        h_info = row.find('td', class_=re.compile(r'^(Horse_Info|HorseInfo)$'))
+        if not h_info:
+            # Fallback for other structures
+            h_info = row.find('td', class_=re.compile(r'Horse_?Info'))
+        
         if not h_info: continue
         
         name_tag = h_info.find('a', href=re.compile(r'/horse/'))
@@ -977,7 +812,7 @@ def get_race_data(race_id):
         h_data['Name'] = name_tag.text.strip()
         
         # Jockey
-        j_td = row.find('td', class_='Jockey')
+        j_td = row.find('td', class_=re.compile(r'Jockey|jockey'))
         h_data['Jockey'] = j_td.find('a').text.strip() if j_td and j_td.find('a') else ""
         
         # Current Popularity and Win Odds
@@ -989,23 +824,16 @@ def get_race_data(race_id):
         
         # Fallback for Odds/Popularity if real-time fetching failed (extract from shutuba_past.html)
         if h_data['Popularity'] == 99 or h_data['Odds'] == 0.0:
-            pop_td = row.find('td', class_='Popular_Ninki')
-            if not pop_td: pop_td = row.find('td', class_='Popular')
-            
+            pop_td = row.find('td', class_=re.compile(r'Popular|Popularity|Ninki'))
             if pop_td:
+                txt = pop_td.text.strip()
                 if h_data['Popularity'] == 99:
-                    m_pop = re.search(r'(\d+)人気', pop_td.text.strip())
-                    if not m_pop: m_pop = re.search(r'(\d+)', pop_td.text.strip())
+                    m_pop = re.search(r'(\d+)', txt)
                     h_data['Popularity'] = int(m_pop.group(1)) if m_pop else 99
                 
                 if h_data['Odds'] == 0.0:
-                    odds_span = pop_td.find('span', class_='Odds')
-                    if odds_span:
-                        try: h_data['Odds'] = float(odds_span.text.strip())
-                        except: pass
-                    else:
-                        m_odds = re.search(r'(\d+\.\d+)', pop_td.text.strip())
-                        if m_odds: h_data['Odds'] = float(m_odds.group(1))
+                    m_odds = re.search(r'(\d+\.\d+)', txt)
+                    if m_odds: h_data['Odds'] = float(m_odds.group(1))
 
         # --- Past Runs Extraction ---
         past_runs = []
@@ -1115,8 +943,8 @@ def get_race_data(race_id):
         
     df = pd.DataFrame(horses)
     if df.empty:
-        print("Debug: Compiled DataFrame is empty.")
+        logger.warning("Debug: Compiled DataFrame is empty.")
     else:
-        print(f"Debug: Compiled DataFrame with {len(df)} horses.")
+        logger.info(f"Debug: Compiled DataFrame with {len(df)} horses.")
         
     return df
