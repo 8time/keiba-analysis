@@ -16,3 +16,4 @@ tabulate
 scrapling
 curl_cffi
 browserforge
+msgspec
