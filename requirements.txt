@@ -15,3 +15,4 @@ graphviz
 tabulate
 scrapling
 curl_cffi
+browserforge
