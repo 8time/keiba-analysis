@@ -1,1 +1,8 @@
-.env 
+.env
+__pycache__/
+*.pyc
+auth_session.json
+*.html
+saved_logic_notes.json
+.streamlit/
+race_history.csv

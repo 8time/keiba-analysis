@@ -13,3 +13,7 @@ playwright
 python-dotenv
 graphviz
 tabulate
+scrapling
+curl_cffi
+browserforge
+msgspec
