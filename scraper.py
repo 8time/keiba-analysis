@@ -764,17 +764,34 @@ def get_race_data(race_id, use_storage=True):
                     if not _stored.empty:
                         logger.info(f"[Storage] Using cached data for {race_id} ({len(_stored)} horses)")
                         # Rename stored columns to match live-scrape column names where needed
+                        # NOTE: 'Name' must stay as 'Name' - calculator.py expects that column name
                         _col_map = {
                             'RaceTitle': 'RaceName',
                             'Distance': 'CurrentDistance',
                             'Condition': 'CurrentSurface',
-                            'Name': 'HorseName',
                         }
                         _stored = _stored.rename(columns={k: v for k, v in _col_map.items() if k in _stored.columns})
                         # Ensure key columns are present
-                        for _c in ['RaceID', 'Umaban', 'RaceName', 'CurrentDistance']:
+                        for _c in ['RaceID', 'Umaban', 'Name', 'CurrentDistance']:
                             if _c not in _stored.columns:
                                 _stored[_c] = None
+                        # ── Re-fetch live odds from Netkeiba API (no login needed) ──
+                        try:
+                            _odds_map = fetch_win_odds(race_id)
+                            if not _odds_map.empty:
+                                _stored = _stored.copy()
+                                _stored['Odds'] = _stored['Umaban'].map(
+                                    lambda u: _odds_map.get(int(u), None) if _pd.notna(u) else None
+                                )
+                                # Derive popularity ranking from odds (ascending odds = higher popularity)
+                                _valid_odds = _stored['Odds'].dropna()
+                                if not _valid_odds.empty:
+                                    _ranks = _stored['Odds'].rank(method='min', ascending=True, na_option='bottom').astype('Int64')
+                                    _stored['Popularity'] = _ranks
+                                logger.info(f"[Storage] Re-fetched {len(_odds_map)} live odds for {race_id}")
+                        except Exception as _oe:
+                            logger.warning(f"[Storage] Live odds re-fetch failed: {_oe}")
+                        # ─────────────────────────────────────────────────────────
                         return _stored.reset_index(drop=True)
         except Exception as _e:
             logger.warning(f"[Storage] Failed to load from cache: {_e}")

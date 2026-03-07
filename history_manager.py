@@ -37,7 +37,17 @@ def save_race_data(df, race_id):
 
     # Prepare DataFrame for saving
     save_df = df.copy()
-    save_df['RaceID'] = str(race_id)
+    # ── Sanitize RaceID: extract 12-digit ID from URL if a URL was passed ──
+    race_id_str = str(race_id)
+    import re as _re
+    _m = _re.search(r'(\d{12})', race_id_str)
+    if _m:
+        race_id_str = _m.group(1)
+    elif not race_id_str.isdigit() or len(race_id_str) != 12:
+        print(f"Invalid race_id format: {race_id_str}. Skipping save.")
+        return "InvalidID"
+    save_df['RaceID'] = race_id_str
+
     
     # Date Processing
     # STRICT: Do not default to today if RaceDate is missing/None.
