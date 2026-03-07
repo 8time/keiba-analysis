@@ -3711,26 +3711,55 @@ if nav == "🔬 実験その３(馬番パターン)":
 
     st.divider()
 
+    col_d1, col_d2 = st.columns([3, 1])
+    with col_d1:
+        default_date = datetime.now().strftime("%Y%m%d")
+        rpps_date = st.text_input("スキャン対象日付 (YYYYMMDD)", value=default_date, key="rpps_date_input")
+    with col_d2:
+        st.write("") 
+        fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", use_container_width=True)
+
+    if fetch_venues_btn and rpps_date:
+        st.session_state.rpps_venue_list = scraper.get_race_list_for_date(rpps_date)
+
+    selected_race_urls = []
+    if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
+        race_list = st.session_state.rpps_venue_list
+        # Group by venue
+        venues = {}
+        for r in race_list:
+            v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
+            if v_code not in venues: venues[v_code] = []
+            venues[v_code].append(r)
+        
+        VENUE_NAMES = {
+            "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京","06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
+            "36":"大井","42":"船橋","43":"川崎","44":"浦和","65":"園田","62":"名古屋","54":"門別","50":"帯広","45":"盛岡","46":"水沢"
+        }
+        v_options = list(venues.keys())
+        def format_v(c):
+            return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
+        
+        selected_v = st.selectbox("スキャンする競馬場を選択", v_options, format_func=format_v, key="rpps_selected_venue")
+        if selected_v:
+            # Generate URLs for all races in this venue
+            for r in venues[selected_v]:
+                r_id = r['race_id']
+                selected_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+
+    st.divider()
+
     col_l, col_r = st.columns([1, 2])
     with col_l:
-        seed_url = st.text_input(
-            "🔗 ベースURL (当日の任意のレースURL)",
-            placeholder="https://race.netkeiba.com/race/shutuba.html?race_id=202608020201",
-            key="rpps_seed_url"
-        )
-        max_races = st.slider("📋 スキャンするレース数 (1R〜NR)", min_value=1, max_value=12, value=12, key="rpps_max_races")
         entity = st.radio("👤 比較対象", options=["jockey", "trainer", "both"], index=0,
                           format_func=lambda x: {"jockey": "🏇 騎手", "trainer": "🏋 厩舎", "both": "🔀 両方"}.get(x, x),
                           key="rpps_entity", horizontal=True)
         min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
 
     with col_r:
-        st.info("""
-        **使い方**:
-        1. 当日の任意のレースURL（netkeiba 出馬表）を貼り付けてください。
-        2. スキャン範囲（1R〜12Rなど）と比較対象（騎手 or 厩舎）を設定。
-        3. 「🔍 スキャン開始」ボタンを押してください。
-
+        st.info(f"""
+        **現在の設定**: {len(selected_race_urls)} レースをスキャン対象としています。
+        
         **スコア目安**:
         - 🔴 7以上: 超注目穴馬
         - 🟠 5〜6: 要警戒穴馬
@@ -3743,15 +3772,15 @@ if nav == "🔬 実験その３(馬番パターン)":
     if 'rpps_result_df' not in st.session_state:
         st.session_state.rpps_result_df = None
 
-    scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not seed_url, key="rpps_scan_btn")
+    scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
 
-    if scan_btn and seed_url:
+    if scan_btn and selected_race_urls:
         import race_position_scanner as rpps
         # Reload module to pick up any changes
         import importlib
         importlib.reload(rpps)
         
-        urls = rpps.build_urls_from_seed(seed_url, max_races)
+        urls = selected_race_urls
         st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
         progress_bar = st.progress(0)
         status_text = st.empty()
