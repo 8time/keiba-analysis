@@ -130,54 +130,90 @@ def validate_horse_name(name):
 
 def fetch_html_with_playwright(url, wait_time=4000):
     """
-    Fetches HTML content via a SUBPROCESS to avoid 'Playwright Sync API inside asyncio loop' error.
-    This guarantees no conflict with Streamlit's internal loop.
+    Lightweight HTML fetcher: tries requests first, then curl_cffi as fallback.
+    Playwright is avoided on cloud/Linux because of memory and installation issues.
+    Falls back to Playwright subprocess ONLY on Windows (local dev).
     """
-    import subprocess
     import sys
-    
-    python_exe = sys.executable 
-    # Fallback to the one we know works if sys.executable is the store stub
-    if "WindowsApps" in python_exe:
-        python_exe = r"C:\Users\kimnhaty\AppData\Local\Programs\Python\Python313\python.exe"
-    
-    helper_path = os.path.join(os.path.dirname(__file__), "fetch_helper.py")
-    
+
+    # --- Attempt 1: Standard requests (fastest, works for server-rendered pages) ---
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://race.netkeiba.com/",
+    }
     try:
-        # We must use shell=False for safety, and capture output
-        # Use env with utf-8 forced too
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        
-        result = subprocess.run(
-            [python_exe, helper_path, url],
-            capture_output=True,
-            text=False, # We receive bytes to handle encoding ourselves
-            timeout=120,
-            env=env
-        )
-        
-        if result.returncode == 0:
-            content = result.stdout
-            if not content:
-                logger.warning(f"Subprocess returned empty stdout for {url}")
-                return None
-            
-            # Try decoding the result
-            for enc in ['utf-8', 'euc-jp', 'shift_jis']:
+        resp = requests.get(url, headers=HEADERS, timeout=20)
+        if resp.status_code == 200:
+            content = resp.content
+            for enc in ['euc-jp', 'utf-8', 'shift_jis']:
                 try:
                     html = content.decode(enc)
-                    if "</html" in html.lower():
+                    if '</html' in html.lower() and len(html) > 500:
+                        logger.info(f"[requests] Fetched OK: {url}")
                         return html
-                except: continue
+                except Exception:
+                    continue
             return content.decode('utf-8', errors='replace')
         else:
-            err_msg = result.stderr.decode('utf-8', errors='replace')
-            logger.error(f"Subprocess fetch failed for {url}: {err_msg}")
-            return None
+            logger.warning(f"[requests] Status {resp.status_code} for {url}")
     except Exception as e:
-        logger.error(f"Error spawning fetch subprocess for {url}: {e}")
-        return None
+        logger.warning(f"[requests] Failed for {url}: {e}")
+
+    # --- Attempt 2: curl_cffi (browser-like TLS fingerprinting, no browser needed) ---
+    try:
+        from curl_cffi import requests as curl_requests
+        resp2 = curl_requests.get(url, impersonate="chrome120", timeout=25)
+        if resp2.status_code == 200:
+            content = resp2.content
+            for enc in ['euc-jp', 'utf-8', 'shift_jis']:
+                try:
+                    html = content.decode(enc)
+                    if '</html' in html.lower() and len(html) > 500:
+                        logger.info(f"[curl_cffi] Fetched OK: {url}")
+                        return html
+                except Exception:
+                    continue
+            return content.decode('utf-8', errors='replace')
+        logger.warning(f"[curl_cffi] Status {resp2.status_code} for {url}")
+    except Exception as e:
+        logger.warning(f"[curl_cffi] Failed for {url}: {e}")
+
+    # --- Attempt 3 (Windows only): Playwright subprocess ---
+    if sys.platform == 'win32':
+        import subprocess
+        python_exe = sys.executable
+        if "WindowsApps" in python_exe:
+            python_exe = r"C:\Users\kimnhaty\AppData\Local\Programs\Python\Python313\python.exe"
+        helper_path = os.path.join(os.path.dirname(__file__), "fetch_helper.py")
+        try:
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            result = subprocess.run(
+                [python_exe, helper_path, url],
+                capture_output=True, text=False, timeout=120, env=env
+            )
+            if result.returncode == 0:
+                content = result.stdout
+                if content:
+                    for enc in ['utf-8', 'euc-jp', 'shift_jis']:
+                        try:
+                            html = content.decode(enc)
+                            if '</html' in html.lower():
+                                return html
+                        except Exception:
+                            continue
+                    return content.decode('utf-8', errors='replace')
+            err = result.stderr.decode('utf-8', errors='replace')
+            logger.error(f"[playwright subprocess] Failed for {url}: {err}")
+        except Exception as e:
+            logger.error(f"[playwright subprocess] Exception for {url}: {e}")
+
+    logger.error(f"All fetch methods failed for {url}")
+    return None
+
 
 def fetch_sanrenpuku_odds(race_id):
     """
