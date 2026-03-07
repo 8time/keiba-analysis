@@ -205,7 +205,9 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
                                     if m_val:
                                         for u_num, d in advanced_data.items():
                                             if d.get('HorseID') == hid:
-                                                d['UIndex'] = float(m_val.group(1))
+                                                import math
+                                                u_val = float(m_val.group(1))
+                                                d['UIndex'] = math.floor(u_val * 10) / 10.0
                                                 break
                         except Exception as e:
                             pass
@@ -234,7 +236,9 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
                                 if l_num in advanced_data:
                                     m_val = re.search(r'(\d+\.?\d*)', s_text or '')
                                     if m_val: 
-                                        advanced_data[l_num]['LaboIndex'] = float(m_val.group(1))
+                                        import math
+                                        l_val = float(m_val.group(1))
+                                        advanced_data[l_num]['LaboIndex'] = math.floor(l_val * 10) / 10.0
                     except Exception as e:
                         pass
                 await lpage.close()

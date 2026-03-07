@@ -1184,6 +1184,35 @@ if nav == "🏠 Single Race Analysis":
                             formatted_dark_horses = "  \n\n".join(dark_horse_msgs)
                             st.warning(f"🎯 **【注目の適性ダークホース】**  \n\n{formatted_dark_horses}")
 
+                        # --- NEW: CHAOS INDEX (荒れ度判定) ---
+                        score_col = 'Test_Score' if 'Test_Score' in df.columns else ('Projected Score' if 'Projected Score' in df.columns else 'BattleScore')
+                        if score_col in df.columns and 'Popularity' in df.columns:
+                            valid_df = df.dropna(subset=[score_col, 'Popularity'])
+                            
+                            top5_scores = valid_df.sort_values(by=score_col, ascending=False).head(5)[score_col]
+                            std_dev = top5_scores.std() if len(top5_scores) > 1 else 0
+                            
+                            pop_avg = valid_df[valid_df['Popularity'] <= 3][score_col].mean()
+                            dark_horses = valid_df[valid_df['Popularity'] >= 7]
+                            dark_max = dark_horses[score_col].max() if not dark_horses.empty else 0
+                            
+                            if pd.isna(pop_avg): pop_avg = 0
+                            if pd.isna(dark_max): dark_max = 0
+                            
+                            chaos_status = "🟢 順当"
+                            chaos_desc = "人気と実力が概ね一致しています。"
+                            if dark_max > pop_avg and std_dev < 3.0:
+                                chaos_status = "🔴 大荒れ注意"
+                                chaos_desc = "人気馬の指数が低く、実力が拮抗しています。穴馬券を狙う大チャンス！"
+                            elif dark_max > pop_avg or std_dev < 4.5:
+                                chaos_status = "🟡 波乱含み"
+                                chaos_desc = "指数上位に穴馬が混じっています。ヒモ荒れに警戒してください。"
+                                
+                            st.metric("📊 荒れ度 (Chaos Index)", chaos_status, help=f"上位5頭のスコア偏差: {std_dev:.1f} / 人気上位平均: {pop_avg:.1f} vs 穴馬最高: {dark_max:.1f}")
+                            st.caption(chaos_desc)
+                        else:
+                            st.metric("📊 荒れ度 (Chaos Index)", "判定不能")
+                            
                         # --- NEW: Predicted Difficulty Display ---
                         pred_diff = calculator.calculate_predicted_difficulty(df) if df is not None and not df.empty else "B"
                         diff_labels = {"S": "大荒れ (S)", "A": "荒れ (A)", "B": "通常 (B)", "C": "堅い (C)"}
@@ -1384,6 +1413,15 @@ if nav == "🏠 Single Race Analysis":
                     try:
                         import pandas as pd_sc
                         df_sc = df.copy()
+                        
+                        # Add Bomb Horse Highlight
+                        if 'Popularity' in df_sc.columns and 'Strength (X)' in df_sc.columns and 'Suitability (Y)' in df_sc.columns:
+                            def add_bomb_icon(r):
+                                name_str = str(r['Name'])
+                                if r.get('Popularity', 99) >= 7 and r.get('Strength (X)', 0) > 50 and r.get('Suitability (Y)', 0) > 50:
+                                    return f"🔥{name_str}"
+                                return name_str
+                            df_sc['Name'] = df_sc.apply(add_bomb_icon, axis=1)
                     
                         # Rank diff label
                         df_sc['Old Rank'] = df_sc['BattleScore'].rank(ascending=False, method='min').astype(int)

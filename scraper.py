@@ -1077,9 +1077,45 @@ def get_race_data(race_id, use_storage=True):
         horses.append(h_data)
         
     df = pd.DataFrame(horses)
+    
+    # --- Check for missing odds/popularity globally and apply result fallback ---
+    if not df.empty and ('Odds' not in df.columns or (df['Odds'] == 0.0).all() or (df['Popularity'] == 99).all()):
+        logger.info("Using result.html fallback for Odds and Popularity")
+        res_odds, res_pop = fetch_result_odds_pop(race_id)
+        if not res_odds.empty:
+            df['Odds'] = df['Umaban'].map(lambda u: res_odds.get(u, 0.0) if pd.notna(u) else 0.0)
+        if not res_pop.empty:
+            df['Popularity'] = df['Umaban'].map(lambda u: res_pop.get(u, 99) if pd.notna(u) else 99)
+
     if df.empty:
         logger.warning("Debug: Compiled DataFrame is empty.")
     else:
         logger.info(f"Debug: Compiled DataFrame with {len(df)} horses.")
         
     return df
+
+def fetch_result_odds_pop(race_id):
+    """Fallback: fetch result.html to get final odds and popularity for past races."""
+    url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+    html = fetch_html_with_playwright(url)
+    res_odds = {}
+    res_pop = {}
+    if html:
+        from bs4 import BeautifulSoup
+        import re
+        soup = BeautifulSoup(html, 'html.parser')
+        for row in soup.find_all('tr', class_='HorseList'):
+            cols = row.find_all('td')
+            if len(cols) >= 11:
+                try:
+                    u_txt = cols[2].text.strip()
+                    p_txt = cols[9].text.strip()
+                    o_txt = cols[10].text.strip()
+                    if u_txt.isdigit() and p_txt.isdigit():
+                        u = int(u_txt)
+                        res_pop[u] = int(p_txt)
+                        m_o = re.search(r'(\d+\.\d+)', o_txt)
+                        if m_o: res_odds[u] = float(m_o.group(1))
+                except: pass
+    import pandas as pd
+    return pd.Series(res_odds), pd.Series(res_pop)
