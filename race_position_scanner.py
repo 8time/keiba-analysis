@@ -27,14 +27,19 @@ try:
 except (AttributeError, ValueError):
     pass
 
-# Patch print to safely ignore closed pipes
-_builtin_print = print
-def safe_print(*args, **kwargs):
-    try:
-        _builtin_print(*args, **kwargs)
-    except (ValueError, OSError, AttributeError):
-        pass
-print = safe_print
+# Patch print to safely ignore closed pipes (Idempotent)
+if __name__ != "__main__" or (hasattr(print, "__name__") and print.__name__ != "safe_print"):
+    _builtin_print = print
+    def safe_print(*args, **kwargs):
+        try:
+            _builtin_print(*args, **kwargs)
+        except (ValueError, OSError, AttributeError):
+            pass
+    # We use a slightly different approach to ensure we don't recursive-loop on reload
+    if not hasattr(sys, "_rpps_patched"):
+        import builtins
+        builtins.print = safe_print
+        sys._rpps_patched = True
 
 HEADERS = {
     "User-Agent": (
