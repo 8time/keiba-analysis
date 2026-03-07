@@ -27,18 +27,19 @@ try:
 except (AttributeError, ValueError):
     pass
 
-# Avoid infinite recursion on reload: Use a module-level override instead of global monkey-patch
-import builtins
-if not hasattr(sys, "_rpps_orig_print"):
-    sys._rpps_orig_print = builtins.print
-
+# Shadow print to safely ignore closed pipes without using the name 'print' internally to avoid recursion
 def safe_print(*args, **kwargs):
     try:
-        sys._rpps_orig_print(*args, **kwargs)
+        import sys
+        if sys.stdout is not None and not sys.stdout.closed:
+            msg = " ".join(map(str, args))
+            end = kwargs.get("end", "\n")
+            sys.stdout.write(f"{msg}{end}")
+            sys.stdout.flush()
     except (ValueError, OSError, AttributeError):
         pass
 
-# Shadow the global print for THIS module only
+# Shadow only in this module
 print = safe_print
 
 HEADERS = {
