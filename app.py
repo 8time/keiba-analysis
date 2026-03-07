@@ -923,6 +923,7 @@ if nav == "🏠 Single Race Analysis":
 
     # --- Recent Races History List (Shortcut) ---
     import history_manager
+    importlib.reload(history_manager)  # always pick up the latest version (avoids cached stale module)
     df_h_main = history_manager.load_history()
     if not df_h_main.empty:
         with st.expander("📁 最近解析したレース履歴から読み込む", expanded=False):
