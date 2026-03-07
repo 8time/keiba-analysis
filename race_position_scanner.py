@@ -4,6 +4,7 @@ RacePositionPatternScanner Pro v2.0
 netkeibaの出馬表から、騎手・厩舎の配置パターン（裏番、循環、同期等）を抽出し、
 構造的な繋がりから穴馬を特定するシステム。
 
+【実行環境】
 PowerShell: [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py race_position_scanner.py --seed-url <URL>
 cmd:        chcp 65001 > nul && py race_position_scanner.py --seed-url <URL>
 """
@@ -20,14 +21,18 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-# Enforce UTF-8 stdout
+# ──────────────────────────────────────────────
+# Encoding & Stdout Protection (Critical)
+# ──────────────────────────────────────────────
+
+# Force UTF-8 stdout if possible
 try:
     if sys.stdout is not None and hasattr(sys.stdout, 'closed') and not sys.stdout.closed:
         sys.stdout.reconfigure(encoding='utf-8')
 except (AttributeError, ValueError):
     pass
 
-# Shadow print to safely ignore closed pipes without using the name 'print' internally to avoid recursion
+# Safe print to avoid recursion on reload or closed pipe issues
 def safe_print(*args, **kwargs):
     try:
         import sys
@@ -39,7 +44,7 @@ def safe_print(*args, **kwargs):
     except (ValueError, OSError, AttributeError):
         pass
 
-# Shadow only in this module
+# Shadow the global print for this module only
 print = safe_print
 
 HEADERS = {
@@ -49,9 +54,7 @@ HEADERS = {
         "Chrome/122.0.0.0 Safari/537.36"
     )
 }
-SLEEP_SEC = 1.2
-BEST_PERIOD_RANGE = range(3, 9)   # holding day 03~08 is "best period"
-
+SLEEP_SEC = 1.0
 
 # ──────────────────────────────────────────────
 # Data Models
@@ -65,32 +68,25 @@ class Horse:
     trainer: str
     odds: float
     odds_rank: int
-    ura_number: int = 0   # filled after Race.compute_ura()
-
+    ura_number: int = 0
+    matched_details: List[str] = field(default_factory=list)
+    matched_patterns: set = field(default_factory=set) # Set of pattern labels like 'P1', 'P2'
 
 @dataclass
 class Race:
-    race_id: str        # 12-digit netkeiba ID
-    venue: str          # 競馬場名 (if available)
-    holding_day: int    # digits 9-10 of race_id (開催日数)
-    field_size: int     # 登録頭数
+    race_id: str
+    race_number: int
+    venue: str
+    holding_day: int
+    field_size: int
     horses: List[Horse] = field(default_factory=list)
-    has_scratched: bool = False  # 取消/除外馬フラグ
 
     def compute_ura(self):
         for h in self.horses:
             h.ura_number = (self.field_size - h.horse_number) + 1
 
-    @property
-    def race_number(self) -> int:
-        try:
-            return int(self.race_id[-2:])
-        except Exception:
-            return 0
-
-
 # ──────────────────────────────────────────────
-# Scraping Helpers
+# Scraping Core
 # ──────────────────────────────────────────────
 
 def _fetch_html(url: str) -> Optional[BeautifulSoup]:
@@ -103,423 +99,296 @@ def _fetch_html(url: str) -> Optional[BeautifulSoup]:
         print(f"[WARN] Fetch failed {url}: {e}")
         return None
 
-
 def _parse_float(val: str) -> float:
     try:
-        return float(val.replace(",", "").strip())
-    except Exception:
+        m = re.search(r'(\d+\.\d+)', val)
+        return float(m.group(1)) if m else 0.0
+    except:
         return 0.0
-
 
 def _parse_int(val: str) -> int:
     try:
-        return int(re.sub(r"[^0-9]", "", val))
-    except Exception:
-        return 0
-
-
-def _extract_race_id(url: str) -> str:
-    m = re.search(r"race_id=(\d{12})", url)
-    return m.group(1) if m else url
-
-
-def _holding_day_from_id(race_id: str) -> int:
-    """Digits 9-10 (0-indexed 8-9) of race_id = 開催日数."""
-    try:
-        return int(race_id[8:10])
-    except Exception:
-        return 0
-
+        m = re.search(r'(\d+)', val)
+        return int(m.group(1)) if m else 99
+    except:
+        return 99
 
 def scrape_race(url: str) -> Optional[Race]:
-    """Scrape shutuba (entry list) page and return Race object."""
     soup = _fetch_html(url)
-    if soup is None:
-        return None
+    if not soup: return None
 
-    race_id = _extract_race_id(url)
-    holding_day = _holding_day_from_id(race_id)
+    # Extract ID and Number
+    race_id_match = re.search(r'race_id=(\d+)', url)
+    if not race_id_match: return None
+    race_id = race_id_match.group(1)
+    
+    # race_number (last 2 digits)
+    race_num = int(race_id[-2:])
+    
+    # venue code (digits 5-6)
+    venue_code = race_id[4:6]
+    
+    # holding day (digits 9-10)
+    holding_day = int(race_id[8:10])
 
-    # Venue
-    venue = ""
-    venue_tag = (
-        soup.select_one(".RaceData02 span:first-child")
-        or soup.select_one("dl.racedata dd")
-    )
-    if venue_tag:
-        venue = venue_tag.get_text(strip=True)
-
-    # Shutuba table rows
     table = soup.select_one("#shutuba_table") or soup.select_one("table.Shutuba_Table")
-    if table is None:
-        print(f"[WARN] No shutuba table at {url}")
-        return None
+    if not table: return None
 
-    rows = table.select("tr.HorseList") or table.select("tbody tr")
-    horses: List[Horse] = []
-    has_scratched = False
+    rows = table.select("tr.HorseList")
+    horses = []
+    
+    # Field size (total horses listed, including potential scratches for numbering consistency)
+    field_size = len(rows)
 
-    for row in rows:
-        # ── Horse Number ──
-        uma_cell = (
-            row.select_one("td.Umaban")
-            or row.select_one("td.waku")
-            or row.select_one("td:first-child")
-        )
-        if uma_cell is None:
+    for idx, row in enumerate(rows):
+        # We need flexible selectors because classes like Umaban can be Umaban1, Umaban2...
+        num_td = row.select_one("td[class^='Umaban']")
+        name_td = row.select_one("td[class^='HorseInfo']") or row.select_one("td[class^='Horse_Info']")
+        jock_td = row.select_one("td[class^='Jockey']")
+        train_td = row.select_one("td[class^='Trainer']")
+        odds_td = row.select_one("td[class^='Odds']")
+        pop_td = row.select_one("td[class^='Popular']")
+
+        if not (num_td and name_td):
+            # Fallback to broader search if class prefix fails
+            num_td = num_td or row.find("td", class_=re.compile(r"Umaban"))
+            name_td = name_td or row.find("td", class_=re.compile(r"HorseInfo|Horse_Info"))
+            jock_td = jock_td or row.find("td", class_=re.compile(r"Jockey"))
+            train_td = train_td or row.find("td", class_=re.compile(r"Trainer"))
+            odds_td = odds_td or row.find("td", class_=re.compile(r"Odds"))
+            pop_td = pop_td or row.find("td", class_=re.compile(r"Popular"))
+
+        if not (num_td and name_td):
             continue
-        horse_number = _parse_int(uma_cell.get_text(strip=True))
-        if horse_number == 0:
-            continue
 
-        # ── Scratch check ──
-        row_text = row.get_text()
-        is_scratched = ("取消" in row_text) or ("除外" in row_text)
-        if is_scratched:
-            has_scratched = True
-            # Still include the horse but track the flag
+        h_name = name_td.text.strip()
+        # Sometimes name includes breadcrumbs or meta, take the best part
+        if "\n" in h_name: h_name = h_name.split("\n")[0].strip()
 
-        # ── Horse Name ──
-        name_cell = (
-            row.select_one("td.HorseName a")
-            or row.select_one("span.HorseName")
-            or row.select_one("td.horse_name a")
+        horse = Horse(
+            horse_number=int(num_td.text.strip()),
+            horse_name=h_name,
+            jockey=jock_td.text.strip() if (jock_td and jock_td.text.strip()) else "不明",
+            trainer=train_td.text.strip() if (train_td and train_td.text.strip()) else "不明",
+            odds=_parse_float(odds_td.text.strip()) if odds_td else 0.0,
+            odds_rank=_parse_int(pop_td.text.strip()) if pop_td else 99
         )
-        horse_name = name_cell.get_text(strip=True) if name_cell else "不明"
+        horses.append(horse)
 
-        # ── Jockey ──
-        jockey_cell = (
-            row.select_one("td.Jockey a")
-            or row.select_one("td.jockey_name_td a")
-        )
-        jockey = jockey_cell.get_text(strip=True) if jockey_cell else ""
-
-        # ── Trainer ──
-        trainer_cell = (
-            row.select_one("td.Trainer a")
-            or row.select_one("td.trainer_name_td a")
-        )
-        trainer = trainer_cell.get_text(strip=True) if trainer_cell else ""
-
-        # ── Odds / Rank ──
-        odds_val, odds_rank = 0.0, 0
-        try:
-            odds_cells = row.select("td.Odds span") or row.select("td.odds span")
-            if odds_cells:
-                odds_val = _parse_float(odds_cells[0].get_text(strip=True))
-            rank_cell = row.select_one("td.Popular span") or row.select_one("td.tan_rank")
-            if rank_cell:
-                odds_rank = _parse_int(rank_cell.get_text(strip=True))
-        except Exception:
-            pass
-
-        horses.append(Horse(
-            horse_number=horse_number,
-            horse_name=horse_name,
-            jockey=jockey,
-            trainer=trainer,
-            odds=odds_val,
-            odds_rank=odds_rank,
-        ))
-
-    if not horses:
-        print(f"[WARN] No horses parsed at {url}")
-        return None
-
-    # field_size = 登録頭数 (include scratched horses in count)
-    field_size = len(horses)
     race = Race(
         race_id=race_id,
-        venue=venue,
+        race_number=race_num,
+        venue=venue_code,
         holding_day=holding_day,
         field_size=field_size,
-        horses=horses,
-        has_scratched=has_scratched,
+        horses=horses
     )
+    # print(f"[DEBUG] Race {race_num} built with {len(horses)} horses")
     race.compute_ura()
     return race
 
-
-def build_urls_from_seed(seed_url: str, max_races: int = 12) -> List[str]:
-    """Auto-generate race URLs for R1..max_races from any URL of the same day/venue."""
-    m = re.search(r"race_id=(\d{12})", seed_url)
-    if not m:
-        return [seed_url]
-    prefix = m.group(1)[:10]   # drop last 2 digits (race number)
-    return [
-        f"https://race.netkeiba.com/race/shutuba.html?race_id={prefix}{r:02d}"
-        for r in range(1, max_races + 1)
-    ]
-
-
 # ──────────────────────────────────────────────
-# Pattern Detection
+# Pattern Logic (Ver 2.0)
 # ──────────────────────────────────────────────
 
-def _detect_patterns(ha: Horse, ra: Race, hb: Horse, rb: Race) -> List[str]:
-    """Return list of matched pattern labels for the pair (ha,ra) vs (hb,rb)."""
-    matched = []
-    same_field = (ra.field_size == rb.field_size)
+def detect_and_record(ha: Horse, ra: Race, hb: Horse, rb: Race, entity_label: str):
+    """
+    ra.race_number is the target race (base). rb.race_number is the comparison race.
+    """
+    m_label = f"[{entity_label}] {rb.race_number}R({hb.horse_number}番)"
 
-    # ── P1: 裏同士 ──
-    if not same_field and ha.ura_number == hb.ura_number:
-        matched.append("P1:裏同士")
+    # P1: 裏同士 (Back-to-Back)
+    # 頭数が違う場合に裏番が一致
+    if ra.field_size != rb.field_size and ha.ura_number == hb.ura_number:
+        ha.matched_details.append(f"{m_label} - 裏同士")
+        ha.matched_patterns.add("P1")
 
-    # ── P2: 裏表逆 ──
+    # P2: 裏表逆 (Reverse)
     if ha.ura_number == hb.horse_number or ha.horse_number == hb.ura_number:
-        matched.append("P2:裏表逆")
+        ha.matched_details.append(f"{m_label} - 裏表逆")
+        ha.matched_patterns.add("P2")
 
-    # ── P3: 一の位一致 ──
+    # P3: 一の位一致 (Ones Match)
     if ha.horse_number % 10 == hb.horse_number % 10:
-        matched.append("P3:一の位一致")
+        ha.matched_details.append(f"{m_label} - 一の位一致")
+        ha.matched_patterns.add("P3")
 
-    # ── P4: 片方循環（表循環 + 裏循環） ──
-    if not same_field:
+    # P4: 片方循環 (Cycle)
+    # 頭数が違う場合に、大きい方の馬番を小さい方の頭数で循環させた値が一致
+    if ra.field_size != rb.field_size:
+        # Determine which is smaller
         if ra.field_size < rb.field_size:
-            s_horse, s_ura, s_fs = ha.horse_number, ha.ura_number, ra.field_size
-            t_horse, t_ura          = hb.horse_number, hb.ura_number
+            # Shift b onto a's cycle
+            cycle = ((hb.horse_number - 1) % ra.field_size) + 1
+            if cycle == ha.horse_number:
+                ha.matched_details.append(f"{m_label} - 片方循環")
+                ha.matched_patterns.add("P4")
         else:
-            s_horse, s_ura, s_fs = hb.horse_number, hb.ura_number, rb.field_size
-            t_horse, t_ura          = ha.horse_number, ha.ura_number
-
-        # 表循環
-        if ((t_horse - 1) % s_fs) + 1 == s_horse:
-            matched.append("P4:表循環")
-        # 裏循環
-        if ((t_ura - 1) % s_fs) + 1 == s_ura:
-            matched.append("P4:裏循環")
-
-    return matched
-
+            # Shift a onto b's cycle
+            cycle = ((ha.horse_number - 1) % rb.field_size) + 1
+            if cycle == hb.horse_number:
+                # In this logic, we record for HA if HA's cycle matches HB's actual number
+                # But P4 logic usually means "these two are structurally linked"
+                ha.matched_details.append(f"{m_label} - 片方循環")
+                ha.matched_patterns.add("P4")
 
 # ──────────────────────────────────────────────
-# RaceScanner (Main Orchestrator)
+# Main Engine
 # ──────────────────────────────────────────────
 
-class RaceScanner:
-    def __init__(self, entity: str = "jockey"):
-        self.entity = entity    # "jockey" | "trainer" | "both"
+class RacePositionScanner:
+    def __init__(self, entity_mode: str = "jockey", min_patterns: int = 1):
+        self.entity_mode = entity_mode # jockey, trainer, both
+        self.min_patterns = min_patterns
 
-    # ── Build entity occurrence count per day (for Strategic Entry Bonus) ──
-    def _build_entity_count(self, races: List[Race]) -> dict:
-        """
-        Returns {entity_value: count_of_races_that_entity_appears_in}
-        Used to detect exactly-2-appearances.
-        """
-        counter: dict = defaultdict(set)
-        for race in races:
-            for h in race.horses:
-                if self.entity in ("jockey", "both") and h.jockey:
-                    counter[("jockey", h.jockey)].add(race.race_id)
-                if self.entity in ("trainer", "both") and h.trainer:
-                    counter[("trainer", h.trainer)].add(race.race_id)
-        # convert set to count
-        return {k: len(v) for k, v in counter.items()}
-
-    # ── Pattern detection across all race pairs ──
-    def _get_candidates(self, races: List[Race]) -> dict:
-        """
-        Returns dict: (race_id, horse_number) -> {race, horse, patterns (set)}
-        """
-        result: dict = {}
-
-        for i, ra in enumerate(races):
-            for j, rb in enumerate(races):
-                if i >= j:
-                    continue
-                for ha in ra.horses:
-                    for hb in rb.horses:
-                        # Entity match
-                        ej = (self.entity in ("jockey", "both")) and ha.jockey and ha.jockey == hb.jockey
-                        et = (self.entity in ("trainer", "both")) and ha.trainer and ha.trainer == hb.trainer
-                        if not (ej or et):
-                            continue
-
-                        patterns = _detect_patterns(ha, ra, hb, rb)
-                        if not patterns:
-                            continue
-
-                        for key, race_obj, horse_obj in [
-                            ((ra.race_id, ha.horse_number), ra, ha),
-                            ((rb.race_id, hb.horse_number), rb, hb),
-                        ]:
-                            if key not in result:
-                                result[key] = {"race": race_obj, "horse": horse_obj, "patterns": set()}
-                            result[key]["patterns"].update(patterns)
-
-        return result
-
-    # ── Scoring ──
-    def _score(self, candidates: dict, entity_count: dict, races: List[Race]) -> List[dict]:
-        # Trainer multi-entry lookup (Bonus from v1 kept as trainer_bonus)
-        trainer_per_race: dict = {}
-        for race in races:
-            counter: dict = defaultdict(int)
-            for h in race.horses:
-                if h.trainer:
-                    counter[h.trainer] += 1
-            trainer_per_race[race.race_id] = counter
-
-        scored = []
-        for (race_id, _horse_num), c in candidates.items():
-            race: Race = c["race"]
-            horse: Horse = c["horse"]
-            patterns: set = c["patterns"]
-
-            score = 0
-
-            # Base: +1 per pattern type
-            score += len(patterns)
-
-            # Overlap Bonus: 3+ patterns → +3
-            if len(patterns) >= 3:
-                score += 3
-
-            # Strategic Entry Bonus: entity appears exactly 2 times on the day, ≥1 pattern
-            if len(patterns) >= 1:
-                key_j = ("jockey", horse.jockey)
-                key_t = ("trainer", horse.trainer)
-                if (
-                    (self.entity in ("jockey", "both") and entity_count.get(key_j, 0) == 2)
-                    or (self.entity in ("trainer", "both") and entity_count.get(key_t, 0) == 2)
-                ):
-                    score += 3
-
-            # Longshot Bonus
-            if horse.odds_rank >= 7 or horse.odds >= 20.0:
-                score += 1
-
-            # Holding Day Bonus: day 03~08
-            is_best_period = race.holding_day in BEST_PERIOD_RANGE
-            if is_best_period:
-                score += 1
-
-            # Warning text
-            warnings = []
-            if race.has_scratched:
-                warnings.append("取消/除外馬あり")
-
-            scored.append({
-                "race_id": race.race_id,
-                "race_number": race.race_number,
-                "horse_number": horse.horse_number,
-                "horse_name": horse.horse_name,
-                "jockey": horse.jockey,
-                "trainer": horse.trainer,
-                "patterns": ",".join(sorted(patterns)),
-                "score": score,
-                "odds": horse.odds,
-                "rank": horse.odds_rank,
-                "is_best_period": is_best_period,
-                "warning": "; ".join(warnings),
-            })
-
-        return scored
-
-    # ── Main run ──
-    def scan(
-        self,
-        urls: List[str],
-        output_csv: Optional[str] = None,
-        progress_callback: Optional[Callable] = None,
-    ) -> pd.DataFrame:
+    def scan(self, urls: List[str], progress_callback: Optional[Callable] = None):
         races: List[Race] = []
-
         for idx, url in enumerate(urls):
-            msg = f"[{idx+1}/{len(urls)}] {url}"
+            msg = f"Fetching [{idx+1}/{len(urls)}]..."
             print(msg)
-            if progress_callback:
-                progress_callback(idx, len(urls), msg)
-            race = scrape_race(url)
-            if race is not None:
-                races.append(race)
+            if progress_callback: progress_callback(idx, len(urls), msg)
+            
+            r = scrape_race(url)
+            if r: races.append(r)
             time.sleep(SLEEP_SEC)
 
         if not races:
-            print("[INFO] No race data fetched.")
             return pd.DataFrame()
 
-        entity_count = self._build_entity_count(races)
-        candidates = self._get_candidates(races)
+        # Cross-comparison
+        for ra in races:
+            # Bonus: Trainer multiple entry (in same race)
+            trainer_counts = defaultdict(int)
+            for h in ra.horses: trainer_counts[h.trainer] += 1
+            
+            for ha in ra.horses:
+                # Scoring against other races
+                for rb in races:
+                    if ra.race_id == rb.race_id: continue # Don't compare with same race patterns
+                    
+                    for hb in rb.horses:
+                        # Check entity match
+                        match_jockey = (self.entity_mode in ["jockey", "both"]) and (ha.jockey == hb.jockey)
+                        match_trainer = (self.entity_mode in ["trainer", "both"]) and (ha.trainer == hb.trainer)
+                        
+                        if match_jockey or match_trainer:
+                            old_len = len(ha.matched_details)
+                            if match_jockey:
+                                detect_and_record(ha, ra, hb, rb, "騎手")
+                            if match_trainer:
+                                detect_and_record(ha, ra, hb, rb, "厩舎")
+                            if len(ha.matched_details) > old_len:
+                                pass
 
-        if not candidates:
-            print("[INFO] No pattern candidates found.")
-            return pd.DataFrame()
+        # Compile Results
+        results = []
+        for ra in races:
+            # Re-check trainer multiple entry for scoring
+            trainer_counts = defaultdict(int)
+            for h in ra.horses: trainer_counts[h.trainer] += 1
 
-        scored = self._score(candidates, entity_count, races)
+            for h in ra.horses:
+                if len(h.matched_details) < self.min_patterns: continue
+                
+                # --- SCORING (Ver 2.0) ---
+                score = 0
+                # Base: +1 per evidence recorded
+                score += len(h.matched_details)
+                
+                # Bonus 1 (Overlap): +2 if >= 2 distinct types (P1~P4)
+                if len(h.matched_patterns) >= 2:
+                    score += 2
+                    
+                # Bonus 2 (Trainer Entry): +2 if same trainer has 2+ in this race
+                if trainer_counts[h.trainer] >= 2:
+                    score += 2
+                    
+                # Bonus 3 (Longshot): +1 if odds_rank >= 7 or odds >= 20.0
+                if h.odds_rank >= 7 or h.odds >= 20.0:
+                    score += 1
+                
+                results.append({
+                    "race_number": ra.race_number,
+                    "horse_number": h.horse_number,
+                    "horse_name": h.horse_name,
+                    "jockey": h.jockey,
+                    "trainer": h.trainer,
+                    "score": score,
+                    "patterns_detected": ",".join(sorted(list(h.matched_patterns))),
+                    "match_details": " | ".join(h.matched_details),
+                    "odds": h.odds,
+                    "odds_rank": h.odds_rank
+                })
 
-        df = pd.DataFrame(scored).sort_values(
-            by=["score", "race_id"], ascending=[False, True]
-        ).reset_index(drop=True)
-
-        if output_csv:
-            df.to_csv(output_csv, index=False, encoding='utf-8-sig')
-            print(f"[INFO] Saved → {output_csv}")
-
+        df = pd.DataFrame(results)
+        if not df.empty:
+            df = df.sort_values(by=["score", "race_number"], ascending=[False, True])
         return df
 
+# ──────────────────────────────────────────────
+# Entry Point
+# ──────────────────────────────────────────────
 
-# ──────────────────────────────────────────────
-# Convenience wrapper (used by Streamlit tab)
-# ──────────────────────────────────────────────
+def build_urls_from_seed(seed_url: str, max_races: int = 12) -> List[str]:
+    # URL example: https://race.netkeiba.com/race/shutuba.html?race_id=202406050511
+    # We ensure we use shutuba.html and update the race_id.
+    
+    # 1. Force shutuba.html
+    base_url = seed_url.split('?')[0]
+    if 'shutuba.html' not in base_url:
+        # Replace result.html or any other page with shutuba.html
+        seed_url = seed_url.replace(base_url.split('/')[-1], 'shutuba.html')
+
+    match = re.search(r'(race_id=)(\d{10})(\d{2})', seed_url)
+    if not match: return [seed_url]
+    
+    prefix = match.group(1)
+    base_id = match.group(2)
+    urls = []
+    for i in range(1, max_races + 1):
+        r_id = f"{base_id}{i:02d}"
+        # Careful replacement of only the ID part
+        new_url = re.sub(r'race_id=\d+', f'race_id={r_id}', seed_url)
+        urls.append(new_url)
+    return urls
 
 def run_scan(
     urls: List[str],
     entity: str = "jockey",
     min_patterns: int = 1,
-    output_csv: Optional[str] = None,
-    progress_callback: Optional[Callable] = None,
-) -> pd.DataFrame:
-    scanner = RaceScanner(entity=entity)
-    df = scanner.scan(urls, output_csv=output_csv, progress_callback=progress_callback)
-    if not df.empty and min_patterns > 1:
-        # Count distinct pattern types per row
-        df = df[df["patterns"].apply(lambda p: len(p.split(",")) >= min_patterns)]
-        df = df.reset_index(drop=True)
+    output_csv: Optional[str] = "result.csv",
+    progress_callback: Optional[Callable] = None
+):
+    scanner = RacePositionScanner(entity_mode=entity, min_patterns=min_patterns)
+    df = scanner.scan(urls, progress_callback=progress_callback)
+    
+    if output_csv and not df.empty:
+        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+        print(f"[INFO] Saved results to {output_csv}")
+    
     return df
 
-
-def build_urls_from_seed(seed_url: str, max_races: int = 12) -> List[str]:
-    m = re.search(r"race_id=(\d{12})", seed_url)
-    if not m:
-        return [seed_url]
-    prefix = m.group(1)[:10]
-    return [
-        f"https://race.netkeiba.com/race/shutuba.html?race_id={prefix}{r:02d}"
-        for r in range(1, max_races + 1)
-    ]
-
-
-# ──────────────────────────────────────────────
-# CLI Entry Point
-# ──────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description="RacePositionPatternScanner Pro v2.0")
-    parser.add_argument("--urls", nargs="*", help="出馬表URL(複数指定可)")
-    parser.add_argument("--seed-url", help="ベースURLから1-12R自動生成")
-    parser.add_argument("--auto-day", type=int, default=12, help="最大レース数 (default:12)")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="RacePositionPatternScanner Ver 2.0")
+    parser.add_argument("--urls", nargs="+", help="Target entry URLs")
+    parser.add_argument("--seed-url", help="Base URL to expand 1R-12R")
+    parser.add_argument("--auto-day", type=int, default=12, help="Max races for seed expansion")
     parser.add_argument("--entity", choices=["jockey", "trainer", "both"], default="jockey")
-    parser.add_argument("--min-patterns", type=int, default=1, help="最低パターン数フィルタ")
-    parser.add_argument("--output", default="result.csv", help="出力CSVファイル名")
-    args = parser.parse_args()
+    parser.add_argument("--min-patterns", type=int, default=1)
+    parser.add_argument("--output", default="result.csv")
 
-    if not args.urls and not args.seed_url:
+    args = parser.parse_args()
+    
+    target_urls = []
+    if args.seed_url:
+        target_urls = build_urls_from_seed(args.seed_url, args.auto_day)
+    elif args.urls:
+        target_urls = args.urls
+    else:
         parser.print_help()
         sys.exit(1)
 
-    urls = list(args.urls or [])
-    if args.seed_url:
-        urls = build_urls_from_seed(args.seed_url, args.auto_day)
-
-    df = run_scan(urls, entity=args.entity, min_patterns=args.min_patterns, output_csv=args.output)
-
-    if not df.empty:
-        print("\n===== TOP 20 =====")
-        print(df.head(20).to_string(index=False))
-    else:
-        print("[INFO] No results.")
-
-
-if __name__ == "__main__":
-    main()
+    df_final = run_scan(target_urls, args.entity, args.min_patterns, args.output)
+    if not df_final.empty:
+        print("\n=== TOP RESULTS ===")
+        print(df_final.head(10).to_string(index=False))
