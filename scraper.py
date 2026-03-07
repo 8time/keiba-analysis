@@ -743,8 +743,43 @@ def fetch_advanced_data_playwright(race_id, top_horse_ids=None):
         
     return advanced_data
 
-def get_race_data(race_id):
-    """Main function to scrape race card data with ROBUST EXTRACTION."""
+def get_race_data(race_id, use_storage=True):
+    """Main function to scrape race card data with ROBUST EXTRACTION.
+
+    Args:
+        race_id: 12-digit race ID string or int.
+        use_storage: If True (default), checks race_history.csv first.
+                     Pass False to force a live scrape.
+    """
+    # ── Storage-First: check race_history.csv before scraping ──────────────
+    if use_storage:
+        try:
+            import os, pandas as _pd
+            _hist_path = os.path.join(os.path.dirname(__file__), "race_history.csv")
+            if os.path.exists(_hist_path):
+                _hist = _pd.read_csv(_hist_path, encoding='utf-8')
+                if 'RaceID' in _hist.columns:
+                    _hist['RaceID'] = _hist['RaceID'].astype(str)
+                    _stored = _hist[_hist['RaceID'] == str(race_id)]
+                    if not _stored.empty:
+                        logger.info(f"[Storage] Using cached data for {race_id} ({len(_stored)} horses)")
+                        # Rename stored columns to match live-scrape column names where needed
+                        _col_map = {
+                            'RaceTitle': 'RaceName',
+                            'Distance': 'CurrentDistance',
+                            'Condition': 'CurrentSurface',
+                            'Name': 'HorseName',
+                        }
+                        _stored = _stored.rename(columns={k: v for k, v in _col_map.items() if k in _stored.columns})
+                        # Ensure key columns are present
+                        for _c in ['RaceID', 'Umaban', 'RaceName', 'CurrentDistance']:
+                            if _c not in _stored.columns:
+                                _stored[_c] = None
+                        return _stored.reset_index(drop=True)
+        except Exception as _e:
+            logger.warning(f"[Storage] Failed to load from cache: {_e}")
+    # ────────────────────────────────────────────────────────────────────────
+
     # Determine JRA vs NAR
     is_nar = False
     try:
