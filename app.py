@@ -3192,9 +3192,9 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             test_scores.append({
                 "馬番": umaban,
                 "馬名(ラベル付)": horse_name,
-                "人気": int(row.get('Popularity')) if pd.notnull(row.get('Popularity')) else "-",
-                "馬体重": weight_str,
-                "調教": training_eval if training_eval else "-",
+                "人気": int(row.get('Popularity')) if pd.notnull(row.get('Popularity')) and row.get('Popularity') != 99 else "-",
+                "馬体重": weight_str if weight_str and str(weight_str).strip() != "" else "-",
+                "調教": training_eval if training_eval and str(training_eval).strip() != "" else "-",
                 "U指数": round(float(pw_data.get('UIndex')), 1) if pw_data.get('UIndex') and str(pw_data.get('UIndex')).replace('.','',1).strip().replace('-','',1).replace('e','',1).replace('E','',1).replace('+','',1).split('.')[0].isdigit() else pw_data.get('UIndex', "-"),
                 "オメガ指数": round(float(pw_data.get('LaboIndex')), 1) if pw_data.get('LaboIndex') and str(pw_data.get('LaboIndex')).replace('.','',1).strip().replace('-','',1).replace('e','',1).replace('E','',1).replace('+','',1).split('.')[0].isdigit() else pw_data.get('LaboIndex', "-"),
                 "血統": blood_flag if blood_flag else "-",

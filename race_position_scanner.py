@@ -22,8 +22,9 @@ import pandas as pd
 
 # Enforce UTF-8 stdout
 try:
-    sys.stdout.reconfigure(encoding='utf-8')
-except AttributeError:
+    if sys.stdout is not None and hasattr(sys.stdout, 'closed') and not sys.stdout.closed:
+        sys.stdout.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
     pass
 
 HEADERS = {

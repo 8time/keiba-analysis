@@ -784,10 +784,12 @@ def get_race_data(race_id, use_storage=True):
                                     lambda u: _odds_map.get(int(u), None) if _pd.notna(u) else None
                                 )
                                 # Derive popularity ranking from odds (ascending odds = higher popularity)
-                                _valid_odds = _stored['Odds'].dropna()
+                                _valid_odds = _stored['Odds'][_stored['Odds'] > 0.0].dropna()
                                 if not _valid_odds.empty:
-                                    _ranks = _stored['Odds'].rank(method='min', ascending=True, na_option='bottom').astype('Int64')
-                                    _stored['Popularity'] = _ranks
+                                    _ranks = _valid_odds.rank(method='min', ascending=True).astype(int)
+                                    _stored['Popularity'] = _stored['Popularity'].where(_stored['Odds'] == 0.0, _ranks).fillna(99).astype(int)
+                                else:
+                                    _stored['Popularity'] = 99
                                 logger.info(f"[Storage] Re-fetched {len(_odds_map)} live odds for {race_id}")
                         except Exception as _oe:
                             logger.warning(f"[Storage] Live odds re-fetch failed: {_oe}")
@@ -1118,17 +1120,25 @@ def fetch_result_odds_pop(race_id):
         from bs4 import BeautifulSoup
         import re
         soup = BeautifulSoup(html, 'html.parser')
+        
+        headers = [th.text.strip() for th in soup.find_all('th')]
+        u_idx = headers.index('馬番') if '馬番' in headers else 2
+        p_idx = headers.index('人気') if '人気' in headers else 10
+        o_idx = headers.index('単勝') if '単勝' in headers else 9
+        
         for row in soup.find_all('tr', class_='HorseList'):
             cols = row.find_all('td')
-            if len(cols) >= 11:
+            if len(cols) > max(u_idx, p_idx, o_idx):
                 try:
-                    u_txt = cols[2].text.strip()
-                    p_txt = cols[9].text.strip()
-                    o_txt = cols[10].text.strip()
-                    if u_txt.isdigit() and p_txt.isdigit():
+                    u_txt = cols[u_idx].text.strip()
+                    p_txt = cols[p_idx].text.strip()
+                    o_txt = cols[o_idx].text.strip()
+                    
+                    if u_txt.isdigit():
                         u = int(u_txt)
-                        res_pop[u] = int(p_txt)
-                        m_o = re.search(r'(\d+\.\d+)', o_txt)
+                        if p_txt.isdigit():
+                            res_pop[u] = int(p_txt)
+                        m_o = re.search(r'(\d+\.\d+|\d+)', o_txt)
                         if m_o: res_odds[u] = float(m_o.group(1))
                 except: pass
     import pandas as pd
