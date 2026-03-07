@@ -14,11 +14,17 @@ def fetch_main(url):
         # Use a fresh fetcher every time
         fetcher = DynamicFetcher()
         # netkeiba sometimes needs a real user agent
+        # Try to wait for the horse table specifically if possible
         response = fetcher.fetch(
             url, 
-            timeout=60000, 
-            wait_until='networkidle' # Wait for network to be quiet
+            timeout=80000, 
+            wait_until='domcontentloaded' # Start with DOM
         )
+        
+        # Additional wait if table is missing
+        if not response.text or '.RaceTable' not in response.text:
+            time.sleep(3) # Simple fallback wait for JS rendering
+        
         
         html = response.text
         if not html or len(html) < 100:

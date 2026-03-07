@@ -65,6 +65,12 @@ st.markdown("""
     [data-testid="stSidebar"] button p {
         color: black !important;
     }
+    
+    /* Force main tab Race ID text input to have a white background and black text */
+    div[data-testid="stTextInput"] input {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -876,7 +882,7 @@ if nav == "🏠 Single Race Analysis":
         if 'test_adv_data' in st.session_state:
             del st.session_state['test_adv_data']
 
-    # Input
+    # Input Layout
     col1, col2 = st.columns([1, 2])
     with col1:
         race_id_input = st.text_input("Race ID (Netkeiba)", key='main_race_id_input', on_change=_on_main_race_id_change)
@@ -902,11 +908,13 @@ if nav == "🏠 Single Race Analysis":
             default_profile_index = 1
             
     with col2:
+        st.markdown("**✨ コース特性プロファイル （開催場所から自動判定）**")
         course_profile_main = st.radio(
-            "✨ コース特性プロファイル （開催場所から自動判定）",
+            "コース特性",
             options=["✨ 直線が長い・差し有利 (東京/外回り 等)", "✨ 小回り・先行有利 (中山/小倉/札幌 等)", "✨ 標準 (バランス)"],
             index=default_profile_index,
             horizontal=True,
+            label_visibility="collapsed",
             help="レースIDの競馬場コードから自動で適性計算を切り替えています。"
         )
 
@@ -990,7 +998,19 @@ if nav == "🏠 Single Race Analysis":
                 df = scraper.get_race_data(race_id_input)
                 
                 if df is None or df.empty:
-                    st.error("No data found for this Race ID. (Data is None or Empty)")
+                    is_nar_check = False
+                    try:
+                        if int(str(race_id_input)[4:6]) > 10: is_nar_check = True
+                    except: pass
+                    
+                    if is_nar_check:
+                        chk_url = f"https://nar.netkeiba.com/race/shutuba.html?race_id={race_id_input}"
+                        st.error(f"No data found for Race ID: {race_id_input}. (⚠️ 地方競馬(NAR)のデータ取得は現在制限されているか、出馬表が未発表の可能性があります。)")
+                        st.markdown(f"🔍 **確認用URL (地方):** [{chk_url}]({chk_url})")
+                    else:
+                        chk_url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id_input}"
+                        st.error(f"No data found for Race ID: {race_id_input}. (データが取得できませんでした。レースIDが正しいか、または出馬表が既に公開されているかご確認ください。)")
+                        st.markdown(f"🔍 **確認用URL (JRA):** [{chk_url}]({chk_url})")
                 else:
                     # 2. Calculate
                     df = calculator.calculate_battle_score(df)
@@ -1083,44 +1103,44 @@ if nav == "🏠 Single Race Analysis":
                     race_pattern = detect_race_pattern(sorted_scores)
                     
                     if race_pattern == 1:
-                        advice_color, advice_border, advice_bg = "#FF4500", "#FF4500", "#2D0000"
+                        advice_color, advice_border, advice_bg = "#FF4500", "#FF4500", "#FF450015"
                         advice_title = "予測難易度: D ➖ ✨ 超固い"
                         advice_text = "<strong>✨ このレースは買わずに「見（ケン）」を強く推奨します。</strong><br><br>1位馬の指数が2位以下を圧倒しており、単勝・馬連ともに低配当が確実な構造です。むやみに買い続けると、払い戻しが投資額を下回る「プラス収支の罠」にはまります。<br><br><strong>【推奨アクション】</strong><br>▶ 基本姿勢：完全ケン（見送り）<br>▶ どうしても買いたい場合：1強馬を軸に「3連単1-2着固定」で点数を絞り、配当倍率が最低でも10倍以上になる組み合わせのみ購入<br>▶ 次の「荒れレース」に向けて資金をキープし、体力を温存することが最優先戦略です。"
                     elif race_pattern == 2:
-                        advice_color, advice_border, advice_bg = "#00C8FF", "#00C8FF", "#001A2D"
+                        advice_color, advice_border, advice_bg = "#00C8FF", "#00C8FF", "#00C8FF15"
                         advice_title = "予測難易度: C ➖ 🔥 固い"
                         advice_text = "<strong>▶ 上位2頭が安定しており、「手堅く回収」を狙えるレースです。</strong><br><br>指数上位2頭と3位以下の差が明確なため、軸が絞りやすい構造です。無理に穴を狙わず、堅実な買い目でしっかり的中率を維持しましょう。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連：1-2位軸の流し</strong>（相手は3～5位まで）→ 点数3～4点に絞る<br>✨ <strong>3連複：1・2位を軸に1頭ずつ固定</strong>、3頭目を3～6位から3点流し → 合計5～6点<br>✨ <strong>目標配当：馬連10～20倍、3連複30～80倍</strong><br><br>✨ このレースで確実に回収し、次のレースに向けた資金基盤を整えましょう。"
                     elif race_pattern == 3:
-                        advice_color, advice_border, advice_bg = "#FFD700", "#FFD700", "#1A1400"
+                        advice_color, advice_border, advice_bg = "#FFD700", "#FFD700", "#FFD70015"
                         advice_title = "予測難易度: B ➖ 🔥 通常"
                         advice_text = "<strong>✨ 最もバランスの良い「勝負レース」です。積極的に仕掛けましょう！</strong><br><br>上位馬が階段状にスコアが落ちており、1～5位に実力差はあるものの混戦要素があります。軸馬を1頭固定しつつ、相手を広げることで「中穴の旨みを取る」戦略が最適です。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連：1位軸から2～6位への流し</strong> → 5点<br>✨ <strong>3連複：1位を軸1頭固定、2～7位から6頭選んで流し</strong> → 15点前後<br>✨ <strong>3連単：1位→2・3位固定→4～7位まで流し</strong>で点数を絞った高配当狙い<br>✨ <strong>目標配当：馬連15～40倍、3連複50～200倍</strong><br><br>✨ 消し馬ロジック（💀マーク）を最大活用し、買い目数を削減してください。点数を絞るほど回収率が上がります。"
                     elif race_pattern == 4:
-                        advice_color, advice_border, advice_bg = "#7FFF00", "#7FFF00", "#0B1F00"
+                        advice_color, advice_border, advice_bg = "#7FFF00", "#7FFF00", "#7FFF0015"
                         advice_title = "予測難易度: A ➖ ⚠️ 荒れ"
                         advice_text = "<strong>⚠️ 上位陣が伯仲しており、軸選びが非常に難しいレースです。</strong><br><br>1位から中位までのスコア差が小さく、展開一つで着順が大きく入れ替わる可能性が高いです。「荒れる」可能性を秘めており、手広く買うか、あるいは見送るかの判断が求められます。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連/ワイド：上位5頭のボックス買い</strong>（10点）で確実に的中を拾う<br>✨ <strong>3連複：上位5～6頭のボックス買い</strong>（10～20点）<br>✨ <strong>フォーメーション：</strong>どうしても勝負したい場合は、好調教馬や騎手評価の高い馬を1列目に置く<br><br>✨ 資金に余裕がない場合は、「見（ケン）」も立派な戦略です。"
                     elif race_pattern == 5:
-                        advice_color, advice_border, advice_bg = "#FF4500", "#FF4500", "#2D0000"
+                        advice_color, advice_border, advice_bg = "#FF1493", "#FF1493", "#FF149315"
                         advice_title = "予測難易度: S ➖ ✨ 大荒れ"
                         advice_text = "<strong>🚨 超危険！大波乱の予感が漂う「爆穴狙い推奨」レースです。</strong><br><br>1位から最下位までのスコア差が極めて小さく、人気馬に明確な死角があります。全馬に勝つチャンスがあるため、最も回収率を爆増させやすいレースです。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>3連複全頭流し：</strong>どうしても勝負したい場合は、好適性の穴馬から全通りを買う「全流し」で事故待ち<br>✨ <strong>単勝・複勝コロガシ：</strong>10番人気以下の馬から単複を買う<br><br>✨ 安全に行くなら100%「見」ですが、ギャンブルとして楽しむなら最高の舞台です。"
                     else:
-                        advice_color, advice_border, advice_bg = "#FF69B4", "#FF69B4", "#300020"
+                        advice_color, advice_border, advice_bg = "#9400D3", "#9400D3", "#9400D315"
                         advice_title = "予測難易度: Unknown ➖ 🚨 大混戦（カオス）"
                         advice_text = "<strong>🚨 全馬の実력이拮抗しており、何が来てもおかしくない「超難解レース」です。</strong><br><br>予測スコアが完全にフラットになっており、データからは軸馬を絞りきれません。高配当が狙える一方、的中率は極めて低くなります。<br><br><strong>【推奨アクション】</strong><br>▶ 基本姿勢：完全ケン（見送り）<br>▶ <strong>一攫千金狙い（遊び）</strong>：散布図の「左上（高適性・低人気）」にいる【波乱の使者】から単勝やワイドを少額で買う<br>▶ <strong>全頭買い</strong>：資金に余裕があれば、荒れることを前提に入線を祈る<br><br>✨ 「わからないレースは買わない」が投資競馬の鉄則です。無理な勝負は避けましょう。"
-                    
                     # --- UI Rendering ---
                     col_r1, col_r2 = st.columns([1.3, 1])
                     with col_r1:
                         # Render Pattern Advisor Component (First)
-                        st.html(f"""
+                        # Remove forced colors to let Streamlit handle dark/light mode dynamically while keeping the background colorful
+                        st.markdown(f"""
                         <div style="background-color: {advice_bg}; border: 2px solid {advice_border}; border-radius: 12px; padding: 24px 28px; margin-bottom: 24px; box-shadow: 0 0 22px {advice_color}55;">
                             <div style="font-size: 1.4em; font-weight: bold; color: {advice_color}; margin-bottom: 14px; border-bottom: 1px solid {advice_border}55; padding-bottom: 10px;">
                                 {advice_title}
                             </div>
-                            <div style="font-size: 1.0em; color: #EEEEEE; line-height: 2.0;">
+                            <div style="font-size: 1.0em; line-height: 2.0;">
                                 {advice_text}
                             </div>
                         </div>
-                        """)
+                        """, unsafe_allow_html=True)
 
                         # Render Gap Strategy
                         getattr(st, gap_type)(gap_msg)
@@ -1769,7 +1789,18 @@ if nav == "🏠 Single Race Analysis":
                                     ])
                                     st.dataframe(rec_df.style.apply(highlight_dark_horse, axis=1), use_container_width=True)
                                 else:
-                                    st.info("オッズが取得できなかったか、該当する買い目が見つかりませんでした。（発売前の場合は発売開始後に再度お試しください）")
+                                    is_nar = False
+                                    if 'race_id_input' in locals() and len(race_id_input) >= 6:
+                                        try:
+                                            # Netkeiba venue codes > 10 are NAR (e.g., 42, 45, 65)
+                                            if int(str(race_id_input)[4:6]) > 10:
+                                                is_nar = True
+                                        except: pass
+                                        
+                                    if is_nar:
+                                        st.warning("⚠️ **地方競馬（NAR）のオッズ自動取得は現在サポートされていません。** 買い目と資金配分の計算はJRAレースでのみご利用いただけます。")
+                                    else:
+                                        st.info("オッズが取得できなかったか、該当する買い目が見つかりませんでした。（発売前の場合は発売開始後に再度お試しください）")
 
                             except Exception as e:
                                 st.error(f"3連複推奨データの取得中にエラーが発生しました: {e}")
@@ -2724,14 +2755,59 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
     st.header("🧪 新ロジックテスト (FEW+マクリ)")
     st.markdown("既存の予測スコアをベースに、「枠順バイアス」「馬体重仕上がり」「マクリ地力指数」を統合した検証用スコアリングです。")
     
-    df = st.session_state.get('df')
+    # --- Sync Race ID with Main Tab ---
+    if 'main_race_id_input' not in st.session_state:
+        st.session_state['main_race_id_input'] = ""
+        
+    def _on_test_race_id_change():
+        import re
+        val = st.session_state['test_race_id_input']
+        match = re.search(r'race_id=(\d{12})', val)
+        if not match: match = re.search(r'(\d{12})', val)
+        if match:
+            extracted = match.group(1)
+            if extracted != val:
+                st.session_state['test_race_id_input'] = extracted
+        
+        # Sync back to main tab
+        st.session_state['main_race_id_input'] = st.session_state['test_race_id_input']
+        st.session_state['tab1_analyzed_id'] = st.session_state['test_race_id_input']
+        
+        # Clear specific tab4 data to force re-fetch
+        if 'test_adv_data' in st.session_state:
+            del st.session_state['test_adv_data']
+
+    # Read from main tab's state by default
     current_input_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
+    
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        test_race_id = st.text_input("Race ID (同期済み)", value=current_input_id, key="test_race_id_input", on_change=_on_test_race_id_change)
+    with col_t2:
+        test_analyze_btn = st.button("🚀 データを読み込む (Analyze)", type="primary")
+
+    if test_analyze_btn and test_race_id:
+        st.session_state['main_race_id_input'] = test_race_id
+        st.session_state['tab1_analyzed_id'] = test_race_id
+        with st.spinner("Fetching base data..."):
+            try:
+                new_df = scraper.get_race_data(test_race_id)
+                if new_df is not None and not new_df.empty:
+                    new_df = calculator.calculate_battle_score(new_df)
+                    new_df = calculator.calculate_n_index(new_df)
+                    st.session_state['df'] = new_df
+                else:
+                    st.error("データが取得できませんでした。")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    df = st.session_state.get('df')
     
     # Consistency check: Ensure the loaded data matches the current input ID
     is_consistent = False
     if df is not None and not df.empty:
         loaded_id = str(df['RaceID'].iloc[0]) if 'RaceID' in df.columns else ""
-        if loaded_id == current_input_id:
+        if loaded_id == test_race_id:
             is_consistent = True
             
     if is_consistent:

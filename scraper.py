@@ -153,7 +153,7 @@ def fetch_html_with_playwright(url, wait_time=4000):
             [python_exe, helper_path, url],
             capture_output=True,
             text=False, # We receive bytes to handle encoding ourselves
-            timeout=70,
+            timeout=120,
             env=env
         )
         
@@ -263,7 +263,8 @@ def fetch_sanrenpuku_odds(race_id):
         # If API returned no data (e.g., before odds open), fallback to HTML scraping
         logger.debug(f"オッズ未発表 (status={data.get('status','-')}, reason={data.get('reason','-')}) - API失敗、HTMLから取得を試みます")
 
-        html_url = f"https://race.netkeiba.com/odds/index.html?type=b7&race_id={race_id}&housiki=c99"
+        domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+        html_url = f"https://{domain}/odds/index.html?type=b7&race_id={race_id}&housiki=c99"
         
         def parse_table_html(html_text):
             soup = BeautifulSoup(html_text, 'html.parser')
@@ -366,7 +367,9 @@ def fetch_win_odds(race_id):
     # If API failed or returned empty results, try HTML scraping with Playwright
     if data is None or 'data' not in data:
         logger.warning("Win Odds API failed or no data. Trying Playwright fallback...")
-    html_url = f"https://race.netkeiba.com/odds/index.html?type=b1&race_id={race_id}"
+    
+    sub = "nar" if is_nar else "race"
+    html_url = f"https://{sub}.netkeiba.com/odds/index.html?type=b1&race_id={race_id}"
     pw_html = fetch_html_with_playwright(html_url)
     
     if pw_html:
@@ -399,7 +402,13 @@ def fetch_popularity(race_id):
     Fetches real-time popularity ranking from the Top Popularity (上位人気 / type=b0) tab.
     Returns dict: {umaban: int (popularity rank)}
     """
-    url = f"https://race.netkeiba.com/odds/index.html?race_id={race_id}"
+    is_nar = False
+    try:
+        if int(str(race_id)[4:6]) > 10: is_nar = True
+    except: pass
+    
+    sub = "nar" if is_nar else "race"
+    url = f"https://{sub}.netkeiba.com/odds/index.html?race_id={race_id}"
     logger.debug(f"Fetching popularity from: {url}")
     
     # This page is almost entirely JS-rendered
@@ -700,14 +709,35 @@ def fetch_advanced_data_playwright(race_id, top_horse_ids=None):
 
 def get_race_data(race_id):
     """Main function to scrape race card data with ROBUST EXTRACTION."""
-    # Use shutuba_past.html to ensure we get past performance data
-    url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
-    logger.info(f"Fetching Race Data: {url}")
+    # Determine JRA vs NAR
+    is_nar = False
+    try:
+        if int(str(race_id)[4:6]) > 10:
+            is_nar = True
+    except: pass
+
+    if is_nar:
+        # NAR uses shutuba.html on nar subdomain
+        url = f"https://nar.netkeiba.com/race/shutuba.html?race_id={race_id}"
+    else:
+        # JRA uses shutuba_past.html for better historic data coverage
+        url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
+        
+    logger.info(f"Fetching {'NAR' if is_nar else 'JRA'} Race Data: {url}")
     
     html = fetch_html_with_playwright(url)
     if not html: return pd.DataFrame()
     
     soup = BeautifulSoup(html, 'html.parser')
+    
+    # Check if we got an empty entry table (happens if shutuba_past.html isn't ready)
+    if not is_nar and not soup.find('tr', class_='HorseList'):
+        logger.info("shutuba_past.html appears empty or not ready. Falling back to standard shutuba.html.")
+        url_fallback = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+        html_fallback = fetch_html_with_playwright(url_fallback)
+        if html_fallback:
+            html = html_fallback
+            soup = BeautifulSoup(html, 'html.parser')
     
     # --- Race Info ---
     race_title = "Unknown Race"
@@ -748,17 +778,33 @@ def get_race_data(race_id):
     # Robust table detection: search for any of the common classes or the sort_table ID
     table = soup.find('table', id='sort_table')
     if not table:
-        table = soup.find('table', class_=re.compile(r'Shutuba_Table|RaceTable01'))
+        table = soup.find('table', class_=re.compile(r'Shutuba_Table|RaceTable01|ShutubaTable'))
+    
+    if not table:
+        # Emergency: maybe it's just the first table with many rows
+        tables = soup.find_all('table')
+        for t in tables:
+            if len(t.find_all('tr')) > 5:
+                table = t
+                break
     
     if not table:
         logger.warning(f"No race table found for ID {race_id}. HTML sample: {str(soup)[:500]}")
         return pd.DataFrame()
     
     # In some pages, rows might be in tbody, but find_all finds them all.
-    rows = table.find_all('tr', class_='HorseList')
+    rows = table.find_all('tr', class_=re.compile(r'HorseList|Entry'))
     if not rows:
         # Emergency fallback: find ANY tr with Jockey/HorseInfo inside
-        rows = [tr for tr in table.find_all('tr') if tr.find('td', class_=re.compile(r'Jockey|Horse'))]
+        rows = [tr for tr in table.find_all('tr') if tr.find('td', class_=re.compile(r'Jockey|Horse|Umaban'))]
+    
+    if not rows:
+        # Last resort: just take all TRs in the first tbody if it exists, or just all TRs (skipping headers)
+        tbody = table.find('tbody')
+        if tbody:
+             rows = tbody.find_all('tr')
+        else:
+             rows = table.find_all('tr')[2:] # Assume first 2 are headers
         
     horses = []
     
@@ -775,7 +821,8 @@ def get_race_data(race_id):
         # Umaban (Horse Number) - Robust version
         # On shutuba_past.html: <td class="Waku">1</td> is Umaban, <td class="Waku1"> is Waku.
         # On shutuba.html: <td class="Umaban"> is Umaban.
-        uma_td = row.find('td', class_=re.compile(r'^Umaban$|^umaban$|^Waku$'))
+        # Use exact match ^...$ to prevent catching 'Waku1' (the bracket column) as the horse number.
+        uma_td = row.find('td', class_=re.compile(r'^(?:Umaban|umaban|Waku|Num)$'))
         if uma_td:
             m_uma = re.search(r'(\d+)', uma_td.text.strip())
             h_data['Umaban'] = int(m_uma.group(1)) if m_uma else 0
@@ -788,8 +835,11 @@ def get_race_data(race_id):
                 h_data['Umaban'] = 0
         
         # Waku (Bracket Number)
-        # Often class starts with Waku (Waku1, Waku2...) or is just Waku
-        waku_td = row.find('td', class_=re.compile(r'Waku|waku'))
+        # Often class starts with Waku (Waku1, Waku2...). Try to get the numbered one first.
+        waku_td = row.find('td', class_=re.compile(r'^(?:Waku\d+|waku\d+)$'))
+        if not waku_td:
+            waku_td = row.find('td', class_=re.compile(r'Waku|waku'))
+            
         if waku_td:
             # If we used Waku for Umaban, we might need to find another one for Bracket
             # Usually the bracket is the FIRST cell
@@ -800,10 +850,7 @@ def get_race_data(race_id):
         
         # Name
         # We need to be careful NOT to match 'Horse_Select' or 'Horse_Info_ItemWrap'
-        h_info = row.find('td', class_=re.compile(r'^(Horse_Info|HorseInfo)$'))
-        if not h_info:
-            # Fallback for other structures
-            h_info = row.find('td', class_=re.compile(r'Horse_?Info'))
+        h_info = row.find('td', class_=re.compile(r'Horse_?Info'))
         
         if not h_info: continue
         
