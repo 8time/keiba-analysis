@@ -102,7 +102,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"❌ 実行エラー: {e}")
     else:
-        with st.expander("❓ U指数・ラボ指数を使いたい場合"):
+        with st.expander("❓ U指数・オメガ指数を使いたい場合"):
             st.markdown("""
             クラウド版ではログインが必要なデータ（U指数など）を直接取得できません。
             
@@ -2877,7 +2877,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "Jockey": 0.0, 
                 "Training": 0.0,
                 "Weight": 0.0, 
-                "LaboIndex": 0.0, 
+                "LaboIndex": 0.0, # Omega Index
                 "Bloodline": 0.0
             }
         
@@ -2904,7 +2904,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
 
         st.write("### 📊 影響率（ウェイト）設定")
         # Column distribution matching the result table:
-        # 馬番(1), 馬名(2), 特徴(1), 人気(1), 馬体重(1.5), 調教(1.2), U指(1.2), ラボ(1), 血統(1), 元順(1), 元スコ(1.2), DIY2(1.2), DIY1(1.2), Test(1.5), 備考(3)
+        # 馬番(1), 馬名(2), 特徴(1), 人気(1), 馬体重(1.5), 調教(1.2), U指(1.2), オメガ(1), 血統(1), 元順(1), 元スコ(1.2), DIY2(1.2), DIY1(1.2), Test(1.5), 備考(3)
         # We need to map 10 inputs across these.
         cols = st.columns([1, 2, 1, 1.5, 1.2, 1.2, 1, 1, 1, 1.2, 1.2, 1.2, 1.5, 3]) 
         
@@ -2925,8 +2925,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             sw["UIndex"] = st.number_input("% (U指)", value=sw["UIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_uindex", label_visibility="collapsed")
             st.markdown('<div class="weight-header">U指 %</div>', unsafe_allow_html=True)
         with cols[6]: 
-            sw["LaboIndex"] = st.number_input("% (ラボ)", value=sw["LaboIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_labo", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">ラボ %</div>', unsafe_allow_html=True)
+            sw["LaboIndex"] = st.number_input("% (オメガ)", value=sw["LaboIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_labo", label_visibility="collapsed")
+            st.markdown('<div class="weight-header">オメガ %</div>', unsafe_allow_html=True)
         with cols[7]: 
             sw["Bloodline"] = st.number_input("% (血統)", value=sw["Bloodline"], min_value=0.0, max_value=100.0, step=1.0, key="w_blood", label_visibility="collapsed")
             st.markdown('<div class="weight-header">血統 %</div>', unsafe_allow_html=True)
@@ -2963,7 +2963,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         if st.button("🚀 Playwrightで全てのデータ取得・計算を一括実行", key="btn_pw_test", type="primary"):
             race_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
             with st.status("📊 統合データ処理中...", expanded=True) as status:
-                st.write("1. Playwrightブラウザ起動... [馬体重/調教/血統/U指数/ラボ] をスキャンしています")
+                st.write("1. Playwrightブラウザ起動... [馬体重/調教/血統/U指数/オメガ] をスキャンしています")
                 top10_umaban = df_test.head(10)['Umaban'].tolist()
                 adv_data = scraper.fetch_advanced_data_playwright(race_id, top_horse_ids=top10_umaban)
                 st.session_state['test_adv_data'] = adv_data
@@ -3144,7 +3144,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if pop_score > 0 and sw.get("Popularity", 0) > 0: remarks.append(f"人({int(row.get('Popularity'))})")
             if training_score != 0 and sw.get("Training", 0) > 0: remarks.append(f"調({training_score})")
             if j_bonus > 0 and sw.get("Jockey", 0) > 0: remarks.append(f"騎({j_bonus})")
-            if l_val > 0 and sw.get("LaboIndex", 0) > 0: remarks.append(f"ラ({l_val})")
+            if l_val > 0 and sw.get("LaboIndex", 0) > 0: remarks.append(f"オメガ({l_val})")
             if blood_score > 0 and sw.get("Bloodline", 0) > 0: remarks.append("血(有)")
             
             # Final Test Score = Weighted Core + Raw Diff (Only remaining minor additive bonuses)
@@ -3157,7 +3157,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "馬体重": weight_str,
                 "調教": training_eval if training_eval else "-",
                 "U指数": pw_data.get('UIndex', "-"),
-                "ラボ指数": pw_data.get('LaboIndex', "-"),
+                "オメガ指数": pw_data.get('LaboIndex', "-"),
                 "血統": blood_flag if blood_flag else "-",
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
@@ -3829,7 +3829,7 @@ if nav == "📦 データ保管庫":
     from datetime import date
 
     st.header("📦 データ保管庫 (Storage Hub)")
-    st.caption("ローカルで取得したデータ（U指数・ラボ指数含む）をクラウドに同期し、いつでも活用できます。")
+    st.caption("ローカルで取得したデータ（U指数・オメガ指数含む）をクラウドに同期し、いつでも活用できます。")
 
     st.markdown("""
     > [!NOTE]
@@ -3911,7 +3911,7 @@ if nav == "📦 データ保管庫":
                 RaceName=('RaceName', 'first') if 'RaceName' in df_date.columns else ('RaceID', 'first'),
                 頭数=('RaceID', 'count'),
                 U指数=('UIndex', lambda x: '✅' if x.notna().any() else '-') if 'UIndex' in df_date.columns else ('RaceID', lambda x: '-'),
-                ラボ指数=('LaboIndex', lambda x: '✅' if x.notna().any() else '-') if 'LaboIndex' in df_date.columns else ('RaceID', lambda x: '-'),
+                オメガ指数=('LaboIndex', lambda x: '✅' if x.notna().any() else '-') if 'LaboIndex' in df_date.columns else ('RaceID', lambda x: '-'),
             ).reset_index()
             st.dataframe(race_summary, use_container_width=True)
 
@@ -3939,7 +3939,7 @@ if nav == "📦 データ保管庫":
         "race_history.csv または解析済みCSVをアップロード",
         type=["csv"],
         key="hub_csv_uploader",
-        help="ローカルで取得したU指数・ラボ指数データを含むCSVをアップロードしてください。"
+        help="ローカルで取得したU指数・オメガ指数データを含むCSVをアップロードしてください。"
     )
 
     if uploaded_file is not None:
