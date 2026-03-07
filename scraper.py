@@ -137,11 +137,9 @@ def fetch_html_with_playwright(url, wait_time=4000):
     import sys
     
     python_exe = sys.executable 
-    # Fallback if sys.executable is the Windows store stub or on Linux server
-    if sys.platform == 'win32' and "WindowsApps" in python_exe:
+    # Fallback to the one we know works if sys.executable is the store stub
+    if "WindowsApps" in python_exe:
         python_exe = r"C:\Users\kimnhaty\AppData\Local\Programs\Python\Python313\python.exe"
-    elif not sys.executable or os.path.basename(sys.executable) == "pythonw.exe":
-        python_exe = "python" # General fallback for Linux/Unix/environments where sys.executable is weird
     
     helper_path = os.path.join(os.path.dirname(__file__), "fetch_helper.py")
     

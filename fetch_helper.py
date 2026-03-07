@@ -11,11 +11,8 @@ if sys.platform == 'win32':
 
 def fetch_main(url):
     try:
-        # Use a fresh fetcher every time with strict server-compatible headless args
-        fetcher = DynamicFetcher(
-            headless=True,
-            browser_args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-        )
+        # Use a fresh fetcher every time
+        fetcher = DynamicFetcher()
         # netkeiba sometimes needs a real user agent
         # Try to wait for the horse table specifically if possible
         response = fetcher.fetch(
