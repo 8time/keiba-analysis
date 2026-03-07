@@ -198,7 +198,7 @@ def detect_and_record(ha: Horse, ra: Race, hb: Horse, rb: Race, entity_label: st
     m_label = f"[{entity_label}] {rb.race_number}R({hb.horse_number}番)"
 
     # P1: 裏同士 (Back-to-Back)
-    # 頭数が違う場合に裏番が一致
+    # 頭数が違う場合に裏番が一致 (同頭数のレースは対象外)
     if ra.field_size != rb.field_size and ha.ura_number == hb.ura_number:
         ha.matched_details.append(f"{m_label} - 裏同士")
         ha.matched_patterns.add("P1")
@@ -208,28 +208,43 @@ def detect_and_record(ha: Horse, ra: Race, hb: Horse, rb: Race, entity_label: st
         ha.matched_details.append(f"{m_label} - 裏表逆")
         ha.matched_patterns.add("P2")
 
-    # P3: 一の位一致 (Ones Match)
-    if ha.horse_number % 10 == hb.horse_number % 10:
-        ha.matched_details.append(f"{m_label} - 一の位一致")
+    # P3: 1の位が同じ (Ones Match)
+    # 馬番が違う場合に1の位が一致 (同じ馬番、例:11番同士は対象外。表からのみ)
+    if ha.horse_number != hb.horse_number and (ha.horse_number % 10 == hb.horse_number % 10):
+        ha.matched_details.append(f"{m_label} - 1の位一致")
         ha.matched_patterns.add("P3")
 
     # P4: 片方循環 (Cycle)
-    # 頭数が違う場合に、大きい方の馬番を小さい方の頭数で循環させた値が一致
+    # 頭数が違う場合に対象 (同頭数のレースは対象外)
     if ra.field_size != rb.field_size:
-        # Determine which is smaller
-        if ra.field_size < rb.field_size:
-            # Shift b onto a's cycle
-            cycle = ((hb.horse_number - 1) % ra.field_size) + 1
-            if cycle == ha.horse_number:
-                ha.matched_details.append(f"{m_label} - 片方循環")
+        # Smaller race scale
+        smaller_f = min(ra.field_size, rb.field_size)
+        
+        # 1. Forward Cycle (表循環): Larger race horse number projects onto smaller race horse number
+        # 2. Backward Cycle (裏循環): Larger race horse number projects onto smaller race ura_number
+        
+        # We need to check if target horse in larger race projects onto smaller race horse's position
+        if ra.field_size > rb.field_size:
+            target_num = ha.horse_number
+            projected = ((target_num - 1) % smaller_f) + 1
+            # Case A: Matches smaller race horse_number
+            if projected == hb.horse_number:
+                ha.matched_details.append(f"{m_label} - 片方循環(表)")
                 ha.matched_patterns.add("P4")
-        else:
-            # Shift a onto b's cycle
-            cycle = ((ha.horse_number - 1) % rb.field_size) + 1
-            if cycle == hb.horse_number:
-                # In this logic, we record for HA if HA's cycle matches HB's actual number
-                # But P4 logic usually means "these two are structurally linked"
-                ha.matched_details.append(f"{m_label} - 片方循環")
+            # Case B: Matches smaller race ura_number
+            if projected == hb.ura_number:
+                ha.matched_details.append(f"{m_label} - 片方循環(裏)")
+                ha.matched_patterns.add("P4")
+        else: # ra.field_size < rb.field_size
+            target_num = hb.horse_number
+            projected = ((target_num - 1) % smaller_f) + 1
+            # Case A: Matches smaller race (ours) horse_number
+            if projected == ha.horse_number:
+                ha.matched_details.append(f"{m_label} - 片方循環(表)")
+                ha.matched_patterns.add("P4")
+            # Case B: Matches smaller race (ours) ura_number
+            if projected == ha.ura_number:
+                ha.matched_details.append(f"{m_label} - 片方循環(裏)")
                 ha.matched_patterns.add("P4")
 
 # ──────────────────────────────────────────────
