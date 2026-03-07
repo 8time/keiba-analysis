@@ -27,6 +27,15 @@ try:
 except (AttributeError, ValueError):
     pass
 
+# Patch print to safely ignore closed pipes
+_builtin_print = print
+def safe_print(*args, **kwargs):
+    try:
+        _builtin_print(*args, **kwargs)
+    except (ValueError, OSError, AttributeError):
+        pass
+print = safe_print
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

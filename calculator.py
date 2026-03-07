@@ -631,7 +631,13 @@ def calculate_battle_score(df):
     temp_df.loc[temp_df['Odds'] == 0, 'Odds'] = 9999.0
     
     # Calculate Popularity from Odds to ensure it's always available (especially for past races)
-    temp_df['Popularity'] = temp_df['Odds'].rank(method='min', ascending=True)
+    valid_odds_df = temp_df[temp_df['Odds'] < 9999.0]
+    if not valid_odds_df.empty:
+        # Only overwrite Popularity for horses with valid odds
+        temp_df.loc[temp_df['Odds'] < 9999.0, 'Popularity'] = valid_odds_df['Odds'].rank(method='min', ascending=True)
+    
+    # Ensure any remaining horses with 9999.0 odds don't get ranked 1st
+    temp_df.loc[temp_df['Odds'] == 9999.0, 'Popularity'] = 99
     df['Popularity'] = temp_df['Popularity']
     
     # 1. Odds Sets
