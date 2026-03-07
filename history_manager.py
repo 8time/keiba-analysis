@@ -244,3 +244,71 @@ def update_history_with_results():
         return f"Updated {updated_count} records."
     else:
         return "No new results."
+
+
+def merge_uploaded_csv(uploaded_df: pd.DataFrame) -> dict:
+    """
+    Merges an uploaded DataFrame (from a locally-generated CSV) into the history.
+    Deduplicates by RaceID + Umaban. Returns a summary dict.
+    """
+    if uploaded_df.empty:
+        return {"status": "error", "message": "アップロードファイルが空です。"}
+
+    existing_df = load_history()
+
+    # Normalize RaceID column to string
+    uploaded_df = uploaded_df.copy()
+    uploaded_df['RaceID'] = uploaded_df['RaceID'].astype(str)
+
+    if not existing_df.empty:
+        existing_df['RaceID'] = existing_df['RaceID'].astype(str)
+        # Find only new records (by RaceID + Umaban combination)
+        existing_key = existing_df['RaceID'].astype(str) + "_" + existing_df.get('Umaban', pd.Series([''] * len(existing_df))).astype(str)
+        uploaded_key = uploaded_df['RaceID'].astype(str) + "_" + uploaded_df.get('Umaban', pd.Series([''] * len(uploaded_df))).astype(str)
+        new_mask = ~uploaded_key.isin(existing_key.values)
+        new_rows = uploaded_df[new_mask]
+        merged = pd.concat([existing_df, new_rows], ignore_index=True)
+    else:
+        new_rows = uploaded_df
+        merged = uploaded_df.copy()
+
+    merged.to_csv(HISTORY_FILE, index=False, encoding='utf-8')
+
+    return {
+        "status": "ok",
+        "total_uploaded": len(uploaded_df),
+        "new_added": len(new_rows),
+        "total_stored": len(merged),
+        "message": f"✅ {len(new_rows)} 件の新しいレコードを追加しました。（重複 {len(uploaded_df) - len(new_rows)} 件はスキップ）"
+    }
+
+
+def get_dates_with_data() -> dict:
+    """
+    Returns a dict of { 'YYYY-MM-DD': count_of_races } for calendar visualization.
+    """
+    df = load_history()
+    if df.empty or 'Date' not in df.columns:
+        return {}
+
+    result = {}
+    # Normalize Date to YYYY-MM-DD format
+    df['_date_normalized'] = pd.to_datetime(df['Date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    grouped = df.groupby('_date_normalized')['RaceID'].nunique()  # count unique races per day
+    for date_str, count in grouped.items():
+        if date_str and date_str != 'NaT':
+            result[date_str] = int(count)
+    return result
+
+
+def get_data_for_date(date_str: str) -> pd.DataFrame:
+    """
+    Returns all stored data for a given date (YYYY-MM-DD or YYYY/MM/DD).
+    """
+    df = load_history()
+    if df.empty or 'Date' not in df.columns:
+        return pd.DataFrame()
+
+    df['_date_normalized'] = pd.to_datetime(df['Date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    target = pd.to_datetime(date_str, errors='coerce').strftime('%Y-%m-%d')
+    return df[df['_date_normalized'] == target].drop(columns=['_date_normalized'], errors='ignore')

@@ -91,6 +91,7 @@ with st.sidebar:
             "🔍 Race Scanner (Batch)",
             "💰 BetSync（資金管理）",
             "📊 History & Review",
+            "📦 データ保管庫",
             "🧪 新ロジックテスト(FEW+マクリ)",
             "📚 RMHS分析",
             "🏇 過去走R理論スキャン",
@@ -3758,6 +3759,183 @@ if nav == "🔬 実験その３(馬番パターン)":
             if all_patterns:
                 pat_series = pd.Series(all_patterns).value_counts()
                 st.bar_chart(pat_series)
+
+# ──────────────────────────────────────────────
+# 📦 データ保管庫 (Storage Hub) タブ
+# ──────────────────────────────────────────────
+if nav == "📦 データ保管庫":
+    import history_manager
+    from calendar import monthcalendar, month_name
+    from datetime import date
+
+    st.header("📦 データ保管庫 (Storage Hub)")
+    st.caption("ローカルで取得したデータ（U指数・ラボ指数含む）をクラウドに同期し、いつでも活用できます。")
+
+    st.markdown("""
+    > [!NOTE]
+    > **使い方**: ローカルPCで解析を実行し、生成された `race_history.csv` をここからアップロードするか、
+    > `push.bat` で GitHub にコミットしてください。データはクラウドサーバーに永続保存されます。
+    """)
+
+    # ─────────────────────────────────────────
+    # ① カレンダー表示（データ取得済みの日を強調）
+    # ─────────────────────────────────────────
+    st.subheader("📅 データ取得済みカレンダー")
+
+    dates_with_data = history_manager.get_dates_with_data()
+
+    # 月選択
+    today = date.today()
+    col_y, col_m = st.columns(2)
+    with col_y:
+        sel_year = st.selectbox("年", list(range(2024, today.year + 2)), index=today.year - 2024, key="hub_year")
+    with col_m:
+        sel_month = st.selectbox("月", list(range(1, 13)), index=today.month - 1, key="hub_month",
+                                  format_func=lambda m: f"{m}月")
+
+    # カレンダー描画
+    weeks = monthcalendar(sel_year, sel_month)
+    day_headers = ["月", "火", "水", "木", "金", "土", "日"]
+    cal_html = """
+    <style>
+    .hub-cal { width: 100%; border-collapse: collapse; font-size: 1em; }
+    .hub-cal th { background: #1e1e2e; color: #aaa; text-align: center; padding: 6px; }
+    .hub-cal td { text-align: center; padding: 8px; border: 1px solid #333; border-radius: 4px; min-width: 36px; }
+    .hub-cal td.no-day { background: transparent; border: none; }
+    .hub-cal td.has-data { background: #1a472a; color: #6fcf97; font-weight: bold; cursor: pointer; }
+    .hub-cal td.today { outline: 2px solid #f59e0b; }
+    .hub-cal td.no-data { color: #666; }
+    .hub-cal .badge { font-size: 0.65em; background: #2d6a4f; color: #b7e4c7; border-radius: 8px; padding: 1px 5px; display: block; }
+    </style>
+    <table class="hub-cal"><tr>
+    """ + "".join(f"<th>{h}</th>" for h in day_headers) + "</tr>"
+
+    for week in weeks:
+        cal_html += "<tr>"
+        for d in week:
+            if d == 0:
+                cal_html += '<td class="no-day"></td>'
+            else:
+                date_key = f"{sel_year}-{sel_month:02d}-{d:02d}"
+                is_today = (d == today.day and sel_month == today.month and sel_year == today.year)
+                today_cls = " today" if is_today else ""
+                if date_key in dates_with_data:
+                    race_count = dates_with_data[date_key]
+                    cal_html += f'<td class="has-data{today_cls}">{d}<span class="badge">{race_count}R</span></td>'
+                else:
+                    cal_html += f'<td class="no-data{today_cls}">{d}</td>'
+        cal_html += "</tr>"
+    cal_html += "</table>"
+    st.html(cal_html)
+
+    # ─────────────────────────────────────────
+    # ② 日付別データ確認
+    # ─────────────────────────────────────────
+    st.divider()
+    st.subheader("🔎 日付別データ確認")
+
+    if dates_with_data:
+        sorted_dates = sorted(dates_with_data.keys(), reverse=True)
+        selected_date = st.selectbox(
+            "データ取得済みの日付を選択",
+            sorted_dates,
+            format_func=lambda d: f"📅 {d}（{dates_with_data[d]}レース分）",
+            key="hub_date_sel"
+        )
+        df_date = history_manager.get_data_for_date(selected_date)
+        if not df_date.empty:
+            st.success(f"✅ {selected_date} のデータ: {len(df_date['RaceID'].unique())} レース / {len(df_date)} 頭")
+
+            # サマリーテーブル（レース別）
+            race_summary = df_date.groupby('RaceID').agg(
+                RaceName=('RaceName', 'first') if 'RaceName' in df_date.columns else ('RaceID', 'first'),
+                頭数=('RaceID', 'count'),
+                U指数=('UIndex', lambda x: '✅' if x.notna().any() else '-') if 'UIndex' in df_date.columns else ('RaceID', lambda x: '-'),
+                ラボ指数=('LaboIndex', lambda x: '✅' if x.notna().any() else '-') if 'LaboIndex' in df_date.columns else ('RaceID', lambda x: '-'),
+            ).reset_index()
+            st.dataframe(race_summary, use_container_width=True)
+
+            with st.expander("📋 生データを表示（全カラム）"):
+                st.dataframe(df_date, use_container_width=True)
+        else:
+            st.warning("データが見つかりませんでした。")
+    else:
+        st.info("まだ保管庫にデータがありません。下のアップローダーからCSVを登録してください。")
+
+    # ─────────────────────────────────────────
+    # ③ ローカルCSVアップロード（クラウド同期）
+    # ─────────────────────────────────────────
+    st.divider()
+    st.subheader("⬆️ ローカルCSV同期（クラウドへアップロード）")
+
+    st.markdown("""
+    **手順：**
+    1. ローカルPCの `keiba_analysis` フォルダ内にある `race_history.csv` をドラッグ＆ドロップ
+    2. または、ローカルで解析後に保存された任意のCSVをアップロード
+    3. 「同期する」ボタンを押して保管庫に追加
+    """)
+
+    uploaded_file = st.file_uploader(
+        "race_history.csv または解析済みCSVをアップロード",
+        type=["csv"],
+        key="hub_csv_uploader",
+        help="ローカルで取得したU指数・ラボ指数データを含むCSVをアップロードしてください。"
+    )
+
+    if uploaded_file is not None:
+        try:
+            uploaded_df = pd.read_csv(uploaded_file, encoding='utf-8')
+        except Exception:
+            try:
+                uploaded_file.seek(0)
+                uploaded_df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+            except Exception as e:
+                st.error(f"CSVの読み込みに失敗しました: {e}")
+                uploaded_df = pd.DataFrame()
+
+        if not uploaded_df.empty:
+            st.success(f"✅ ファイル読み込み成功: {len(uploaded_df)} 行 / {uploaded_df.shape[1]} カラム")
+            with st.expander("📋 プレビュー（最初の10行）"):
+                st.dataframe(uploaded_df.head(10), use_container_width=True)
+
+            if st.button("⬆️ 保管庫に同期する", type="primary", key="hub_sync_btn"):
+                result = history_manager.merge_uploaded_csv(uploaded_df)
+                if result["status"] == "ok":
+                    st.success(result["message"])
+                    st.info(f"📊 保管庫合計: {result['total_stored']} 件のレコード")
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+
+    # ─────────────────────────────────────────
+    # ④ 保管庫統計
+    # ─────────────────────────────────────────
+    st.divider()
+    st.subheader("📊 保管庫サマリー")
+
+    all_hist = history_manager.load_history()
+    if not all_hist.empty:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📅 記録日数", len(dates_with_data))
+        with col2:
+            unique_races = all_hist['RaceID'].nunique() if 'RaceID' in all_hist.columns else 0
+            st.metric("🏇 記録レース数", unique_races)
+        with col3:
+            st.metric("🐴 記録頭数", len(all_hist))
+        with col4:
+            has_u = all_hist['UIndex'].notna().sum() if 'UIndex' in all_hist.columns else 0
+            st.metric("✨ U指数あり", f"{has_u} 件")
+
+        # GitHub経由での保存案内
+        st.markdown("""
+        ---
+        > 💡 **データを永続保存するには**: ローカルで `push.bat` を実行し、
+        > `race_history.csv` を GitHub に コミットしてください。
+        > Streamlit Cloud は自動的に最新データをデプロイします。
+        """)
+    else:
+        st.info("保管庫は現在空です。")
 
 # ──────────────────────────────────────────────
 # --- Footer ---
