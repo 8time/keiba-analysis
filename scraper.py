@@ -979,7 +979,8 @@ def get_race_data(race_id, use_storage=True):
                 'Rank': 99, 'Time': 0, 'Distance': 0, 'Surface': '', 
                 'Agari': 0.0, 'AgariType': 'Imputed', 'Passing': '8-8', 
                 'PassingType': 'Imputed', 'Grade': 'OP', 'Date': '2000.01.01',
-                'Condition': '良', 'Popularity': 99, 'TimeIndexRank': 99
+                'Condition': '良', 'Popularity': 99, 'TimeIndexRank': 99,
+                'Weight': 55.0, 'Margin': 9.9
             }
             full_text = p_td.text.strip()
             
@@ -1001,12 +1002,25 @@ def get_race_data(race_id, use_storage=True):
                 if 'G1' in race_name or 'GI' in race_name: run['Grade'] = 'G1'
                 elif 'G2' in race_name or 'GII' in race_name: run['Grade'] = 'G2'
                 elif 'G3' in race_name or 'GIII' in race_name: run['Grade'] = 'G3'
+                elif 'OP' in race_name or '(L)' in race_name: run['Grade'] = 'OP'
+                elif '3勝' in race_name or '1600万' in race_name: run['Grade'] = '3勝'
+                elif '2勝' in race_name or '1000万' in race_name: run['Grade'] = '2勝'
+                elif '1勝' in race_name or '500万' in race_name: run['Grade'] = '1勝'
+                elif '未勝利' in race_name: run['Grade'] = '未勝利'
+                elif '新馬' in race_name: run['Grade'] = '新馬'
                 else: run['Grade'] = 'OP'
+
+            # Data03 (Weight) e.g "7頭 3番 1人 田辺裕信 55.0"
+            d03 = p_td.find('div', class_='Data03')
+            if d03:
+                txt = d03.text.strip()
+                m_w = re.search(r'(\d+\.\d)$', txt)
+                if m_w:
+                    run['Weight'] = float(m_w.group(1))
 
             # Data04 (Popularity/Odds)
             d04 = p_td.find('div', class_='Data04')
             if d04:
-                # Popularity is often like "3人気"
                 match_p = re.search(r'(\d+)人気', d04.text)
                 if match_p: run['Popularity'] = int(match_p.group(1))
 
@@ -1061,15 +1075,15 @@ def get_race_data(race_id, use_storage=True):
                     run['Agari'] = float(m_aga.group(1))
                     run['AgariType'] = 'Real'
 
-            # Data07 (Horse weight, and often Margin e.g. "0.6")
+            # Data07 (Margin)
             d07 = p_td.find('div', class_='Data07')
             if d07:
                 t07 = d07.text.strip()
-                m_mar = re.search(r'(\d+\.\d+)', t07)
+                m_mar = re.search(r'\(([-+]?\d+\.\d+)\)', t07)
                 if m_mar:
                     run['Margin'] = float(m_mar.group(1))
                 else:
-                    run['Margin'] = 9.9 # Safe default if missing
+                    run['Margin'] = 9.9
             
             past_runs.append(run)
         

@@ -1295,11 +1295,12 @@ if nav == "🏠 Single Race Analysis":
 
                     # New column set with Projected Score highlighted
                     cols = ['Rank', 'Umaban', 'Name', 'Popularity', 'Odds', 'Jockey',
-                            'Projected Score', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'AvgAgari', 'AvgPosition']
+                            'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'AvgAgari', 'AvgPosition']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
                     column_config = {
                         "Projected Score": st.column_config.NumberColumn("⭐ 予測スコア", format="%.1f"),
+                        "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
                         "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f"),
                         "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.0f"),
                         "BattleScore": st.column_config.NumberColumn("🔥 戦闘力", format="%.1f"),
@@ -3199,6 +3200,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "血統": blood_flag if blood_flag else "-",
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
+                "N指数": round(float(row.get('NIndex', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "Test_Score": round(final_test_score, 1),
@@ -3236,6 +3238,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             column_config={
                 "元の順位": st.column_config.NumberColumn("元の順位", help="ベーススコアでの順位"),
                 "元のスコア": st.column_config.NumberColumn("元のスコア", format="%.1f"),
+                "N指数": st.column_config.NumberColumn("N指数", format="%.1f"),
                 "DIY2": st.column_config.NumberColumn("DIY2(末脚)", format="%.1f"),
                 "DIY指数": st.column_config.NumberColumn("DIY指数", format="%.1f"),
                 "Test_Score": st.column_config.NumberColumn("Test_Score (現在の合算)", format="%.1f"),

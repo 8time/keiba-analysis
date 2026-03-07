@@ -247,56 +247,80 @@ def calculate_diy2_index(df):
 
 def calculate_n_index(df):
     """
-    N-Index Logic (2026-02-22):
-    Points are calculated for the last 10 races + current race:
-    - Popularity <= 3: +1 pt
-    - G1 & Rank <= 3: +3 pts
-    - G2 & Rank <= 3: +2 pts
-    - G3 & Rank == 1: +1 pt
-    - Time Index Rank <= 3 (Marker or Rank): +1 pt
+    N-Index Logic (2026-03-07):
+    Calculates a custom rating using only free past run data (Class, Margin, Weight, Agari).
     
-    Final N-Index = Total Points
+    Base Scores:
+      G1=100, G2=95, G3=90, OP/L=85, 3勝=80, 2勝=75, 1勝=70, 新馬/未勝利=65
+      
+    Run Score = Base - (Margin * 10) + (Weight - 55.0) + (AgariRank <= 3 ? 2 : 0)
+    
+    Final N-Index = Weighted average of last 3 valid runs (50%, 30%, 20%).
     """
     if df.empty:
-        if 'NIndex' not in df.columns: df['NIndex'] = 0
+        if 'NIndex' not in df.columns: df['NIndex'] = 0.0
         return df
     
-    if 'NIndex' not in df.columns: df['NIndex'] = 0
+    if 'NIndex' not in df.columns: df['NIndex'] = 0.0
+    
+    base_scores = {
+        'G1': 100, 'G2': 95, 'G3': 90, 'OP': 85,
+        '3勝': 80, '2勝': 75, '1勝': 70, '未勝利': 65, '新馬': 65
+    }
+    
+    weights = [0.5, 0.3, 0.2]
     
     for i, row in df.iterrows():
-        points = 0
-        
-        # 1. Current Race Data
-        cur_pop = row.get('Popularity', 99)
-        cur_ti_rank = row.get('TimeIndexRank', 99)
-        
-        if cur_pop <= 3: points += 1
-        if cur_ti_rank <= 3: points += 1
-        
-        # 2. Past Races (Last 10)
         past = row.get('PastRuns', [])
-        for run in past[:10]:
-            r_rank = run.get('Rank', 99)
-            r_pop = run.get('Popularity', 99)
-            r_ti_rank = run.get('TimeIndexRank', 99)
-            r_grade = str(run.get('Grade', 'OP')).upper()
-            
-            # Popularity
-            if r_pop <= 3: points += 1
-            
-            # Time Index
-            if r_ti_rank <= 3: points += 1
-            
-            # Grades
-            if (r_grade == 'G1' or r_grade == 'GI') and r_rank <= 3:
-                points += 3
-            elif (r_grade == 'G2' or r_grade == 'GII') and r_rank <= 3:
-                points += 2
-            elif (r_grade == 'G3' or r_grade == 'GIII') and r_rank == 1:
-                points += 1
-                
-        df.at[i, 'NIndex'] = points
+        run_scores = []
         
+        for run in past:
+            if len(run_scores) >= 3:
+                break
+                
+            grade = run.get('Grade', 'OP')
+            margin = run.get('Margin', 9.9)
+            weight = run.get('Weight', 55.0)
+            ti_rank = run.get('TimeIndexRank', 99)
+            
+            # Skip runs with invalid margin or weight if possible, but we use defaults 9.9 and 55.0
+            if margin == 9.9:
+                continue # Skip races where we couldn't properly extract margin (often means DNF or lacking data)
+                
+            base_score = base_scores.get(grade, 85)
+            
+            # Penalty for losing margin (e.g. 0.2s behind -> -2 points)
+            # Bonus for winning margin (e.g. -0.2s ahead -> +2 points)
+            margin_penalty = margin * 10
+            
+            # Weight diff bonus
+            weight_diff = weight - 55.0
+            
+            # Agari Bonus (Time Index Rank proxy for late speed)
+            agari_bonus = 2.0 if ti_rank <= 3 else 0.0
+            
+            score = (base_score - margin_penalty) + weight_diff + agari_bonus
+            
+            # Cap penalities
+            score = max(score, base_score - 20)
+            
+            run_scores.append(score)
+            
+        if run_scores:
+            # Calculate weighted average
+            final_n_score = 0.0
+            total_weight = 0.0
+            for w, s in zip(weights, run_scores):
+                final_n_score += s * w
+                total_weight += w
+            
+            if total_weight > 0:
+                final_n_score /= total_weight
+                
+            df.at[i, 'NIndex'] = round(final_n_score, 1)
+        else:
+            df.at[i, 'NIndex'] = 0.0
+            
     return df
 
 def get_sanrenpuku_recommendations(df, odds_list):
