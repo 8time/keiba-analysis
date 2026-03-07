@@ -75,12 +75,42 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Sidebar: Cache Clear & Navigation
+is_local = (os.name == 'nt') # Simple check for Windows local environment
+is_cloud = not is_local
+
 with st.sidebar:
     st.divider()
     if st.button("🗑️ キャッシュクリア (Cache Clear)"):
         st.cache_data.clear()
         st.cache_resource.clear()
         st.success("Cache cleared! Please re-analyze.")
+
+    # ── Cloud Sync / Help Section ──
+    st.divider()
+    if is_local:
+        st.markdown("### ☁️ Cloud Sync")
+        st.caption("ローカルで取得したデータ（U指数等）をクラウドサーバーへ送信します。")
+        if st.button("🚀 GitHubへ同期（公開）", help="push.bat を実行してデータをアップロードします。"):
+            with st.spinner("Pushing to GitHub..."):
+                try:
+                    import subprocess
+                    result = subprocess.run(["push.bat"], capture_output=True, text=True, shell=True)
+                    if result.returncode == 0:
+                        st.success("✅ 同期が完了しました！クラウド版でデータが利用可能です。")
+                    else:
+                        st.error(f"❌ 同期エラー: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ 実行エラー: {e}")
+    else:
+        with st.expander("❓ U指数・ラボ指数を使いたい場合"):
+            st.markdown("""
+            クラウド版ではログインが必要なデータ（U指数など）を直接取得できません。
+            
+            **手順:**
+            1. **ローカル版**で解析し「履歴に保存」
+            2. ローカル版の「GitHubへ同期」ボタンを押す
+            3. クラウド版を更新すると、データが自動反映されます。
+            """)
 
     st.divider()
     st.markdown("### 🧭 メニュー (Menu)")
