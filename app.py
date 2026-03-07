@@ -3205,6 +3205,35 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "新順位": st.column_config.NumberColumn("現在の順位"),
             }
         )
+        
+        st.divider()
+        if st.button("💾 解析結果を保存 (Save Results)", type="primary"):
+            try:
+                import json
+                save_dir = os.path.join(os.getcwd(), "data", "history")
+                os.makedirs(save_dir, exist_ok=True)
+                
+                # Fetch current race ID
+                current_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', 'unknown_race'))
+                file_path = os.path.join(save_dir, f"{current_id}.json")
+                
+                # Convert DataFrame to dictionary
+                res_dict = df_test_res.to_dict(orient='records')
+                save_data = {
+                    "RaceID": current_id,
+                    "SavedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Results": res_dict
+                }
+                
+                # Save as JSON with UTF-8 encoding
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(save_data, f, ensure_ascii=False, indent=2)
+                    
+                st.success(f"✅ 解析結果を保存しました！\n📂 保存先: `{file_path}`")
+            except Exception as e:
+                import traceback
+                st.error(f"保存エラー: {e}")
+                logger.error(f"Save Error: {traceback.format_exc()}")
             
     else:
         st.warning(f"⚠️ データが現在のレースID（{current_input_id}）と一致しないか、未解析です。")
