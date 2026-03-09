@@ -47,6 +47,10 @@ from datetime import datetime, timedelta
 # Core functionality imports
 from core import scraper
 from core import calculator
+try:
+    importlib.reload(calculator)
+except:
+    pass
 from core import theory_rmhs
 from core import odds_tracker
 from core import odds_analyzer
@@ -1377,7 +1381,7 @@ if nav == "🏠 Single Race Analysis":
                             with f3:
                                 st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
 
-                            st.write(f"**🎯 推奨買い目一覧 ({allocated_res['main_count']}点 + ボーナス)**")
+                            st.write(f"**🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)**")
                             
                             if allocated_res['tickets']:
                                 df_tickets = pd.DataFrame(allocated_res['tickets'])
@@ -1395,7 +1399,7 @@ if nav == "🏠 Single Race Analysis":
                                     })
                                 st.table(pd.DataFrame(display_rows))
                                 
-                                st.success(f"合計購入金額: **{allocated_res['actual_total']:,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res['unit_price']}円)")
+                                st.success(f"合計購入金額: **{allocated_res.get('actual_total', 0):,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res.get('unit_price', 0)}円)")
                             else:
                                 st.warning("条件に合う買い目が見つかりませんでした。")
 
