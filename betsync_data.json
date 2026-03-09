@@ -1,0 +1,15 @@
+{
+  "bankroll": 20000,
+  "init_bet": 100,
+  "target": 50,
+  "strategy": "[稼働中] 6連サバイバル",
+  "ticket": "3連複（15点）",
+  "races": [
+    {
+      "id": "d8fb7b2d-375a-4876-9a2f-0de76f3d7d37",
+      "win": false,
+      "ret": 0,
+      "decided": true
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# Antigravity Ignore File
+# Exclude heavy data files from AI context to prevent bloating and performance issues.
+
+data/
+race_history.csv
+
+# Standard ignores
+__pycache__/
+*.pyc
+auth_session.json
+*.html
+saved_logic_notes.json
+.streamlit/
+.env

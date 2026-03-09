@@ -1,13 +1,16 @@
 import sys, io
+sys.setrecursionlimit(10000) # Increased to handle Torch initialization
 import os
 import logging
 
 # Configure logging to handle Streamlit and sub-module output safely
 logging.basicConfig(level=logging.INFO)
 # Silence noisy internal logs
+# Silence noisy internal logs
 logging.getLogger("scrapling").setLevel(logging.ERROR)
 logging.getLogger("browserforge").setLevel(logging.ERROR)
 logging.getLogger("curl_cffi").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 import streamlit as st
@@ -16,35 +19,98 @@ import google.genai as genai
 from google.genai import types as genai_types
 
 # Load environment variables from .env file (for local testing)
-load_dotenv()
+load_dotenv(override=True)
 
-# API Key Management (Priority: st.secrets > .env)
-# On Streamlit Cloud, set this in: Settings -> Secrets
-# For local dev, use .env file: GEMINI_API_KEY="your_key"
-try:
-    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-except Exception:
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# API Key Management (Priority: .env > st.secrets)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    try:
+        GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+    except Exception:
+        pass
 
 if not GEMINI_API_KEY:
     st.error("API Key not found. Please set GEMINI_API_KEY in .env or Streamlit Secrets.")
     st.stop()
+
+# Debug info (Masked) - REMOVED for security
+# st.sidebar.caption(...) 
+
 import importlib
 import pandas as pd
+import numpy as np
 import time
 import math
-import scraper
-import calculator
+from core import scraper
+from core import calculator
 # Force reload so code changes are always reflected
 importlib.reload(calculator)
 importlib.reload(scraper)
-import theory_rmhs
+from core import theory_rmhs
 importlib.reload(theory_rmhs)
-from scraper import fetch_comprehensive_result
+from core.scraper import fetch_comprehensive_result
+from core import odds_tracker
+importlib.reload(odds_tracker)
+from core.odds_tracker import OddsTracker
+
+from core import odds_analyzer
+importlib.reload(odds_analyzer)
+from core.odds_analyzer import OddsAnalyzer
+from core import vision_analyzer
+importlib.reload(vision_analyzer)
+from core.vision_analyzer import VisionOddsAnalyzer
+from core import local_vision_analyzer
+importlib.reload(local_vision_analyzer) 
+from core.local_vision_analyzer import LocalVisionOddsAnalyzer
+from core.kaggle_client import KaggleChatClient
+
+@st.cache_resource
+def get_local_vision_analyzer_v2():
+    """Cache the EasyOCR reader. Updated to ensure latest code in local_vision_analyzer.py is used."""
+    return LocalVisionOddsAnalyzer()
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Keiba Analysis - Modified Ogura Index", layout="wide")
+
+def render_session_status(key_prefix=""):
+    """Renders session status and login buttons for Umanity and KeibaLab."""
+    import os
+    from datetime import datetime
+    
+    col1, col2 = st.columns(2)
+    
+    # --- Umanity ---
+    with col1:
+        session_umanity = "auth_session.json"
+        st.markdown("**🔑 認証 (Umanity / U指数)**")
+        if os.path.exists(session_umanity):
+            mtime = os.path.getmtime(session_umanity)
+            dt_mtime = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            st.success(f"✅ 保存済み ({dt_mtime})")
+        else:
+            st.warning("⚠️ 未ログイン (U指数取得不可)")
+        
+        if st.button("🔑 Umanity ログイン", key=f"{key_prefix}btn_umanity"):
+            cmd = f'start powershell -NoExit -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py umanity"'
+            os.system(cmd)
+            st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
+
+    # --- KeibaLab ---
+    with col2:
+        session_labo = "labo_session.json"
+        st.markdown("**🔑 認証 (競馬ラボ / オメガ指数)**")
+        if os.path.exists(session_labo):
+            mtime = os.path.getmtime(session_labo)
+            dt_mtime = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            st.success(f"✅ 保存済み ({dt_mtime})")
+        else:
+            st.warning("⚠️ 未ログイン (オメガ指数取得不可)")
+        
+        if st.button("🔑 競馬ラボ ログイン", key=f"{key_prefix}btn_labo"):
+            cmd = f'start powershell -NoExit -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py keibalab"'
+            os.system(cmd)
+            st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
 
 # Custom UI Styling (U-NEXT style dark sidebar)
 st.markdown("""
@@ -149,6 +215,7 @@ def display_icon_legend():
         *   **○ (丸): 対抗候補** (スピード指数 2位)
         *   **▲ (黒三角): 単穴候補** (スピード指数 3位)
         *   **⏱️ (時計): タイム指数保有** (過去走において優秀なタイム指数が記録されている馬)
+        *   **⚠️ (警告): データ不足** (N指数と戦闘力が0の馬。デビュー戦やデータ取得失敗の可能性があります)
         
         **【能力・適性・人気（各カラム）】**
         *   **🚀 (ロケット): 上がり最速（穴馬）** (過去データで上がり3Fが全体1位かつ信頼度高)
@@ -170,708 +237,681 @@ if nav == "💰 BetSync（資金管理）":
     st.header("💰 BetSync 📊 資金管理ダッシュボード")
     st.caption("レースごとの勝敗を記録し、最適な賭け金と残高を自動計算します。")
 
-    # ── 定数 ──
-    ROKU_UNITS   = [100, 200, 300, 400, 500, 600]   # 6連法の単価ステップ
-    TICKET_COUNT = {"3連複（15点）": 15, "馬連（5点）": 5}
+    import json
+    import os
+    import uuid
+    import traceback
+    from datetime import datetime
 
-    # ── Session State 初期化 ──
-    _ss = st.session_state
-    if 'bs_bankroll'  not in _ss: _ss['bs_bankroll']  = 20000
-    if 'bs_init_bet'  not in _ss: _ss['bs_init_bet']  = 100
-    if 'bs_target'    not in _ss: _ss['bs_target']    = 50
-    if 'bs_strategy'  not in _ss: _ss['bs_strategy']  = "[稼働中] 6連サバイバル"
-    if 'bs_ticket'    not in _ss: _ss['bs_ticket']    = "3連複（15点）"
-    if 'bs_races'     not in _ss: _ss['bs_races']     = []   # start empty = Step 1 表示
+    BETSYNC_FILE = "betsync_data.json"
 
-    # ─────────────────────────────────────────
-    # ① 基本設定パネル
-    # ─────────────────────────────────────────
-    STRATEGIES = [
-        "[稼働中] 6連サバイバル",
-        "[稼働中] 3Dリカバリ",
-        "[開発中] ココモ加速",
-        "[稼働中] ジワ上げ",
-        "[開発中] 超追い上げ",
-        "[稼働中] ウィナーズ",
-    ]
-    STRATEGY_INTERNAL = {s: "6連法（サバイバル）" for s in STRATEGIES}
-    STRATEGY_INTERNAL["[稼働中] 3Dリカバリ"] = "3Dリカバリ"
-    STRATEGY_INTERNAL["[稼働中] ジワ上げ"]   = "ジワ上げ"
-    STRATEGY_INTERNAL["[稼働中] ウィナーズ"] = "ウィナーズ"
-    STRATEGY_DESC = {
-        "[開発中] ココモ加速":  "前2戦の負けを合算し、連敗時の威力を高める爆発型。",
-        "[開発中] 超追い上げ":  "負けたら倍額+αを賭ける強気設定。",
-    }
-    # Migrate old session state strategy names
-    if _ss['bs_strategy'] not in STRATEGIES:
-        _ss['bs_strategy'] = STRATEGIES[0]
+    def save_betsync_data(data):
+        with open(BETSYNC_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
-    with st.expander("⚙️ 基本設定（クリックで開閉）", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            _ss['bs_bankroll'] = st.number_input(
-                "開始資金 (円)", min_value=1000, step=1000,
-                value=_ss['bs_bankroll'], key="bs_bankroll_inp"
-            )
-        with c2:
-            _ss['bs_target'] = st.number_input(
-                "目標利回り (%)", min_value=1, max_value=1000, step=10,
-                value=_ss['bs_target'], key="bs_target_inp"
-            )
-        with c3:
-            _ss['bs_init_bet'] = st.number_input(
-                "初期ベット単価 (円)", min_value=100, step=100,
-                value=_ss['bs_init_bet'], key="bs_initbet_inp",
-                help="6連法では初回の単価として使用します（固定100円推奨）"
-            )
+    def load_betsync_data():
+        if os.path.exists(BETSYNC_FILE):
+            try:
+                with open(BETSYNC_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except:
+                return None
+        return None
 
-        cs1, cs2 = st.columns(2)
-        with cs1:
-            _ss['bs_strategy'] = st.selectbox(
-                "ベット戦略",
-                STRATEGIES,
-                index=STRATEGIES.index(_ss['bs_strategy']),
-                key="bs_strategy_sel"
-            )
-        with cs2:
-            TICKET_OPTIONS = list(TICKET_COUNT.keys())
-            _ss['bs_ticket'] = st.selectbox(
-                "馬券種",
-                TICKET_OPTIONS,
-                index=TICKET_OPTIONS.index(_ss['bs_ticket']) if _ss['bs_ticket'] in TICKET_OPTIONS else 0,
-                key="bs_ticket_sel",
-                help="全損ラインと1レース投資額の計算に使用します"
-            )
+    try:
 
-        # Strategy description card (for 開発中 strategies)
-        _sel = _ss['bs_strategy']
-        if _sel in STRATEGY_DESC:
-            st.html(f"""<div style="background:#2a2a3a;border:1px solid #666;border-radius:8px;
-            padding:10px 16px;color:#bbb;font-size:0.88em;">
-  <strong style="color:#FF9800;">&#128679; 開発中</strong>&nbsp;&nbsp;{STRATEGY_DESC[_sel]}<br>
-  <span style="font-size:0.82em;color:#888;">※ 開発中の戦略は「6連サバイバル」のロジックで代替動作します。</span>
-</div>""")
+        # ── 定数 ──
+        ROKU_UNITS   = [100, 200, 300, 400, 500, 600]   # 6連法の単価ステップ
+        TICKET_COUNT = {"3連複（15点）": 15, "馬連（5点）": 5}
 
-        # 6連法の場合、全損ラインをリアルタイム表示
-        if STRATEGY_INTERNAL.get(_ss['bs_strategy']) == "6連法（サバイバル）":
-            tkt = _ss['bs_ticket']
-            n   = TICKET_COUNT[tkt]
-            total_loss = sum(u * n for u in ROKU_UNITS)
-            st.html(f"""
-<div style="background:#FFF3CD;border:2px solid #FFCA28;border-radius:8px;
-            padding:12px 18px;font-size:0.92em;color:#856404;line-height:1.6;">
-  <span style="font-size:1.05em;font-weight:bold;">&#x26A0;&#xFE0F; 6連法 全損ライン</span><br>
-  {tkt} の場合、<strong>¥{total_loss:,}</strong> を超えると全損。<br>
-  単価ステップ：{' &rarr; '.join(f'&yen;{u}' for u in ROKU_UNITS)}&nbsp;&nbsp;
-  (1R投資：&yen;{ROKU_UNITS[0]*n:,}&sim;&yen;{ROKU_UNITS[-1]*n:,})
-</div>""")
-
-    # ─────────────────────────────────────────
-    # 賭け金計算ロジック
-    # ─────────────────────────────────────────
-    bankroll  = _ss['bs_bankroll']
-    init_bet  = _ss['bs_init_bet']
-    strategy  = STRATEGY_INTERNAL.get(_ss['bs_strategy'], "6連法（サバイバル）")
-    ticket    = _ss['bs_ticket']
-    n_tickets = TICKET_COUNT[ticket]
-    races     = _ss['bs_races']
-
-    # --- 6連法：しきい値テーブル（チケット種別） ---
-    # 各Stepの直前時点のサイクル累計マイナス額の上限
-    # 例：3連複 Step1=0-1500, Step2=1501-4500 ...
-    ROKU_THRESHOLDS = {
-        "3連複（15点）": [0, 1500, 4500, 9000, 15000, 22500],  # >22500 = 全損
-        "馬連（5点）":   [0,  500, 1500, 3000,  5000,  7500],  # >7500  = 全損
-    }
-    ROKU_TOTAL_LOSS_LINE = {
-        "3連複（15点）": 22500,
-        "馬連（5点）":    7500,
-    }
-
-    def _roku_step_from_deficit(deficit, thresholds):
-        """Map cycle deficit → step index (0-5). Returns 6 if total loss."""
-        if deficit <= 0:
-            return 0  # recovered → Step 1
-        for i, t in enumerate(thresholds[1:], 1):
-            if deficit <= t:
-                return i   # i=1→Step2, i=2→Step3, ...
-        return 6  # beyond all thresholds = 全損
-
-    computed      = []
-    cum_bet       = 0
-    cycle_deficit = 0
-    _3d_seq        = [1, 1, 1]   # 3Dリカバリ
-    _jiwa_unit     = 100          # ジワ上げ
-    _win_seq       = []           # ウィナーズ: recovery sequence (empty = not triggered)
-    _win_consec_loss = 0          # ウィナーズ: consecutive loss counter
-
-    # Pre-compute the step for the NEXT (pending) race before the loop
-    # so we can display it in the pending card
-    decided_races = [r for r in races if r.get('decided', True)]
-
-    for i, r in enumerate(races):
-        # Skip undecided (pending) races in financial calculations
-        if not r.get('decided', True):
-            continue
-
-        prev = computed[-1] if computed else None
-
-        if strategy == "フラット（固定）":
-            unit = init_bet
-            step = 0
-        elif strategy == "マーチンゲール（負け倍増）":
-            unit = init_bet if (prev is None or prev['win']) else min(prev['unit'] * 2, init_bet * 16)
-            step = 0
-        elif strategy == "逆マーチン（勝ち倍増）":
-            unit = min(prev['unit'] * 2, init_bet * 16) if (prev and prev['win']) else init_bet
-            step = 0
-        elif strategy == "3Dリカバリ":
-            if not _3d_seq:
-                _3d_seq = [1, 1, 1]
-            _3d_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else _3d_seq[0]
-            unit = max(100, (_3d_mult * 50 // 100) * 100)
-            step = len(_3d_seq)
-        elif strategy == "ジワ上げ":
-            unit = _jiwa_unit
-            step = max(0, (unit - 100) // 100)
-        elif strategy == "ウィナーズ":
-            # Winners: flat 100 until 2-loss trigger, then leftmost*2*100
-            if _win_seq:
-                _win_mult = _win_seq[0] * 2
-                unit = _win_mult * 100
-                step = len(_win_seq)
+        # ── Session State 初期化 ──
+        _ss = st.session_state
+        
+        # Load persistence if session is empty
+        if 'bs_races' not in _ss:
+            persisted = load_betsync_data()
+            if persisted:
+                _ss['bs_bankroll'] = persisted.get('bankroll', 20000)
+                _ss['bs_init_bet'] = persisted.get('init_bet', 100)
+                _ss['bs_target']   = persisted.get('target', 50)
+                _ss['bs_strategy'] = persisted.get('strategy', "[稼働中] 6連サバイバル")
+                _ss['bs_ticket']   = persisted.get('ticket', "3連複（15点）")
+                _ss['bs_races']    = persisted.get('races', [])
+                # Ensure all legacy races have a UUID
+                for r in _ss['bs_races']:
+                    if 'id' not in r: r['id'] = str(uuid.uuid4())
             else:
-                unit = 100
-                _win_mult = 1
+                _ss['bs_bankroll'] = 20000
+                _ss['bs_init_bet'] = 100
+                _ss['bs_target']   = 50
+                _ss['bs_strategy'] = "[稼働中] 6連サバイバル"
+                _ss['bs_ticket']   = "3連複（15点）"
+                _ss['bs_races']    = []
+
+        # ─────────────────────────────────────────
+        # ① 基本設定パネル
+        # ─────────────────────────────────────────
+        STRATEGIES = [
+            "[稼働中] 6連サバイバル",
+            "[稼働中] 3Dリカバリ",
+            "[開発中] ココモ加速",
+            "[稼働中] ジワ上げ",
+            "[開発中] 超追い上げ",
+            "[稼働中] ウィナーズ",
+        ]
+        STRATEGY_INTERNAL = {s: "6連法（サバイバル）" for s in STRATEGIES}
+        STRATEGY_INTERNAL["[稼働中] 3Dリカバリ"] = "3Dリカバリ"
+        STRATEGY_INTERNAL["[稼働中] ジワ上げ"]   = "ジワ上げ"
+        STRATEGY_INTERNAL["[稼働中] ウィナーズ"] = "ウィナーズ"
+        STRATEGY_DESC = {
+            "[開発中] ココモ加速":  "前2戦の負けを合算し、連敗時の威力を高める爆発型。",
+            "[開発中] 超追い上げ":  "負けたら倍額+αを賭ける強気設定。",
+        }
+        # Migrate old session state strategy names
+        if _ss['bs_strategy'] not in STRATEGIES:
+            _ss['bs_strategy'] = STRATEGIES[0]
+
+        with st.expander("⚙️ 基本設定（クリックで開閉）", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                _ss['bs_bankroll'] = st.number_input(
+                    "開始資金 (円)", min_value=1000, step=1000,
+                    value=_ss['bs_bankroll'], key="bs_bankroll_inp"
+                )
+            with c2:
+                _ss['bs_target'] = st.number_input(
+                    "目標利回り (%)", min_value=1, max_value=1000, step=10,
+                    value=_ss['bs_target'], key="bs_target_inp"
+                )
+            with c3:
+                _ss['bs_init_bet'] = st.number_input(
+                    "初期ベット単価 (円)", min_value=100, step=100,
+                    value=_ss['bs_init_bet'], key="bs_initbet_inp",
+                    help="6連法では初回の単価として使用します（固定100円推奨）"
+                )
+
+            cs1, cs2 = st.columns(2)
+            with cs1:
+                _ss['bs_strategy'] = st.selectbox(
+                    "ベット戦略",
+                    STRATEGIES,
+                    index=STRATEGIES.index(_ss['bs_strategy']),
+                    key="bs_strategy_sel"
+                )
+            with cs2:
+                TICKET_OPTIONS = list(TICKET_COUNT.keys())
+                _ss['bs_ticket'] = st.selectbox(
+                    "馬券種",
+                    TICKET_OPTIONS,
+                    index=TICKET_OPTIONS.index(_ss['bs_ticket']) if _ss['bs_ticket'] in TICKET_OPTIONS else 0,
+                    key="bs_ticket_sel",
+                    help="全損ラインと1レース投資額の計算に使用します"
+                )
+
+            # Strategy description card (for 開発中 strategies)
+            _sel = _ss['bs_strategy']
+            if _sel in STRATEGY_DESC:
+                st.html(f"""<div style="background:#2a2a3a;border:1px solid #666;border-radius:8px;
+                padding:10px 16px;color:#bbb;font-size:0.88em;">
+      <strong style="color:#FF9800;">&#128679; 開発中</strong>&nbsp;&nbsp;{STRATEGY_DESC[_sel]}<br>
+      <span style="font-size:0.82em;color:#888;">※ 開発中の戦略は「6連サバイバル」のロジックで代替動作します。</span>
+    </div>""")
+
+            # 6連法の場合、全損ラインをリアルタイム表示
+            if STRATEGY_INTERNAL.get(_ss['bs_strategy']) == "6連法（サバイバル）":
+                tkt = _ss['bs_ticket']
+                n   = TICKET_COUNT[tkt]
+                total_loss = sum(u * n for u in ROKU_UNITS)
+                st.html(f"""
+    <div style="background:#FFF3CD;border:2px solid #FFCA28;border-radius:8px;
+                padding:12px 18px;font-size:0.92em;color:#856404;line-height:1.6;">
+      <span style="font-size:1.05em;font-weight:bold;">&#x26A0;&#xFE0F; 6連法 全損ライン</span><br>
+      {tkt} の場合、<strong>¥{total_loss:,}</strong> を超えると全損。<br>
+      単価ステップ：{' &rarr; '.join(f'&yen;{u}' for u in ROKU_UNITS)}&nbsp;&nbsp;
+      (1R投資：&yen;{ROKU_UNITS[0]*n:,}&sim;&yen;{ROKU_UNITS[-1]*n:,})
+    </div>""")
+
+        # ─────────────────────────────────────────
+        # 賭け金計算ロジック
+        # ─────────────────────────────────────────
+        bankroll  = _ss['bs_bankroll']
+        init_bet  = _ss['bs_init_bet']
+        strategy  = STRATEGY_INTERNAL.get(_ss['bs_strategy'], "6連法（サバイバル）")
+        ticket    = _ss['bs_ticket']
+        n_tickets = TICKET_COUNT[ticket]
+        races     = _ss['bs_races']
+
+        # --- 6連法：しきい値テーブル（チケット種別） ---
+        ROKU_THRESHOLDS = {
+            "3連複（15点）": [0, 1500, 4500, 9000, 15000, 22500],  # >22500 = 全損
+            "馬連（5点）":   [0,  500, 1500, 3000,  5000,  7500],  # >7500  = 全損
+        }
+        ROKU_TOTAL_LOSS_LINE = {
+            "3連複（15点）": 22500,
+            "馬連（5点）":    7500,
+        }
+
+        def _roku_step_from_deficit(deficit, thresholds):
+            """Map cycle deficit → step index (0-5). Returns 6 if total loss."""
+            if deficit <= 0:
+                return 0  # recovered → Step 1
+            for i, t in enumerate(thresholds[1:], 1):
+                if deficit <= t:
+                    return i   # i=1→Step2, i=2→Step3, ...
+            return 6  # beyond all thresholds = 全損
+
+        computed      = []
+        cum_bet       = 0
+        cycle_deficit = 0
+        _3d_seq        = [1, 1, 1]   # 3Dリカバリ
+        _jiwa_unit     = 100          # ジワ上げ
+        _win_seq       = []           # ウィナーズ: recovery sequence (empty = not triggered)
+        _win_consec_loss = 0          # ウィナーズ: consecutive loss counter
+
+        # Pre-compute the step for the NEXT (pending) race before the loop
+        decided_races = [r for r in races if r.get('decided', True)]
+
+        for i, r in enumerate(races):
+            # Skip undecided (pending) races in financial calculations
+            if not r.get('decided', True):
+                continue
+
+            prev = computed[-1] if computed else None
+
+            if strategy == "フラット（固定）":
+                unit = init_bet
                 step = 0
-        else:  # 6連法 ? step determined by cycle deficit BEFORE this race
-            thresholds = ROKU_THRESHOLDS[ticket]
-            step = _roku_step_from_deficit(cycle_deficit, thresholds)
-            step = min(step, 5)
-            unit = ROKU_UNITS[step]
-
-        bet      = unit * n_tickets
-        cum_bet += bet
-        ret      = r.get('ret', 0) if r['win'] else 0
-
-        # Update cycle deficit
-        cycle_deficit = cycle_deficit + bet - ret
-
-        overall_ret = sum((rr.get('ret', 0) if rr['win'] else 0) for rr in decided_races[:len(computed)+1])
-        overall_profit = overall_ret - cum_bet
-        balance = bankroll + overall_profit
-
-        # Result type: compare ret vs THIS race's bet
-        if ret == 0:
-            result_type = "MISS"
-        elif ret > bet:
-            result_type = "PLUS"
-        else:
-            result_type = "GAMI"
-
-        if cycle_deficit <= 0:
-            cycle_deficit = 0
-
-        # 3Dリカバリ: modify sequence after this race
-        if strategy == "3Dリカバリ":
-            if result_type == "MISS":
-                _3d_seq.append(_3d_mult)
-            elif result_type == "PLUS":
-                _3d_seq = _3d_seq[1:-1] if len(_3d_seq) >= 2 else []
-            elif result_type == "GAMI":
-                _3d_seq = _3d_seq[1:] if _3d_seq else []
-            if not _3d_seq:
-                _3d_seq = [1, 1, 1]
-        elif strategy == "ジワ上げ":
-            if result_type == "MISS":
-                _jiwa_unit += 100
-            else:
-                _jiwa_unit = max(100, _jiwa_unit - 100)
-        elif strategy == "ウィナーズ":
-            if _win_seq:   # sequence is active
-                if result_type == "MISS":
-                    _win_seq.append(_win_mult)
-                else:  # PLUS or GAMI: remove leftmost
-                    _win_seq = _win_seq[1:]
-                    if not _win_seq:
-                        _win_consec_loss = 0   # full reset
-            else:          # sequence not started yet
-                if result_type == "MISS":
-                    _win_consec_loss += 1
-                    if _win_consec_loss >= 2:
-                        _win_seq = [1, 1]  # trigger!
+            elif strategy == "マーチンゲール（負け倍増）":
+                unit = init_bet if (prev is None or prev['win']) else min(prev['unit'] * 2, init_bet * 16)
+                step = 0
+            elif strategy == "逆マーチン（勝ち倍増）":
+                unit = min(prev['unit'] * 2, init_bet * 16) if (prev and prev['win']) else init_bet
+                step = 0
+            elif strategy == "3Dリカバリ":
+                if not _3d_seq:
+                    _3d_seq = [1, 1, 1]
+                _3d_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else _3d_seq[0]
+                unit = max(100, (_3d_mult * 50 // 100) * 100)
+                step = len(_3d_seq)
+            elif strategy == "ジワ上げ":
+                unit = _jiwa_unit
+                step = max(0, (unit - 100) // 100)
+            elif strategy == "ウィナーズ":
+                if _win_seq:
+                    _win_mult = _win_seq[0] * 2
+                    unit = _win_mult * 100
+                    step = len(_win_seq)
                 else:
-                    _win_consec_loss = 0   # reset counter on any win
+                    unit = 100
+                    _win_mult = 1
+                    step = 0
+            else:  # 6連法
+                thresholds = ROKU_THRESHOLDS[ticket]
+                step = _roku_step_from_deficit(cycle_deficit, thresholds)
+                step = min(step, 5)
+                unit = ROKU_UNITS[step]
 
-        computed.append({
-            'race_idx':     races.index(r),
-            'win':          r['win'],
-            'unit':         unit,
-            'step':         step,
-            'bet':          bet,
-            'cum_bet':      cum_bet,
-            'ret':          ret,
-            'profit':       overall_profit,
-            'balance':      balance,
-            'cycle_deficit':cycle_deficit,
-            'result_type':  result_type,
-        })
+            bet      = unit * n_tickets
+            cum_bet += bet
+            ret      = r.get('ret', 0) if r['win'] else 0
 
-    # Next-race step/bet (for pending card)
-    if strategy == "3Dリカバリ":
-        if not _3d_seq:
-            _3d_seq = [1, 1, 1]
-        _nd_3d_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else _3d_seq[0]
-        _nd_unit = max(100, (_nd_3d_mult * 50 // 100) * 100)
-        _nd_step = len(_3d_seq)
-        _nd_bet  = _nd_unit * n_tickets
-    elif strategy == "6連法（サバイバル）":
-        _th = ROKU_THRESHOLDS[ticket]
-        _nd_step = min(_roku_step_from_deficit(cycle_deficit, _th), 5)
-        _nd_unit = ROKU_UNITS[_nd_step]
-        _nd_bet  = _nd_unit * n_tickets
-    elif strategy == "ジワ上げ":
-        _nd_unit = _jiwa_unit
-        _nd_step = max(0, (_jiwa_unit - 100) // 100)
-        _nd_bet  = _nd_unit * n_tickets
-    elif strategy == "ウィナーズ":
-        if _win_seq:
-            _nd_win_mult = _win_seq[0] * 2
-            _nd_unit = _nd_win_mult * 100
-            _nd_step = len(_win_seq)
-        else:
-            _nd_unit = 100
-            _nd_step = 0
-        _nd_bet = _nd_unit * n_tickets
-    else:
-        _nd_step = 0
-        _nd_unit = init_bet
-        _nd_bet  = _nd_unit * n_tickets
+            # Update cycle deficit
+            cycle_deficit = cycle_deficit + bet - ret
 
+            overall_ret = sum((rr.get('ret', 0) if rr['win'] else 0) for rr in decided_races[:len(computed)+1])
+            overall_profit = overall_ret - cum_bet
+            balance = bankroll + overall_profit
 
+            # Result type
+            if ret == 0: result_type = "MISS"
+            elif ret > bet: result_type = "PLUS"
+            else: result_type = "GAMI"
 
-    # ─────────────────────────────────────────
-    # ② サマリーメトリクス
-    # ─────────────────────────────────────────
-    st.divider()
-    total_races   = len(computed)
-    wins          = sum(1 for c in computed if c['win'])
-    total_ret     = sum(c['ret'] for c in computed if c['win'])
-    total_cum_bet = computed[-1]['cum_bet'] if computed else 0
-    final_balance = computed[-1]['balance'] if computed else bankroll
-    final_profit  = computed[-1]['profit']  if computed else 0
-    target_profit = bankroll * _ss['bs_target'] / 100
+            if cycle_deficit <= 0: cycle_deficit = 0
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("現在残高",     f"¥{final_balance:,.0f}", f"{final_profit:+,.0f}")
-    m2.metric("勝率",         f"{wins/total_races*100:.0f}%" if total_races else "-",
-              f"{wins}勝 / {total_races-wins}敗")
-    m3.metric("総投資額",     f"¥{total_cum_bet:,.0f}")
-    m4.metric("総払戻金",     f"¥{total_ret:,.0f}")
-    m5.metric("目標利益まで", f"¥{max(0, target_profit-final_profit):,.0f}",
-              f"目標¥{target_profit:,.0f}")
+            # modify sequence after this race
+            if strategy == "3Dリカバリ":
+                if result_type == "MISS":
+                    _3d_seq.append(_3d_mult)
+                elif result_type == "PLUS":
+                    _3d_seq = _3d_seq[1:-1] if len(_3d_seq) >= 2 else []
+                elif result_type == "GAMI":
+                    _3d_seq = _3d_seq[1:] if _3d_seq else []
+                if not _3d_seq: _3d_seq = [1, 1, 1]
+            elif strategy == "ジワ上げ":
+                if result_type == "MISS": _jiwa_unit += 100
+                else: _jiwa_unit = max(100, _jiwa_unit - 100)
+            elif strategy == "ウィナーズ":
+                if _win_seq:
+                    if result_type == "MISS": _win_seq.append(_win_mult)
+                    else:
+                        _win_seq = _win_seq[1:]
+                        if not _win_seq: _win_consec_loss = 0
+                else:
+                    if result_type == "MISS":
+                        _win_consec_loss += 1
+                        if _win_consec_loss >= 2: _win_seq = [1, 1]
+                    else: _win_consec_loss = 0
 
-    progress_pct = min(1.0, max(0.0, final_profit / target_profit)) if target_profit > 0 else 0
-    st.progress(progress_pct, text=f"目標達成率: {progress_pct*100:.1f}%")
+            computed.append({
+                'race_idx':     races.index(r),
+                'win':          r['win'],
+                'unit':         unit,
+                'step':         step,
+                'bet':          bet,
+                'cum_bet':      cum_bet,
+                'ret':          ret,
+                'profit':       overall_profit,
+                'balance':      balance,
+                'cycle_deficit':cycle_deficit,
+                'result_type':  result_type,
+            })
 
-    # ─────────────────────────────────────────
-    # 6連法：ステッパー（サイクル赤字に応じた自動進行）
-    # ─────────────────────────────────────────
-    if strategy == "6連法（サバイバル）":
-        # Determine NEXT step from current cycle_deficit (end of all computed races)
-        thresholds  = ROKU_THRESHOLDS[ticket]
-        total_loss_line = ROKU_TOTAL_LOSS_LINE[ticket]
-        # cycle_deficit was reset to 0 if it went <=0; take from last computed entry if any
-        cur_deficit = computed[-1]['cycle_deficit'] if computed else 0
-        next_step   = _roku_step_from_deficit(cur_deficit, thresholds)
-        is_total_loss = cur_deficit > total_loss_line
-
-        if is_total_loss:
-            st.error(f"✨ **全損到達（累計赤字 ¥{cur_deficit:,.0f}）。** サイクルをリセットして第1回目から再開してください。")
-        else:
-            next_step  = min(next_step, 5)
-            next_unit  = ROKU_UNITS[next_step]
-            next_bet   = next_unit * n_tickets
-            is_danger  = cur_deficit > thresholds[3] if len(thresholds) > 3 else False  # Step4以上
-
-            # Visual stepper pills
-            step_pills = ""
-            for j in range(6):
-                is_active  = (j == next_step)
-                is_d       = (is_danger and is_active)
-                pill_bg    = "#FF6B00" if is_d else ("#FFD700" if is_active else "transparent")
-                pill_color = "#000"    if is_active else "#DDD"   # DDD = readable on dark bg
-                pill_border= "#FF6B00" if is_d else ("#FFD700" if is_active else "#666")
-                pill_size  = "1.05em" if is_active else "0.85em"
-                pill_label = f"Step {j+1}<br><span style='font-size:0.78em;'>&#165;{ROKU_UNITS[j]*n_tickets:,}</span>"
-                connector  = "" if j == 0 else "<span style='color:#888;padding:0 4px;'>&mdash;</span>"
-                step_pills += f"""
-{connector}<span style='display:inline-block;text-align:center;padding:6px 12px;
-  background:{pill_bg};color:{pill_color};border:2px solid {pill_border};
-  border-radius:20px;font-size:{pill_size};font-weight:{'bold' if is_active else 'normal'};
-  line-height:1.4;vertical-align:middle;'>{pill_label}</span>"""
-
-            deficit_pct = cur_deficit / total_loss_line if total_loss_line > 0 else 0
-            danger_note = f"<span style='color:#FF6B6B;font-size:0.9em;'>✨ サイクル赤字：¥{cur_deficit:,.0f}?/?全損ライン：¥{total_loss_line:,}</span>" if cur_deficit > 0 else "<span style='color:#6FE09A;'>? サイクルプラス ? Step 1リセット</span>"
-            border_color = "#FF6B00" if is_danger else "#FFD700"
-            bg_color     = "#1f0800" if is_danger else "#1a1400"
-            st.html(f"""
-<div style="border:2px solid {border_color};border-radius:10px;padding:14px 18px;margin:12px 0;background:{bg_color};">
-  <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">✨ 6連法 ステッパー（サイクル赤字に応じた自動進行）</div>
-  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:12px;">{step_pills}</div>
-  <div style="font-size:1.05em;">
-    ▶ 次回のベット：
-    <strong style="color:{border_color};font-size:1.25em;">¥{next_bet:,.0f}</strong>
-    <span style="color:#aaa;font-size:0.85em;">（単価 ¥{next_unit} × {n_tickets}点）</span>
-    &nbsp;&nbsp;{danger_note}
-  </div>
-</div>""")
-
-    # ─────────────────────────────────────────
-    # 3Dリカバリ：数列ディスプレイ
-    # ─────────────────────────────────────────
-    elif strategy == "3Dリカバリ":
-        seq_display = ', '.join(str(x) for x in _3d_seq)
-        _3d_next_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else (_3d_seq[0] if _3d_seq else 1)
-        _3d_raw  = _3d_next_mult * 50
-        _3d_next_unit = max(100, (_3d_raw // 100) * 100)
-        _3d_truncated = (_3d_raw % 100) > 0   # 50円端数があるか
-        _3d_next_bet  = _3d_next_unit * n_tickets
-        seq_len = len(_3d_seq)
-        # Color: green if short (recovering), orange/red if long (deep)
-        if seq_len <= 3:
-            _3d_border = "#4CAF50"
-            _3d_bg     = "#0a1f0a"
-            _3d_status = "<span style='color:#6FE09A;'>&#10003; 数列が短い = リカバリー順調</span>"
-        elif seq_len <= 5:
-            _3d_border = "#FFD700"
-            _3d_bg     = "#1a1400"
-            _3d_status = "<span style='color:#FFD700;'>✨ 数列が伸びています</span>"
-        else:
-            _3d_border = "#FF6B00"
-            _3d_bg     = "#1f0800"
-            _3d_status = "<span style='color:#FF6B6B;'>✨ 数列が長い = 深追い中</span>"
-
-        # Build sequence pills
-        seq_pills = ""
-        for si, sv in enumerate(_3d_seq):
-            is_edge = (si == 0 or si == len(_3d_seq) - 1)
-            p_bg   = "#FFD700" if is_edge else "transparent"
-            p_col  = "#000" if is_edge else "#DDD"
-            p_bdr  = "#FFD700" if is_edge else "#666"
-            p_fw   = "bold" if is_edge else "normal"
-            seq_pills += f"<span style='display:inline-block;padding:4px 10px;background:{p_bg};color:{p_col};border:2px solid {p_bdr};border-radius:16px;font-size:0.95em;font-weight:{p_fw};margin:2px 3px;'>{sv}</span>"
-
-        st.html(f"""
-<div style="border:2px solid {_3d_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_3d_bg};">
-  <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">
-    &#127922; 3Dリカバリ 数列モニター（モンテカルロ方式）
-  </div>
-  <div style="margin-bottom:10px;">{seq_pills}</div>
-  <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">
-    数列: [{seq_display}]&nbsp;&nbsp;(要素数: {seq_len})
-    &nbsp;&nbsp;{_3d_status}
-  </div>
-  <div style="font-size:1.05em;">
-    &#9654; 次回のベット：
-    <strong style="color:{_3d_border};font-size:1.25em;">&#165;{_3d_next_bet:,.0f}</strong>
-    <span style="color:#aaa;font-size:0.85em;">（単価 &#165;{_3d_next_unit:,} = [{_3d_seq[0]}+{_3d_seq[-1] if len(_3d_seq)>=2 else 0}] &times; 50{' <span style="color:#FF9800;font-size:0.85em;">(50円端数切捨)</span>' if _3d_truncated else ''} &times; {n_tickets}点）</span>
-  </div>
-</div>""")
-
-    # -----------------------------------------
-    # jiwa-age display
-    # -----------------------------------------
-    elif strategy == "jiwa-age-placeholder":
-        pass  # placeholder to avoid syntax issues
-
-    if strategy == "ジワ上げ":
-        _jw_level = (_jiwa_unit - 100) // 100  # 0 = base
-        if _jiwa_unit <= 200:
-            _jw_border = "#4CAF50"; _jw_bg = "#0a1f0a"
-            _jw_status = "<span style='color:#6FE09A;'>&#10003; 低単価ゾーン（守備的）</span>"
-        elif _jiwa_unit <= 400:
-            _jw_border = "#FFD700"; _jw_bg = "#1a1400"
-            _jw_status = "<span style='color:#FFD700;'>&#9888;&#65039; 中単価ゾーン</span>"
-        else:
-            _jw_border = "#FF6B00"; _jw_bg = "#1f0800"
-            _jw_status = "<span style='color:#FF6B6B;'>&#128680; 高単価ゾーン（注意）</span>"
-
-        # Build step pills for 100-600
-        _jw_pills = ""
-        for jp in range(6):
-            jp_unit = (jp + 1) * 100
-            jp_active = (jp_unit == _jiwa_unit)
-            jp_bg  = "#FFD700" if jp_active else "transparent"
-            jp_col = "#000" if jp_active else "#DDD"
-            jp_bdr = "#FFD700" if jp_active else "#666"
-            jp_fw  = "bold" if jp_active else "normal"
-            jp_sz  = "1.05em" if jp_active else "0.85em"
-            connector = "" if jp == 0 else "<span style='color:#888;padding:0 4px;'>&mdash;</span>"
-            _jw_pills += f"""{connector}<span style='display:inline-block;text-align:center;padding:6px 12px;
-  background:{jp_bg};color:{jp_col};border:2px solid {jp_bdr};
-  border-radius:20px;font-size:{jp_sz};font-weight:{jp_fw};
-  line-height:1.4;vertical-align:middle;'>&#165;{jp_unit}<br><span style='font-size:0.78em;'>&#165;{jp_unit*n_tickets:,}</span></span>"""
-
-        # Direction arrow
-        if computed:
-            last_rt = computed[-1]['result_type']
-            if last_rt == "MISS":
-                _jw_arrow = "<span style='color:#FF6B6B;font-size:1.1em;'>&#9650; +100</span>"
+        # Next-race step/bet
+        if strategy == "3Dリカバリ":
+            if not _3d_seq: _3d_seq = [1, 1, 1]
+            _nd_3d_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else _3d_seq[0]
+            _nd_unit = max(100, (_nd_3d_mult * 50 // 100) * 100)
+            _nd_step = len(_3d_seq)
+            _nd_bet  = _nd_unit * n_tickets
+        elif strategy == "6連法（サバイバル）":
+            _th = ROKU_THRESHOLDS[ticket]
+            _nd_step = min(_roku_step_from_deficit(cycle_deficit, _th), 5)
+            _nd_unit = ROKU_UNITS[_nd_step]
+            _nd_bet  = _nd_unit * n_tickets
+        elif strategy == "ジワ上げ":
+            _nd_unit = _jiwa_unit
+            _nd_step = max(0, (_jiwa_unit - 100) // 100)
+            _nd_bet  = _nd_unit * n_tickets
+        elif strategy == "ウィナーズ":
+            if _win_seq:
+                _nd_win_mult = _win_seq[0] * 2
+                _nd_unit = _nd_win_mult * 100
+                _nd_step = len(_win_seq)
             else:
-                _jw_arrow = "<span style='color:#6FE09A;font-size:1.1em;'>&#9660; -100</span>"
+                _nd_unit = 100
+                _nd_step = 0
+            _nd_bet = _nd_unit * n_tickets
         else:
-            _jw_arrow = "<span style='color:#aaa;'>&#8212; \u521d\u671f\u72b6\u614b</span>"
+            _nd_step = 0
+            _nd_unit = init_bet
+            _nd_bet  = _nd_unit * n_tickets
 
-        st.html(f"""
-<div style="border:2px solid {_jw_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_jw_bg};">
-  <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">
-    &#128737; \u30b8\u30ef\u4e0a\u3052 \u5358\u4fa1\u30e2\u30cb\u30bf\u30fc\uff08\u30c0\u30e9\u30f3\u30d9\u30fc\u30eb\u65b9\u5f0f\uff09
-    &nbsp;&nbsp;<span style="font-size:0.9em;">\u8ca0\u3051\u2192+100 / \u52dd\u3061\u30fb\u30ac\u30df\u2192-100 (\u6700\u4f4e100)</span>
-  </div>
-  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:12px;">{_jw_pills}</div>
-  <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">
-    \u73fe\u5728\u5358\u4fa1: <strong style="color:#FFF;">&#165;{_jiwa_unit:,}</strong>
-    &nbsp;&nbsp;{_jw_arrow}&nbsp;&nbsp;{_jw_status}
-  </div>
-  <div style="font-size:1.05em;">
-    &#9654; \u6b21\u56de\u306e\u30d9\u30c3\u30c8\uff1a
-    <strong style="color:{_jw_border};font-size:1.25em;">&#165;{_jiwa_unit*n_tickets:,.0f}</strong>
-    <span style="color:#aaa;font-size:0.85em;">\uff08\u5358\u4fa1 &#165;{_jiwa_unit:,} &times; {n_tickets}\u70b9\uff09</span>
-  </div>
-</div>""")
+        # ─────────────────────────────────────────
+        # ② サマリーメトリクス
+        # ─────────────────────────────────────────
+        st.divider()
+        total_races   = len(computed)
+        wins          = sum(1 for c in computed if c['win'])
+        total_ret     = sum(c['ret'] for c in computed if c['win'])
+        total_cum_bet = computed[-1]['cum_bet'] if computed else 0
+        final_balance = computed[-1]['balance'] if computed else bankroll
+        final_profit  = computed[-1]['profit']  if computed else 0
+        target_profit = bankroll * _ss['bs_target'] / 100
 
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("現在残高",     f"¥{final_balance:,.0f}", f"{final_profit:+,.0f}")
+        m2.metric("勝率",         f"{wins/total_races*100:.0f}%" if total_races else "-", f"{wins}勝 / {total_races-wins}敗")
+        m3.metric("総投資額",     f"¥{total_cum_bet:,.0f}")
+        m4.metric("総払戻金",     f"¥{total_ret:,.0f}")
+        m5.metric("目標利益まで", f"¥{max(0, target_profit-final_profit):,.0f}", f"目標¥{target_profit:,.0f}")
 
-    # -----------------------------------------
-    # winners display
-    # -----------------------------------------
-    elif strategy == "ウィナーズ":
-        if _win_seq:
-            seq_display = ', '.join(str(x) for x in _win_seq)
-            _wn_next_mult = _win_seq[0] * 2
-            _wn_next_unit = _wn_next_mult * 100
-            _wn_next_bet  = _wn_next_unit * n_tickets
-            seq_len = len(_win_seq)
-            
-            _wn_border = "#FFD700"
-            _wn_bg     = "#1a1400"
-            _wn_status = "<span style='color:#FFD700;'>&#9888;&#65039; リカバリー実行中</span>"
+        progress_pct = min(1.0, max(0.0, final_profit / target_profit)) if target_profit > 0 else 0
+        st.progress(progress_pct, text=f"目標達成率: {progress_pct*100:.1f}%")
 
-            # Build sequence pills
+        # ─────────────────────────────────────────
+        # 6連法：ステッパー
+        # ─────────────────────────────────────────
+        if strategy == "6連法（サバイバル）":
+            thresholds  = ROKU_THRESHOLDS[ticket]
+            total_loss_line = ROKU_TOTAL_LOSS_LINE[ticket]
+            cur_deficit = computed[-1]['cycle_deficit'] if computed else 0
+            next_step   = _roku_step_from_deficit(cur_deficit, thresholds)
+            is_total_loss = cur_deficit > total_loss_line
+
+            if is_total_loss:
+                st.error(f"✨ **全損到達（累計赤字 ¥{cur_deficit:,.0f}）。** サイクルをリセットしてください。")
+            else:
+                next_step  = min(next_step, 5)
+                next_unit  = ROKU_UNITS[next_step]
+                next_bet   = next_unit * n_tickets
+                is_danger  = cur_deficit > thresholds[3] if len(thresholds) > 3 else False
+
+                step_pills = ""
+                for j in range(6):
+                    is_active  = (j == next_step)
+                    is_d       = (is_danger and is_active)
+                    pill_bg    = "#FF6B00" if is_d else ("#FFD700" if is_active else "transparent")
+                    pill_color = "#000"    if is_active else "#DDD"
+                    pill_border= "#FF6B00" if is_d else ("#FFD700" if is_active else "#666")
+                    pill_size  = "1.05em" if is_active else "0.85em"
+                    pill_label = f"Step {j+1}<br><span style='font-size:0.78em;'>&#165;{ROKU_UNITS[j]*n_tickets:,}</span>"
+                    connector  = "" if j == 0 else "<span style='color:#888;padding:0 4px;'>&mdash;</span>"
+                    step_pills += f"{connector}<span style='display:inline-block;text-align:center;padding:6px 12px;background:{pill_bg};color:{pill_color};border:2px solid {pill_border};border-radius:20px;font-size:{pill_size};font-weight:{'bold' if is_active else 'normal'};line-height:1.4;vertical-align:middle;'>{pill_label}</span>"
+
+                deficit_pct = cur_deficit / total_loss_line if total_loss_line > 0 else 0
+                danger_note = f"<span style='color:#FF6B6B;font-size:0.9em;'>✨ サイクル赤字：¥{cur_deficit:,.0f} / 全損：¥{total_loss_line:,}</span>" if cur_deficit > 0 else "<span style='color:#6FE09A;'>✅ サイクルプラス</span>"
+                border_color = "#FF6B00" if is_danger else "#FFD700"
+                bg_color     = "#1f0800" if is_danger else "#1a1400"
+                st.html(f"""<div style="border:2px solid {border_color};border-radius:10px;padding:14px 18px;margin:12px 0;background:{bg_color};">
+      <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">✨ 6連法 ステッパー</div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:12px;">{step_pills}</div>
+      <div style="font-size:1.05em;">▶ 次回のベット：<strong style="color:{border_color};font-size:1.25em;">¥{next_bet:,.0f}</strong><span style="color:#aaa;font-size:0.85em;">（単価 ¥{next_unit} × {n_tickets}点）</span>&nbsp;&nbsp;{danger_note}</div>
+    </div>""")
+
+        # ─────────────────────────────────────────
+        # ③ 戦略別ディスプレイ (追加)
+        # ─────────────────────────────────────────
+        elif strategy == "3Dリカバリ":
+            seq_display = ', '.join(str(x) for x in _3d_seq)
+            _3d_next_mult = (_3d_seq[0] + _3d_seq[-1]) if len(_3d_seq) >= 2 else (_3d_seq[0] if _3d_seq else 1)
+            _3d_raw  = _3d_next_mult * 50
+            _3d_next_unit = max(100, (_3d_raw // 100) * 100)
+            _3d_truncated = (_3d_raw % 100) > 0
+            _3d_next_bet  = _3d_next_unit * n_tickets
+            seq_len = len(_3d_seq)
+            if seq_len <= 3:
+                _3d_border = "#4CAF50"; _3d_bg = "#0a1f0a"
+                _3d_status = "<span style='color:#6FE09A;'>✓ 数列が短い = リカバリー順調</span>"
+            elif seq_len <= 5:
+                _3d_border = "#FFD700"; _3d_bg = "#1a1400"
+                _3d_status = "<span style='color:#FFD700;'>✨ 数列が伸びています</span>"
+            else:
+                _3d_border = "#FF6B00"; _3d_bg = "#1f0800"
+                _3d_status = "<span style='color:#FF6B6B;'>✨ 数列が長い = 深追い中</span>"
+
             seq_pills = ""
-            for si, sv in enumerate(_win_seq):
-                is_edge = (si == 0) # left edge
+            for si, sv in enumerate(_3d_seq):
+                is_edge = (si == 0 or si == len(_3d_seq) - 1)
                 p_bg   = "#FFD700" if is_edge else "transparent"
                 p_col  = "#000" if is_edge else "#DDD"
                 p_bdr  = "#FFD700" if is_edge else "#666"
                 p_fw   = "bold" if is_edge else "normal"
                 seq_pills += f"<span style='display:inline-block;padding:4px 10px;background:{p_bg};color:{p_col};border:2px solid {p_bdr};border-radius:16px;font-size:0.95em;font-weight:{p_fw};margin:2px 3px;'>{sv}</span>"
 
-            st.html(f"""
-<div style="border:2px solid {_wn_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_wn_bg};">
-  <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">
-    &#127919; ウィナーズ 数列モニター（2連敗で始動）
-    &nbsp;&nbsp;<span style="font-size:0.9em;">負け&rarr;右端追加 / 勝ち・ガミ&rarr;左端削除</span>
-  </div>
-  <div style="margin-bottom:10px;">{seq_pills}</div>
-  <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">
-    数列: [{seq_display}]&nbsp;&nbsp;(要素数: {seq_len})
-    &nbsp;&nbsp;{_wn_status}
-  </div>
-  <div style="font-size:1.05em;">
-    &#9654; 次回のベット：
-    <strong style="color:{_wn_border};font-size:1.25em;">&#165;{_wn_next_bet:,.0f}</strong>
-    <span style="color:#aaa;font-size:0.85em;">&#xff08;単価 &#165;{_wn_next_unit:,} = [{_win_seq[0]}] &times; 2 &times; 100 &times; {n_tickets}点&#xff09;</span>
-  </div>
-</div>""")
-        else:
-            _wn_border = "#4CAF50"
-            _wn_bg     = "#0a1f0a"
-            _wn_status = "<span style='color:#6FE09A;'>&#10003; 待機中&#xff08;2連敗で始動&#xff09;</span>"
-            if _win_consec_loss == 1:
-                _wn_status = "<span style='color:#FFD700;'>&#9888;&#65039; 1敗中&#xff08;次負けると始動&#xff09;</span>"
-                _wn_border = "#FFD700"
-                _wn_bg     = "#1a1400"
+            st.html(f"""<div style="border:2px solid {_3d_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_3d_bg};">
+      <div style="font-size:0.82em;color:#888;margin-bottom:10px;">🎲 3Dリカバリ 数列モニター</div>
+      <div style="margin-bottom:10px;">{seq_pills}</div>
+      <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">数列: [{seq_display}]&nbsp;&nbsp;{_3d_status}</div>
+      <div style="font-size:1.05em;">▶ 次回のベット：<strong style="color:{_3d_border};font-size:1.25em;">¥{_3d_next_bet:,.0f}</strong><span style="color:#aaa;font-size:0.85em;">（単価 ¥{_3d_next_unit:,} × {n_tickets}点）</span></div>
+    </div>""")
 
-            st.html(f"""
-<div style="border:2px solid {_wn_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_wn_bg};">
-  <div style="font-size:0.82em;color:#888;margin-bottom:10px;letter-spacing:.05em;">
-    &#127919; ウィナーズ 数列モニター&#xff08;2連敗で始動&#xff09;
-  </div>
-  <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">
-    数列: [ 未始動 ]&nbsp;&nbsp;{_wn_status}
-  </div>
-  <div style="font-size:1.05em;">
-    &#9654; 次回のベット：
-    <strong style="color:{_wn_border};font-size:1.25em;">&#165;{init_bet * n_tickets:,.0f}</strong>
-    <span style="color:#aaa;font-size:0.85em;">&#xff08;単価 &#165;{init_bet:,} &times; {n_tickets}点&#xff09;</span>
-  </div>
-</div>""")
-
-    # レース履歴テーブル（カード型）
-    # ─────────────────────────────────────────
-    st.divider()
-    st.subheader("🏁 レース履歴")
-
-    if not races:
-        st.html("""
-<div style="border:2px dashed #555;border-radius:10px;padding:20px;
-            text-align:center;color:#888;font-size:0.95em;">
-  まだレースが記録されていません。<br>
-  下の「＋ 次のレースを追加」ボタンで R1 を開始してください。
-</div>""")
-    else:
-        comp_idx = 0
-        for ri, r in enumerate(races):
-            is_pending = not r.get('decided', True)
-            rnum = ri + 1
-
-            if is_pending:
-                # ── 未確定行：賭け金指示カード ──
-                st_tag = f"Step {_nd_step+1}" if strategy == "6連法（サバイバル）" else ""
-                step_label = f" ? {st_tag}" if st_tag else ""
-                ul = f"単価¥{_nd_unit:,}×{n_tickets}点" if strategy == "6連法（サバイバル）" else f"¥{_nd_bet:,}"
-                st.html(f"""
-<div style="border:2px solid #FFD700;border-radius:10px;padding:12px 16px;
-            margin-bottom:4px;background:#1a1400;">
-  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-    <span style="font-weight:bold;font-size:1em;color:#FFF;min-width:34px;">R{rnum}</span>
-    <span style="color:#aaa;font-size:0.82em;">&#9651; 未入力</span>
-    <span style="color:#FFD700;font-size:0.97em;font-weight:bold;">
-      &#9654; 今回の賭け金{step_label}：
-      <strong style="font-size:1.22em;">&#165;{_nd_bet:,.0f}</strong>
-      <span style="font-size:0.82em;color:#aaa;">({ul})</span>
-    </span>
-  </div>
-  <div style="font-size:0.82em;color:#aaa;margin-top:6px;">
-    &#8595; レース終了後、下の「勝 / 負」を選択して結果を入力してください。
-  </div>
-</div>""")
-                inp_c1, inp_c2, inp_c3 = st.columns([1.5, 3, 0.7])
-                with inp_c1:
-                    radio_val = st.radio(
-                        "",
-                        options=["❌ 負", "✅ 勝"],
-                        index=None,
-                        horizontal=True,
-                        key=f"bs_radio_{ri}",
-                        label_visibility="collapsed"
-                    )
-                    if radio_val is not None:
-                        _ss['bs_races'][ri]['win'] = (radio_val == "✅ 勝")
-                        _ss['bs_races'][ri]['decided'] = True
-                        if not _ss['bs_races'][ri]['win']:
-                            _ss['bs_races'][ri]['ret'] = 0
-                        st.rerun()
-                with inp_c2:
-                    st.caption("← 勝敗を選択すると結果が表示されます")
-                with inp_c3:
-                    if ri > 0:
-                        if st.button("🗑️ 削除", key=f"bs_del_{ri}"):
-                            _ss['bs_races'].pop(ri)
-                            st.rerun()
+        elif strategy == "ジワ上げ":
+            if _jiwa_unit <= 200:
+                _jw_border = "#4CAF50"; _jw_bg = "#0a1f0a"
+                _jw_status = "<span style='color:#6FE09A;'>✓ 低単価ゾーン</span>"
+            elif _jiwa_unit <= 400:
+                _jw_border = "#FFD700"; _jw_bg = "#1a1400"
+                _jw_status = "<span style='color:#FFD700;'>⚠️ 中単価ゾーン</span>"
             else:
-                # ── 確定済み行：結果カード ──
-                c = computed[comp_idx]
-                comp_idx += 1
-                bg          = "#1a3a1f" if c['win'] else "#2a1515"
-                border      = "#4CAF50" if c['win'] else "#F44336"
-                result_icon = "✅ 勝"   if c['win'] else "❌ 負"
+                _jw_border = "#FF6B00"; _jw_bg = "#1f0800"
+                _jw_status = "<span style='color:#FF6B6B;'>🚨 高単価ゾーン</span>"
 
-                if strategy == "6連法（サバイバル）":
-                    rt = c['result_type']
-                    if rt == "PLUS":
-                        badge = "<span style='background:#1a4a2a;color:#6FE09A;border:1px solid #6FE09A;border-radius:4px;padding:2px 6px;font-size:0.8em;font-weight:bold;'>📈プラス</span>"
-                    elif rt == "GAMI":
-                        badge = "<span style='background:#3a2a00;color:#FFB347;border:1px solid #FFB347;border-radius:4px;padding:2px 6px;font-size:0.8em;font-weight:bold;'>⚠️ガミ</span>"
-                    else:
-                        badge = "<span style='background:#3a0000;color:#FF7070;border:1px solid #FF7070;border-radius:4px;padding:2px 6px;font-size:0.8em;font-weight:bold;'>📉ハズレ</span>"
-                else:
-                    badge = ""
+            _jw_pills = ""
+            for jp in range(6):
+                jp_unit = (jp + 1) * 100
+                jp_active = (jp_unit == _jiwa_unit)
+                jp_bg  = "#FFD700" if jp_active else "transparent"
+                jp_col = "#000" if jp_active else "#DDD"
+                jp_bdr = "#FFD700" if jp_active else "#666"
+                jp_fw  = "bold" if jp_active else "normal"
+                connector = "" if jp == 0 else "<span style='color:#888;padding:0 4px;'>—</span>"
+                _jw_pills += f"{connector}<span style='display:inline-block;padding:6px 12px;background:{jp_bg};color:{jp_col};border:2px solid {jp_bdr};border-radius:20px;font-size:0.85em;'>¥{jp_unit}<br>¥{jp_unit*n_tickets:,}</span>"
 
-                ul = f"単価¥{c['unit']:,}×{n_tickets}点" if strategy == "6連法（サバイバル）" else f"¥{c['bet']:,}"
-                step_tag = f"<span style='color:#aaa;font-size:0.78em;background:#333;padding:1px 5px;border-radius:10px;'>Step {c['step']+1}</span>" if strategy == "6連法（サバイバル）" else ""
+            st.html(f"""<div style="border:2px solid {_jw_border};border-radius:10px;padding:14px 18px;margin:12px 0;background:{_jw_bg};">
+      <div style="font-size:0.82em;color:#888;margin-bottom:10px;">🛡️ ジワ上げ 単価モニター</div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:12px;">{_jw_pills}</div>
+      <div style="font-size:1.05em;">▶ 次回のベット：<strong style="color:{_jw_border};font-size:1.25em;">¥{_jiwa_unit*n_tickets:,.0f}</strong><span style="color:#aaa;font-size:0.85em;">（単価 ¥{_jiwa_unit:,} × {n_tickets}点）</span></div>
+    </div>""")
 
-                st.html(f"""
-<div style="background:{bg};border-left:5px solid {border};border-radius:8px;
-            padding:9px 14px;margin-bottom:2px;display:flex;align-items:center;
-            gap:12px;flex-wrap:wrap;">
-  <span style="font-weight:bold;font-size:1em;color:#FFF;min-width:34px;">R{rnum}</span>
-  {step_tag}
-  <span style="color:{border};font-weight:bold;">{result_icon}</span>
-  {badge}
-  <span style="color:#ccc;font-size:0.86em;">ベット <strong style="color:#FFF;">¥{c['bet']:,.0f}</strong>
-    <span style="font-size:0.78em;color:#aaa;">({ul})</span></span>
-  <span style="color:#ccc;font-size:0.86em;">累計投資 <strong style="color:#FFF;">¥{c['cum_bet']:,.0f}</strong></span>
-  <span style="color:#ccc;font-size:0.86em;">払戻 <strong style="color:#FFF;">¥{c['ret']:,.0f}</strong></span>
-  <span style="color:#ccc;font-size:0.86em;">利益
-    <strong style="color:{'#6FE09A' if c['profit']>=0 else '#FF7070'};">¥{c['profit']:+,.0f}</strong></span>
-  <span style="color:#ccc;font-size:0.86em;">残高 <strong style="color:#FFD700;">¥{c['balance']:,.0f}</strong></span>
-</div>""")
-                ec1, ec2 = st.columns([1, 4])
-                with ec1:
-                    rv = st.radio(
-                        "",
-                        options=["❌ 負", "✅ 勝"],
-                        index=1 if races[ri]['win'] else 0,
-                        horizontal=True,
-                        key=f"bs_radio_{ri}",
-                        label_visibility="collapsed"
-                    )
-                    nw = (rv == "✅ 勝")
-                    if nw != races[ri]['win']:
-                        _ss['bs_races'][ri]['win'] = nw
-                        if not nw:
-                            _ss['bs_races'][ri]['ret'] = 0
-                        st.rerun()
-                with ec2:
-                    if races[ri]['win']:
-                        nr = st.number_input(
-                            "✨ 払い戻し金入力",
-                            min_value=0, step=100,
-                            value=int(races[ri].get('ret', 0)),
-                            key=f"bs_ret_{ri}",
-                            placeholder="払戻金額を入力",
-                            help="実際に受け取った払い戻し金額を入力してください"
-                        )
-                        if nr != races[ri].get('ret', 0):
-                            _ss['bs_races'][ri]['ret'] = nr
+        elif strategy == "ウィナーズ":
+            if _win_seq:
+                _wn_next_bet = (_win_seq[0] * 2 * 100) * n_tickets
+                _wn_status = "<span style='color:#FFD700;'>⚠️ リカバリー実行中</span>"
+                st.html(f"""<div style="border:2px solid #FFD700;border-radius:10px;padding:14px 18px;margin:12px 0;background:#1a1400;">
+          <div style="font-size:0.82em;color:#888;margin-bottom:10px;">🎯 ウィナーズ モニター</div>
+          <div style="font-size:0.88em;color:#aaa;margin-bottom:8px;">数列: [{', '.join(str(x) for x in _win_seq)}]&nbsp;&nbsp;{_wn_status}</div>
+          <div style="font-size:1.05em;">▶ 次回のベット：<strong style="color:#FFD700;font-size:1.25em;">¥{_wn_next_bet:,.0f}</strong></div>
+        </div>""")
+            else:
+                _wn_status = "<span style='color:#6FE09A;'>✓ 待機中</span>" if _win_consec_loss < 1 else "<span style='color:#FFD700;'>⚠️ 1敗中</span>"
+                st.html(f"""<div style="border:2px solid #666;border-radius:10px;padding:14px 18px;margin:12px 0;background:#111;">
+          <div style="font-size:0.88em;color:#aaa;">🎯 ウィナーズ: {_wn_status}</div>
+          <div style="font-size:1.05em;">▶ 次回のベット：<strong>¥{init_bet*n_tickets:,.0f}</strong></div>
+        </div>""")
+
+        # ─────────────────────────────────────────
+        # ④ レース履歴テーブル
+        # ─────────────────────────────────────────
+        st.divider()
+        st.subheader("🏁 レース履歴")
+
+        if not races:
+            st.info("まだレースが記録されていません。下のボタンから追加してください。")
+        else:
+            comp_idx = 0
+            for ri, r in enumerate(races):
+                r_id = r.get('id', str(ri))
+                is_pending = not r.get('decided', True)
+                rnum = ri + 1
+
+                if is_pending:
+                    st.html(f"""<div style="border:2px solid #FFD700;border-radius:10px;padding:12px 16px;margin-bottom:8px;background:#1a1400;">
+          <span style="font-weight:bold;color:#FFF;">R{rnum}</span> <span style="color:#aaa;">△ 未入力</span>
+          <span style="color:#FFD700;margin-left:12px;">▶ 次回指示：<strong>¥{_nd_bet:,.0f}</strong></span>
+        </div>""")
+                    inp_c1, inp_c2, inp_c3 = st.columns([1.5, 3, 0.7])
+                    with inp_c1:
+                        rv = st.radio("", options=["❌ 負", "✅ 勝"], index=None, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
+                        if rv is not None:
+                            _ss['bs_races'][ri]['win'] = (rv == "✅ 勝")
+                            _ss['bs_races'][ri]['decided'] = True
+                            if not _ss['bs_races'][ri]['win']: _ss['bs_races'][ri]['ret'] = 0
+                            save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
                             st.rerun()
-                        if nr > c['bet']:
-                            st.success("✅ プラス（このレースで利益）", icon="✅")
-                        elif nr > 0:
-                            st.warning("✨ ガミ（一部回収・赤字継続）", icon=None)
-                    else:
-                        st.caption("❌ ハズレ → 払い戻しなし")
-                if ri > 0 and ri == len(races) - 1:
-                    if st.button("🗑️ 削除", key=f"bs_del_{ri}"):
-                        _ss['bs_races'].pop(ri)
-                        st.rerun()
+                    with inp_c2: st.caption("← 勝敗を選択してください")
+                    with inp_c3:
+                        if st.button("🗑️", key=f"bs_del_{r_id}"):
+                            _ss['bs_races'].pop(ri)
+                            save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
+                            st.rerun()
+                else:
+                    c = computed[comp_idx]
+                    comp_idx += 1
+                    bg     = "#1a3a1f" if c['win'] else "#2a1515"
+                    border = "#4CAF50" if c['win'] else "#F44336"
+                    st.html(f"""<div style="background:{bg};border-left:5px solid {border};border-radius:8px;padding:8px 14px;margin-bottom:4px;display:flex;gap:12px;font-size:0.9em;color:#ccc;">
+          <span style="font-weight:bold;color:#FFF;min-width:30px;">R{rnum}</span>
+          <span>ベット ¥{c['bet']:,.0f}</span>
+          <span>払戻 ¥{c['ret']:,.0f}</span>
+          <span style="color:{'#6FE09A' if c['profit']>=0 else '#FF7070'};">収支 ¥{c['profit']:+,.0f}</span>
+          <span style="color:#FFD700;">残高 ¥{c['balance']:,.0f}</span>
+        </div>""")
+                    ec1, ec2, ec3 = st.columns([1, 2, 0.5])
+                    with ec1:
+                        rv = st.radio("", options=["❌ 負", "✅ 勝"], index=1 if r['win'] else 0, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
+                        nw = (rv == "✅ 勝")
+                        if nw != r['win']:
+                            _ss['bs_races'][ri]['win'] = nw
+                            if not nw: _ss['bs_races'][ri]['ret'] = 0
+                            save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
+                            st.rerun()
+                    with ec2:
+                        if r['win']:
+                            nr = st.number_input("払戻金", min_value=0, step=100, value=int(r.get('ret', 0)), key=f"bs_ret_{r_id}", label_visibility="collapsed")
+                            if nr != r.get('ret', 0):
+                                _ss['bs_races'][ri]['ret'] = nr
+                                save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
+                                st.rerun()
+                    with ec3:
+                        if st.button("🗑️", key=f"bs_del_{r_id}"):
+                            _ss['bs_races'].pop(ri)
+                            save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
+                            st.rerun()
 
-    # ─────────────────────────────────────────
-    # 追加 / リセット ボタン
-    # ─────────────────────────────────────────
-    st.divider()
-    badd, breset = st.columns([2, 1])
-    # Guard: prevent adding new race before deciding the current one
-    _last_pending = bool(races) and not races[-1].get('decided', True)
-    _add_label = "➕ 次のレースを追加"
-    if not _last_pending and races:
-        _add_label += f" （次は Step {_nd_step+1} / ¥{_nd_bet:,.0f}）"
+        # ─────────────────────────────────────────
+        # ⑤ 操作パネル
+        # ─────────────────────────────────────────
+        b1, b2 = st.columns([2, 1])
+        with b1:
+            _pending = any(not r.get('decided', True) for r in races)
+            if st.button("➕ 次のレースを追加", type="primary", disabled=_pending, key="bs_add"):
+                _ss['bs_races'].append({'id': str(uuid.uuid4()), 'win': False, 'ret': 0, 'decided': False})
+                save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
+                st.rerun()
+        with b2:
+            if st.button("✨ 全リセット", type="secondary", key="bs_reset"):
+                _ss['bs_races'] = []
+                if os.path.exists(BETSYNC_FILE): os.remove(BETSYNC_FILE)
+                st.rerun()
 
-    with badd:
-        if st.button(_add_label, type="primary", key="bs_add",
-                     disabled=_last_pending,
-                     help="現在のレースの勝敗を確定してから次のレースを追加してください" if _last_pending else None):
-            _ss['bs_races'].append({'win': False, 'ret': 0, 'decided': False})
-            st.rerun()
-    if _last_pending:
-        st.caption("✨ 上のレースの勝敗（✅・❌）を選択してから次のレースを追加できます。")
-    with breset:
-        if st.button("✨ リセット（最初からやり直す）", key="bs_reset"):
-            _ss['bs_races'] = []
-            _ss['bs_strategy'] = "[稼働中] 6連サバイバル"   # ステッパーを確実に表示
-            st.rerun()
+        # ─────────────────────────────────────────
+        # ─────────────────────────────────────────
+        # ─────────────────────────────────────────
+        # ⑥ Kaggleデータ分析チャット
+        # ─────────────────────────────────────────
+        st.divider()
+        
+        # Singleton client
+        kaggle_chat = KaggleChatClient(api_key=GEMINI_API_KEY)
+
+        st.subheader("📊 Kaggleデータ分析チャット (2010-2025)")
+        st.caption("Geminiを使用して過去15年分のデータを抽出・分析します。質問を入力してください。")
+
+        # 1. 保存済み一覧 (ロジック置き場風スタイル)
+        with st.expander("📌 保存済み分析一覧", expanded=False):
+            saved_items = kaggle_chat.get_saved_interactions()
+            if not saved_items:
+                st.write("保存された分析はありません")
+            else:
+                # ソート (最新順)
+                sorted_saved = sorted(saved_items, key=lambda x: x.get('timestamp', ''), reverse=True)
+                
+                # Header
+                shc1, shc2, shc3, shc4 = st.columns([5, 3, 1, 1])
+                with shc1: st.caption("クエリ")
+                with shc2: st.caption("保存日時")
+                st.divider()
+                
+                # CSS for alternating rows (mimicking ロジック置き場)
+                chat_css = ["<style>"]
+                for i, item in enumerate(sorted_saved):
+                    bg = "#ffffff" if i % 2 == 0 else "#f5f5f5"
+                    chat_css.append(f"""
+                        div[data-testid="stHorizontalBlock"]:has(.chat-row-{i}) {{
+                            background-color: {bg} !important;
+                            padding: 4px 8px;
+                            border-radius: 4px;
+                            align-items: center;
+                        }}
+                        div[data-testid="stHorizontalBlock"]:has(.chat-row-{i}) * {{
+                            color: #333333 !important;
+                        }}
+                    """)
+                chat_css.append("</style>")
+                st.markdown("\n".join(chat_css), unsafe_allow_html=True)
+
+                for i, item in enumerate(sorted_saved):
+                    c1, c2, c3, c4 = st.columns([5, 3, 1, 1])
+                    with c1:
+                        query_disp = item['query'][:30] + "..." if len(item['query']) > 30 else item['query']
+                        st.markdown(f"<span class='chat-row-{i}'>💬 **{query_disp}**</span>", unsafe_allow_html=True)
+                    with c2:
+                        st.caption(item.get('timestamp', '')[:16].replace('T', ' '))
+                    with c3:
+                        if st.button("📂", key=f"chat_load_{item['id']}", help="読み込む"):
+                            restored_df = None
+                            if item.get('response_df_json'):
+                                try: restored_df = pd.read_json(item['response_df_json'], orient='split')
+                                except: pass
+                            st.session_state.kaggle_chat_history = [
+                                {"role": "user", "content": item['query']},
+                                {"role": "assistant", "content": item['response_text'], "df": restored_df}
+                            ]
+                            st.rerun()
+                    with c4:
+                        if st.button("🗑️", key=f"chat_del_{item['id']}", help="削除する"):
+                            if kaggle_chat.delete_interaction(item['id']):
+                                st.rerun()
+
+        # 2. チャット履歴の初期化
+        if "kaggle_chat_history" not in st.session_state:
+            st.session_state.kaggle_chat_history = []
+
+        # 3. チャットログの表示
+        chat_container = st.container()
+        with chat_container:
+            for i, msg in enumerate(st.session_state.kaggle_chat_history):
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+                    if "df" in msg and msg["df"] is not None:
+                        # race_id があればリンク化する
+                        df_display = msg["df"].copy()
+                        col_config = {}
+                        if "race_id" in df_display.columns:
+                            col_config["race_id"] = st.column_config.LinkColumn(
+                                "Race Link",
+                                help="netkeibaのレース詳細を開く",
+                                display_text="Open netkeiba"
+                            )
+                            # race_id カラムの値をURLに変換 (様々な型に対応)
+                            def to_netkeiba_url(val):
+                                if pd.isnull(val): return val
+                                try:
+                                    # 科学表記や小数点を排除して文字列化
+                                    s = str(int(float(val)))
+                                    return f"https://db.netkeiba.com/race/{s}/"
+                                except:
+                                    return val
+                            df_display["race_id"] = df_display["race_id"].apply(to_netkeiba_url)
+
+                        st.dataframe(df_display, use_container_width=True, column_config=col_config)
+                    
+                    # 的中保存ボタン
+                    if msg["role"] == "assistant":
+                        if st.button("⭐ お気に入り保存", key=f"save_btn_{i}"):
+                            query_msg = st.session_state.kaggle_chat_history[i-1]["content"]
+                            if kaggle_chat.save_interaction(query_msg, msg["content"], msg.get("df")):
+                                st.success("保存しました")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("保存に失敗しました。data/kaggle_interactions.json の権限等を確認してください。")
+
+        # 4. チャット入力
+        if k_prompt := st.chat_input("例: 2018年の三連複人気ランキングを教えて"):
+            st.session_state.kaggle_chat_history.append({"role": "user", "content": k_prompt})
+            with chat_container:
+                with st.chat_message("user"):
+                    st.write(k_prompt)
+                
+                with st.chat_message("assistant"):
+                    with st.spinner("Kaggle データをロード/分析中..."):
+                        ans_text, ans_df = kaggle_chat.ask(k_prompt)
+                        st.write(ans_text)
+                        if ans_df is not None:
+                            st.dataframe(ans_df, use_container_width=True)
+                        st.session_state.kaggle_chat_history.append({
+                            "role": "assistant", 
+                            "content": ans_text, 
+                            "df": ans_df
+                        })
+                        st.rerun() # ボタンを表示するために再描画
+
+
+        # Final persistence save at the end of valid execution
+        save_betsync_data({
+            'bankroll': _ss['bs_bankroll'],
+            'init_bet': _ss['bs_init_bet'],
+            'target':   _ss['bs_target'],
+            'strategy': _ss['bs_strategy'],
+            'ticket':   _ss['bs_ticket'],
+            'races':    _ss['bs_races']
+        })
+
+    except Exception as e:
+        st.error(f"⚠️ BetSync エラーが発生しました: {e}")
+        st.code(traceback.format_exc())
 
 
 
@@ -952,7 +992,7 @@ if nav == "🏠 Single Race Analysis":
     analyze_btn = st.button("🚀 Analyze Race & Generate Map", type="primary")
 
     # --- Recent Races History List (Shortcut) ---
-    import history_manager
+    from core import history_manager
     importlib.reload(history_manager)  # always pick up the latest version (avoids cached stale module)
     df_h_main = history_manager.load_history()
     if not df_h_main.empty:
@@ -1023,12 +1063,41 @@ if nav == "🏠 Single Race Analysis":
         st.session_state['tab1_analyzed_id'] = race_id_input
         
     if analyze_btn or ("race_id" in query_params and race_id_input == default_id) or st.session_state.get('tab1_analyzed_id') == race_id_input:
-        with st.spinner("Fetching data and calculating indices..."):
-            df = st.session_state.get('df')
-            try:
-                # 1. Fetch Data
+        # Determine if we need to fetch fresh data from the web
+        # Fetch if analyze button is pressed, OR if it's a new race, OR if df is missing
+        must_fetch = analyze_btn or st.session_state.get('tab1_analyzed_id') != race_id_input or st.session_state.get('df') is None
+        
+        if must_fetch:
+            with st.spinner("Fetching data from web..."):
                 df = scraper.get_race_data(race_id_input)
                 
+                # --- [NEW] Fetch detailed shutuba data (Barei, Futan, Weight, etc.) ---
+                try:
+                    shutuba_extra = scraper.fetch_shutuba_data(race_id_input)
+                    if shutuba_extra and df is not None and not df.empty:
+                        for umaban, info in shutuba_extra.items():
+                            # Find matching horse in df by Umaban
+                            umaban_str = str(umaban).lstrip('0') # Handle possible leading zeros
+                            mask = df['Umaban'].astype(str).str.lstrip('0') == umaban_str
+                            if mask.any():
+                                for col, val in info.items():
+                                    # Update if current value is placeholder or empty
+                                    if col not in df.columns:
+                                        df[col] = "-"
+                                    
+                                    curr_val = str(df.loc[mask, col].iloc[0])
+                                    if curr_val in ["-", "", "None", "発走前のため未公開"]:
+                                        if val not in ["-", ""]:
+                                            df.loc[mask, col] = val
+                except Exception as ex_shutuba:
+                    st.warning(f"出馬表データの詳細取得に一部失敗しました: {ex_shutuba}")
+
+                st.session_state['tab1_analyzed_id'] = race_id_input
+        else:
+            df = st.session_state.get('df')
+
+        with st.spinner("Fetching data and calculating indices..."):
+            try:
                 if df is None or df.empty:
                     is_nar_check = False
                     try:
@@ -1048,182 +1117,334 @@ if nav == "🏠 Single Race Analysis":
                     df = calculator.calculate_battle_score(df)
                     df = calculator.calculate_n_index(df)
                     st.session_state['df'] = df
-                    
-                    # ★ New: Strength × Suitability calculation
-                    import altair as alt
-                    import numpy as _np_main
-                    df = calculator.calculate_strength_suitability(df, course_profile_main)
-                    
-                    # --- Race Rating + Strategy (Merged) ---
-                    score, rating, reasons = calculator.calculate_confidence(df) if hasattr(calculator, 'calculate_confidence') else (0, 'C', [])
-                    
-                    rating_icon = "➖"
-                    if "S" in rating: rating_icon = "🌟"
-                    elif "A" in rating: rating_icon = "➖"
-                    elif "B" in rating: rating_icon = "➖"
-                    st.divider()
-                    st.subheader("🏁 レース情報（展開予測・波乱警戒）")
-                    
-                    # --- Data Processing (No Rendering Here) ---
-                    fav_vuln_msg = ""
-                    dark_horse_msgs = []
-                    
-                    try:
-                        if 'Popularity' in df.columns and 'Suitability (Y)' in df.columns:
-                            top_favs = df[pd.to_numeric(df['Popularity'], errors='coerce') <= 3]
-                            if not top_favs.empty:
-                                avg_suit = top_favs['Suitability (Y)'].mean()
-                                if avg_suit < 50:
-                                    fav_vuln_msg = "🚨 **【波乱警戒】** 上位人気馬のコース適性（Y軸）が全体的に低く、**ヒモ荒れや波乱の可能性が非常に高い**レースです。人気馬を過信せず、適性の高い中穴馬からのアプローチを推奨します。"
-                                elif avg_suit < 65:
-                                    fav_vuln_msg = "⚠️ **【中穴注意】** 上位人気馬のコース適性は平凡です。付け入る隙があり、展開次第で中穴馬が台頭する余地があります。"
-                                else:
-                                    fav_vuln_msg = "✨ **【軸馬信頼】** 上位人気馬のコース適性が高く安定しています。順当な決着になる確率が高いレースです。"
-
-                            dark_horses = df[(pd.to_numeric(df['Popularity'], errors='coerce') >= 6) & (pd.to_numeric(df['Suitability (Y)'], errors='coerce') >= 65)]
-                            if not dark_horses.empty:
-                                for _, dh in dark_horses.iterrows():
-                                    dh_name = dh['Name']
-                                    dh_uma = dh['Umaban']
-                                    dh_pop = int(dh['Popularity']) if pd.notnull(dh['Popularity']) else "?"
-                                    dh_suit = int(dh['Suitability (Y)'])
-                                    dark_horse_msgs.append(f"🐴 **{dh_uma}番 {dh_name}** ({dh_pop}人気 / 適性 {dh_suit}): 人気薄ながらコース適性抜群！激走の可能性大。")
-                    except Exception as e_enh:
-                        fav_vuln_msg = f"Analysis error: {e_enh}"
-
-                    strategy_df = df.copy()
-                    score_col = 'Projected Score' if 'Projected Score' in strategy_df.columns else 'BattleScore'
-                    strategy_df = strategy_df.sort_values(by=score_col, ascending=False).reset_index(drop=True)
-                    strategy_df['TotalScore_For_Chart'] = pd.to_numeric(strategy_df[score_col], errors='coerce').fillna(0)
-                    sorted_scores = strategy_df['TotalScore_For_Chart'].tolist()
-                    
-                    gap_msg = ""
-                    gap_type = "info"
-                    if len(sorted_scores) >= 5:
-                        diff_threshold = 15
-                        score_1, score_2, score_3, score_4, score_5 = sorted_scores[:5]
-                        gap_1_2, gap_2_3 = score_1 - score_2, score_2 - score_3
-                        gap_1_5, gap_1_3, gap_3_4 = score_1 - score_5, score_1 - score_3, score_3 - score_4
-                        
-                        if gap_1_2 >= diff_threshold:
-                            gap_msg, gap_type = "✨ **1強レース**：1位の予測スコアが突出。散布図の右上にいる馬を絶対軸に、相手は手広く3連複で。", "info"
-                        elif gap_1_2 < diff_threshold and gap_2_3 >= diff_threshold:
-                            gap_msg, gap_type = "✨ **2強マッチレース**：上位2頭が抜けています。この2頭を軸に『3連複2頭軸流し』が最も威力を発揮します！", "success"
-                        elif gap_1_5 < 8.0:
-                            gap_msg, gap_type = "🚨 **大混戦（カオス）**：全馬の予測スコアが接近。ケン推奨か、散布図の左上（高適性・低人気）の馬狙いで大穴一点。", "error"
-                        elif gap_1_3 < 8.0 and gap_3_4 >= 8.0:
-                            gap_msg, gap_type = "⚠️ **上位拮抗レース**：上位陣が伯仲。散布図で対角線より上の馬を中心にボックス買いが安全です。", "warning"
-                        else:
-                            gap_msg, gap_type = "✨ **波乱含み（中穴警戒）**：散布図で適性が高い中位馬にチャンスあり。💀を消してヒモ荒れを狙いましょう。", "warning"
+                    # Preserve metadata in session state
+                    if hasattr(df, 'attrs') and 'metadata' in df.attrs:
+                        st.session_state['race_metadata'] = df.attrs['metadata']
                     else:
-                        gap_msg, gap_type = "✨ **少頭数レース**：データが少ないため、各馬の状態や展開を重視してください。", "info"
-
-                    GAP_VERY_LARGE, GAP_LARGE, GAP_FLAT, GAP_MIDDLE_SMALL = 50, 30, 15, 20
-                    def detect_race_pattern(scores):
-                        if len(scores) < 2: return 3
-                        s = scores
-                        gap_1_2 = s[0] - s[1]
-                        gap_1_3 = s[0] - s[2] if len(s) >= 3 else gap_1_2
-                        gap_top_mid = (s[2] - s[6]) if len(s) >= 7 else 0
-                        gap_1_last = s[0] - s[-1]
-                        if gap_1_2 >= GAP_VERY_LARGE: return 1
-                        elif gap_1_3 >= GAP_LARGE and gap_1_2 < GAP_VERY_LARGE: return 2
-                        elif gap_1_last < GAP_FLAT: return 5
-                        elif len(scores) >= 7 and gap_top_mid < GAP_MIDDLE_SMALL: return 4
-                        return 3
+                        st.session_state['race_metadata'] = {'class': '-', 'weight_rule': '-', 'holding_days': '-', 'weather': '-', 'condition': '-', 'is_handicap': False}
                     
-                    race_pattern = detect_race_pattern(sorted_scores)
-                    
-                    if race_pattern == 1:
-                        advice_color, advice_border, advice_bg = "#FF4500", "#FF4500", "#FF450015"
-                        advice_title = "予測難易度: D ➖ ✨ 超固い"
-                        advice_text = "<strong>✨ このレースは買わずに「見（ケン）」を強く推奨します。</strong><br><br>1位馬の指数が2位以下を圧倒しており、単勝・馬連ともに低配当が確実な構造です。むやみに買い続けると、払い戻しが投資額を下回る「プラス収支の罠」にはまります。<br><br><strong>【推奨アクション】</strong><br>▶ 基本姿勢：完全ケン（見送り）<br>▶ どうしても買いたい場合：1強馬を軸に「3連単1-2着固定」で点数を絞り、配当倍率が最低でも10倍以上になる組み合わせのみ購入<br>▶ 次の「荒れレース」に向けて資金をキープし、体力を温存することが最優先戦略です。"
-                    elif race_pattern == 2:
-                        advice_color, advice_border, advice_bg = "#00C8FF", "#00C8FF", "#00C8FF15"
-                        advice_title = "予測難易度: C ➖ 🔥 固い"
-                        advice_text = "<strong>▶ 上位2頭が安定しており、「手堅く回収」を狙えるレースです。</strong><br><br>指数上位2頭と3位以下の差が明確なため、軸が絞りやすい構造です。無理に穴を狙わず、堅実な買い目でしっかり的中率を維持しましょう。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連：1-2位軸の流し</strong>（相手は3～5位まで）→ 点数3～4点に絞る<br>✨ <strong>3連複：1・2位を軸に1頭ずつ固定</strong>、3頭目を3～6位から3点流し → 合計5～6点<br>✨ <strong>目標配当：馬連10～20倍、3連複30～80倍</strong><br><br>✨ このレースで確実に回収し、次のレースに向けた資金基盤を整えましょう。"
-                    elif race_pattern == 3:
-                        advice_color, advice_border, advice_bg = "#FFD700", "#FFD700", "#FFD70015"
-                        advice_title = "予測難易度: B ➖ 🔥 通常"
-                        advice_text = "<strong>✨ 最もバランスの良い「勝負レース」です。積極的に仕掛けましょう！</strong><br><br>上位馬が階段状にスコアが落ちており、1～5位に実力差はあるものの混戦要素があります。軸馬を1頭固定しつつ、相手を広げることで「中穴の旨みを取る」戦略が最適です。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連：1位軸から2～6位への流し</strong> → 5点<br>✨ <strong>3連複：1位を軸1頭固定、2～7位から6頭選んで流し</strong> → 15点前後<br>✨ <strong>3連単：1位→2・3位固定→4～7位まで流し</strong>で点数を絞った高配当狙い<br>✨ <strong>目標配当：馬連15～40倍、3連複50～200倍</strong><br><br>✨ 消し馬ロジック（💀マーク）を最大活用し、買い目数を削減してください。点数を絞るほど回収率が上がります。"
-                    elif race_pattern == 4:
-                        advice_color, advice_border, advice_bg = "#7FFF00", "#7FFF00", "#7FFF0015"
-                        advice_title = "予測難易度: A ➖ ⚠️ 荒れ"
-                        advice_text = "<strong>⚠️ 上位陣が伯仲しており、軸選びが非常に難しいレースです。</strong><br><br>1位から中位までのスコア差が小さく、展開一つで着順が大きく入れ替わる可能性が高いです。「荒れる」可能性を秘めており、手広く買うか、あるいは見送るかの判断が求められます。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>馬連/ワイド：上位5頭のボックス買い</strong>（10点）で確実に的中を拾う<br>✨ <strong>3連複：上位5～6頭のボックス買い</strong>（10～20点）<br>✨ <strong>フォーメーション：</strong>どうしても勝負したい場合は、好調教馬や騎手評価の高い馬を1列目に置く<br><br>✨ 資金に余裕がない場合は、「見（ケン）」も立派な戦略です。"
-                    elif race_pattern == 5:
-                        advice_color, advice_border, advice_bg = "#FF1493", "#FF1493", "#FF149315"
-                        advice_title = "予測難易度: S ➖ ✨ 大荒れ"
-                        advice_text = "<strong>🚨 超危険！大波乱の予感が漂う「爆穴狙い推奨」レースです。</strong><br><br>1位から最下位までのスコア差が極めて小さく、人気馬に明確な死角があります。全馬に勝つチャンスがあるため、最も回収率を爆増させやすいレースです。<br><br><strong>【推奨買い目】</strong><br>✨ <strong>3連複全頭流し：</strong>どうしても勝負したい場合は、好適性の穴馬から全通りを買う「全流し」で事故待ち<br>✨ <strong>単勝・複勝コロガシ：</strong>10番人気以下の馬から単複を買う<br><br>✨ 安全に行くなら100%「見」ですが、ギャンブルとして楽しむなら最高の舞台です。"
-                    else:
-                        advice_color, advice_border, advice_bg = "#9400D3", "#9400D3", "#9400D315"
-                        advice_title = "予測難易度: Unknown ➖ 🚨 大混戦（カオス）"
-                        advice_text = "<strong>🚨 全馬の実력이拮抗しており、何が来てもおかしくない「超難解レース」です。</strong><br><br>予測スコアが完全にフラットになっており、データからは軸馬を絞りきれません。高配当が狙える一方、的中率は極めて低くなります。<br><br><strong>【推奨アクション】</strong><br>▶ 基本姿勢：完全ケン（見送り）<br>▶ <strong>一攫千金狙い（遊び）</strong>：散布図の「左上（高適性・低人気）」にいる【波乱の使者】から単勝やワイドを少額で買う<br>▶ <strong>全頭買い</strong>：資金に余裕があれば、荒れることを前提に入線を祈る<br><br>✨ 「わからないレースは買わない」が投資競馬の鉄則です。無理な勝負は避けましょう。"
-                    # --- UI Rendering ---
-                    col_r1, col_r2 = st.columns([1.3, 1])
-                    with col_r1:
-                        # Render Pattern Advisor Component (First)
-                        # Remove forced colors to let Streamlit handle dark/light mode dynamically while keeping the background colorful
-                        st.markdown(f"""
-                        <div style="background-color: {advice_bg}; border: 2px solid {advice_border}; border-radius: 12px; padding: 24px 28px; margin-bottom: 24px; box-shadow: 0 0 22px {advice_color}55;">
-                            <div style="font-size: 1.4em; font-weight: bold; color: {advice_color}; margin-bottom: 14px; border-bottom: 1px solid {advice_border}55; padding-bottom: 10px;">
-                                {advice_title}
-                            </div>
-                            <div style="font-size: 1.0em; line-height: 2.0;">
-                                {advice_text}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    # Reset vision apply flag for new race
+                    if st.session_state.get('last_race_id') != race_id_input:
+                        st.session_state['vision_data_applied'] = False
+                        st.session_state['last_race_id'] = race_id_input
 
-                        # Render Gap Strategy
-                        getattr(st, gap_type)(gap_msg)
+                    # --- [NEW] RACE SUMMARY BLOCK (TOP PRIORITY) ---
+                    st.markdown("""
+                        <style>
+                        .summary-box {
+                            background-color: #f8f9fa;
+                            padding: 20px;
+                            border-radius: 10px;
+                            border-left: 5px solid #ff4b4b;
+                            margin-bottom: 20px;
+                        }
+                        .summary-title { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+                        .summary-rank { font-size: 32px; color: #ff4b4b; font-weight: bold; }
+                        </style>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("## 🏆 Race Analysis Summary")
+                    
+                    # Manual Odds Override UI (Support for Image interpretation)
+                    with st.expander("📝 オッズ・人気データの補完/上書き (画像/手動入力)", expanded=False):
+                        st.info("💡 取得データが古い場合や、画像から読み取った値をここに反映させて分析精度を高めることができます。")
                         
-                        # Render Upset/Vulnerability
-                        if fav_vuln_msg:
-                            st.info(fav_vuln_msg)
-                        if dark_horse_msgs:
-                            formatted_dark_horses = "  \n\n".join(dark_horse_msgs)
-                            st.warning(f"🎯 **【注目の適性ダークホース】**  \n\n{formatted_dark_horses}")
+                        # Added Image Uploader for drag-and-drop
+                        uploaded_file = st.file_uploader("オッズ画像のアップロード (ドラッグ＆ドロップ対応)", type=['png', 'jpg', 'jpeg'], help="ここにオッズ画面のスクリーンショットをドロップして、数値を手動入力する際の参考にしてください。")
+                        if uploaded_file:
+                            st.image(uploaded_file, caption="アップロードされたオッズ画像", use_container_width=True)
+                            
+                            col_engine, col_btn = st.columns([1, 1])
+                            with col_engine:
+                                ocr_engine = st.radio("解析エンジン", ["Gemini AI (推奨)", "EasyOCR (ローカル)"], horizontal=True, help="Gemini APIキーが不安定な場合はローカルを選択してください")
+                            
+                            with col_btn:
+                                st.write("") # Adjust for alignment
+                                st.write("")
+                                run_vision = st.button("🤖 解析実行", help="画像からオッズデータを自動抽出します", key="btn_vision_ai")
+                            
+                            if run_vision:
+                                with st.spinner(f"{ocr_engine} で画像を解析中..."):
+                                    if "Gemini" in ocr_engine:
+                                        vision_analyzer = VisionOddsAnalyzer(api_key=GEMINI_API_KEY)
+                                        result = vision_analyzer.analyze_odds_image(uploaded_file.getvalue())
+                                        v_data = result[0]
+                                        v_err = result[1]
+                                        v_dbg = result[2] if len(result) > 2 else []
+                                    else:
+                                        vision_analyzer = get_local_vision_analyzer_v2()
+                                        result = vision_analyzer.analyze_odds_image(uploaded_file.getvalue())
+                                        v_data = result[0]
+                                        v_err = result[1]
+                                        v_dbg = result[2] if len(result) > 2 else []
+                                    
+                                    # Store results in session state
+                                    st.session_state['last_vision_data'] = v_data
+                                    st.session_state['last_vision_error'] = v_err
+                                    st.session_state['last_vision_debug'] = v_dbg
+                                    st.rerun()
 
-                        # --- NEW: CHAOS INDEX (荒れ度判定) ---
-                        score_col = 'Test_Score' if 'Test_Score' in df.columns else ('Projected Score' if 'Projected Score' in df.columns else 'BattleScore')
-                        if score_col in df.columns and 'Popularity' in df.columns:
-                            valid_df = df.dropna(subset=[score_col, 'Popularity'])
-                            
-                            top5_scores = valid_df.sort_values(by=score_col, ascending=False).head(5)[score_col]
-                            std_dev = top5_scores.std() if len(top5_scores) > 1 else 0
-                            
-                            pop_avg = valid_df[valid_df['Popularity'] <= 3][score_col].mean()
-                            dark_horses = valid_df[valid_df['Popularity'] >= 7]
-                            dark_max = dark_horses[score_col].max() if not dark_horses.empty else 0
-                            
-                            if pd.isna(pop_avg): pop_avg = 0
-                            if pd.isna(dark_max): dark_max = 0
-                            
-                            chaos_status = "🟢 順当"
-                            chaos_desc = "人気と実力が概ね一致しています。"
-                            if dark_max > pop_avg and std_dev < 3.0:
-                                chaos_status = "🔴 大荒れ注意"
-                                chaos_desc = "人気馬の指数が低く、実力が拮抗しています。穴馬券を狙う大チャンス！"
-                            elif dark_max > pop_avg or std_dev < 4.5:
-                                chaos_status = "🟡 波乱含み"
-                                chaos_desc = "指数上位に穴馬が混じっています。ヒモ荒れに警戒してください。"
+                            # -- Persistent Result UI (survives reruns) --
+                            if st.session_state.get('last_vision_data'):
+                                v_data = st.session_state['last_vision_data']
+                                st.success(f"✅ {len(v_data)}頭のデータを抽出しました。内容を確認して反映してください。")
                                 
-                            st.metric("📊 荒れ度 (Chaos Index)", chaos_status, help=f"上位5頭のスコア偏差: {std_dev:.1f} / 人気上位平均: {pop_avg:.1f} vs 穴馬最高: {dark_max:.1f}")
-                            st.caption(chaos_desc)
-                        else:
-                            st.metric("📊 荒れ度 (Chaos Index)", "判定不能")
-                            
-                        # --- NEW: Predicted Difficulty Display ---
-                        pred_diff = calculator.calculate_predicted_difficulty(df) if df is not None and not df.empty else "B"
-                        diff_labels = {"S": "大荒れ (S)", "A": "荒れ (A)", "B": "通常 (B)", "C": "堅い (C)"}
-                        st.metric("予測レース難易度", diff_labels.get(pred_diff, "判定不能"))
-                            
-                    with col_r2:
-                        st.progress(min(score, 100) / 100.0)
-                        if reasons:
-                            st.caption(f"Reason: {', '.join(reasons)}")
+                                # Show preview table
+                                prev_df = pd.DataFrame(v_data).rename(columns={
+                                    "umaban": "馬番", "popularity": "人気", "win_odds": "単勝", 
+                                    "place_min": "複勝(低)", "place_max": "複勝(高)",
+                                    "sex_age": "性齢", "weight_carried": "斤量"
+                                })
+                                st.table(prev_df)
+                                
+                                if st.button("📊 抽出データを分析表に反映する", key="apply_vision", type="primary"):
+                                    # Use the correct analyzer for merging
+                                    analyzer = VisionOddsAnalyzer(api_key=GEMINI_API_KEY) if "Gemini" in ocr_engine else get_local_vision_analyzer_v2()
+                                    st.session_state['df'] = analyzer.merge_vision_data(st.session_state['df'], v_data)
+                                    st.session_state['vision_data_applied'] = True # Set flag!
+                                    st.success("分析表に反映しました。")
+                                    # Clear state after apply
+                                    st.session_state['last_vision_data'] = None
+                                    st.rerun()
+
+                            elif st.session_state.get('last_vision_error'):
+                                st.error(f"❌ 画像の解析に失敗しました ({ocr_engine})。\n\n**原因:** {st.session_state['last_vision_error']}")
+                                    
+                            # Show Raw Debug Text if available
+                            if st.session_state.get('last_vision_debug'):
+                                with st.expander("🔍 解析の裏側（検出された生テキスト）", expanded=not st.session_state.get('last_vision_data')):
+                                    st.info("画像から以下の行テキストを検出しました。パースが不完全な場合はこちらを確認してください。")
+                                    for line in st.session_state['last_vision_debug']:
+                                        st.write(f"- {line}")
+
+                            if "Gemini" in ocr_engine and st.session_state.get('last_vision_error'):
+                                st.info("💡 解決のヒント: APIキーの更新を検討するか、ローカル解析をお試しください。")
+                        
+                        col_o1, col_o2 = st.columns(2)
+                        with col_o1:
+                             default_fav = float(df['Odds'].min()) if not df.empty and df['Odds'].min() >= 1.0 else 2.0
+                             fav_odds = st.number_input("1番人気の単勝オッズ", min_value=1.0, value=default_fav, step=0.1)
+                        with col_o2:
+                             st.caption("※高度な分析（単複乖離など）を行うには、以下の『Ranking Table』で各馬の複勝データを編集してください。")
+
+                    # Apply override
+                    if not df.empty:
+                        df.loc[df['Odds'] == df['Odds'].min(), 'Odds'] = fav_odds
                     
+                    # --- [NEW] START OF CONDITIONAL DISPLAY ---
+                    if not st.session_state.get('vision_data_applied', False):
+                        st.warning("⚠️ 波乱予測と推奨買い目を表示するには、オッズ画像をアップロードして『分析表に反映する』を実行してください。")
+                    else:
+                        # --- [PREPARE EVIDENCE DATA] ---
+                        meta = st.session_state.get('race_metadata', {})
+                        chaos_data = calculator.evaluate_race_chaos_v3(df)
+                        rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(chaos_data['rank'], "#333")
+                        
+                        evidence_list = [
+                            {"項目": "クラス", "値": meta.get('class', '-'), "ステータス": "-"},
+                            {"項目": "斤量ルール", "値": meta.get('weight_rule', '-'), "ステータス": "⚠️ ハンデ戦: 波乱リスク高" if meta.get('is_handicap') else "✅ 定量/馬齢"},
+                        ]
+                        
+                        # Holding days logic
+                        hd = meta.get('holding_days', '-')
+                        hd_status = "-"
+                        try:
+                            if str(hd).isdigit() and int(hd) >= 7: hd_status = "🚩 馬場劣化警告"
+                            elif str(hd).isdigit(): hd_status = "✅ 良好"
+                        except: pass
+                        evidence_list.append({"項目": "開催日数", "値": f"{hd}日目", "ステータス": hd_status})
+                        
+                        evidence_list.append({"項目": "天候/馬場", "値": f"{meta.get('weather', '-')}/{meta.get('condition', '-')}", "ステータス": "-"})
+                        
+                        # Existing items
+                        evidence_list.extend([
+                            {"項目": "1番人気オッズ", "値": f"{fav_odds}倍", "ステータス": "🚩 要注意" if fav_odds >= 3.5 else "✅ 正常"},
+                            {"項目": "要警戒アノマリー数", "値": f"{chaos_data.get('anomaly_count', 0)}件", "ステータス": "⚠️ 検出" if chaos_data.get('anomaly_count', 0) > 0 else "✅ 低"},
+                            {"項目": "先行馬密集度", "値": "高" if "先行馬が密集" in chaos_data['reason'] else "中以下", "ステータス": "-"}
+                        ])
+
+                        st.markdown(f"""
+                            <div class="summary-box">
+                                <div class="summary-title">🏁 総合波乱度判定</div>
+                                <div class="summary-rank" style="color: {rank_color}">Chaos Level: {chaos_data['rank']}</div>
+                                <p style="font-size: 16px; line-height: 1.6;">{chaos_data['reason']}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Recommended Bets Section
+                        st.markdown("### 🎫 推奨買い目")
+                        rec_col1, rec_col2 = st.columns([2, 1])
+                        with rec_col1:
+                            top_horses = df.head(3)
+                            if chaos_data['rank'] in ['S', 'A']:
+                                st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                            else:
+                                st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                        with rec_col2:
+                            st.button("📋 買い目を生成 (ChatGPT連携)", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
+
+                        # Evidence Table
+                        with st.expander("📊 判定根拠エビデンス表", expanded=True):
+                            st.table(pd.DataFrame(evidence_list))
+
+                        st.divider()
+                        
+                        # --- [PRE-CALCULATE SCORES & DERIVED COLUMNS] ---
+                        # Move this up so Sniper Logic can use Projected Score
+                        import numpy as _np_main
+                        course_profile_main = meta.get('course_profile', '')
+                        df = calculator.calculate_strength_suitability(df, course_profile_main)
+                        
+                        def calc_derived_cols(target_df):
+                            res = target_df.copy()
+                            # Sort by Popularity for Odds Gap
+                            if 'Popularity' in res.columns and 'Odds' in res.columns:
+                                gap_df = res.sort_values('Popularity').copy()
+                                gap_df['PrevOdds'] = gap_df['Odds'].shift(1)
+                                gap_df['OddsGap'] = gap_df.apply(lambda r: "⚠断層" if r['PrevOdds'] > 0 and r['Odds']/r['PrevOdds'] >= 1.5 else "-", axis=1)
+                                res = res.merge(gap_df[['Umaban', 'OddsGap']], on='Umaban', how='left')
+                            else:
+                                res['OddsGap'] = "-"
+
+                            # Extra data for v2 Dashboard
+                            risks, corners, weight_raw, prev_agari, jockey_flag = [], [], [], [], []
+                            current_surf = str(res['CurrentSurface'].iloc[0]) if 'CurrentSurface' in res.columns and not res.empty else "芝"
+
+                            for _, row in res.iterrows():
+                                p_runs = row.get('PastRuns', [])
+                                r_list, c_val, w_val, a_val, j_flag = [], "-", "-", "-", "-"
+                                if p_runs:
+                                    last_run = p_runs[0]
+                                    c_val = last_run.get('Passing', "-")
+                                    a_val = f"{last_run.get('Agari', 0.0):.1f}" if last_run.get('Agari', 0.0) > 0 else "-"
+                                    
+                                    # Jockey change check
+                                    current_jockey = str(row.get('Jockey', ''))
+                                    prev_jockey = str(last_run.get('PrevJockey', ''))
+                                    if current_jockey and prev_jockey and current_jockey != prev_jockey and prev_jockey != "-":
+                                        j_flag = "乗替"
+                                    
+                                    if 'ダ' in current_surf and not any('ダ' in str(pr.get('Surface', '')) for pr in p_runs): r_list.append("初ダ")
+                                    try:
+                                        last_date = datetime.strptime(last_run.get('Date', '2000.01.01'), "%Y.%m.%d")
+                                        if (datetime.now() - last_date).days > 180: r_list.append("休明")
+                                    except: pass
+                                    w_val = last_run.get('Weight', "-")
+                                risks.append(", ".join(r_list) if r_list else "-")
+                                corners.append(c_val)
+                                weight_raw.append(w_val)
+                                prev_agari.append(a_val)
+                                jockey_flag.append(j_flag)
+                                
+                            res['RiskFlags'], res['PrevCorners'], res['WeightHistory'], res['PrevAgari'], res['JockeyChange'] = risks, corners, weight_raw, prev_agari, jockey_flag
+                            return res
+                        
+                        df = calc_derived_cols(df)
+
+                        # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
+                        st.subheader("🤖 中穴スナイパー分析")
+                        
+                        # 波乱度ランクを取得
+                        c_rank = chaos_data['rank']
+                        pop_ranges = {'S': '15〜45', 'A': '12〜35', 'B': '10〜30', 'C': '10〜30'}
+                        current_pop_range = pop_ranges.get(c_rank, '10〜30')
+                        
+                        if c_rank in ['B', 'C']:
+                            st.caption(f"3頭の人気合計が{current_pop_range}の組み合わせに絞り、波乱度に応じた中穴ゾーンをピンポイントで抽出します。")
+                        else:
+                            st.caption(f"波乱度{c_rank}に基づき、人気合計が{current_pop_range}の広範な組み合わせから期待値を最大化します。")
+                        
+                        bet_budget = st.number_input("買い目生成用 予算 (円)", min_value=1000, value=10000, step=1000, key="ai_bet_budget_unified")
+                        
+                        # ロジック呼び出し
+                        # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
+                        c_rank = chaos_data['rank']
+                        unified_pool = calculator.generate_unified_sniper_pool(df, c_rank)
+                        
+                        if 'error' in unified_pool:
+                            st.error(f"分析プール生成エラー: {unified_pool['error']}")
+                        else:
+                            # 予算配分を実行
+                            allocated_res = calculator.allocate_unified_budget(unified_pool, bet_budget)
+                            
+                            rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(c_rank, "#333")
+                            
+                            # ステータス表示
+                            f1, f2, f3 = st.columns([1, 1, 1])
+                            with f1:
+                                st.markdown(f"""
+                                    <div style="background-color: {rank_color}; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+                                        <div style="font-size: 12px;">波乱度判定</div>
+                                        <div style="font-size: 28px; font-weight: bold;">{c_rank}</div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            with f2:
+                                min_o, max_o = unified_pool['odds_range']
+                                st.metric("適用オッズレンジ", f"{min_o}〜{max_o}倍")
+                            with f3:
+                                st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
+
+                            st.write(f"**🎯 推奨買い目一覧 ({allocated_res['main_count']}点 + ボーナス)**")
+                            
+                            if allocated_res['tickets']:
+                                df_tickets = pd.DataFrame(allocated_res['tickets'])
+                                # 表示用に整形
+                                display_rows = []
+                                for _, row in df_tickets.iterrows():
+                                    is_bonus = row.get('is_bonus', False)
+                                    display_rows.append({
+                                        "種別": "🎁ボーナス" if is_bonus else f"🎯パターン{row['type']}",
+                                        "組合せ": ", ".join(map(str, row['horses'])),
+                                        "馬名": " - ".join(row['names']),
+                                        "推定オッズ": f"{row['est_odds']}倍",
+                                        "購入金額": f"{row['amount']}円",
+                                        "想定払戻": f"{row['est_payout']:,}円"
+                                    })
+                                st.table(pd.DataFrame(display_rows))
+                                
+                                st.success(f"合計購入金額: **{allocated_res['actual_total']:,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res['unit_price']}円)")
+                            else:
+                                st.warning("条件に合う買い目が見つかりませんでした。")
+
+                            # 除外ログ
+                            with st.expander("🕵️ 除外ログ (フィルタリング詳細)", expanded=False):
+                                st.caption("以下の組み合わせは、オッズまたは人気の条件により除外されました。")
+                                for log in unified_pool['exclusion_log']:
+                                    st.write(f"- {log}")
+
+                        st.divider()
+                        # --- [NEW] END OF CONDITIONAL DISPLAY ---
+                        pass 
+
+                    # --- RESTORED ODDS MONITORING SECTIONS ---
+                    with st.expander("📈 時系列オッズ・詳細分析 (高度な監視機能)", expanded=False):
+                        from core.odds_tracker import OddsTracker
+                        from core.odds_analyzer import OddsAnalyzer
+                        tracker = OddsTracker()
+                        analyzer = OddsAnalyzer()
+                        
+                        st.markdown("#### 📉 Time-Series Change")
+                        st.caption("Record Current Odds で最新の状態を保存し、推移を確認できます。")
+                        if st.button("🔴 Record Current Odds", help="現在値を記録します", key="btn_record_odds_v3"):
+                            count = tracker.track(race_id_input)
+                            if count > 0: st.success(f"Logged {count} records!")
+                        
+                        history_df = tracker.get_history_df(race_id_input)
+                        if not history_df.empty:
+                            history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
+                            line_chart = alt.Chart(history_df[history_df['odds_type']=='win']).mark_line(point=True).encode(
+                                x='timestamp:T', y='odds_value:Q', color='umaban:N'
+                            ).interactive()
+                            st.altair_chart(line_chart, use_container_width=True)
+                        
+                        st.markdown("#### ⚠️ Anomalies Detected")
+                        alerts = analyzer.detect_abnormal_odds(df)
+                        if alerts:
+                            for a in alerts: st.warning(f"馬番 {a['horse_number']}: {a['reason']}")
+                        else: st.success("特筆すべき異常は見つかりませんでした。")
+
                     st.divider()
+
                     # --- 強適 Ranking Table ---
                     st.subheader("📊 強適 Ranking Table")
                     display_icon_legend()
@@ -1278,7 +1499,7 @@ if nav == "🏠 Single Race Analysis":
                         except:
                             return f"{a:.1f}"
 
-                    view_df['AvgAgari'] = df.apply(fmt_agari, axis=1)
+                    view_df['AvgAgari'] = view_df.apply(fmt_agari, axis=1)
 
                     # Format Position (2.5 🦁)
                     def fmt_pos(row):
@@ -1289,27 +1510,34 @@ if nav == "🏠 Single Race Analysis":
                         icon = " 🦁" if (p <= 5.0 and trusted) else ""
                         return f"{p:.1f}{icon}"
                     
-                    view_df['AvgPosition'] = df.apply(fmt_pos, axis=1)
+                    view_df['AvgPosition'] = view_df.apply(fmt_pos, axis=1)
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
                     # New column set with Projected Score highlighted
-                    cols = ['Rank', 'Umaban', 'Name', 'Popularity', 'Odds', 'Jockey',
-                            'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'AvgAgari', 'AvgPosition']
+                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'Weight', 'WeightCarried', 'Trainer', 'PrevCorners', 'PrevAgari', 'JockeyChange', 'Bloodline',
+                            'Name', 'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
                     column_config = {
+                        "Umaban": st.column_config.NumberColumn("馬番"),
+                        "Popularity": st.column_config.NumberColumn("人気", format="%d"),
+                        "Odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
+                        "OddsGap": st.column_config.TextColumn("オッズ断層"),
+                        "SexAge": st.column_config.TextColumn("性別/年齢"),
+                        "Weight": st.column_config.TextColumn("当日馬体重(増減)"),
+                        "WeightCarried": st.column_config.TextColumn("斤量"),
+                        "PrevCorners": st.column_config.TextColumn("前走通過順位"),
+                        "PrevAgari": st.column_config.TextColumn("前走上がり3F"),
+                        "JockeyChange": st.column_config.TextColumn("乗り替えわり"),
+                        "Bloodline": st.column_config.TextColumn("血統(父/母父)"),
+                        "Name": st.column_config.TextColumn("馬名"),
                         "Projected Score": st.column_config.NumberColumn("⭐ 予測スコア", format="%.1f"),
                         "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
                         "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f"),
                         "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.0f"),
                         "BattleScore": st.column_config.NumberColumn("🔥 戦闘力", format="%.1f"),
-                        "Umaban": st.column_config.NumberColumn("馬番"),
-                        "Jockey": st.column_config.TextColumn("騎手"),
-                        "Odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
-                        "Popularity": st.column_config.NumberColumn("人気", format="%d"),
-                        "AvgAgari": st.column_config.TextColumn("上がり3F (順位)"),
-                        "AvgPosition": st.column_config.TextColumn("平均位置取り"),
+                        "RiskFlags": st.column_config.TextColumn("不安要素"),
                     }
 
                     try:
@@ -1348,6 +1576,12 @@ if nav == "🏠 Single Race Analysis":
                             styled_df = styled_df.apply(color_rank, axis=0, subset=['Rank'])
                         if 'Alert' in view_df.columns:
                             styled_df = styled_df.apply(color_alert, axis=0, subset=['Alert'])
+                        
+                        def color_odds_gap(s):
+                            return ["background-color: #ffcccc; color: #cc0000; font-weight: bold" if v == "⚠断層" else "" for v in s]
+                        if 'OddsGap' in view_df.columns:
+                            styled_df = styled_df.apply(color_odds_gap, axis=0, subset=['OddsGap'])
+
                         st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
                     except Exception as e:
                         st.warning(f"Display Error: {e}")
@@ -1357,11 +1591,22 @@ if nav == "🏠 Single Race Analysis":
                     st.subheader("✨ Index Analysis Chart")
                     import altair as alt
                     
+                    # TotalScore_For_Chart がなければ BattleScore で代替
+                    chart_src = df.copy()
+                    if 'TotalScore_For_Chart' not in chart_src.columns:
+                        score_col_fallback = 'BattleScore' if 'BattleScore' in chart_src.columns else 'OguraIndex'
+                        chart_src['TotalScore_For_Chart'] = chart_src.get(score_col_fallback, 0)
+                    
+                    # OguraIndex / SpeedIndex がなければ 0 で補完
+                    for _c in ['OguraIndex', 'SpeedIndex']:
+                        if _c not in chart_src.columns:
+                            chart_src[_c] = 0.0
+                    
                     cols_to_keep = ['Name', 'OguraIndex', 'SpeedIndex', 'TotalScore_For_Chart']
-                    if 'Odds' in strategy_df.columns:
+                    if 'Odds' in chart_src.columns:
                         cols_to_keep.append('Odds')
                     
-                    chart_df = strategy_df[cols_to_keep].copy()
+                    chart_df = chart_src[[c for c in cols_to_keep if c in chart_src.columns]].copy()
                     
                     if 'Odds' in chart_df.columns:
                         chart_df['Odds'] = pd.to_numeric(chart_df['Odds'], errors='coerce').fillna(0)
@@ -1371,8 +1616,8 @@ if nav == "🏠 Single Race Analysis":
                     if 'Odds' in chart_df.columns:
                         id_vars.append('Odds')
                     
-                    melted_df = chart_df.melt(id_vars=id_vars, 
-                                              value_vars=['OguraIndex', 'SpeedIndex'], 
+                    melted_df = chart_df.melt(id_vars=[v for v in id_vars if v in chart_df.columns],
+                                              value_vars=[v for v in ['OguraIndex', 'SpeedIndex'] if v in chart_df.columns],
                                               var_name='IndexType', value_name='Score')
                     
                     # Define X-axis sort order based on dataframe index
@@ -1647,6 +1892,35 @@ if nav == "🏠 Single Race Analysis":
                         except Exception as e_dh:
                             st.error(f"穴馬計算エラー: {e_dh}")
 
+                    # --- Save Area (History) ---
+                    st.divider()
+                    st.subheader("💾 分析結果の保存")
+                    col_save1, col_save2 = st.columns([2, 1])
+                    with col_save1:
+                        memo_val = st.text_input("📝 レースメモ・備忘録 (History & Reviewタブに保存されます)", key="memo_val_main", placeholder="例: 差し有利な馬場、次走期待の穴馬など")
+                    
+                    with col_save2:
+                        st.write("") # Adjust alignment
+                        st.write("") 
+                        if st.button("✨ この分析内容を履歴に保存", type="primary", use_container_width=True):
+                            if 'df' in st.session_state:
+                                df_to_save = st.session_state['df']
+                                # Get race name from session state or placeholder
+                                rname = st.session_state.get('race_name_main', race_id_input)
+                                
+                                success = history_manager.save_race_data(
+                                    race_id=race_id_input,
+                                    race_name=rname,
+                                    df=df_to_save,
+                                    memo=memo_val
+                                )
+                                if success:
+                                    st.success(f"✅ レースID {race_id_input} の分析結果を保存しました！")
+                                else:
+                                    st.error("保存に失敗しました。")
+                            else:
+                                st.warning("分析データがありません。先に分析を実行してください。")
+
                     # --- 🎯 買い目用 10選 コンテナ (Visual Reordering) ---
                     # We create the container here so it renders ABOVE the Axis Selection,
                     # but we populate it below after Axis Selection is determined.
@@ -1686,7 +1960,9 @@ if nav == "🏠 Single Race Analysis":
                     with recommends_container:
                         st.divider()
                         
-                        if race_pattern in [4, 5]:
+                        # race_pattern の代わりに波乱度 (chaos_rank) を使用
+                        _chaos_rank = calculator.evaluate_race_chaos_v2(df).get('rank', 'B')
+                        if _chaos_rank in ['A', 'S']:
                             st.html("""
                             <div style="background-color: #3d0000; border: 3px solid #ff4500; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 0 30px #ff450077;">
                                 <h3 style="color: #ffd700; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
@@ -1946,6 +2222,9 @@ if nav == "🔍 Race Scanner (Batch)":
     import re as _re2
     from datetime import date as _date
 
+    with st.expander("🔑 認証・セッション管理 (Advanced Data)"):
+        render_session_status(key_prefix="scanner_")
+
     # Shared name map (race_id -> race_name) populated by auto-fetch
     if 'scanner_name_map' not in st.session_state:
         st.session_state['scanner_name_map'] = {}
@@ -2141,6 +2420,9 @@ if nav == "🔍 Race Scanner (Batch)":
                         "error": None,
                     })
                 except Exception as e:
+                    import traceback
+                    err_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+                    logger.error(f"Scanner error for {rid}: {err_msg}")
                     results.append({
                         "id": rid,
                         "title": rid,
@@ -2148,6 +2430,7 @@ if nav == "🔍 Race Scanner (Batch)":
                         "top3": [],
                         "df": None,
                         "error": str(e),
+                        "traceback": err_msg
                     })
 
                 progress_bar.progress((i + 1) / len(race_ids))
@@ -2173,6 +2456,8 @@ if nav == "🔍 Race Scanner (Batch)":
                 with st.expander(f"✨ スキップされたレース {len(errors)}件", expanded=False):
                     for r in errors:
                         st.markdown(f"- `{r['id']}` : {r['error']}")
+                        if 'traceback' in r:
+                            st.code(r['traceback'], language="python")
 
             st.markdown(f"### 💡 結果 {len(display)} 件 {'（フィルター適用中）' if selected_options else ''}")
 
@@ -2227,7 +2512,7 @@ if nav == "📊 History & Review":
         4. **ロジック修正**: 「○○条件で弱い」と分かったら、 `calculator.py` の計算式を調整しましょう。
         """)
 
-    import history_manager
+    from core import history_manager
 
     # --- Registration Area ---
     st.subheader("✨ Register Past Races (Learning)")
@@ -2248,6 +2533,16 @@ if nav == "📊 History & Review":
                 if not rids:
                     st.warning("有効な12桁のレースIDが含まれていません")
                 else:
+                    st.info(f"計 {len(rids)} 件のレースデータを順次取得して保存します...")
+                    
+                    # Add memo input for bulk registration if needed? 
+                    # For now, let's just add it to the single save call if any
+                    
+                    for rid in rids:
+                        with st.status(f"📥 Race {rid} 処理中...", expanded=False) as s:
+                            # Use existing logic but pass empty memo for now unless we add a generic one
+                            # Better yet, let's add a memo field for this area too if the user wants
+                            pass 
                     with st.spinner(f"Fetching results for {len(rids)} races..."):
                         logs = history_manager.register_past_races(rids)
                         
@@ -2360,13 +2655,13 @@ if nav == "📊 History & Review":
                     
                     # Select columns for display
                     disp_cols = ['Rank', 'Umaban', 'Name', 'Popularity', 'Odds', 'Jockey', 'BattleScore', 
-                                 'OguraIndex', 'AvgAgari', 'AvgPosition', 'Alert']
+                                 'OguraIndex', 'AvgAgari', 'AvgPosition', 'Memo', 'Alert']
                     
                     # Add result columns if available
                     if race_results:
                         disp_cols = ['Rank', 'ActualRank', 'Umaban', 'Name', 'Popularity', 'Odds', 'Jockey', 
                                      'BattleScore', 'OguraIndex', 'AvgAgari', 'AvgPosition', 
-                                     'ResultAgari', 'Alert']
+                                     'ResultAgari', 'Memo', 'Alert']
                     
                     disp_view = disp_view[[c for c in disp_cols if c in disp_view.columns]]
                     
@@ -2474,6 +2769,59 @@ if nav == "📊 History & Review":
                             styled = styled.apply(row_style, axis=1)
                         
                         st.dataframe(styled, column_config=disp_col_config, use_container_width=True, hide_index=True)
+                        
+                        # --- NEW: プロ推奨買い目 (オッズ断層フォーメーション) ---
+                        st.subheader("🎯 プロ推奨買い目 (オッズ断層フォーメーション)")
+                        with st.expander("🛠️ 買い目選定・資金配分設定", expanded=True):
+                            # BetSync から現在の予算を取得（デフォルト1,000円）
+                            default_budget = 1000
+                            if 'bs_bankroll' in st.session_state:
+                                # BetSyncタブの計算結果（_nd_bet）を想定するが、ここでは簡易的に入力可能にする
+                                pass
+                            
+                            target_budget = st.number_input("今回レースの総予算 (円)", value=1000, step=100)
+                            
+                            pro_result = calculator.calculate_pro_formation_betting(disp_df, target_budget)
+                            
+                            if 'error' in pro_result:
+                                st.warning(pro_result['error'])
+                            else:
+                                st.markdown(f"**【フォーメーション構成】**")
+                                f_c1, f_c2, f_c3 = st.columns(3)
+                                f_c1.markdown(f"**1列目 (軸)**: {' , '.join([str(x) for x in pro_result['col1']])}")
+                                f_c2.markdown(f"**2列目 (相手)**: {' , '.join([str(x) for x in pro_result['col2']])}")
+                                f_c3.markdown(f"**3列目 (ヒモ)**: {' , '.join([str(x) for x in pro_result['col3']])}")
+
+                                st.info(f"📈 検出されたオッズ断層: {pro_result['gaps_count']}箇所 (Group A: {len(pro_result['group_a'])}頭 / Group B: {len(pro_result['group_b'])}頭)")
+
+                                # 買い目テーブルの表示
+                                tickets_df = pd.DataFrame(pro_result['tickets'])
+                                if not tickets_df.empty:
+                                    def format_horses(h_list):
+                                        return " - ".join([str(x) for x in sorted(h_list)])
+                                    
+                                    tickets_df['買い目'] = tickets_df['horses'].apply(format_horses)
+                                    tickets_df['購入額'] = tickets_df['amount'].apply(lambda x: f"¥{x:,}")
+                                    tickets_df['想定払戻'] = tickets_df['est_payout'].apply(lambda x: f"¥{x:,}")
+                                    tickets_df['推計オッズ'] = tickets_df['est_odds'].apply(lambda x: f"{x:.1f}倍")
+                                    tickets_df['状態'] = tickets_df['is_torigami'].apply(lambda x: "⚠トリガミ注意" if x else "✅ 利益圏内")
+                                    
+                                    st.dataframe(
+                                        tickets_df[['買い目', '購入額', '推計オッズ', '想定払戻', '状態']],
+                                        column_config={
+                                            "買い目": st.column_config.TextColumn("3連複 買い目"),
+                                            "購入額": st.column_config.TextColumn("投資金額"),
+                                            "推計オッズ": st.column_config.TextColumn("推計オッズ"),
+                                            "想定払戻": st.column_config.TextColumn("想定払戻金"),
+                                            "状態": st.column_config.TextColumn("判定"),
+                                        },
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                    st.success(f"💰 合計投資予定額: ¥{pro_result['actual_total_bet']:,} (予算 ¥{target_budget:,})")
+                                else:
+                                    st.warning("予算内で購入可能な買い目がありませんでした。単価を上げるか予算を増やしてください。")
+
                     except Exception as e:
                         st.warning(f"表示エラー (raw data表示): {e}")
                         st.dataframe(disp_view, use_container_width=True)
@@ -2484,7 +2832,7 @@ if nav == "📊 History & Review":
                         st.subheader("📊 難易度ダブルスコア検証")
                         c_diff1, c_diff2, c_diff3 = st.columns(3)
                         
-                        pred_d = calculator.calculate_predicted_difficulty(df)
+                        pred_d = calculator.calculate_predicted_difficulty(disp_df)
                         act_d = race_results.get('Actual_Diff', 'C')
                         
                         diff_labels = {"S": "大荒れ (S)", "A": "荒れ (A)", "B": "通常 (B)", "C": "堅い (C)"}
@@ -2887,23 +3235,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_test = df_test.sort_values(by=score_col, ascending=False).reset_index(drop=True)
 
         # 0. Session Status
-        import os
-        from datetime import datetime
-        session_path = "auth_session.json"
-        
-        with st.expander("🔑 認証・セッション管理 (Umanity)", expanded=not os.path.exists(session_path)):
-            if os.path.exists(session_path):
-                mtime = os.path.getmtime(session_path)
-                dt_mtime = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-                st.success(f"✅ セッション保存済み (更新日時: {dt_mtime})")
-            else:
-                st.warning("⚠️ セッション情報が見つかりません。ウマニティの数値（U指数）を取得するにはログインが必要です。")
-            
-            if st.button("🔑 ウマニティにログインしてセッションを保存", key="btn_create_session"):
-                # Use powershell in a new window to handle encoding and interaction
-                cmd = f'start powershell -NoExit -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py"'
-                os.system(cmd)
-                st.info("別ウィンドウでログイン用ブラウザが起動しました。ログイン完了後、そのウィンドウでEnterキーを押してください。")
+        with st.expander("🔑 認証・セッション管理 (Advanced Data)"):
+            render_session_status(key_prefix="test_")
         
         # 1. Influence Weights Initialization (Updated defaults for Robustness)
         if 'score_weights' not in st.session_state:
@@ -3016,7 +3349,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                     st.session_state['df'] = df_main
                 
                 status.update(label="✅ 全データの取得と計算が完了しました！", state="complete", expanded=False)
-                st.rerun()
+            st.rerun()
 
         # 4. Calculation and Table Display
         adv_data = st.session_state.get('test_adv_data', {})
@@ -3069,6 +3402,15 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             training_score = pw_data.get('TrainingScore', 0.0)
             blood_flag = pw_data.get('BloodlineFlag', '')
             
+            # Update Popularity/Odds from Playwright if available (v2.1 fix)
+            pop_val = pw_data.get('Popularity', 99)
+            if pop_val != 99:
+                row['Popularity'] = pop_val
+            
+            odds_val = pw_data.get('Odds', 0.0)
+            if odds_val > 0.0:
+                row['Odds'] = odds_val
+
             # A. 枠順バイアス (Frame bias)
             if total_horses > 0 and umaban > 0:
                 inner_threshold = total_horses * 0.3
@@ -3143,7 +3485,12 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             b_flag = pw_data.get('BloodlineFlag', '')
             
             # 1. Popularity Score
-            pop_score = 100.0 - (int(row.get('Popularity', 20)) - 1) * 5.0
+            try:
+                raw_pop = row.get('Popularity', 20)
+                if raw_pop == 99 or pd.isna(raw_pop): raw_pop = 20
+                pop_score = 100.0 - (int(raw_pop) - 1) * 5.0
+            except:
+                pop_score = 0.0
             pop_score = max(0, pop_score)
             
             # 2. Weight Condition Score
@@ -3195,8 +3542,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "人気": int(row.get('Popularity')) if pd.notnull(row.get('Popularity')) and row.get('Popularity') != 99 else "-",
                 "馬体重": weight_str if weight_str and str(weight_str).strip() != "" else "-",
                 "調教": training_eval if training_eval and str(training_eval).strip() != "" else "-",
-                "U指数": round(float(pw_data.get('UIndex')), 1) if pw_data.get('UIndex') and str(pw_data.get('UIndex')).replace('.','',1).strip().replace('-','',1).replace('e','',1).replace('E','',1).replace('+','',1).split('.')[0].isdigit() else pw_data.get('UIndex', "-"),
-                "オメガ指数": round(float(pw_data.get('LaboIndex')), 1) if pw_data.get('LaboIndex') and str(pw_data.get('LaboIndex')).replace('.','',1).strip().replace('-','',1).replace('e','',1).replace('E','',1).replace('+','',1).split('.')[0].isdigit() else pw_data.get('LaboIndex', "-"),
+                "U指数": pw_data.get('UIndex', "-"),
+                "オメガ指数": pw_data.get('LaboIndex', "-"),
                 "血統": blood_flag if blood_flag else "-",
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
@@ -3224,14 +3571,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             text_col = 'color: #ffffff;' if bg else ''
             return [bg + text_col for _ in r]
 
-        # Format Diff column with arrows
-        def format_diff(val):
-            if val > 0: return f"↑+{val}"
-            elif val < 0: return f"↓{val}"
-            return "-"
+        # Display Warning if missing data horses exist
+        if (df_test_res['N指数'] == 0).any() and (df_test_res['Test_Score'] == 0).any():
+             st.warning("⚠️ **データ不足の馬がいます**: 新馬戦やデータ取得失敗により、N指数・戦闘力が0の馬には⚠️マークを表示しています。")
 
-        df_test_res['Diff'] = df_test_res['Diff'].apply(format_diff)
-        
         st.dataframe(
             df_test_res.style.apply(highlight_flags, axis=1), 
             use_container_width=True,
@@ -3250,33 +3593,53 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         )
         
         st.divider()
-        if st.button("💾 解析結果を保存 (Save Results)", type="primary"):
-            try:
-                import json
-                save_dir = os.path.join(os.getcwd(), "data", "history")
-                os.makedirs(save_dir, exist_ok=True)
-                
-                # Fetch current race ID
-                current_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', 'unknown_race'))
-                file_path = os.path.join(save_dir, f"{current_id}.json")
-                
-                # Convert DataFrame to dictionary
-                res_dict = df_test_res.to_dict(orient='records')
-                save_data = {
-                    "RaceID": current_id,
-                    "SavedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Results": res_dict
-                }
-                
-                # Save as JSON with UTF-8 encoding
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(save_data, f, ensure_ascii=False, indent=2)
+        memo_val_test = st.text_input("📝 メモ (Memo)", key="memo_val_test", placeholder="この解析に関するメモを入力...")
+        
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("💾 解析結果をJSON保存 (Save JSON)", type="secondary", use_container_width=True):
+                try:
+                    import json
+                    save_dir = os.path.join(os.getcwd(), "data", "history")
+                    os.makedirs(save_dir, exist_ok=True)
                     
-                st.success(f"✅ 解析結果を保存しました！\n📂 保存先: `{file_path}`")
-            except Exception as e:
-                import traceback
-                st.error(f"保存エラー: {e}")
-                logger.error(f"Save Error: {traceback.format_exc()}")
+                    # Fetch current race ID
+                    current_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', 'unknown_race'))
+                    file_path = os.path.join(save_dir, f"{current_id}.json")
+                    
+                    # Convert DataFrame to dictionary
+                    res_dict = df_test_res.to_dict(orient='records')
+                    save_data = {
+                        "RaceID": current_id,
+                        "SavedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Memo": memo_val_test,
+                        "Results": res_dict
+                    }
+                    
+                    # Save as JSON with UTF-8 encoding
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(save_data, f, ensure_ascii=False, indent=2)
+                        
+                    st.success(f"✅ 解析結果をJSON保存しました！\n📂 保存先: `{file_path}`")
+                except Exception as e:
+                    import traceback
+                    st.error(f"保存エラー: {e}")
+                    logger.error(f"Save Error: {traceback.format_exc()}")
+        
+        with col_btn2:
+            if st.button("📊 履歴(CSV)に登録", type="primary", use_container_width=True):
+                 try:
+                     # For CSV history, we might need more columns than df_test_res has.
+                     # But history_manager.save_race_data handles missing columns.
+                     current_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', 'unknown_race'))
+                     # We use the original df_test which has all raw columns before scoring
+                     res = history_manager.save_race_data(df_test, current_id, memo=memo_val_test)
+                     if res == "Duplicate":
+                         st.warning("⚠️ このレースIDは既に履歴に存在します。")
+                     else:
+                         st.success("✅ 履歴(CSV)に登録しました！「History & Review」タブで確認できます。")
+                 except Exception as e:
+                     st.error(f"CSV登録エラー: {e}")
             
     else:
         st.warning(f"⚠️ データが現在のレースID（{current_input_id}）と一致しないか、未解析です。")
@@ -3775,7 +4138,7 @@ if nav == "🔬 実験その３(馬番パターン)":
     scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
 
     if scan_btn and selected_race_urls:
-        import race_position_scanner as rpps
+        from scripts import race_position_scanner as rpps
         # Reload module to pick up any changes
         import importlib
         importlib.reload(rpps)
@@ -3892,11 +4255,75 @@ if nav == "🔬 実験その３(馬番パターン)":
                 pat_series = pd.Series(all_patterns).value_counts()
                 st.bar_chart(pat_series)
 
+            # --- [NEW] Pattern Explanation AI Chat ---
+            st.divider()
+            st.subheader("🤖 パターン解説チャット")
+            st.caption("検出されたパターンがなぜその配置といえるのか、AIがロジカルに解説します。")
+            
+            # 永続化用のセッションステート
+            if 'rpps_chat_answer' not in st.session_state:
+                st.session_state.rpps_chat_answer = ""
+            
+            # 入力フォームでUIを安定させる
+            with st.form(key="rpps_explanation_form", clear_on_submit=False):
+                pattern_query = st.text_input("質問を入力してください（例：15頭立て13番と16頭立て13番が片方循環で一致するのはなぜ？）", value="", placeholder="例）13番がなぜ片方循環（表）で一致しているのか？")
+                submit_button = st.form_submit_button("💬 質問する")
+                
+            if submit_button:
+                if not pattern_query:
+                    st.warning("質問を入力してください。")
+                else:
+                    with st.spinner("AIが解析中..."):
+                        try:
+                            from core.kaggle_client import KaggleChatClient
+                            chat_client = KaggleChatClient(api_key=st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+                            
+                            if not chat_client.client:
+                                st.error("APIキーが設定されていないため、AIチャットを使用できません。")
+                            else:
+                                system_prompt = """
+                                あなたは競馬の「馬番配置パターン」分析のエキスパートです。
+                                以下の定義と数式に基づいて、ユーザーの質問に対して具体的に計算過程を示して解説してください。
+
+                                【用語・解析ロジック詳細】
+                                1. 裏番号 (ura_number): (出走頭数 - 馬番) + 1
+                                2. P1: 裏同士: 異なる頭数のレース間で裏番号が一致。
+                                3. P2: 裏表逆: 一方の馬番 = 他方の裏番号。
+                                4. P3: 1の位一致: 馬番は違うが1の位が同じ。
+                                5. P4: 片方循環: 
+                                   - 大きい頭数のレース(N)の馬番(X)を、小さい頭数のレース(M)の頭数で割った余りで投影。
+                                   - 計算式: projected = ((X - 1) % M) + 1
+                                   - この projected が小さい頭数のレースの馬番（表）または裏番号（裏）と一致する場合。
+
+                                【回答時の注意】
+                                - 必ず質問にある数字を使って計算式を書いてください。
+                                - 「片方循環(表)」であれば、大きい頭数から算出した projected が、小さい頭数側の馬番と等しいことを説明してください。
+                                - 丁寧な日本語で回答してください。
+                                """
+                                
+                                response = chat_client.client.models.generate_content(
+                                    model="gemini-2.0-flash",
+                                    contents=[system_prompt, f"ユーザーの質問: {pattern_query}"],
+                                    config=genai_types.GenerateContentConfig(temperature=0.2)
+                                )
+                                st.session_state.rpps_chat_answer = response.text
+                        except Exception as e:
+                            st.error(f"AI解析中にエラーが発生しました: {e}")
+
+            # 答えがある場合は表示
+            if st.session_state.rpps_chat_answer:
+                st.markdown("### 📝 AIの解説")
+                st.markdown(st.session_state.rpps_chat_answer)
+                st.success("解説が完了しました。")
+                if st.button("🗑️ 解説を消去"):
+                    st.session_state.rpps_chat_answer = ""
+                    st.rerun()
+
 # ──────────────────────────────────────────────
 # 📦 データ保管庫 (Storage Hub) タブ
 # ──────────────────────────────────────────────
 if nav == "📦 データ保管庫":
-    import history_manager
+    from core import history_manager
     from calendar import monthcalendar, month_name
     from datetime import date
 
