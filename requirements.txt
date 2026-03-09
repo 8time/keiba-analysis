@@ -1,4 +1,4 @@
-streamlit
+﻿streamlit
 pandas
 numpy
 altair
@@ -16,4 +16,5 @@ tabulate
 scrapling
 curl_cffi
 browserforge
-msgspeckagglehub
+msgspec
+kagglehub
