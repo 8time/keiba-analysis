@@ -1377,64 +1377,48 @@ def evaluate_chaos_level_strict(df):
 
 def generate_unified_sniper_pool(df, chaos_rank):
     """
-    刷新された統合買い目生成ロジック。
-    1. 人気フィルター（S/A: 全通, B/C: 1-11位）
-    2. 全組み合わせ生成
-    3. 波乱度連動オッズフィルター
-    4. スコアソートと点数下限保証
+    刷新された統合買い目生成ロジック (Ver 2.6)
+    STEP 1: 買い目プールの統合生成
     """
     from itertools import combinations
     
     if df.empty:
         return {'error': 'データがありません'}
 
-    # STEP1: 母集団の絞り込み（以前の人気足切りは廃止）
-    # 全出走馬を対象とする（人気順位が取得できている全頭）
-    df_filtered = df.dropna(subset=['Popularity']).copy()
+    # 1. 母集団の絞り込み (人気フィルター)
+    # S・A: 全頭 (1〜18番人気) / B・C: 1〜11番人気のみ
+    if chaos_rank in ['S', 'A']:
+        df_filtered = df.dropna(subset=['Popularity']).copy()
+    else:
+        df_filtered = df[df['Popularity'] <= 11].copy()
     
     if len(df_filtered) < 3:
         return {'error': f'母集団の頭数が不足しています ({len(df_filtered)}頭)'}
 
     # スコア・オッズの準備
-    score_col = 'Projected Score' if 'Projected Score' in df.columns else ('BattleScore' if 'BattleScore' in df.columns else None)
-    if score_col is None:
-        if 'Popularity' in df.columns:
-            df['temp_score'] = 100 - df['Popularity'].fillna(99).astype(float)
-        else:
-            df['temp_score'] = 100 - pd.to_numeric(df['Odds'], errors='coerce').rank(method='min')
-        score_col = 'temp_score'
+    score_col = 'Projected Score' if 'Projected Score' in df.columns else ('BattleScore' if 'BattleScore' in df.columns else 'temp_score')
+    if score_col == 'temp_score' and 'temp_score' not in df.columns:
+        df['temp_score'] = 100 - df['Popularity'].fillna(99).astype(float)
 
-    # 軸馬（ピボット）の選定
-    top_5_by_score = df.sort_values(score_col, ascending=False)['Umaban'].head(5).tolist()
-    top_3_by_pop = []
-    if 'Popularity' in df.columns:
-        top_3_by_pop = df.sort_values('Popularity', ascending=True)['Umaban'].head(3).tolist()
-    
-    pivot_set = set(map(int, top_5_by_score)) | set(map(int, top_3_by_pop))
+    # 予測スコア上位5頭の選定 (パターンの軸判定用)
+    top_5_by_score = df.sort_values(score_col, ascending=False)['Umaban'].head(5).astype(int).tolist()
+    pivot_set = set(top_5_by_score)
     
     odds_map = dict(zip(df['Umaban'].astype(str), pd.to_numeric(df['Odds'], errors='coerce').fillna(10.0)))
     name_map = dict(zip(df['Umaban'], df['Name']))
     score_map = dict(zip(df['Umaban'], df[score_col]))
-    pop_map = dict(zip(df['Umaban'], df['Popularity'].fillna(99).astype(int)))
 
-    # 波乱度別の設定 (S: 15-500, A: 20-400, B: 30-300, C: 10-150)
+    # 3. オッズフィルターの適用 (波乱度連動)
     ranges = {
-        'S': (15.0, 500.0),
-        'A': (15.0, 400.0),
-        'B': (20.0, 300.0),
+        'S': (30.0, 500.0),
+        'A': (50.0, 400.0),
+        'B': (50.0, 300.0),
         'C': (10.0, 150.0)
     }
-    # 人気合計の範囲設定 (ご指示に従い全ランク10-30へ戻す)
-    pop_sum_ranges = {
-        'S': (10, 30),
-        'A': (10, 30),
-        'B': (10, 30),
-        'C': (10, 30)
-    }
-    limits = { 'S': 10, 'A': 8, 'B': 6, 'C': 4 }
+    # 5. 点数の下限保証 (S:8点, A:6点)
+    limits = { 'S': 8, 'A': 6, 'B': 4, 'C': 2 }
     
     base_min, base_max = ranges.get(chaos_rank, (50.0, 300.0))
-    pop_min, pop_max = pop_sum_ranges.get(chaos_rank, (10, 30))
     min_required = limits.get(chaos_rank, 4)
     
     all_umaban = df_filtered['Umaban'].unique().tolist()
@@ -1442,40 +1426,31 @@ def generate_unified_sniper_pool(df, chaos_rank):
     
     retry_count = 0
     adj_min, adj_max = base_min, base_max
-    
     exclusion_log = []
     
-    while retry_count < 5:
+    while retry_count < 10:
         pattern_a = []
         pattern_b = []
         bonus_candidates = []
         
         for combo in all_combos:
-            # 1. 人気合計フィルター
-            pops = [pop_map.get(str(h), 99) for h in combo]
-            total_pop = sum(pops)
-            
-            if not (pop_min <= total_pop <= pop_max):
-                if retry_count == 0:
-                    exclusion_log.append(f"{combo}: 人気合計範囲外 (合計: {total_pop})")
-                continue
-
-            # 2. オッズフィルター (推定)
+            # 推計オッズ算出
             o1 = float(odds_map.get(str(combo[0]), 10.0))
             o2 = float(odds_map.get(str(combo[1]), 10.0))
             o3 = float(odds_map.get(str(combo[2]), 10.0))
             est_odds = max(1.0, (o1 * o2 * o3) * 0.48)
             
+            # スコア合計値 (ソート用)
             total_score = sum(score_map.get(h, 0) for h in combo)
             item = {
                 'horses': sorted(list(map(int, combo))),
                 'names': [name_map.get(h, str(h)) for h in sorted(list(combo))],
                 'est_odds': round(est_odds, 1),
-                'total_score': total_score,
-                'total_pop': total_pop
+                'total_score': total_score
             }
 
             c_set = set(map(int, combo))
+            # スコア上位5頭との合致数
             match_count = len(c_set.intersection(pivot_set))
 
             if adj_min <= est_odds <= adj_max:
@@ -1488,40 +1463,41 @@ def generate_unified_sniper_pool(df, chaos_rank):
             elif est_odds > adj_max:
                 bonus_candidates.append(item)
                 if retry_count == 0:
-                    exclusion_log.append(f"{combo}: オッズ高すぎ (推定: {est_odds:.1f}倍)")
+                    exclusion_log.append(f"{combo}: オッズ上限超え ({est_odds:.1f}倍)")
             else:
                 if retry_count == 0:
-                    exclusion_log.append(f"{combo}: オッズ低すぎ (推定: {est_odds:.1f}倍)")
+                    exclusion_log.append(f"{combo}: オッズ下限以下 ({est_odds:.1f}倍)")
 
-        # ソートと制限
-        pattern_a = sorted(pattern_a, key=lambda x: x['total_score'], reverse=True)
-        pattern_b = sorted(pattern_b, key=lambda x: x['total_score'], reverse=True)
+        # 4. パターン分けとソート (予測スコア合計値が高い順、最大10点)
+        pattern_a = sorted(pattern_a, key=lambda x: x['total_score'], reverse=True)[:10]
+        pattern_b = sorted(pattern_b, key=lambda x: x['total_score'], reverse=True)[:10]
         
-        total_main_count = len(pattern_a[:10]) + len(pattern_b[:10])
+        total_main_count = len(pattern_a) + len(pattern_b)
         
-        if total_main_count >= min_required or retry_count >= 4:
+        # 点数の下限保証
+        if total_main_count >= min_required or retry_count >= 6:
             break
         
-        # 拡張して再試行
+        # オッズフィルターのレンジを上下10%ずつ拡張
         adj_min *= 0.9
         adj_max *= 1.1
         retry_count += 1
-        exclusion_log.append(f"再試行 {retry_count}: レンジ拡張 {adj_min:.1f} - {adj_max:.1f}")
+        exclusion_log.append(f"再試行 {retry_count}: 下限点数未達のためレンジ拡張 ({adj_min:.1f}-{adj_max:.1f}倍)")
 
-    # ボーナス枠: 上限超えの中で最高スコア1点
+    # STEP2-2: ボーナス枠 (上限超えの最高スコア1点)
     bonus_item = None
     if bonus_candidates:
         bonus_item = sorted(bonus_candidates, key=lambda x: x['total_score'], reverse=True)[0]
         bonus_item['is_bonus'] = True
-        bonus_item['amount'] = 100
+        bonus_item['type'] = 'Bonus'
 
     return {
-        'pattern_a': pattern_a[:10],
-        'pattern_b': pattern_b[:10],
+        'pattern_a': pattern_a,
+        'pattern_b': pattern_b,
         'bonus': bonus_item,
         'chaos_rank': chaos_rank,
         'odds_range': (round(adj_min, 1), round(adj_max, 1)),
-        'exclusion_log': exclusion_log[:50], # UIパンク防止
+        'exclusion_log': exclusion_log[:30],
         'base_count': len(df_filtered)
     }
 
