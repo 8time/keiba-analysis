@@ -41,35 +41,28 @@ import pandas as pd
 import numpy as np
 import time
 import math
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+# Core functionality imports
 from core import scraper
 from core import calculator
-# Force reload so code changes are always reflected
-importlib.reload(calculator)
-importlib.reload(scraper)
 from core import theory_rmhs
-importlib.reload(theory_rmhs)
-from core.scraper import fetch_comprehensive_result
 from core import odds_tracker
-importlib.reload(odds_tracker)
-from core.odds_tracker import OddsTracker
-
 from core import odds_analyzer
-importlib.reload(odds_analyzer)
-from core.odds_analyzer import OddsAnalyzer
 from core import vision_analyzer
-importlib.reload(vision_analyzer)
-from core.vision_analyzer import VisionOddsAnalyzer
 from core import local_vision_analyzer
-importlib.reload(local_vision_analyzer) 
+from core.scraper import fetch_comprehensive_result
+from core.odds_tracker import OddsTracker
+from core.odds_analyzer import OddsAnalyzer
+from core.vision_analyzer import VisionOddsAnalyzer
 from core.local_vision_analyzer import LocalVisionOddsAnalyzer
 from core.kaggle_client import KaggleChatClient
 
 @st.cache_resource
 def get_local_vision_analyzer_v2():
-    """Cache the EasyOCR reader. Updated to ensure latest code in local_vision_analyzer.py is used."""
+    """Cache the EasyOCR reader."""
     return LocalVisionOddsAnalyzer()
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Keiba Analysis - Modified Ogura Index", layout="wide")
 
