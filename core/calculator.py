@@ -1530,46 +1530,46 @@ def allocate_unified_budget(pool, total_budget):
     統合買い目プールに対して、均等配分と端数調整を行う。
     """
     main_tickets = pool['pattern_a'] + pool['pattern_b']
-    if not main_tickets:
-        return {'tickets': [], 'actual_total': 0}
-        
     num_main = len(main_tickets)
-    bonus_budget = 100 if pool['bonus'] else 0
-    available_budget = total_budget - bonus_budget
+    bonus_item = pool.get('bonus')
+    bonus_budget = 100 if bonus_item else 0
     
-    if available_budget < num_main * 100:
-        # 予算不足時のフォールバック
-        unit_price = 100
-    else:
-        unit_price = (available_budget // num_main // 100) * 100
-    
-    # 配分
     actual_total = 0
-    for i, t in enumerate(main_tickets):
-        t['amount'] = unit_price
-        t['est_payout'] = int(t['amount'] * t['est_odds'])
-        actual_total += t['amount']
-        
-    # 端数処理: パターンAの1位（存在すれば）に加算
-    remainder = available_budget - actual_total
-    if remainder >= 100 and main_tickets:
-        # パターンAの1位に加算
-        target = main_tickets[0]
-        target['amount'] += (remainder // 100) * 100
-        target['est_payout'] = int(target['amount'] * target['est_odds'])
-        actual_total += (remainder // 100) * 100
-        
-    # ボーナス追加
+    unit_price = 0
     final_tickets = []
-    for t in main_tickets:
-        t['type'] = 'A' if t in pool['pattern_a'] else 'B'
-        final_tickets.append(t)
+
+    if num_main > 0:
+        available_budget = total_budget - bonus_budget
+        if available_budget < num_main * 100:
+            unit_price = 100
+        else:
+            unit_price = (available_budget // num_main // 100) * 100
         
-    if pool['bonus']:
-        b = pool['bonus']
-        b['est_payout'] = int(b['amount'] * b['est_odds'])
-        actual_total += b['amount']
-        final_tickets.append(b)
+        # 配分
+        current_main_total = 0
+        for t in main_tickets:
+            t['amount'] = unit_price
+            t['est_payout'] = int(t['amount'] * t['est_odds'])
+            current_main_total += t['amount']
+            
+        # 端数処理: パターンAの1位（またはBの1位）に加算
+        remainder = available_budget - current_main_total
+        if remainder >= 100:
+            main_tickets[0]['amount'] += (remainder // 100) * 100
+            main_tickets[0]['est_payout'] = int(main_tickets[0]['amount'] * main_tickets[0]['est_odds'])
+            current_main_total += (remainder // 100) * 100
+        
+        actual_total += current_main_total
+        for t in main_tickets:
+            t['type'] = 'A' if t in pool['pattern_a'] else 'B'
+            final_tickets.append(t)
+
+    # ボーナス追加 (メインがなくてもボーナスがあれば出す)
+    if bonus_item:
+        bonus_item['amount'] = 100
+        bonus_item['est_payout'] = int(bonus_item['amount'] * bonus_item['est_odds'])
+        actual_total += bonus_item['amount']
+        final_tickets.append(bonus_item)
         
     return {
         'tickets': final_tickets,
