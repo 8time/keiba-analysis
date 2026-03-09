@@ -1417,21 +1417,21 @@ def generate_unified_sniper_pool(df, chaos_rank):
     score_map = dict(zip(df['Umaban'], df[score_col]))
     pop_map = dict(zip(df['Umaban'], df['Popularity'].fillna(99).astype(int)))
 
-    # 波乱度別の設定 (S: 30-500, A: 50-400, B: 50-300, C: 10-150)
+    # 波乱度別の設定 (S: 15-500, A: 20-400, B: 30-300, C: 10-150)
     ranges = {
-        'S': (30.0, 500.0),
-        'A': (50.0, 400.0),
-        'B': (50.0, 300.0),
+        'S': (15.0, 500.0),
+        'A': (15.0, 400.0),
+        'B': (20.0, 300.0),
         'C': (10.0, 150.0)
     }
-    # 人気合計の範囲設定
+    # 人気合計の範囲設定 (ご指示に従い全ランク10-30へ戻す)
     pop_sum_ranges = {
-        'S': (15, 45),
-        'A': (12, 35),
+        'S': (10, 30),
+        'A': (10, 30),
         'B': (10, 30),
         'C': (10, 30)
     }
-    limits = { 'S': 8, 'A': 6, 'B': 4, 'C': 2 }
+    limits = { 'S': 10, 'A': 8, 'B': 6, 'C': 4 }
     
     base_min, base_max = ranges.get(chaos_rank, (50.0, 300.0))
     pop_min, pop_max = pop_sum_ranges.get(chaos_rank, (10, 30))
