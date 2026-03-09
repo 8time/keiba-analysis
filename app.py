@@ -1381,25 +1381,63 @@ if nav == "🏠 Single Race Analysis":
                             with f3:
                                 st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
 
-                            st.write(f"**🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)**")
+                            st.write(f"### 🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)")
                             
-                            if allocated_res['tickets']:
-                                df_tickets = pd.DataFrame(allocated_res['tickets'])
-                                # 表示用に整形
-                                display_rows = []
-                                for _, row in df_tickets.iterrows():
-                                    is_bonus = row.get('is_bonus', False)
-                                    display_rows.append({
-                                        "種別": "🎁ボーナス" if is_bonus else f"🎯パターン{row['type']}",
-                                        "組合せ": ", ".join(map(str, row['horses'])),
-                                        "馬名": " - ".join(row['names']),
-                                        "推定オッズ": f"{row['est_odds']}倍",
-                                        "購入金額": f"{row['amount']}円",
-                                        "想定払戻": f"{row['est_payout']:,}円"
-                                    })
-                                st.table(pd.DataFrame(display_rows))
+                            if allocated_res.get('tickets'):
+                                # パターン別に分離
+                                tickets_a = [t for t in allocated_res['tickets'] if t.get('type') == 'A']
+                                tickets_b = [t for t in allocated_res['tickets'] if t.get('type') == 'B']
+                                bonus_t = [t for t in allocated_res['tickets'] if t.get('is_bonus')]
                                 
+                                # 2カラム表示 (スクリーンショットのデザインを再現)
+                                col_pa, col_pb = st.columns(2)
+                                
+                                with col_pa:
+                                    st.markdown("#### 🟦 パターンA (上位5頭から2頭)")
+                                    if tickets_a:
+                                        rows_a = []
+                                        for t in tickets_a:
+                                            rows_a.append({
+                                                "組合せ": ", ".join(map(str, t['horses'])),
+                                                "想定オッズ": f"{t['est_odds']}倍",
+                                                "スコア計": round(t['total_score'], 1)
+                                            })
+                                        st.table(pd.DataFrame(rows_a))
+                                    else:
+                                        st.caption("該当なし")
+                                        
+                                with col_pb:
+                                    st.markdown("#### 🟧 パターンB (上位5頭から1頭)")
+                                    if tickets_b:
+                                        rows_b = []
+                                        for t in tickets_b:
+                                            rows_b.append({
+                                                "組合せ": ", ".join(map(str, t['horses'])),
+                                                "想定オッズ": f"{t['est_odds']}倍",
+                                                "スコア計": round(t['total_score'], 1)
+                                            })
+                                        st.table(pd.DataFrame(rows_b))
+                                    else:
+                                        st.caption("該当なし")
+
+                                # ボーナスと詳細
+                                if bonus_t:
+                                    st.info(f"🎁 **ボーナス枠**: {', '.join(map(str, bonus_t[0]['horses']))} ({bonus_t[0]['est_odds']}倍) / スコア計: {round(bonus_t[0]['total_score'], 1)}")
+
+                                # 予算配分の詳細は表の下に
                                 st.success(f"合計購入金額: **{allocated_res.get('actual_total', 0):,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res.get('unit_price', 0)}円)")
+                                
+                                with st.expander("📝 買い目詳細 (金額・馬名付)", expanded=False):
+                                    full_rows = []
+                                    for t in allocated_res['tickets']:
+                                        full_rows.append({
+                                            "種別": "ボーナス" if t.get('is_bonus') else f"パターン{t['type']}",
+                                            "組合せ": ", ".join(map(str, t['horses'])),
+                                            "馬名": " - ".join(t['names']),
+                                            "購入金額": f"{t['amount']}円",
+                                            "想定払戻": f"{t['est_payout']:,}円"
+                                        })
+                                    st.dataframe(pd.DataFrame(full_rows), use_container_width=True)
                             else:
                                 st.warning("条件に合う買い目が見つかりませんでした。")
 
