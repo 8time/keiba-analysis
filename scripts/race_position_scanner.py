@@ -90,14 +90,31 @@ class Race:
 # ──────────────────────────────────────────────
 
 def _fetch_html(url: str) -> Optional[BeautifulSoup]:
+    # 1. Try standard requests
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding
-        return BeautifulSoup(resp.text, "html.parser")
+        if resp.status_code == 200:
+            resp.encoding = resp.apparent_encoding
+            return BeautifulSoup(resp.text, "html.parser")
     except Exception as e:
-        print(f"[WARN] Fetch failed {url}: {e}")
-        return None
+        pass
+
+    # 2. Try curl_cffi (MUCH MORE ROBUST for Cloud/DataCenter IPs)
+    try:
+        from curl_cffi import requests as curl_requests
+        resp2 = curl_requests.get(url, impersonate="chrome120", timeout=20)
+        if resp2.status_code == 200:
+            # Detect encoding or use apparent
+            html_text = resp2.content.decode('utf-8', errors='replace')
+            if 'euc-jp' in html_text.lower():
+                try: html_text = resp2.content.decode('euc-jp')
+                except: pass
+            return BeautifulSoup(html_text, "html.parser")
+    except Exception:
+        pass
+
+    print(f"[WARN] All fetch methods failed for {url}")
+    return None
 
 def _parse_float(val: str) -> float:
     try:

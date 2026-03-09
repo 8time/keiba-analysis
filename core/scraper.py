@@ -117,7 +117,23 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     except Exception as e:
         logger.debug(f"[curl_cffi] Failed: {e}")
 
-    # --- Attempt 3: Playwright subprocess (Windows Only) ---
+    # --- Attempt 3: Scrapling (Playwright-based) ---
+    try:
+        from scrapling import DynamicFetcher
+        fetcher = DynamicFetcher()
+        # Non-async version of fetcher might be needed or use a helper
+        # Scrapling's DynamicFetcher by default uses sync methods if called as such? 
+        # Actually in recent version it's better to use get()
+        page = fetcher.get(url, timeout=30)
+        if page and page.content:
+            html = page.content
+            if '</html' in html.lower():
+                logger.debug(f"[scrapling] OK: {url}")
+                return html
+    except Exception as e:
+        logger.debug(f"[scrapling] Failed: {e}")
+
+    # --- Attempt 4: Windows-Specific Subprocess Fallback ---
     if sys.platform == 'win32':
         import subprocess
         python_exe = sys.executable
@@ -134,10 +150,10 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
             if result.returncode == 0 and result.stdout:
                 html = _decode_content(result.stdout)
                 if '</html' in html.lower():
-                    logger.debug(f"[playwright] OK: {url}")
+                    logger.debug(f"[playwright-sub] OK: {url}")
                     return html
         except Exception as e:
-            logger.debug(f"[playwright] Exception: {e}")
+            logger.debug(f"[playwright-sub] Exception: {e}")
 
     logger.error(f"All fetch methods failed: {url}")
     return None

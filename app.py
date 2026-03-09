@@ -986,7 +986,7 @@ if nav == "🏠 Single Race Analysis":
 
     # --- Recent Races History List (Shortcut) ---
     from core import history_manager
-    importlib.reload(history_manager)  # always pick up the latest version (avoids cached stale module)
+    from core import history_manager
     df_h_main = history_manager.load_history()
     if not df_h_main.empty:
         with st.expander("📁 最近解析したレース履歴から読み込む", expanded=False):
@@ -4131,10 +4131,7 @@ if nav == "🔬 実験その３(馬番パターン)":
     scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
 
     if scan_btn and selected_race_urls:
-        from scripts import race_position_scanner as rpps
-        # Reload module to pick up any changes
-        import importlib
-        importlib.reload(rpps)
+        import scripts.race_position_scanner as rpps
         
         urls = selected_race_urls
         st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
