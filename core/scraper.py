@@ -167,7 +167,7 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
         except Exception as e:
             logger.debug(f"[playwright-sub] Exception: {e}")
 
-    logger.error(f"All fetch methods failed: {url}")
+    logger.error(f"[FATAL] All fetch methods failed for: {url}")
     return None
 
 def fetch_html(url):
