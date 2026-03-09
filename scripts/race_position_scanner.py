@@ -90,30 +90,51 @@ class Race:
 # ──────────────────────────────────────────────
 
 def _fetch_html(url: str) -> Optional[BeautifulSoup]:
+    # Standard headers for both requests and curl_cffi
+    headers = HEADERS.copy()
+    headers.update({
+        "sec-ch-ua": '"Not(A:Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1"
+    })
+
     # 1. Try standard requests
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code == 200:
-            resp.encoding = resp.apparent_encoding
-            return BeautifulSoup(resp.text, "html.parser")
-    except Exception as e:
+            # Netkeiba fix: apparent_encoding doesn't always work for EUC-JP bytes
+            content = resp.content
+            html_text = ""
+            for enc in ['euc-jp', 'cp51932', 'utf-8', 'cp932']:
+                try: 
+                    html_text = content.decode(enc)
+                    break
+                except: continue
+            return BeautifulSoup(html_text or resp.text, "html.parser")
+    except Exception:
         pass
 
     # 2. Try curl_cffi (MUCH MORE ROBUST for Cloud/DataCenter IPs)
     try:
         from curl_cffi import requests as curl_requests
-        resp2 = curl_requests.get(url, impersonate="chrome120", timeout=20)
+        resp2 = curl_requests.get(url, headers=headers, impersonate="chrome120", timeout=15)
         if resp2.status_code == 200:
-            # Detect encoding or use apparent
-            html_text = resp2.content.decode('utf-8', errors='replace')
-            if 'euc-jp' in html_text.lower():
-                try: html_text = resp2.content.decode('euc-jp')
-                except: pass
+            content = resp2.content
+            html_text = ""
+            for enc in ['euc-jp', 'cp51932', 'utf-8', 'cp932']:
+                try:
+                    html_text = content.decode(enc)
+                    break
+                except: continue
             return BeautifulSoup(html_text, "html.parser")
     except Exception:
         pass
 
-    print(f"[WARN] All fetch methods failed for {url}")
     return None
 
 def _parse_float(val: str) -> float:

@@ -108,7 +108,19 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     # --- Attempt 2: curl_cffi ---
     try:
         from curl_cffi import requests as curl_requests
-        resp2 = curl_requests.get(url, impersonate="chrome120", timeout=20)
+        headers = _get_headers(referer)
+        # Modern headers for better impersonation
+        headers.update({
+            "sec-ch-ua": '"Not(A:Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1"
+        })
+        resp2 = curl_requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
         if resp2.status_code == 200:
             html = _decode_content(resp2.content)
             if '</html' in html.lower() and len(html) > 500:

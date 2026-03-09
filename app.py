@@ -4076,7 +4076,12 @@ if nav == "🔬 実験その３(馬番パターン)":
         fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", use_container_width=True)
 
     if fetch_venues_btn and rpps_date:
-        st.session_state.rpps_venue_list = scraper.get_race_list_for_date(rpps_date)
+        res = scraper.get_race_list_for_date(rpps_date)
+        if not res:
+            st.error(f"⚠️ {rpps_date} の開催場を取得できませんでした。データセンターIP制限によりブロックされているか、該当日の開催が空の可能性があります。少し時間を置いて再試行してください。")
+        else:
+            st.success(f"✅ {len(res)} レース分の開催情報を取得しました。")
+        st.session_state.rpps_venue_list = res
 
     selected_race_urls = []
     if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
