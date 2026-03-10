@@ -18,3 +18,4 @@ curl_cffi
 browserforge
 msgspec
 kagglehub
+cloudscraper
