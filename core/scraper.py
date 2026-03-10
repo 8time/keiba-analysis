@@ -207,11 +207,13 @@ def get_race_list_for_date(date_str=None):
 
     # Tier 1: race_list_sub.html (faster fragment)
     # Tier 2: race_list.html (full robust page)
-    # Tier 3: sp.netkeiba.com (smartphone version - often less blocked)
+    # Tier 3: sp.netkeiba.com (smartphone version)
+    # Tier 4: db.netkeiba.com (Database side - very robust on Cloud)
     urls = [
         f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}",
         f"https://race.netkeiba.com/top/race_list.html?kaisai_date={date_str}",
-        f"https://sp.netkeiba.com/v2/race/race_list_sub.html?kaisai_date={date_str}"
+        f"https://sp.netkeiba.com/v2/race/race_list_sub.html?kaisai_date={date_str}",
+        f"https://db.netkeiba.com/race/list/{date_str}/"
     ]
     
     html = None
