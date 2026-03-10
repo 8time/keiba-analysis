@@ -14,7 +14,6 @@ logging.getLogger("curl_cffi").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 import streamlit as st
-import graphviz
 from dotenv import load_dotenv
 import google.genai as genai
 from google.genai import types as genai_types
@@ -1773,7 +1772,7 @@ if nav == "🏠 Single Race Analysis":
                     
                     matches = calculator.get_direct_matches(df) if df is not None and not df.empty else []
                     if matches:
-                        # 🥊 Direct Match Network (Interactive SVG Pan-Zoom)
+                        # 🥊 Direct Match Network (Interactive Client-side)
                         st.markdown("""
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <h3 style="margin:0; font-size:1.4rem;">Direct Match Network</h3>
@@ -1784,194 +1783,182 @@ if nav == "🏠 Single Race Analysis":
                         # Legends
                         st.markdown(f"""
                         <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
-                            <span><span style="color:#ff6b6b;">●</span> Top 5 (High Index)</span>
-                            <span><span style="color:#2b8a3e;">●</span> Middle</span>
+                            <span><span style="color:#ff6b6b;">●</span> Top 5 (Highly Rec)</span>
+                            <span><span style="color:#2b8a3e;">●</span> Others</span>
                             <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Graph Area Box
-                        with st.container(border=True):
-                            # Construct DOT string
-                            dot = 'digraph {'
-                            dot += 'rankdir=LR;'
-                            dot += 'bgcolor="transparent";'
-                            dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1, margin=0, pad=0];'
-                            dot += 'edge [fontname="Meiryo", fontsize=10, color="#444444", arrowsize=0.8, penwidth=1.5];'
+                        # Construct DOT string
+                        dot = 'digraph {'
+                        dot += 'rankdir=LR;'
+                        dot += 'bgcolor="transparent";'
+                        # More compact nodes
+                        dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1, margin=0, penwidth=2.5];'
+                        dot += 'edge [fontname="Meiryo", fontsize=10, color="#555555", arrowsize=0.8, penwidth=1.5];'
+                        
+                        relevant_horse_names = set()
+                        for w, l, _ in matches:
+                            relevant_horse_names.add(w)
+                            relevant_horse_names.add(l)
+
+                        for _, row in df.iterrows():
+                            name = row['Name']
+                            if name not in relevant_horse_names: continue
+                            n_color, border_color, font_color = "#c3fae8", "#51cf66", "#2b8a3e" # Green
                             
-                            relevant_horse_names = set()
-                            for w, l, _ in matches:
-                                relevant_horse_names.add(w)
-                                relevant_horse_names.add(l)
+                            if name in top_5_names:
+                                n_color, border_color, font_color = "#fff5f5", "#ff6b6b", "#c92a2a" # Red
+                            elif name in bot_5_names:
+                                n_color, border_color, font_color = "#e7f5ff", "#339af0", "#1971c2" # Blue
 
-                            for _, row in df.iterrows():
-                                name = row['Name']
-                                if name not in relevant_horse_names: continue
-                                n_color, border_color, font_color = "#c3fae8", "#51cf66", "#2b8a3e" # Default Green
-                                
-                                if name in top_5_names:
-                                    n_color, border_color, font_color = "#fff5f5", "#ff6b6b", "#c92a2a" # Red
-                                elif name in bot_5_names:
-                                    n_color, border_color, font_color = "#e7f5ff", "#339af0", "#1971c2" # Blue
+                            umaban = row['Umaban']
+                            label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
+                            dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}"];'
 
-                                umaban = row['Umaban']
-                                label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
-                                dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}", penwidth=2.5];'
+                        unique_edges = set()
+                        for w, l, details in matches:
+                            if current_surf and (current_surf not in details.get('Surface', '')): continue
+                            edge_key = (w, l)
+                            if edge_key not in unique_edges:
+                                dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#555555", style="dashed", color="#555555"];'
+                                unique_edges.add(edge_key)
+                        dot += '}'
 
-                            unique_edges = set()
-                            for w, l, details in matches:
-                                match_date = None
-                                try:
-                                    d_str = details.get('Date', '')
-                                    match_date = datetime.strptime(d_str, "%Y.%m.%d")
-                                except: pass
-                                if match_date and match_date < one_year_ago: continue
-                                if current_surf and (current_surf not in details.get('Surface', '')): continue
+                        # --- Robust Client-side Interactive Renderer ---
+                        import base64
+                        from streamlit.components.v1 import html
+                        
+                        # Encode to Base64 to safely bridge into JS
+                        b64_dot = base64.b64encode(dot.encode('utf-8')).decode('utf-8')
+                        
+                        html_code = f"""
+                        <style>
+                            #graph-container {{
+                                width: 100%;
+                                height: 700px;
+                                background-color: #ffffff;
+                                border: 1px solid #eeeeee;
+                                border-radius: 8px;
+                                position: relative;
+                                overflow: hidden;
+                                cursor: grab;
+                            }}
+                            #graph-canvas {{
+                                width: 100%;
+                                height: 100%;
+                            }}
+                            .zoom-controls {{
+                                position: absolute;
+                                top: 20px;
+                                right: 20px;
+                                display: flex;
+                                flex-direction: column;
+                                gap: 10px;
+                                z-index: 1000;
+                            }}
+                            .zoom-btn {{
+                                width: 44px;
+                                height: 44px;
+                                background: rgba(255, 255, 255, 0.95);
+                                border: 1px solid #ddd;
+                                border-radius: 8px;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-size: 24px;
+                                font-weight: bold;
+                                cursor: pointer;
+                                box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+                                user-select: none;
+                                transition: all 0.2s;
+                                color: #333;
+                            }}
+                            .zoom-btn:hover {{ background: #f8f8f8; box-shadow: 0 6px 12px rgba(0,0,0,0.15); }}
+                            .zoom-btn:active {{ transform: scale(0.95); }}
+                            .reset-btn {{ font-size: 11px; }}
+                            #instructions {{
+                                position: absolute;
+                                bottom: 15px;
+                                left: 20px;
+                                font-size: 13px;
+                                color: #888;
+                                pointer-events: none;
+                                background: rgba(255,255,255,0.7);
+                                padding: 5px 12px;
+                                border-radius: 5px;
+                            }}
+                        </style>
+                        <div id="graph-container">
+                            <div class="zoom-controls">
+                                <div class="zoom-btn" onclick="triggerZoomIn()">＋</div>
+                                <div class="zoom-btn" onclick="triggerZoomOut()">－</div>
+                                <div class="zoom-btn reset-btn" onclick="triggerReset()">RESET</div>
+                            </div>
+                            <div id="graph-canvas"></div>
+                            <div id="instructions">💡 マウスホイールでズーム | ドラッグで移動 | 枠内ダブルクリックでリセット</div>
+                        </div>
 
-                                edge_key = (w, l)
-                                if edge_key not in unique_edges:
-                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#444444", style="dashed", color="#444444"];'
-                                    unique_edges.add(edge_key)
-                            dot += '}'
+                        <script src="https://d3js.org/d3.v5.min.js"></script>
+                        <script src="https://unpkg.com/@hpcc-js/wasm@0.3.11/dist/index.min.js"></script>
+                        <script src="https://unpkg.com/d3-graphviz@3.0.5/build/d3-graphviz.js"></script>
+                        <script>
+                            const b64Dot = "{b64_dot}";
+                            const dot = decodeURIComponent(escape(window.atob(b64Dot)));
+                            let graphviz;
 
-                            # --- Reliable Server-side Render + Client-side PanZoom ---
-                            import base64
-                            from streamlit.components.v1 import html
-                            
-                            svg_data = ""
-                            try:
-                                # Render to SVG in Python server
-                                svg_bytes = graphviz.Source(dot).pipe(format='svg')
-                                svg_data = svg_bytes.decode('utf-8')
-                            except Exception as e_rv:
-                                st.warning(f"インタラクティブ描画に失敗しました。標準モードに切り替えます: {e_rv}")
-                                st.graphviz_chart(dot, use_container_width=True)
-                            
-                            if svg_data:
-                                # Wrap in Pan-Zoom container
-                                # Remove common SVG header bits that are not needed inside a div
-                                if '<?xml' in svg_data: svg_data = svg_data[svg_data.find('<svg'):]
-                                
-                                # Escape for JS
-                                import json
-                                escaped_svg = json.dumps(svg_data)
-
-                                html_code = f"""
-                                <style>
-                                    #pan-zoom-container {{
-                                        width: 100%;
-                                        height: 700px;
-                                        background-color: #ffffff;
-                                        border: 1px solid #eeeeee;
-                                        border-radius: 8px;
-                                        position: relative;
-                                        overflow: hidden;
-                                        cursor: grab;
-                                    }}
-                                    #svg-wrapper svg {{
-                                        width: 100%;
-                                        height: 100%;
-                                    }}
-                                    .zoom-controls {{
-                                        position: absolute;
-                                        top: 20px;
-                                        right: 20px;
-                                        display: flex;
-                                        flex-direction: column;
-                                        gap: 12px;
-                                        z-index: 1000;
-                                    }}
-                                    .zoom-btn {{
-                                        width: 48px;
-                                        height: 48px;
-                                        background: rgba(255, 255, 255, 0.95);
-                                        border: 1px solid #ddd;
-                                        border-radius: 10px;
-                                        display: flex;
-                                        align-items: center;
-                                        justify-content: center;
-                                        font-size: 26px;
-                                        font-weight: bold;
-                                        cursor: pointer;
-                                        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
-                                        user-select: none;
-                                        transition: all 0.2s;
-                                        color: #333;
-                                    }}
-                                    .zoom-btn:hover {{ background: #f0f0f0; transform: scale(1.05); }}
-                                    .zoom-btn:active {{ background: #e0e0e0; transform: scale(0.95); }}
-                                    .reset-btn {{ font-size: 11px; }}
-                                    #instructions {{
-                                        position: absolute;
-                                        bottom: 15px;
-                                        left: 20px;
-                                        font-size: 13px;
-                                        color: #666;
-                                        pointer-events: none;
-                                        background: rgba(255,255,255,0.8);
-                                        padding: 6px 14px;
-                                        border-radius: 6px;
-                                        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                                    }}
-                                </style>
-                                <div id="pan-zoom-container">
-                                    <div class="zoom-controls">
-                                        <div class="zoom-btn" id="btn-zoom-in">＋</div>
-                                        <div class="zoom-btn" id="btn-zoom-out">－</div>
-                                        <div class="zoom-btn reset-btn" id="btn-reset">RESET</div>
-                                    </div>
-                                    <div id="svg-wrapper" style="width:100%; height:100%;"></div>
-                                    <div id="instructions">💡 マウスホイールで拡大縮小 | ドラッグで移動 | 枠内ダブルクリックでリセット</div>
-                                </div>
-
-                                <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-                                <script>
-                                    const svgCode = {escaped_svg};
-                                    const wrapper = document.getElementById('svg-wrapper');
-                                    wrapper.innerHTML = svgCode;
-                                    
-                                    const svgElement = wrapper.querySelector('svg');
-                                    svgElement.setAttribute('width', '100%');
-                                    svgElement.setAttribute('height', '100%');
-
-                                    const panZoom = svgPanZoom(svgElement, {{
-                                        zoomEnabled: true,
-                                        controlIconsEnabled: false,
-                                        fit: true,
-                                        center: true,
-                                        minZoom: 0.1,
-                                        maxZoom: 10,
-                                        onUpdatedCTM: function() {{}}
+                            function start() {{
+                                graphviz = d3.select("#graph-canvas")
+                                    .graphviz()
+                                    .onerror(function(err) {{
+                                        console.error("Graphviz Error:", err);
+                                        document.getElementById('graph-canvas').innerHTML = '<div style="padding:20px; color:red;">エラー: グラフを描画できませんでした。</div>';
+                                    }})
+                                    .zoom(true)
+                                    .fit(true)
+                                    .renderDot(dot)
+                                    .on("end", function() {{
+                                        d3.select("svg")
+                                            .attr("width", "100%")
+                                            .attr("height", "100%");
                                     }});
+                            }}
 
-                                    document.getElementById('btn-zoom-in').addEventListener('click', function(e){{
-                                        e.preventDefault();
-                                        panZoom.zoomIn();
-                                    }});
+                            window.triggerZoomIn = function() {{
+                                if (graphviz) {{
+                                    const svg = d3.select("svg");
+                                    const zoom = graphviz.zoomBehavior();
+                                    svg.transition().duration(250).call(zoom.scaleBy, 1.25);
+                                }}
+                            }};
 
-                                    document.getElementById('btn-zoom-out').addEventListener('click', function(e){{
-                                        e.preventDefault();
-                                        panZoom.zoomOut();
-                                    }});
+                            window.triggerZoomOut = function() {{
+                                if (graphviz) {{
+                                    const svg = d3.select("svg");
+                                    const zoom = graphviz.zoomBehavior();
+                                    svg.transition().duration(250).call(zoom.scaleBy, 0.8);
+                                }}
+                            }};
 
-                                    document.getElementById('btn-reset').addEventListener('click', function(e){{
-                                        e.preventDefault();
-                                        panZoom.resetZoom();
-                                        panZoom.center();
-                                    }});
+                            window.triggerReset = function() {{
+                                if (graphviz) {{
+                                    graphviz.resetZoom(d3.transition().duration(500));
+                                }}
+                            }};
 
-                                    document.getElementById('pan-zoom-container').addEventListener('dblclick', function(e){{
-                                        panZoom.resetZoom();
-                                        panZoom.center();
-                                    }});
+                            document.getElementById('graph-container').addEventListener('dblclick', function() {{
+                                triggerReset();
+                            }});
 
-                                    // Hand feel cursor
-                                    const container = document.getElementById('pan-zoom-container');
-                                    container.addEventListener('mousedown', () => container.style.cursor = 'grabbing');
-                                    container.addEventListener('mouseup', () => container.style.cursor = 'grab');
-                                </script>
-                                """
-                                html(html_code, height=720)
+                            // Cursor hand feel
+                            const cont = document.getElementById('graph-container');
+                            cont.addEventListener('mousedown', () => cont.style.cursor = 'grabbing');
+                            cont.addEventListener('mouseup', () => cont.style.cursor = 'grab');
+
+                            start();
+                        </script>
+                        """
+                        html(html_code, height=720)
 
                         # Recent Match History Cards
                         st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
