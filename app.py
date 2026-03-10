@@ -1813,6 +1813,7 @@ if nav == "🏠 Single Race Analysis":
                             # Construct DOT string
                             dot = 'digraph {'
                             dot += 'rankdir=LR;'
+                            dot += f'size="{14 * st.session_state.graph_scale},{10 * st.session_state.graph_scale}!";'
                             dot += 'bgcolor="transparent";'
                             dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
                             dot += 'edge [fontname="Meiryo", fontsize=10, color="#444444", arrowsize=0.8, penwidth=1.5];'
@@ -1852,44 +1853,8 @@ if nav == "🏠 Single Race Analysis":
                                     unique_edges.add(edge_key)
                             dot += '}'
 
-                            # Render with d3-graphviz for TRUE interaction
-                            import json
-                            from streamlit.components.v1 import html
-                            
-                            escaped_dot = dot.replace('\n', ' ').replace('"', '\\"')
-                            scale = st.session_state.graph_scale
-                            
-                            html_code = f"""
-                            <div id="graph" style="text-align: center; background-color: #ffffff; border-radius: 8px; overflow: hidden; cursor: grab;"></div>
-                            <script src="https://d3js.org/d3.v5.min.js"></script>
-                            <script src="https://unpkg.com/@hpcc-js/wasm@0.3.11/dist/index.min.js"></script>
-                            <script src="https://unpkg.com/d3-graphviz@3.0.5/build/d3-graphviz.js"></script>
-                            <script>
-                                const dot = "{escaped_dot}";
-                                const scale = {scale};
-                                const graph = d3.select("#graph")
-                                    .graphviz()
-                                    .transition(function() {{ return d3.transition().duration(500); }})
-                                    .zoom(true)
-                                    .fit(true)
-                                    .renderDot(dot)
-                                    .on("end", function() {{
-                                        d3.select("svg")
-                                          .attr("width", "100%")
-                                          .attr("height", "600px")
-                                          .style("transform-origin", "center")
-                                          .style("transform", "scale(" + scale + ")");
-                                    }});
-                                
-                                // Drag hand feel
-                                d3.select("#graph").on("mousedown", function() {{
-                                    d3.select(this).style("cursor", "grabbing");
-                                }}).on("mouseup", function() {{
-                                    d3.select(this).style("cursor", "grab");
-                                }});
-                            </script>
-                            """
-                            html(html_code, height=620)
+                            # Render with standard graphviz for stability
+                            st.graphviz_chart(dot, use_container_width=True)
 
                         # Recent Match History Cards
                         st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
