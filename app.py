@@ -1595,7 +1595,7 @@ if nav == "🏠 Single Race Analysis":
                                 elif name in bot_5_names:
                                     colors.append("background-color: #ccccff; color: #0000cc; font-weight: bold") 
                                 else:
-                                    colors.append("background-color: #ebfbee; color: #2b8a3e;") # Green
+                                    colors.append("background-color: #c3fae8; color: #2b8a3e;") # Modern Green
                             return colors
 
                         def color_rank(s):
@@ -1772,7 +1772,7 @@ if nav == "🏠 Single Race Analysis":
                     
                     matches = calculator.get_direct_matches(df) if df is not None and not df.empty else []
                     if matches:
-                        # 🥊 Direct Match Network (Mobile-Inspired UI)
+                        # 🥊 Direct Match Network (Interactive UI)
                         st.markdown("""
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <h3 style="margin:0; font-size:1.4rem;">Direct Match Network</h3>
@@ -1780,45 +1780,42 @@ if nav == "🏠 Single Race Analysis":
                         </div>
                         """, unsafe_allow_html=True)
 
+                        # Session State for Zoom
+                        if 'graph_scale' not in st.session_state: st.session_state.graph_scale = 1.0
+                        
+                        def zoom_in_f(): st.session_state.graph_scale = min(5.0, st.session_state.graph_scale + 0.2)
+                        def zoom_out_f(): st.session_state.graph_scale = max(0.2, st.session_state.graph_scale - 0.2)
+
                         # Graph Area Box
                         with st.container(border=True):
-                            # Integrated Zoom Control UI
-                            st.markdown("""
-                            <style>
-                                div[data-testid="stHorizontalBlock"] > div:has(button[key^="z"]) {
-                                    gap: 0px !important;
-                                }
-                            </style>
-                            """, unsafe_allow_html=True)
-                            
+                            # Control Panel
+                            st.markdown("""<style>div[data-testid="stHorizontalBlock"] button { border-radius: 8px; }</style>""", unsafe_allow_html=True)
                             c_left, c_middle, c_right = st.columns([12, 1, 1])
                             with c_left:
-                                scale_val = st.slider("調整スライダー", 0.5, 3.0, st.session_state.get('graph_scale', 1.0), 0.1, key="graph_scale_slider", label_visibility="collapsed")
+                                scale_val = st.slider("調整スライダー", 0.2, 5.0, st.session_state.graph_scale, 0.1, key="graph_scale_slider_v2")
                                 st.session_state.graph_scale = scale_val
                             with c_middle:
-                                if st.button("➕", key="z_in", help="拡大"):
-                                    st.session_state.graph_scale = min(3.0, st.session_state.graph_scale + 0.2)
+                                st.button("➕", key="z_in", help="拡大", on_click=zoom_in_f, use_container_width=True)
                             with c_right:
-                                if st.button("➖", key="z_out", help="縮小"):
-                                    st.session_state.graph_scale = max(0.5, st.session_state.graph_scale - 0.2)
+                                st.button("➖", key="z_out", help="縮小", on_click=zoom_out_f, use_container_width=True)
                             
-                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-bottom:10px;'>🔍 マウスホイールで拡大縮小 | Space+ドラッグで移動 (ブラウザ全画面時)</div>", unsafe_allow_html=True)
+                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-bottom:10px;'>💡 マウスホイールでズーム | ドラッグで移動 | 空白クリックでリセット</div>", unsafe_allow_html=True)
 
                             # Legends
                             st.markdown(f"""
                             <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
                                 <span><span style="color:#ff6b6b;">●</span> Top 5 (Highly Rec)</span>
-                                <span><span style="color:#51cf66;">●</span> Neutral</span>
+                                <span><span style="color:#2b8a3e;">●</span> Middle</span>
                                 <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
                             </div>
                             """, unsafe_allow_html=True)
 
+                            # Construct DOT string
                             dot = 'digraph {'
                             dot += 'rankdir=LR;'
-                            dot += f'size="{14 * st.session_state.graph_scale},{10 * st.session_state.graph_scale}!";'
                             dot += 'bgcolor="transparent";'
                             dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
-                            dot += 'edge [fontname="Meiryo", fontsize=9, color="#555555", arrowsize=0.8, penwidth=1.5];'
+                            dot += 'edge [fontname="Meiryo", fontsize=10, color="#444444", arrowsize=0.8, penwidth=1.5];'
                             
                             relevant_horse_names = set()
                             for w, l, _ in matches:
@@ -1828,26 +1825,16 @@ if nav == "🏠 Single Race Analysis":
                             for _, row in df.iterrows():
                                 name = row['Name']
                                 if name not in relevant_horse_names: continue
+                                n_color, border_color, font_color = "#c3fae8", "#51cf66", "#2b8a3e" # Default Green
                                 
-                                # Default: Green
-                                n_color = "#ebfbee" # Light Green
-                                border_color = "#51cf66"
-                                font_color = "#2b8a3e"
-                                
-                                # Highlight Elite
                                 if name in top_5_names:
-                                    n_color = "#fff5f5" # Redish
-                                    border_color = "#ff6b6b"
-                                    font_color = "#c92a2a"
-                                # Highlight Bottom
+                                    n_color, border_color, font_color = "#fff5f5", "#ff6b6b", "#c92a2a" # Red
                                 elif name in bot_5_names:
-                                    n_color = "#e7f5ff" # Bluish
-                                    border_color = "#339af0"
-                                    font_color = "#1971c2"
+                                    n_color, border_color, font_color = "#e7f5ff", "#339af0", "#1971c2" # Blue
 
                                 umaban = row['Umaban']
                                 label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
-                                dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}", penwidth=2.0];'
+                                dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}", penwidth=2.5];'
 
                             unique_edges = set()
                             for w, l, details in matches:
@@ -1857,17 +1844,52 @@ if nav == "🏠 Single Race Analysis":
                                     match_date = datetime.strptime(d_str, "%Y.%m.%d")
                                 except: pass
                                 if match_date and match_date < one_year_ago: continue
-                                
-                                m_surf = details.get('Surface', '')
-                                if current_surf and current_surf not in m_surf: continue
+                                if current_surf and (current_surf not in details.get('Surface', '')): continue
 
                                 edge_key = (w, l)
                                 if edge_key not in unique_edges:
-                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#555555", style="dashed", color="#555555"];'
+                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#444444", style="dashed", color="#444444"];'
                                     unique_edges.add(edge_key)
-                            
                             dot += '}'
-                            st.graphviz_chart(dot, use_container_width=True)
+
+                            # Render with d3-graphviz for TRUE interaction
+                            import json
+                            from streamlit.components.v1 import html
+                            
+                            escaped_dot = dot.replace('\n', ' ').replace('"', '\\"')
+                            scale = st.session_state.graph_scale
+                            
+                            html_code = f"""
+                            <div id="graph" style="text-align: center; background-color: #ffffff; border-radius: 8px; overflow: hidden; cursor: grab;"></div>
+                            <script src="https://d3js.org/d3.v5.min.js"></script>
+                            <script src="https://unpkg.com/@hpcc-js/wasm@0.3.11/dist/index.min.js"></script>
+                            <script src="https://unpkg.com/d3-graphviz@3.0.5/build/d3-graphviz.js"></script>
+                            <script>
+                                const dot = "{escaped_dot}";
+                                const scale = {scale};
+                                const graph = d3.select("#graph")
+                                    .graphviz()
+                                    .transition(function() {{ return d3.transition().duration(500); }})
+                                    .zoom(true)
+                                    .fit(true)
+                                    .renderDot(dot)
+                                    .on("end", function() {{
+                                        d3.select("svg")
+                                          .attr("width", "100%")
+                                          .attr("height", "600px")
+                                          .style("transform-origin", "center")
+                                          .style("transform", "scale(" + scale + ")");
+                                    }});
+                                
+                                // Drag hand feel
+                                d3.select("#graph").on("mousedown", function() {{
+                                    d3.select(this).style("cursor", "grabbing");
+                                }}).on("mouseup", function() {{
+                                    d3.select(this).style("cursor", "grab");
+                                }});
+                            </script>
+                            """
+                            html(html_code, height=620)
 
                         # Recent Match History Cards
                         st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
