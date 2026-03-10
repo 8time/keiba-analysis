@@ -105,41 +105,42 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     except Exception as e:
         logger.debug(f"[requests] Failed: {e}")
 
-    # --- Attempt 2: curl_cffi ---
+    # --- Attempt 2: curl_cffi (with Session & Multi-Profile) ---
     try:
         from curl_cffi import requests as curl_requests
         headers = _get_headers(referer)
-        # Modern headers for better impersonation
         headers.update({
             "sec-ch-ua": '"Not(A:Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "document",
-            "sec-fetch-mode": "navigate",
-            "sec-fetch-site": "none",
-            "sec-fetch-user": "?1",
             "upgrade-insecure-requests": "1"
         })
-        resp2 = curl_requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
-        if resp2.status_code == 200:
-            html = _decode_content(resp2.content)
-            if '</html' in html.lower() and len(html) > 500:
-                logger.debug(f"[curl_cffi] OK: {url}")
-                return html
+        
+        # Try two different profiles
+        for profile in ["chrome120", "edge101"]:
+            try:
+                resp2 = curl_requests.get(url, headers=headers, impersonate=profile, timeout=20)
+                if resp2.status_code == 200:
+                    html = _decode_content(resp2.content)
+                    if '</html' in html.lower() and len(html) > 800:
+                        logger.debug(f"[curl_cffi-{profile}] OK: {url}")
+                        return html
+            except: continue
     except Exception as e:
         logger.debug(f"[curl_cffi] Failed: {e}")
 
     # --- Attempt 3: Scrapling (Playwright-based) ---
     try:
+        # Scrapling can be heavy on Cloud, use sparingly
         from scrapling import DynamicFetcher
-        fetcher = DynamicFetcher()
-        # Non-async version of fetcher might be needed or use a helper
-        # Scrapling's DynamicFetcher by default uses sync methods if called as such? 
-        # Actually in recent version it's better to use get()
-        page = fetcher.get(url, timeout=30)
+        fetcher = DynamicFetcher(
+            headless=True,
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        )
+        page = fetcher.get(url, timeout=45)
         if page and page.content:
             html = page.content
-            if '</html' in html.lower():
+            if '</html' in html.lower() and len(html) > 1000:
                 logger.debug(f"[scrapling] OK: {url}")
                 return html
     except Exception as e:
@@ -198,47 +199,92 @@ def get_race_ids_for_date(date_str=None):
     return list(dict.fromkeys(race_ids))
 
 def get_race_list_for_date(date_str=None):
-    """Scrapes race IDs + race names for a given date from race_list_sub.html.
-    Uses Scrapling via fetch_robust_html to ensure JS is executed.
-    Returns list of dicts: {race_id, race_name, race_num}
+    """Scrapes race IDs + race names for a given date.
+    Tries both race_list_sub.html (fragment) and race_list.html (full page).
     """
     if not date_str:
         date_str = datetime.now().strftime("%Y%m%d")
 
-    url = f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}"
+    # Tier 1: race_list_sub.html (faster fragment)
+    # Tier 2: race_list.html (full robust page)
+    urls = [
+        f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}",
+        f"https://race.netkeiba.com/top/race_list.html?kaisai_date={date_str}"
+    ]
     
-    html = fetch_robust_html(url)
+    html = None
+    for url in urls:
+        html = fetch_robust_html(url)
+        if html and len(html) > 1000: # Success threshold
+            break
+
     if not html:
-        logger.warning("Error fetching race list via Scrapling.")
+        logger.warning(f"Failed to fetch race list for {date_str} from all sources.")
         return []
 
     soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
     results = []
 
+    # Try both fragment and full page selectors
+    # RaceList_DataItem (sub fragment) vs a[href*="race_id="] (general)
     items = soup.find_all('li', class_='RaceList_DataItem')
+    if not items:
+        # Fallback for full page: find all race links
+        items = soup.find_all('dl', class_='RaceList_DataList') # Main container for races in full page
+    
+    # If still not found, just hunt for race_id links
+    if not items:
+        raw_links = soup.select('a[href*="race_id="]')
+        for link in raw_links:
+            href = link.get('href', '')
+            m = re.search(r'race_id=(\d+)', href)
+            if m:
+                race_id = m.group(1)
+                # Avoid duplicates
+                if any(r['race_id'] == race_id for r in results): continue
+                
+                # Try to find name in parent or siblings
+                name = ""
+                parent = link.find_parent(['li', 'dl', 'div'])
+                if parent:
+                    # Look for title span or similar
+                    t = parent.find(['span', 'div'], class_=['ItemTitle', 'RaceName'])
+                    if t: name = t.get_text(strip=True)
+                
+                results.append({
+                    "race_id": race_id,
+                    "race_name": name or f"Race {race_id[-2:]}",
+                    "race_num": f"{int(race_id[-2:])}R"
+                })
+        return results
+
     for item in items:
-        link = item.find('a')
-        if not link or 'href' not in link.attrs:
+        link = item.find('a', href=re.compile(r'race_id=\d+'))
+        if not link:
             continue
         m = re.search(r'race_id=(\d+)', link['href'])
         if not m:
             continue
         race_id = m.group(1)
 
-        # Race name is in span.ItemTitle
+        # Race name
         race_name = ""
-        title_span = item.find('span', class_='ItemTitle')
-        if title_span:
-            race_name = title_span.text.strip()
+        # Try multiple classes
+        title_tag = item.find(['span', 'div', 'p'], class_=['ItemTitle', 'RaceName', 'Race_Name'])
+        if title_tag:
+            race_name = title_tag.get_text(strip=True)
 
-        # Race number from Race_Num div
+        # Race number
         race_num = ""
-        num_div = item.find('div', class_='Race_Num')
-        if num_div:
-            txt = num_div.get_text(strip=True)
+        num_tag = item.find(['div', 'span'], class_=['Race_Num', 'RaceNumber'])
+        if num_tag:
+            txt = num_tag.get_text(strip=True)
             m2 = re.search(r'(\d+R)', txt)
             if m2:
                 race_num = m2.group(1)
+            else:
+                # Basic cleanup
+                race_num = txt.replace('R', '') + 'R'
 
         results.append({
             "race_id": race_id,
