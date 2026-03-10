@@ -85,72 +85,94 @@ class KaggleChatClient:
             if not self.load_data():
                 return "データの読み込みに失敗しました。", None
 
-        try:
-            prompt = f"""
-            あなたは競馬データ分析の専門家です。
-            以下の pandas DataFrame を使用して、ユーザーの質問に答える Python コードを生成してください。
-            
-            DataFrame構成:
-            - df_races: レース情報 (race_id, date, venue, race_name, distance, course_type, race_class)
-            - df_results: 走破結果 (race_id, rank, number, horse_id, horse_name, odds, popularity)
-            - df_payouts: 払戻 (race_id, bet_type, horse_num, payout)
-            
-            重要事項:
-            - df_payouts['bet_type'] の値には '単勝', '複勝', '馬連', 'ワイド', '三連複', '三連単', '馬単', '枠連', '枠単' が含まれます。
-            - 数値の「3」ではなく漢字の「三」を使用していることに注意してください（例: '三連複', '三連単'）。
-            - `df_payouts['payout']` は数値変換してから計算してください。
-            - 日付フィルタは `df_races['date']` (datetime型) を使用してください。
-            - ERROR AVOIDANCE: 
-              - 日付 (`date`) が `NaT` の場合があるため、`.strftime()` を呼ぶ前に `pd.notnull()` でチェックするか `fillna` してください。
-              - フィルタの結果が空の可能性があるため、`.iloc[0]` を使う前に `.empty` をチェックしてください。
-            
-            ユーザーの質問: {query}
-            
-            出力ルール:
-            - 変数名 `result_df` または `result_text` に最終的な回答を格納してください。
-            - `result_text` には分析の構成や、平均配当・合計などの要約を日本語で入れてください。
-            - レースIDを表示する際は、必ず netkeiba のリンク形式にしてください。
-              - 形式: `[レースID](https://db.netkeiba.com/race/レースID/)` (バックティックで囲まないこと)
-            - コードのみを出力し、解説は含めないでください。
-            - インポート文(import pandas as pd等)は含めないでください。
-            """
+        import time
+        
+        prompt = f"""
+        あなたは競馬データ分析の専門家です。
+        以下の pandas DataFrame を使用して、ユーザーの質問に答える Python コードを生成してください。
+        
+        DataFrame構成:
+        - df_races: レース情報 (race_id, date, venue, race_name, distance, course_type, race_class)
+        - df_results: 走破結果 (race_id, rank, number, horse_id, horse_name, odds, popularity)
+        - df_payouts: 払戻 (race_id, bet_type, horse_num, payout)
+        
+        重要事項:
+        - df_payouts['bet_type'] の値には '単勝', '複勝', '馬連', 'ワイド', '三連複', '三連単', '馬単', '枠連', '枠単' が含まれます。
+        - 三連複・三連単などの「三」は漢数字を使用してください。
+        - `df_payouts['payout']` は数値変換してから計算してください。
+        - 日付フィルタは `df_races['date']` (datetime型) を使用してください。
+        - フィルタ結果が空の可能性があるため、`.iloc[0]` を使う前に `.empty` をチェックしてください。
+        
+        ユーザーの質問: {query}
+        
+        出力ルール:
+        - 変数名 `result_df` または `result_text` に回答を格納してください。
+        - レースIDを表示する際は `[レースID](https://db.netkeiba.com/race/レースID/)` 形式にしてください。
+        - コードのみを出力し、解説は含めないでください。
+        """
 
-            response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[prompt],
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.1
-                )
-            )
+        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        last_error = ""
 
-            code = self._extract_code(response.text)
-            if not code:
-                return "解析に必要なコードを生成できませんでした。", None
+        for model_id in models_to_try:
+            retries = 3
+            wait_sec = 2
+            
+            while retries > 0:
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_id,
+                        contents=[prompt],
+                        config=genai_types.GenerateContentConfig(
+                            temperature=0.1
+                        )
+                    )
+                    
+                    code = self._extract_code(response.text)
+                    if not code:
+                        return "解析に必要なコードを生成できませんでした。", None
 
-            # 2. 生成されたコードの実行環境を構築
-            namespace = {
-                'pd': pd,
-                'df_races': self.dfs['races'],
-                'df_results': self.dfs['results'],
-                'df_payouts': self.dfs['payouts'],
-                'result_df': None,
-                'result_text': ""
-            }
+                    # 2. 生成されたコードの実行環境を構築
+                    namespace = {
+                        'pd': pd,
+                        'df_races': self.dfs['races'],
+                        'df_results': self.dfs['results'],
+                        'df_payouts': self.dfs['payouts'],
+                        'result_df': None,
+                        'result_text': ""
+                    }
+                    
+                    try:
+                        exec(code, namespace)
+                    except Exception as e:
+                        logger.error(f"Code execution failed: {e}")
+                        return f"コードの実行中にエラーが発生しました: {e}\n\n生成されたコード:\n```python\n{code}\n```", None
+                    
+                    res_df = namespace.get('result_df')
+                    res_text = namespace.get('result_text')
+                    return res_text, res_df
+
+                except Exception as e:
+                    err_msg = str(e)
+                    last_error = err_msg
+                    
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        logger.warning(f"Quota exceeded for {model_id}. Retrying in {wait_sec}s... ({retries-1} left)")
+                        time.sleep(wait_sec)
+                        retries -= 1
+                        wait_sec *= 2
+                    else:
+                        # 他のエラー（認証エラー等）は即座に終了
+                        logger.error(f"Gemini API Error ({model_id}): {err_msg}")
+                        break # Try next model or fail
             
-            try:
-                exec(code, namespace)
-            except Exception as e:
-                logger.error(f"Code execution failed: {e}")
-                return f"コードの実行中にエラーが発生しました: {e}\n\n生成されたコード:\n```python\n{code}\n```", None
-            
-            res_df = namespace.get('result_df')
-            res_text = namespace.get('result_text')
-            
-            return res_text, res_df
-            
-        except Exception as e:
-            logger.error(f"Kaggle Chat Error: {e}")
-            return f"エラーが発生しました: {e}", None
+            logger.info(f"Model {model_id} failed or exhausted. Trying next fallback...")
+
+        # 全ての試行が失敗した場合
+        if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
+            return "⚠️ AIの利用制限（リミット）に達しました。無料枠の上限のため、30秒〜1分ほど待ってから再試行してください。もしくは API Key の有効期限や制限設定を確認してください。", None
+        
+        return f"エラーが発生しました: {last_error}", None
 
     def _extract_code(self, text):
         """Markdown から Python コードブロックを抽出"""
