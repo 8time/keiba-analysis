@@ -1763,108 +1763,115 @@ if nav == "🏠 Single Race Analysis":
                     
                     matches = calculator.get_direct_matches(df) if df is not None and not df.empty else []
                     if matches:
-                        st.subheader("🥊 Direct Match Pyramid")
-                        st.caption("Color: 🔴>=70, 🟢 50-69, 🔵 <50 (Speed Index) | 過去1年・同コースタイプの対戰のみ表示")
-                    
-                        # Verify loss counts for thick border
-                        loss_counts = {}
-                        for w, l, _ in matches:
-                            loss_counts[l] = loss_counts.get(l, 0) + 1
-                        
-                        dot = 'digraph {'
-                        dot += 'rankdir=TB;'
-                        dot += 'size="14,10"; ratio=compress;'  # Fixed canvas size prevents layout variation
-                        dot += 'nodesep=0.8; ranksep=1.2;'
-                        dot += 'node [shape=circle, fixedsize=true, width=1.8, style="filled", fontname="Meiryo", fontsize=14];'
-                        dot += 'edge [penwidth=2.0];'
-                    
-                        df['SpeedRank'] = df['SpeedIndex'].rank(ascending=False)
-                    
-                        unique_edges = set()
-                        has_edges = False
-                    
-                        # Calculate excluded horses (Bottom 30% by Projected Score or BattleScore)
-                        import math
-                        num_horses = len(df)
-                        exclude_count = math.ceil(num_horses * 0.3)
-                        sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
-                        if sort_col in df.columns:
-                            sorted_df = df.sort_values(by=sort_col, ascending=False)
-                            excludes_df = sorted_df.tail(exclude_count)
-                            excluded_names = excludes_df['Name'].tolist()
-                        else:
-                            excluded_names = []
-                            
-                        # Pre-calculate colors map to ensure consistency
-                        node_colors = {}
-                        for _, row in df.iterrows():
-                            name = row['Name']
-                            speed = row['SpeedIndex']
-                            alert = str(row['Alert'])
-                        
-                            n_color = "#ccffcc" # Default Green
-                            if "💀" in alert:
-                                n_color = "#ccccff" # Blue
-                            elif speed >= 70:
-                                n_color = "#ff9999" # Red
-                            elif speed >= 50:
-                                n_color = "#ccffcc" # Green
-                            else:
-                                n_color = "#ccccff" # Blue
-                        
-                            node_colors[name] = n_color
+                        # 🥊 Direct Match Network (Mobile-Inspired UI)
+                        st.markdown("""
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0; font-size:1.4rem;">Direct Match Network</h3>
+                            <span style="background-color:#e1f5fe; color:#03a9f4; padding:4px 12px; border-radius:15px; font-size:0.75rem; font-weight:bold; letter-spacing:0.5px;">LIVE DATA</span>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                        for w, l, details in matches:
-                            # ... (Filters same) ...
-                            match_date = None
-                            try:
-                                d_str = details.get('Date', '')
-                                match_date = datetime.strptime(d_str, "%Y.%m.%d")
-                            except:
-                                pass
-                            if match_date and match_date < one_year_ago: continue
-                        
-                            m_surf = details.get('Surface', '')
-                            is_same_surf = (current_surf in m_surf) if current_surf else True
-                            if not is_same_surf: continue
+                        # Graph Area Box
+                        with st.container(border=True):
+                            # Legends
+                            st.markdown("""
+                            <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
+                                <span><span style="color:#ff6b6b;">●</span> Elite 70+</span>
+                                <span><span style="color:#51cf66;">●</span> Stable 50-69</span>
+                                <span><span style="color:#339af0;">●</span> Lower <50</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            dot = 'digraph {'
+                            dot += 'rankdir=LR;' # Left to Right for better flow
+                            dot += 'bgcolor="transparent";'
+                            dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
+                            dot += 'edge [fontname="Meiryo", fontsize=9, color="#cccccc", arrowsize=0.7];'
                             
-                            has_edges = True
-                        
-                            w_color = node_colors.get(w, "#ffffff")
-                            l_color = node_colors.get(l, "#ffffff")
-                        
-                            # ID Helpers
-                            w_row = df[df['Name'] == w]
-                            l_row = df[df['Name'] == l]
-                            w_umaban = w_row['Umaban'].iloc[0] if not w_row.empty else "??"
-                            l_umaban = l_row['Umaban'].iloc[0] if not l_row.empty else "??"
-                        
-                            # Border Width Logic (Ironclad Delete)
-                            w_width = 5.0 if (w_color == "#ccccff" and loss_counts.get(w, 0) >= 3) else 1.0
-                            l_width = 5.0 if (l_color == "#ccccff" and loss_counts.get(l, 0) >= 3) else 1.0
-                        
-                            # Labels with large Skull icon next to Umaban if in Exclude List
-                            w_umaban_disp = f'{w_umaban} <FONT POINT-SIZE="48">💀</FONT>' if w in excluded_names else w_umaban
-                            l_umaban_disp = f'{l_umaban} <FONT POINT-SIZE="48">💀</FONT>' if l in excluded_names else l_umaban
+                            node_colors = {}
+                            # Pick relevant horses (Top ones and those in matches)
+                            relevant_horse_names = set()
+                            for w, l, _ in matches:
+                                relevant_horse_names.add(w)
+                                relevant_horse_names.add(l)
+
+                            for _, row in df.iterrows():
+                                name = row['Name']
+                                if name not in relevant_horse_names: continue
+                                
+                                speed = row['SpeedIndex']
+                                n_color = "#e7f5ff" # Default Blue
+                                border_color = "#339af0"
+                                font_color = "#1971c2"
+                                
+                                if speed >= 70:
+                                    n_color = "#fff5f5" # Red
+                                    border_color = "#ff6b6b"
+                                    font_color = "#c92a2a"
+                                elif speed >= 50:
+                                    n_color = "#ebfbee" # Green
+                                    border_color = "#51cf66"
+                                    font_color = "#2b8a3e"
+                                
+                                umaban = row['Umaban']
+                                label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
+                                dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}", penwidth=2.0];'
+
+                            unique_edges = set()
+                            for w, l, details in matches:
+                                match_date = None
+                                try:
+                                    d_str = details.get('Date', '')
+                                    match_date = datetime.strptime(d_str, "%Y.%m.%d")
+                                except: pass
+                                if match_date and match_date < one_year_ago: continue
+                                
+                                m_surf = details.get('Surface', '')
+                                if current_surf and current_surf not in m_surf: continue
+
+                                edge_key = (w, l)
+                                if edge_key not in unique_edges:
+                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#51cf66", style="dashed", color="#51cf66"];'
+                                    unique_edges.add(edge_key)
                             
-                            w_label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="28">{w_umaban_disp}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="16">{w}</FONT></TD></TR></TABLE>>'
-                            l_label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="28">{l_umaban_disp}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="16">{l}</FONT></TD></TR></TABLE>>'
+                            dot += '}'
+                            st.graphviz_chart(dot, use_container_width=True)
+
+                        # Recent Match History Cards
+                        st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
                         
-                            dot += f'"{w}" [label={w_label}, fillcolor="{w_color}", penwidth={w_width}];'
-                            dot += f'"{l}" [label={l_label}, fillcolor="{l_color}", penwidth={l_width}];'
-                        
-                            race_name = details.get('RaceName', '')
-                            short_race = race_name.split('(')[0].strip()[:6]
-                            edge_key = (w, l)
-                            if edge_key not in unique_edges:
-                                 dot += f'"{w}" -> "{l}" [label="{short_race}" fontsize=10, color="#444444"];'
-                                 unique_edges.add(edge_key)
-                    
-                        dot += '}'
-                        if has_edges:
-                             st.graphviz_chart(dot, use_container_width=True)
-                        else:
-                             st.caption("No matching direct comparisons.")
+                        # Process matches for history display (Top 5 unique recent)
+                        history_matches = []
+                        seen_matches = set()
+                        for w, l, details in sorted(matches, key=lambda x: x[2].get('Date', ''), reverse=True):
+                            key = f"{w}_{l}_{details.get('Date','')}"
+                            if key not in seen_matches:
+                                history_matches.append((w, l, details))
+                                seen_matches.add(key)
+                            if len(history_matches) >= 5: break
+
+                        for winner, loser, d in history_matches:
+                            date_str = d.get('Date', 'Unknown Date')
+                            r_name = d.get('RaceName', 'Unknown Race')
+                            venue = d.get('Venue', '')
+                            
+                            # Find the horse being "analyzed" - prioritizing winner as "WIN" card if target
+                            # In this view, we'll just show the cards as "Winner vs Loser"
+                            st.markdown(f"""
+                            <div style="background-color:white; border-radius:12px; padding:15px; margin-bottom:10px; border:1px solid #eee; display:flex; align-items:center; justify-content:space-between; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                <div style="display:flex; align-items:center;">
+                                    <div style="background-color:#ebfbee; color:#2b8a3e; width:45px; height:45px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; margin-right:15px; font-size:0.8rem;">WIN</div>
+                                    <div>
+                                        <div style="font-weight:bold; color:#333; font-size:1rem;">{winner} <span style="color:#888; font-weight:normal; font-size:0.8rem;">vs {loser}</span></div>
+                                        <div style="color:#666; font-size:0.75rem;">{venue} {r_name}</div>
+                                    </div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-weight:bold; color:#333; font-size:0.8rem;">Head-to-Head</div>
+                                    <div style="color:#999; font-size:0.7rem;">{date_str}</div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
                          
                     # --- Exclude Recommended List & Dark Horse ---
                     st.divider()
