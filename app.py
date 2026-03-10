@@ -1554,6 +1554,25 @@ if nav == "🏠 Single Race Analysis":
                             'Name', 'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
+                    # 1. Threshold calculation for consistent coloring (Top/Bottom 30%)
+                    sort_col_main = 'Projected Score' if 'Projected Score' in view_df.columns else 'BattleScore'
+                    top_30_names = []
+                    bot_30_names = []
+                    top_threshold = 999
+                    bot_threshold = -999
+
+                    if sort_col_main in view_df.columns:
+                        temp_df = view_df.sort_values(by=sort_col_main, ascending=False)
+                        num_h = len(temp_df)
+                        e_count = math.ceil(num_h * 0.3)
+                        top_30_names = temp_df.head(e_count)['Name'].tolist()
+                        bot_30_names = temp_df.tail(e_count)['Name'].tolist()
+                        
+                        sorted_vals = pd.to_numeric(temp_df[sort_col_main], errors='coerce').dropna().tolist()
+                        if len(sorted_vals) >= 1:
+                            top_threshold = sorted_vals[max(0, e_count - 1)]
+                            bot_threshold = sorted_vals[max(0, len(sorted_vals) - e_count)]
+
                     column_config = {
                         "Umaban": st.column_config.NumberColumn("馬番"),
                         "Popularity": st.column_config.NumberColumn("人気", format="%d"),
@@ -1579,16 +1598,13 @@ if nav == "🏠 Single Race Analysis":
                         def color_projected(s):
                             colors = []
                             vals = pd.to_numeric(s, errors='coerce')
-                            vmax, vmin = vals.max(), vals.min()
-                            spread = vmax - vmin if vmax != vmin else 1
                             for v in vals:
                                 if pd.isna(v): colors.append("")
-                                elif v >= vmax - spread * 0.1:
-                                    colors.append("background-color: #cc0000; color: white")
-                                elif v >= vmin + spread * 0.5:
-                                    colors.append("background-color: #ccffcc; color: black")
-                                else:
-                                    colors.append("background-color: #0000cc; color: white")
+                                elif v >= top_threshold:
+                                    colors.append("background-color: #ffcccc; color: #cc0000; font-weight: bold") 
+                                elif v <= bot_threshold:
+                                    colors.append("background-color: #ccccff; color: #0000cc; font-weight: bold") 
+                                else: colors.append("")
                             return colors
 
                         def color_rank(s):
@@ -1705,8 +1721,10 @@ if nav == "🏠 Single Race Analysis":
                             df_sc['Name'] = df_sc.apply(add_bomb_icon, axis=1)
                     
                         # Rank diff label
+                        score_col_sc = 'Projected Score' if 'Projected Score' in df_sc.columns else 'BattleScore'
                         df_sc['Old Rank'] = df_sc['BattleScore'].rank(ascending=False, method='min').astype(int)
-                        df_sc['New Rank'] = df_sc['Projected Score'].rank(ascending=False, method='min').astype(int)
+                        # Avoid KeyError if Projected Score is missing
+                        df_sc['New Rank'] = df_sc[score_col_sc].rank(ascending=False, method='min').astype(int)
                         df_sc['Rank Diff'] = df_sc['Old Rank'] - df_sc['New Rank']
                         df_sc['Trend'] = df_sc['Rank Diff'].apply(lambda x: '↑' if x > 0 else ('↓' if x < 0 else 'ー'))
                     
@@ -1773,20 +1791,36 @@ if nav == "🏠 Single Race Analysis":
 
                         # Graph Area Box
                         with st.container(border=True):
+                            # Modern Zoom Controls
+                            if 'graph_scale' not in st.session_state: st.session_state.graph_scale = 1.0
+                            cols_z = st.columns([1, 1, 6])
+                            with cols_z[0]:
+                                if st.button("➕ 拡大", key="zoom_in_btn", use_container_width=True):
+                                    st.session_state.graph_scale = min(3.0, st.session_state.graph_scale + 0.2)
+                            with cols_z[1]:
+                                if st.button("➖ 縮小", key="zoom_out_btn", use_container_width=True):
+                                    st.session_state.graph_scale = max(0.5, st.session_state.graph_scale - 0.2)
+                            with cols_z[2]:
+                                scale_val = st.slider("調整スライダー", 0.5, 3.0, st.session_state.graph_scale, 0.1, key="graph_scale_slider")
+                                st.session_state.graph_scale = scale_val
+                            
+                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-top:5px; margin-bottom:15px;'>🔍 Scroll to zoom | Space + Drag (Browser full-screen only)</div>", unsafe_allow_html=True)
+
                             # Legends
-                            st.markdown("""
+                            st.markdown(f"""
                             <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
-                                <span><span style="color:#ff6b6b;">●</span> Elite 70+</span>
-                                <span><span style="color:#51cf66;">●</span> Stable 50-69</span>
-                                <span><span style="color:#339af0;">●</span> Lower <50</span>
+                                <span><span style="color:#ff6b6b;">●</span> Elite ({top_threshold:,.1f}+)</span>
+                                <span><span style="color:#51cf66;">●</span> Stable</span>
+                                <span><span style="color:#339af0;">●</span> Lower ({bot_threshold:,.1f}- / Excluded)</span>
                             </div>
                             """, unsafe_allow_html=True)
 
                             dot = 'digraph {'
                             dot += 'rankdir=LR;' # Left to Right for better flow
+                            dot += f'size="{14 * st.session_state.graph_scale},{10 * st.session_state.graph_scale}!";'
                             dot += 'bgcolor="transparent";'
                             dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
-                            dot += 'edge [fontname="Meiryo", fontsize=9, color="#cccccc", arrowsize=0.7];'
+                            dot += 'edge [fontname="Meiryo", fontsize=9, color="#555555", arrowsize=0.8, penwidth=1.5];'
                             
                             node_colors = {}
                             # Pick relevant horses (Top ones and those in matches)
@@ -1804,6 +1838,7 @@ if nav == "🏠 Single Race Analysis":
                                 border_color = "#339af0"
                                 font_color = "#1971c2"
                                 
+                                # Highlight Elite/Stable
                                 if speed >= 70:
                                     n_color = "#fff5f5" # Red
                                     border_color = "#ff6b6b"
@@ -1813,6 +1848,12 @@ if nav == "🏠 Single Race Analysis":
                                     border_color = "#51cf66"
                                     font_color = "#2b8a3e"
                                 
+                                # Overwrite if in EXCLUDE LIST
+                                if name in bot_30_names:
+                                    n_color = "#e7f5ff" # Blue
+                                    border_color = "#339af0"
+                                    font_color = "#1971c2"
+
                                 umaban = row['Umaban']
                                 label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
                                 dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}", penwidth=2.0];'
@@ -1831,7 +1872,7 @@ if nav == "🏠 Single Race Analysis":
 
                                 edge_key = (w, l)
                                 if edge_key not in unique_edges:
-                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#51cf66", style="dashed", color="#51cf66"];'
+                                    dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#555555", style="dashed", color="#555555"];'
                                     unique_edges.add(edge_key)
                             
                             dot += '}'
@@ -1895,11 +1936,14 @@ if nav == "🏠 Single Race Analysis":
                             # Fallback if neither score column exists
                             excludes = pd.DataFrame()
 
-                        if not excludes.empty:
+                        if bot_30_names:
                             # Show the horses that are being mathematically excluded
-                            for _, row in excludes.iterrows():
-                                score_val = row.get(sort_col, 0.0)
-                                st.markdown(f"**{row['Umaban']} - {row['Name']}** (予測スコア: {float(score_val):.1f})")
+                            for name in bot_30_names:
+                                r = df[df['Name'] == name]
+                                if not r.empty:
+                                    row = r.iloc[0]
+                                    score_val = row.get(sort_col_main, 0.0)
+                                    st.markdown(f"**{row['Umaban']} - {name}** (予測スコア: {float(score_val):.1f})")
                         else:
                             st.info("消し推奨に該当する馬はいませんでした。")
                             
