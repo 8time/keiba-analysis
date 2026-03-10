@@ -1554,24 +1554,15 @@ if nav == "🏠 Single Race Analysis":
                             'Name', 'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
-                    # 1. Threshold calculation for consistent coloring (Top/Bottom 30%)
+                    # 1. Threshold calculation for consistent coloring (Top 5 / Bottom 5)
                     sort_col_main = 'Projected Score' if 'Projected Score' in view_df.columns else 'BattleScore'
-                    top_30_names = []
-                    bot_30_names = []
-                    top_threshold = 999
-                    bot_threshold = -999
+                    top_5_names = []
+                    bot_5_names = []
 
                     if sort_col_main in view_df.columns:
                         temp_df = view_df.sort_values(by=sort_col_main, ascending=False)
-                        num_h = len(temp_df)
-                        e_count = math.ceil(num_h * 0.3)
-                        top_30_names = temp_df.head(e_count)['Name'].tolist()
-                        bot_30_names = temp_df.tail(e_count)['Name'].tolist()
-                        
-                        sorted_vals = pd.to_numeric(temp_df[sort_col_main], errors='coerce').dropna().tolist()
-                        if len(sorted_vals) >= 1:
-                            top_threshold = sorted_vals[max(0, e_count - 1)]
-                            bot_threshold = sorted_vals[max(0, len(sorted_vals) - e_count)]
+                        top_5_names = temp_df.head(5)['Name'].tolist()
+                        bot_5_names = temp_df.tail(5)['Name'].tolist()
 
                     column_config = {
                         "Umaban": st.column_config.NumberColumn("馬番"),
@@ -1597,14 +1588,14 @@ if nav == "🏠 Single Race Analysis":
                     try:
                         def color_projected(s):
                             colors = []
-                            vals = pd.to_numeric(s, errors='coerce')
-                            for v in vals:
-                                if pd.isna(v): colors.append("")
-                                elif v >= top_threshold:
+                            for idx, row in view_df.loc[s.index].iterrows():
+                                name = row['Name']
+                                if name in top_5_names:
                                     colors.append("background-color: #ffcccc; color: #cc0000; font-weight: bold") 
-                                elif v <= bot_threshold:
+                                elif name in bot_5_names:
                                     colors.append("background-color: #ccccff; color: #0000cc; font-weight: bold") 
-                                else: colors.append("")
+                                else:
+                                    colors.append("background-color: #ebfbee; color: #2b8a3e;") # Green
                             return colors
 
                         def color_rank(s):
@@ -1791,39 +1782,44 @@ if nav == "🏠 Single Race Analysis":
 
                         # Graph Area Box
                         with st.container(border=True):
-                            # Modern Zoom Controls
-                            if 'graph_scale' not in st.session_state: st.session_state.graph_scale = 1.0
-                            cols_z = st.columns([1, 1, 6])
-                            with cols_z[0]:
-                                if st.button("➕ 拡大", key="zoom_in_btn", use_container_width=True):
-                                    st.session_state.graph_scale = min(3.0, st.session_state.graph_scale + 0.2)
-                            with cols_z[1]:
-                                if st.button("➖ 縮小", key="zoom_out_btn", use_container_width=True):
-                                    st.session_state.graph_scale = max(0.5, st.session_state.graph_scale - 0.2)
-                            with cols_z[2]:
-                                scale_val = st.slider("調整スライダー", 0.5, 3.0, st.session_state.graph_scale, 0.1, key="graph_scale_slider")
-                                st.session_state.graph_scale = scale_val
+                            # Integrated Zoom Control UI
+                            st.markdown("""
+                            <style>
+                                div[data-testid="stHorizontalBlock"] > div:has(button[key^="z"]) {
+                                    gap: 0px !important;
+                                }
+                            </style>
+                            """, unsafe_allow_html=True)
                             
-                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-top:5px; margin-bottom:15px;'>🔍 Scroll to zoom | Space + Drag (Browser full-screen only)</div>", unsafe_allow_html=True)
+                            c_left, c_middle, c_right = st.columns([12, 1, 1])
+                            with c_left:
+                                scale_val = st.slider("調整スライダー", 0.5, 3.0, st.session_state.get('graph_scale', 1.0), 0.1, key="graph_scale_slider", label_visibility="collapsed")
+                                st.session_state.graph_scale = scale_val
+                            with c_middle:
+                                if st.button("➕", key="z_in", help="拡大"):
+                                    st.session_state.graph_scale = min(3.0, st.session_state.graph_scale + 0.2)
+                            with c_right:
+                                if st.button("➖", key="z_out", help="縮小"):
+                                    st.session_state.graph_scale = max(0.5, st.session_state.graph_scale - 0.2)
+                            
+                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-bottom:10px;'>🔍 マウスホイールで拡大縮小 | Space+ドラッグで移動 (ブラウザ全画面時)</div>", unsafe_allow_html=True)
 
                             # Legends
                             st.markdown(f"""
                             <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
-                                <span><span style="color:#ff6b6b;">●</span> Elite ({top_threshold:,.1f}+)</span>
-                                <span><span style="color:#51cf66;">●</span> Stable</span>
-                                <span><span style="color:#339af0;">●</span> Lower ({bot_threshold:,.1f}- / Excluded)</span>
+                                <span><span style="color:#ff6b6b;">●</span> Top 5 (Highly Rec)</span>
+                                <span><span style="color:#51cf66;">●</span> Neutral</span>
+                                <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
                             </div>
                             """, unsafe_allow_html=True)
 
                             dot = 'digraph {'
-                            dot += 'rankdir=LR;' # Left to Right for better flow
+                            dot += 'rankdir=LR;'
                             dot += f'size="{14 * st.session_state.graph_scale},{10 * st.session_state.graph_scale}!";'
                             dot += 'bgcolor="transparent";'
                             dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
                             dot += 'edge [fontname="Meiryo", fontsize=9, color="#555555", arrowsize=0.8, penwidth=1.5];'
                             
-                            node_colors = {}
-                            # Pick relevant horses (Top ones and those in matches)
                             relevant_horse_names = set()
                             for w, l, _ in matches:
                                 relevant_horse_names.add(w)
@@ -1833,24 +1829,19 @@ if nav == "🏠 Single Race Analysis":
                                 name = row['Name']
                                 if name not in relevant_horse_names: continue
                                 
-                                speed = row['SpeedIndex']
-                                n_color = "#e7f5ff" # Default Blue
-                                border_color = "#339af0"
-                                font_color = "#1971c2"
+                                # Default: Green
+                                n_color = "#ebfbee" # Light Green
+                                border_color = "#51cf66"
+                                font_color = "#2b8a3e"
                                 
-                                # Highlight Elite/Stable
-                                if speed >= 70:
-                                    n_color = "#fff5f5" # Red
+                                # Highlight Elite
+                                if name in top_5_names:
+                                    n_color = "#fff5f5" # Redish
                                     border_color = "#ff6b6b"
                                     font_color = "#c92a2a"
-                                elif speed >= 50:
-                                    n_color = "#ebfbee" # Green
-                                    border_color = "#51cf66"
-                                    font_color = "#2b8a3e"
-                                
-                                # Overwrite if in EXCLUDE LIST
-                                if name in bot_30_names:
-                                    n_color = "#e7f5ff" # Blue
+                                # Highlight Bottom
+                                elif name in bot_5_names:
+                                    n_color = "#e7f5ff" # Bluish
                                     border_color = "#339af0"
                                     font_color = "#1971c2"
 
@@ -1936,9 +1927,9 @@ if nav == "🏠 Single Race Analysis":
                             # Fallback if neither score column exists
                             excludes = pd.DataFrame()
 
-                        if bot_30_names:
+                        if bot_5_names:
                             # Show the horses that are being mathematically excluded
-                            for name in bot_30_names:
+                            for name in bot_5_names:
                                 r = df[df['Name'] == name]
                                 if not r.empty:
                                     row = r.iloc[0]
