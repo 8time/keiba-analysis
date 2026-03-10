@@ -1780,40 +1780,11 @@ if nav == "🏠 Single Race Analysis":
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Session State for Zoom
-                        if 'graph_scale' not in st.session_state: st.session_state.graph_scale = 1.0
-                        
-                        def zoom_in_f(): st.session_state.graph_scale = min(5.0, st.session_state.graph_scale + 0.2)
-                        def zoom_out_f(): st.session_state.graph_scale = max(0.2, st.session_state.graph_scale - 0.2)
-
                         # Graph Area Box
                         with st.container(border=True):
-                            # Control Panel
-                            st.markdown("""<style>div[data-testid="stHorizontalBlock"] button { border-radius: 8px; }</style>""", unsafe_allow_html=True)
-                            c_left, c_middle, c_right = st.columns([12, 1, 1])
-                            with c_left:
-                                scale_val = st.slider("調整スライダー", 0.2, 5.0, st.session_state.graph_scale, 0.1, key="graph_scale_slider_v2")
-                                st.session_state.graph_scale = scale_val
-                            with c_middle:
-                                st.button("➕", key="z_in", help="拡大", on_click=zoom_in_f, use_container_width=True)
-                            with c_right:
-                                st.button("➖", key="z_out", help="縮小", on_click=zoom_out_f, use_container_width=True)
-                            
-                            st.markdown("<div style='font-size:0.75rem; color:#888; margin-bottom:10px;'>💡 マウスホイールでズーム | ドラッグで移動 | 空白クリックでリセット</div>", unsafe_allow_html=True)
-
-                            # Legends
-                            st.markdown(f"""
-                            <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
-                                <span><span style="color:#ff6b6b;">●</span> Top 5 (Highly Rec)</span>
-                                <span><span style="color:#2b8a3e;">●</span> Middle</span>
-                                <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-
                             # Construct DOT string
                             dot = 'digraph {'
                             dot += 'rankdir=LR;'
-                            dot += f'size="{14 * st.session_state.graph_scale},{10 * st.session_state.graph_scale}!";'
                             dot += 'bgcolor="transparent";'
                             dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1];'
                             dot += 'edge [fontname="Meiryo", fontsize=10, color="#444444", arrowsize=0.8, penwidth=1.5];'
@@ -1853,8 +1824,138 @@ if nav == "🏠 Single Race Analysis":
                                     unique_edges.add(edge_key)
                             dot += '}'
 
-                            # Render with standard graphviz for stability
-                            st.graphviz_chart(dot, use_container_width=True)
+                            # Legends
+                            st.markdown(f"""
+                            <div style="display:flex; justify-content:center; gap:20px; font-size:0.85rem; color:#666; margin-bottom:15px;">
+                                <span><span style="color:#ff6b6b;">●</span> Top 5 (Highly Rec)</span>
+                                <span><span style="color:#2b8a3e;">●</span> Middle</span>
+                                <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # --- Interactive HTML Renderer (d3-graphviz) ---
+                            from streamlit.components.v1 import html
+                            escaped_dot = dot.replace('\n', ' ').replace('"', '\\"')
+                            
+                            html_code = f"""
+                            <style>
+                                #graph-container {{
+                                    width: 100%;
+                                    height: 700px;
+                                    background-color: #ffffff;
+                                    border-radius: 8px;
+                                    overflow: hidden;
+                                    position: relative;
+                                    cursor: grab;
+                                    border: 1px solid #eee;
+                                }}
+                                .zoom-controls {{
+                                    position: absolute;
+                                    top: 20px;
+                                    right: 20px;
+                                    display: flex;
+                                    flex-direction: column;
+                                    gap: 10px;
+                                    z-index: 1000;
+                                }}
+                                .zoom-btn {{
+                                    width: 44px;
+                                    height: 44px;
+                                    background: rgba(255, 255, 255, 0.9);
+                                    border: 1px solid #ddd;
+                                    border-radius: 8px;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    font-size: 24px;
+                                    cursor: pointer;
+                                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                                    user-select: none;
+                                    transition: all 0.2s;
+                                }}
+                                .zoom-btn:hover {{ background: #f8f8f8; transform: translateY(-2px); }}
+                                .zoom-btn:active {{ transform: translateY(0); }}
+                                #instructions {{
+                                    position: absolute;
+                                    bottom: 15px;
+                                    left: 20px;
+                                    font-size: 13px;
+                                    color: #888;
+                                    pointer-events: none;
+                                    background: rgba(255,255,255,0.7);
+                                    padding: 4px 10px;
+                                    border-radius: 4px;
+                                }}
+                            </style>
+                            <div id="graph-container">
+                                <div class="zoom-controls">
+                                    <div class="zoom-btn" onclick="zoomIn()">＋</div>
+                                    <div class="zoom-btn" onclick="zoomOut()">－</div>
+                                    <div class="zoom-btn" onclick="resetZoom()" style="font-size:16px;">RESET</div>
+                                </div>
+                                <div id="graph"></div>
+                                <div id="instructions">💡 マウスホイールで拡大縮小 | ドラッグで移動 | 空白ダブルクリックでリセット</div>
+                            </div>
+
+                            <script src="https://d3js.org/d3.v5.min.js"></script>
+                            <script src="https://unpkg.com/@hpcc-js/wasm@0.3.11/dist/index.min.js"></script>
+                            <script src="https://unpkg.com/d3-graphviz@3.0.5/build/d3-graphviz.js"></script>
+                            <script>
+                                const dot = "{escaped_dot}";
+                                let graphviz;
+                                
+                                function initGraph() {{
+                                    graphviz = d3.select("#graph")
+                                        .graphviz()
+                                        .on("initEnd", function() {{
+                                            render();
+                                        }});
+                                }}
+
+                                function render() {{
+                                    graphviz
+                                        .zoom(true)
+                                        .fit(true)
+                                        .renderDot(dot)
+                                        .on("end", function() {{
+                                            d3.select("svg")
+                                                .attr("width", "100%")
+                                                .attr("height", "700px")
+                                                .style("cursor", "move");
+                                        }});
+                                }}
+
+                                function zoomIn() {{
+                                    if (graphviz) {{
+                                        const svg = d3.select("svg");
+                                        const zoom = graphviz.zoomBehavior();
+                                        svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+                                    }}
+                                }}
+
+                                function zoomOut() {{
+                                    if (graphviz) {{
+                                        const svg = d3.select("svg");
+                                        const zoom = graphviz.zoomBehavior();
+                                        svg.transition().duration(300).call(zoom.scaleBy, 1/1.3);
+                                    }}
+                                }}
+
+                                function resetZoom() {{
+                                    if (graphviz) {{
+                                        graphviz.resetZoom(d3.transition().duration(500));
+                                    }}
+                                }}
+
+                                // Double click background to reset
+                                d3.select("#graph-container").on("dblclick", function(e) {{
+                                    resetZoom();
+                                }});
+
+                                initGraph();
+                            </script>
+                            """
+                            html(html_code, height=720)
 
                         # Recent Match History Cards
                         st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
