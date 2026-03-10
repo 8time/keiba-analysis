@@ -4121,39 +4121,9 @@ if nav == "🔬 実験その３(馬番パターン)":
         res = scraper.get_race_list_for_date(rpps_date)
         if not res:
             st.error(f"⚠️ {rpps_date} の開催場を取得できませんでした。データセンターIP制限によりブロックされているか、該当日の開催が空の可能性があります。少し時間を置いて再試行してください。")
-            st.info("💡 **自動取得に失敗する場合**: 下記の「手動入力」にて、ローカルで取得したRace IDを入力して続行できます。")
         else:
             st.success(f"✅ {len(res)} レース分の開催情報を取得しました。")
         st.session_state.rpps_venue_list = res
-
-    # 救済策: 手動入力
-    with st.expander("🛠️ 手動入力 (自動取得に失敗する場合)", expanded=False):
-        st.caption("自動取得がブロックされた場合の回避策です。ローカルで取得したRace IDをカンマ区切りで入力してください。")
-        manual_ids = st.text_area("Race ID一覧 (12桁の数字をカンマ区切り、または改行区切り)", placeholder="202605010101, 202605010102...", key="rpps_manual_ids")
-        if st.button("🔧 手動リストを生成", key="rpps_manual_gen"):
-            if manual_ids:
-                # Extract 12-digit IDs
-                found_ids = re.findall(r'\d{12}', manual_ids)
-                if found_ids:
-                    manual_list = []
-                    for rid in found_ids:
-                        v_num = int(rid[4:6])
-                        v_name = {
-                            1:"札幌",2:"松館",3:"福島",4:"新潟",5:"東京",6:"中山",7:"中京",8:"京都",9:"阪神",10:"小倉"
-                        }.get(v_num, f"場{v_num}")
-                        r_num = int(rid[-2:])
-                        manual_list.append({
-                            "race_id": rid,
-                            "race_name": f"{v_name}{r_num}R",
-                            "race_num": f"{r_num}R"
-                        })
-                    st.session_state.rpps_venue_list = manual_list
-                    st.success(f"✅ {len(manual_list)} レースを手動設定しました。")
-                    st.rerun()
-                else:
-                    st.error("有効な12桁のRace IDが見つかりませんでした。")
-            else:
-                st.error("Race IDを入力してください。")
 
     selected_race_urls = []
     if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
