@@ -1590,9 +1590,9 @@ if nav == "🏠 Single Race Analysis":
                             for idx, row in view_df.loc[s.index].iterrows():
                                 name = row['Name']
                                 if name in top_5_names:
-                                    colors.append("background-color: #ffcccc; color: #cc0000; font-weight: bold") 
+                                    colors.append("background-color: #fff5f5; color: #c92a2a; font-weight: bold") # Light Red bg, Dark Red text
                                 elif name in bot_5_names:
-                                    colors.append("background-color: #ccccff; color: #0000cc; font-weight: bold") 
+                                    colors.append("background-color: #e7f5ff; color: #1971c2; font-weight: bold") # Light Blue bg, Dark Blue text
                                 else:
                                     colors.append("background-color: #c3fae8; color: #2b8a3e;") # Modern Green
                             return colors
@@ -1771,7 +1771,7 @@ if nav == "🏠 Single Race Analysis":
                     
                     matches = calculator.get_direct_matches(df) if df is not None and not df.empty else []
                     if matches:
-                        # 🥊 Direct Match Network (Interactive Vis-Network)
+                        # 🥊 Direct Match Network (Clean Structural Layout)
                         st.markdown("""
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <h3 style="margin:0; font-size:1.4rem;">Direct Match Network</h3>
@@ -1788,9 +1788,13 @@ if nav == "🏠 Single Race Analysis":
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Prepare Nodes and Edges for vis-network
-                        nodes = []
-                        edges = []
+                        # Construct DOT string (LR Layout)
+                        dot = 'digraph {'
+                        dot += 'rankdir=LR;'
+                        dot += 'bgcolor="transparent";'
+                        dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1, margin=0, penwidth=2.5];'
+                        dot += 'edge [fontname="Meiryo", fontsize=10, color="#555555", arrowsize=0.8, penwidth=1.5];'
+                        
                         relevant_horse_names = set()
                         for w, l, _ in matches:
                             relevant_horse_names.add(w)
@@ -1799,87 +1803,73 @@ if nav == "🏠 Single Race Analysis":
                         for _, row in df.iterrows():
                             name = row['Name']
                             if name not in relevant_horse_names: continue
-                            
-                            # Default: Green
-                            n_color = "#c3fae8"
-                            border_color = "#51cf66"
-                            font_color = "#2b8a3e"
+                            n_color, border_color, font_color = "#c3fae8", "#51cf66", "#2b8a3e" # Green
                             
                             if name in top_5_names:
-                                n_color = "#fff5f5"; border_color = "#ff6b6b"; font_color = "#c92a2a"
+                                n_color, border_color, font_color = "#fff5f5", "#ff6b6b", "#c92a2a" # Red
                             elif name in bot_5_names:
-                                n_color = "#e7f5ff"; border_color = "#339af0"; font_color = "#1971c2"
+                                n_color, border_color, font_color = "#e7f5ff", "#339af0", "#1971c2" # Blue
 
-                            nodes.append({
-                                "id": name,
-                                "label": f"{name}\n(UM:{row['Umaban']})",
-                                "color": {"background": n_color, "border": border_color, "highlight": {"background": n_color, "border": border_color}},
-                                "font": {"color": font_color, "size": 14, "face": "Meiryo", "multi": True, "bold": True},
-                                "shape": "dot",
-                                "size": 25,
-                                "borderWidth": 3
-                            })
+                            umaban = row['Umaban']
+                            # Better formatted label for clarity
+                            label = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD><B><FONT POINT-SIZE="14" COLOR="{font_color}">{name}</FONT></B></TD></TR><TR><TD><FONT POINT-SIZE="8" COLOR="#666666">UM:{umaban}</FONT></TD></TR></TABLE>>'
+                            dot += f'"{name}" [label={label}, fillcolor="{n_color}", color="{border_color}"];'
 
-                        u_edges = set()
+                        unique_edges = set()
                         for w, l, details in matches:
                             if current_surf and (current_surf not in details.get('Surface', '')): continue
                             edge_key = (w, l)
-                            if edge_key not in u_edges:
-                                edges.append({
-                                    "from": w,
-                                    "to": l,
-                                    "label": "WON",
-                                    "arrows": "to",
-                                    "font": {"size": 10, "align": "top", "color": "#666"},
-                                    "color": {"color": "#444444"},
-                                    "dashes": True,
-                                    "width": 2
-                                })
-                                u_edges.add(edge_key)
+                            if edge_key not in unique_edges:
+                                dot += f'"{w}" -> "{l}" [label="WON", fontcolor="#555555", style="dashed", color="#555555"];'
+                                unique_edges.add(edge_key)
+                        dot += '}'
 
-                        import json
+                        import base64
                         from streamlit.components.v1 import html
-                        nodes_json = json.dumps(nodes)
-                        edges_json = json.dumps(edges)
+                        b64_dot = base64.b64encode(dot.encode('utf-8')).decode('utf-8')
 
                         html_code = f"""
                         <style>
-                            #mynetwork {{
+                            #graph-container {{
                                 width: 100%;
                                 height: 750px;
                                 background-color: #ffffff;
                                 border: 1px solid #eeeeee;
-                                border-radius: 8px;
+                                border-radius: 12px;
                                 position: relative;
+                                overflow: hidden;
+                                cursor: grab;
+                                box-shadow: 0 4px 15px rgba(0,0,0,0.05);
                             }}
+                            #graph-canvas {{ width: 100%; height: 100%; }}
                             .zoom-controls {{
                                 position: absolute;
-                                top: 20px;
-                                right: 20px;
+                                top: 25px;
+                                right: 25px;
                                 display: flex;
                                 flex-direction: column;
                                 gap: 12px;
                                 z-index: 1000;
                             }}
                             .zoom-btn {{
-                                width: 48px;
-                                height: 48px;
-                                background: rgba(255, 255, 255, 0.95);
-                                border: 1px solid #ddd;
-                                border-radius: 10px;
+                                width: 50px;
+                                height: 50px;
+                                background: rgba(255, 255, 255, 0.98);
+                                border: 1px solid #e0e0e0;
+                                border-radius: 12px;
                                 display: flex;
                                 align-items: center;
                                 justify-content: center;
-                                font-size: 26px;
+                                font-size: 28px;
                                 font-weight: bold;
                                 cursor: pointer;
-                                box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+                                box-shadow: 0 6px 16px rgba(0,0,0,0.12);
                                 user-select: none;
-                                transition: all 0.2s;
+                                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                                 color: #333;
                             }}
-                            .zoom-btn:hover {{ background: #f0f0f0; transform: scale(1.05); }}
-                            .zoom-btn:active {{ transform: scale(0.95); }}
+                            .zoom-btn:hover {{ background: #f8f8f8; box-shadow: 0 8px 24px rgba(0,0,0,0.2); transform: translateY(-2px); }}
+                            .zoom-btn:active {{ transform: scale(0.92); }}
                             .reset-btn {{ font-size: 11px; }}
                             #instructions {{
                                 position: absolute;
@@ -1888,61 +1878,80 @@ if nav == "🏠 Single Race Analysis":
                                 font-size: 13px;
                                 color: #666;
                                 pointer-events: none;
-                                background: rgba(255,255,255,0.8);
-                                padding: 6px 14px;
-                                border-radius: 6px;
-                                border: 1px solid #eee;
+                                background: rgba(251,251,251,0.9);
+                                padding: 8px 16px;
+                                border-radius: 8px;
+                                border: 1px solid #ddd;
+                                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
                             }}
                         </style>
-                        <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-                        <div id="mynetwork">
+                        <div id="graph-container">
                             <div class="zoom-controls">
-                                <div class="zoom-btn" onclick="zoom(1.4)">＋</div>
-                                <div class="zoom-btn" onclick="zoom(0.7)">－</div>
+                                <div class="zoom-btn" onclick="zoomIn()">＋</div>
+                                <div class="zoom-btn" onclick="zoomOut()">－</div>
                                 <div class="zoom-btn reset-btn" onclick="reset()">RESET</div>
                             </div>
-                            <div id="instructions">💡 マウスホイールで拡大縮小 | ドラッグで移動 | 空白ダブルクリックでリセット</div>
+                            <div id="graph-canvas"></div>
+                            <div id="instructions">💡 マウスホイールでズーム | ドラッグで移動 | 枠内ダブルクリックでリセット</div>
                         </div>
-                        <script type="text/javascript">
-                            var nodes = new vis.DataSet({nodes_json});
-                            var edges = new vis.DataSet({edges_json});
-                            var container = document.getElementById('mynetwork');
-                            var data = {{ nodes: nodes, edges: edges }};
-                            var options = {{
-                                edges: {{
-                                    smooth: {{ type: 'curvedCW', forceDirection: 'none', roundness: 0.2 }}
-                                }},
-                                physics: {{
-                                    solver: 'forceAtlas2Based',
-                                    forceAtlas2Based: {{
-                                        gravitationalConstant: -100,
-                                        centralGravity: 0.01,
-                                        springLength: 150,
-                                        springConstant: 0.08
-                                    }},
-                                    stabilization: {{ iterations: 150 }}
-                                }},
-                                interaction: {{
-                                    dragNodes: true,
-                                    dragView: true,
-                                    zoomView: true,
-                                    hover: true
+
+                        <script src="https://d3js.org/d3.v5.min.js"></script>
+                        <script src="https://unpkg.com/@hpcc-js/wasm@0.3.11/dist/index.min.js"></script>
+                        <script src="https://unpkg.com/d3-graphviz@3.0.5/build/d3-graphviz.js"></script>
+                        <script>
+                            const b64Dot = "{b64_dot}";
+                            const dot = decodeURIComponent(escape(window.atob(b64Dot)));
+                            let graphviz;
+
+                            function start() {{
+                                graphviz = d3.select("#graph-canvas")
+                                    .graphviz()
+                                    .onerror(function(err) {{
+                                        console.error("Graphviz Error:", err);
+                                    }})
+                                    .zoom(true)
+                                    .fit(true)
+                                    .renderDot(dot)
+                                    .on("end", function() {{
+                                        d3.select("svg")
+                                            .attr("width", "100%")
+                                            .attr("height", "100%")
+                                            .style("cursor", "grab");
+                                    }});
+                            }}
+
+                            window.zoomIn = function() {{
+                                if (graphviz) {{
+                                    const svg = d3.select("svg");
+                                    const zoom = graphviz.zoomBehavior();
+                                    svg.transition().duration(300).call(zoom.scaleBy, 1.4);
                                 }}
                             }};
-                            var network = new vis.Network(container, data, options);
 
-                            window.zoom = function(scale) {{
-                                var newScale = network.getScale() * scale;
-                                network.moveTo({{ scale: newScale, animation: true }});
+                            window.zoomOut = function() {{
+                                if (graphviz) {{
+                                    const svg = d3.select("svg");
+                                    const zoom = graphviz.zoomBehavior();
+                                    svg.transition().duration(300).call(zoom.scaleBy, 0.7);
+                                }}
                             }};
 
                             window.reset = function() {{
-                                network.fit({{ animation: {{ duration: 500, easingFunction: 'easeInOutQuad' }} }});
+                                if (graphviz) {{
+                                    graphviz.resetZoom(d3.transition().duration(600));
+                                }}
                             }};
 
-                            container.addEventListener('dblclick', function() {{
+                            document.getElementById('graph-container').addEventListener('dblclick', function() {{
                                 reset();
                             }});
+
+                            // Cursor fix
+                            const container = document.getElementById('graph-container');
+                            container.addEventListener('mousedown', () => container.style.cursor = 'grabbing');
+                            container.addEventListener('mouseup', () => container.style.cursor = 'grab');
+
+                            start();
                         </script>
                         """
                         html(html_code, height=770)
