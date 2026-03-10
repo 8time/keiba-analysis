@@ -13,7 +13,6 @@ logging.getLogger("curl_cffi").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 import streamlit as st
-import graphviz
 from dotenv import load_dotenv
 import google.genai as genai
 from google.genai import types as genai_types
@@ -1772,7 +1771,7 @@ if nav == "🏠 Single Race Analysis":
                     
                     matches = calculator.get_direct_matches(df) if df is not None and not df.empty else []
                     if matches:
-                        # 🥊 Direct Match Network (Structural Stability Priority)
+                        # 🥊 Direct Match Network (Premium Structural Layout)
                         st.markdown("""
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <h3 style="margin:0; font-size:1.4rem;">Direct Match Network</h3>
@@ -1789,7 +1788,7 @@ if nav == "🏠 Single Race Analysis":
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Construct DOT string (LR Layout)
+                        # Construct DOT string (LR Layout - User's favorite)
                         dot = 'digraph {'
                         dot += 'rankdir=LR;'
                         dot += 'bgcolor="transparent";'
@@ -1805,7 +1804,6 @@ if nav == "🏠 Single Race Analysis":
                             name = row['Name']
                             if name not in relevant_horse_names: continue
                             n_color, border_color, font_color = "#c3fae8", "#51cf66", "#2b8a3e" # Default Green
-                            
                             if name in top_5_names:
                                 n_color, border_color, font_color = "#fff5f5", "#ff6b6b", "#c92a2a" # Red
                             elif name in bot_5_names:
@@ -1824,128 +1822,103 @@ if nav == "🏠 Single Race Analysis":
                                 unique_edges.add(edge_key)
                         dot += '}'
 
+                        import base64
                         from streamlit.components.v1 import html
-                        
-                        svg_data = ""
-                        try:
-                            # 🛡️ Server-side direct render for reliability
-                            svg_bytes = graphviz.Source(dot).pipe(format='svg')
-                            svg_data = svg_bytes.decode('utf-8')
-                        except Exception as e_srv:
-                            st.error(f"グラフ描画エラー: {e_srv}")
-                            st.graphviz_chart(dot, use_container_width=True)
+                        # Use escaped backslashes for JS safety
+                        b64_dot = base64.b64encode(dot.encode('utf-8')).decode('utf-8')
 
-                        if svg_data:
-                            # Cleanup and Wrap in PanZoom
-                            if '<?xml' in svg_data: svg_data = svg_data[svg_data.find('<svg'):]
-                            
-                            import json
-                            escaped_svg = json.dumps(svg_data)
-
-                            html_code = f"""
-                            <style>
-                                #pan-zoom-container {{
-                                    width: 100%;
-                                    height: 750px;
-                                    background-color: #ffffff;
-                                    border: 1px solid #eeeeee;
-                                    border-radius: 12px;
-                                    position: relative;
-                                    overflow: hidden;
-                                    cursor: grab;
-                                    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-                                }}
-                                #svg-wrapper svg {{ width: 100%; height: 100%; }}
-                                .zoom-controls {{
-                                    position: absolute;
-                                    top: 25px;
-                                    right: 25px;
-                                    display: flex;
-                                    flex-direction: column;
-                                    gap: 12px;
-                                    z-index: 1000;
-                                }}
-                                .zoom-btn {{
-                                    width: 50px;
-                                    height: 50px;
-                                    background: rgba(255, 255, 255, 0.98);
-                                    border: 1px solid #e0e0e0;
-                                    border-radius: 12px;
-                                    display: flex;
-                                    align-items: center;
-                                    justify-content: center;
-                                    font-size: 28px;
-                                    font-weight: bold;
-                                    cursor: pointer;
-                                    box-shadow: 0 6px 16px rgba(0,0,0,0.12);
-                                    user-select: none;
-                                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-                                    color: #333;
-                                }}
-                                .zoom-btn:hover {{ background: #f8f8f8; box-shadow: 0 8px 24px rgba(0,0,0,0.2); transform: translateY(-2px); }}
-                                .zoom-btn:active {{ transform: scale(0.92); }}
-                                .reset-btn {{ font-size: 11px; }}
-                                #instructions {{
-                                    position: absolute;
-                                    bottom: 15px;
-                                    left: 20px;
-                                    font-size: 13px;
-                                    color: #333;
-                                    pointer-events: none;
-                                    background: rgba(255,255,255,0.9);
-                                    padding: 8px 16px;
-                                    border-radius: 8px;
-                                    border: 1px solid #ddd;
-                                    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-                                }}
-                            </style>
-                            <div id="pan-zoom-container">
-                                <div class="zoom-controls">
-                                    <div class="zoom-btn" id="btn-zoom-in">＋</div>
-                                    <div class="zoom-btn" id="btn-zoom-out">－</div>
-                                    <div class="zoom-btn reset-btn" id="btn-reset">RESET</div>
-                                </div>
-                                <div id="svg-wrapper" style="width:100%; height:100%;"></div>
-                                <div id="instructions">💡 マウスホイールでズーム | ドラッグで移動 | 枠内ダブルクリックでリセット</div>
+                        html_code = f"""
+                        <style>
+                            #graph-container {{
+                                width: 100%; height: 750px; background-color: #ffffff;
+                                border: 1px solid #eeeeee; border-radius: 12px;
+                                position: relative; overflow: hidden;
+                                box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+                                cursor: grab;
+                            }}
+                            #svg-content svg {{ width: 100%; height: 100%; }}
+                            .zoom-controls {{
+                                position: absolute; top: 25px; right: 25px;
+                                display: flex; flex-direction: column; gap: 12px; z-index: 1000;
+                            }}
+                            .zoom-btn {{
+                                width: 50px; height: 50px; background: rgba(255, 255, 255, 0.98);
+                                border: 1px solid #ddd; border-radius: 12px;
+                                display: flex; align-items: center; justify-content: center;
+                                font-size: 28px; font-weight: bold; cursor: pointer;
+                                box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+                                user-select: none; transition: all 0.2s; color: #333;
+                            }}
+                            .zoom-btn:hover {{ background: #f8f8f8; box-shadow: 0 8px 24px rgba(0,0,0,0.2); transform: translateY(-2px); }}
+                            .zoom-btn:active {{ transform: scale(0.92); }}
+                            .reset-btn {{ font-size: 11px; }}
+                            #instructions {{
+                                position: absolute; bottom: 15px; left: 20px; font-size: 13px; color: #666;
+                                pointer-events: none; background: rgba(255,255,255,0.9);
+                                padding: 8px 16px; border-radius: 8px; border: 1px solid #ddd;
+                            }}
+                        </style>
+                        <div id="graph-container">
+                            <div class="zoom-controls">
+                                <div class="zoom-btn" id="btn-zoom-in">＋</div>
+                                <div class="zoom-btn" id="btn-zoom-out">－</div>
+                                <div class="zoom-btn reset-btn" id="btn-reset">RESET</div>
                             </div>
-                            <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-                            <script>
-                                const svgCode = {escaped_svg};
-                                const wrapper = document.getElementById('svg-wrapper');
-                                wrapper.innerHTML = svgCode;
-                                
-                                const svgElement = wrapper.querySelector('svg');
-                                svgElement.setAttribute('width', '100%');
-                                svgElement.setAttribute('height', '100%');
+                            <div id="svg-content" style="width:100%; height:100%; text-align:center; display:flex; align-items:center; justify-content:center;">
+                                <div style="color:#888;">📊 グラフを構築中... (リロードで解決する場合があります)</div>
+                            </div>
+                            <div id="instructions">💡 マウスホイールでズーム | ドラッグで移動 | 空白ダブルクリックでリセット</div>
+                        </div>
 
-                                let panZoom;
-                                function init() {{
-                                    panZoom = svgPanZoom(svgElement, {{
+                        <script src="https://unpkg.com/@hpcc-js/wasm@1.14.1/dist/index.min.js"></script>
+                        <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+                        <script>
+                            async function init() {{
+                                try {{
+                                    const dot = decodeURIComponent(escape(window.atob("{b64_dot}")));
+                                    const hpccWasm = window["@hpcc-js/wasm"];
+                                    
+                                    // Render DOT to SVG using WASM
+                                    const svgString = await hpccWasm.graphviz.layout(dot, "svg", "dot");
+                                    
+                                    const container = document.getElementById("svg-content");
+                                    container.innerHTML = svgString;
+                                    
+                                    const svgElement = container.querySelector("svg");
+                                    svgElement.setAttribute("width", "100%");
+                                    svgElement.setAttribute("height", "100%");
+
+                                    // Add Pan & Zoom (User's favorite interaction)
+                                    const panZoom = svgPanZoom(svgElement, {{
                                         zoomEnabled: true,
                                         controlIconsEnabled: false,
                                         fit: true,
                                         center: true,
                                         minZoom: 0.1,
-                                        maxZoom: 15,
-                                        onUpdatedCTM: function() {{}}
+                                        maxZoom: 20
                                     }});
 
-                                    document.getElementById('btn-zoom-in').addEventListener('click', (e) => {{ e.preventDefault(); panZoom.zoomIn(); }});
-                                    document.getElementById('btn-zoom-out').addEventListener('click', (e) => {{ e.preventDefault(); panZoom.zoomOut(); }});
-                                    document.getElementById('btn-reset').addEventListener('click', (e) => {{ e.preventDefault(); panZoom.resetZoom(); panZoom.center(); }});
-                                    document.getElementById('pan-zoom-container').addEventListener('dblclick', () => {{ panZoom.resetZoom(); panZoom.center(); }});
+                                    document.getElementById('btn-zoom-in').onclick = () => panZoom.zoomIn();
+                                    document.getElementById('btn-zoom-out').onclick = () => panZoom.zoomOut();
+                                    document.getElementById('btn-reset').onclick = () => {{ panZoom.resetZoom(); panZoom.center(); }};
                                     
-                                    const container = document.getElementById('pan-zoom-container');
-                                    container.addEventListener('mousedown', () => container.style.cursor = 'grabbing');
-                                    container.addEventListener('mouseup', () => container.style.cursor = 'grab');
-                                }}
+                                    const outer = document.getElementById("graph-container");
+                                    outer.ondblclick = () => {{ panZoom.resetZoom(); panZoom.center(); }};
+                                    outer.onmousedown = () => outer.style.cursor = "grabbing";
+                                    outer.onmouseup = () => outer.style.cursor = "grab";
 
-                                // Wait for lib to be definitely available
-                                if (window.svgPanZoom) {{ init(); }}
-                                else {{ window.addEventListener('load', init); }}
-                            </script>
-                            """
-                            html(html_code, height=770)
+                                }} catch (e) {{
+                                    console.error("Layout Error:", e);
+                                    document.getElementById("svg-content").innerHTML = '<div style="color:#e03131;">グラフ描画エラーが発生しました。</div>';
+                                }}
+                            }}
+
+                            // Wait for libs
+                            if (window["@hpcc-js/wasm"]) {{ init(); }}
+                            else {{ window.addEventListener("load", init); }}
+                        </script>
+                        """
+                        html(html_code, height=770)
 
                         # Recent Match History Cards
                         st.markdown("<h4 style='margin-top:20px; margin-bottom:15px; color:#333;'>Recent Match History</h4>", unsafe_allow_html=True)
