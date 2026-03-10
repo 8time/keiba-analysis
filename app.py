@@ -1791,8 +1791,10 @@ if nav == "🏠 Single Race Analysis":
                         # Construct DOT string (LR Layout - User's favorite)
                         dot = 'digraph {'
                         dot += 'rankdir=LR;'
+                        dot += 'nodesep=1.2;'
+                        dot += 'ranksep=1.6;'
                         dot += 'bgcolor="transparent";'
-                        dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.1, margin=0, penwidth=2.5];'
+                        dot += 'node [fontname="Meiryo", fontsize=12, shape=circle, style="filled", fixedsize=true, width=1.2, margin=0, penwidth=2.5];'
                         dot += 'edge [fontname="Meiryo", fontsize=10, color="#555555", arrowsize=0.8, penwidth=1.5];'
                         
                         relevant_horse_names = set()
