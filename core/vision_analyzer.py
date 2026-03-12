@@ -58,7 +58,7 @@ class VisionOddsAnalyzer:
         }
 
         import time
-        models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash"]
+        models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.1-flash-lite-preview"]
         last_error = ""
 
         for model_id in models_to_try:

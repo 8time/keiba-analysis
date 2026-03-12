@@ -111,7 +111,7 @@ class KaggleChatClient:
         - コードのみを出力し、解説は含めないでください。
         """
 
-        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        models_to_try = ["gemini-2.0-flash", "gemini-3.1-flash-lite-preview", "gemini-1.5-flash", "gemini-1.5-pro"]
         last_error = ""
 
         for model_id in models_to_try:
@@ -173,6 +173,54 @@ class KaggleChatClient:
             return "⚠️ AIの利用制限（リミット）に達しました。無料枠の上限のため、30秒〜1分ほど待ってから再試行してください。もしくは API Key の有効期限や制限設定を確認してください。", None
         
         return f"エラーが発生しました: {last_error}", None
+
+    def generate_content(self, contents, temperature=0.2):
+        """
+        AI呼び出しにリトライとモデルフォールバックを適用する汎用メソッド。
+        contents: 文字列のリスト（システムプロンプト等を含む）
+        """
+        if not self.client:
+            return "API Key が設定されていないため、AI機能を利用できません。"
+
+        import time
+        # 通知に基づき、将来のモデル gemini-3.1-flash-lite-preview をリストに追加
+        models_to_try = [
+            "gemini-2.0-flash", 
+            "gemini-3.1-flash-lite-preview", 
+            "gemini-1.5-flash", 
+            "gemini-1.5-pro"
+        ]
+        last_error = ""
+
+        for model_id in models_to_try:
+            retries = 3
+            wait_sec = 2
+            while retries > 0:
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_id,
+                        contents=contents,
+                        config=genai_types.GenerateContentConfig(temperature=temperature)
+                    )
+                    if response and response.text:
+                        return response.text
+                    return "AIからの応答が空でした。"
+                except Exception as e:
+                    err_msg = str(e)
+                    last_error = err_msg
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        logger.warning(f"Quota exceeded for {model_id}. Retrying in {wait_sec}s...")
+                        time.sleep(wait_sec)
+                        retries -= 1
+                        wait_sec *= 2
+                    else:
+                        logger.error(f"AI Generate Error ({model_id}): {err_msg}")
+                        break # 他のエラーは現在のモデルを諦める
+            logger.info(f"Model {model_id} exhausted or failed. Falling back...")
+
+        if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
+            return "⚠️ AI利用制限（429）に達しました。30秒ほど待ってから再試行してください。"
+        return f"AI解析中にエラーが発生しました: {last_error}"
 
     def _extract_code(self, text):
         """Markdown から Python コードブロックを抽出"""

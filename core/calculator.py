@@ -73,6 +73,23 @@ def evaluate_race_chaos_v2(df):
              # スローは波乱度は下がりやすい
 
     # 3. 有力な伏兵馬のチェック (適性(Y) または 上がり3F が極めて高い)
+    # --- NEW: マクリ馬（捲り）のチェック ---
+    makuri_horses = []
+    for _, row in df.iterrows():
+        past = row.get('PastRuns', [])
+        for run in past[:5]:
+            p_str = str(run.get('Passing', ''))
+            p_list = [int(t) for t in re.split(r'[,\-()]+', p_str) if t.strip().isdigit()]
+            rank = run.get('Rank', 99)
+            if p_list and rank != 99:
+                if max(p_list) - rank >= 7:
+                    makuri_horses.append(row['Name'])
+                    break
+    
+    if len(makuri_horses) >= 3:
+        reasons.append(f"マクリ（捲り）癖のある馬が {len(makuri_horses)} 頭搭載されており、中盤からの激しい進出で展開が乱れる（波乱）可能性があります。")
+        chaos_points += 2.0
+
     dark_horse_pop_min = CONFIG['DARK_HORSE_POP_MIN']
     dark_horse_df = df[df['Popularity'] >= dark_horse_pop_min]
     
@@ -486,22 +503,169 @@ def get_sanrenpuku_recommendations(df, odds_list):
     name_map = dict(zip(df['Umaban'], df['Name']))
 
     recs = []
-    
-    # Process actual odds if available
-    if odds_list:
-        for item in odds_list:
-            horses = item['Horses']  # [h1, h2, h3]
-            # Check if any horse in the combination is in top5_umaban
-            if any(h in top5_umaban for h in horses):
-                names = " - ".join([name_map.get(h, str(h)) for h in horses])
-                item_copy = item.copy()
-                item_copy['HorseNames'] = names
-                recs.append(item_copy)
-                
-                if len(recs) >= 200:
-                    break
-                    
+    # (Actual odds recommendation logic can be restored if needed, but for now we prioritize the requested 10-point strategy)
     return recs
+
+def generate_10point_strategy(df, chaos_rank):
+    """
+    Generates specialized 10-point Sanrenpuku strategies based on Chaos Rank.
+    1. B/C Rank (Solid): 1-4-4 Formation OR 5-Horse Box
+    2. S/A Rank (Rough): 1-Axis Flux (Hole) OR Hole-Axis 1-4-4 Formation
+    Includes 'Trigami' check (odds < 10.0).
+    """
+    if df.empty or len(df) < 5:
+        return {"error": "分析データが不足しています（5頭以上必要です）"}
+
+    # Define "High Index" as the sort order used in the Ranking Table
+    # Priority: Projected Score > BattleScore
+    sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+    sorted_df = df.sort_values(by=sort_col, ascending=False).reset_index(drop=True)
+    
+    # Mapping for easy lookup
+    name_map = dict(zip(df['Umaban'], df['Name']))
+    odds_map = dict(zip(df['Umaban'].astype(str), pd.to_numeric(df['Odds'], errors='coerce').fillna(10.0)))
+    
+    strategies = []
+
+    def get_est_odds(combo):
+        o1 = float(odds_map.get(str(combo[0]), 10.0))
+        o2 = float(odds_map.get(str(combo[1]), 10.0))
+        o3 = float(odds_map.get(str(combo[2]), 10.0))
+        # 3-RENPUKU Estimated Odds logic (Approximate)
+        return round(max(1.0, (o1 * o2 * o3) * 0.48), 1)
+
+    if chaos_rank in ['B', 'C']:
+        # --- B/C Rank: Solid ---
+        
+        # 1. 1-4-4 Formation (10 points)
+        # 1st: Top 1, 2nd: 2 3 4 5, 3rd: 3 4 5 6
+        h1 = sorted_df.iloc[0]['Umaban']
+        r2 = sorted_df.iloc[1:5]['Umaban'].tolist()
+        r3 = sorted_df.iloc[2:6]['Umaban'].tolist()
+        
+        tickets = []
+        # Manual formation expansion to ensure exactly 10 points
+        # (A, B, C) (A, B, D) (A, B, E) (A, B, F)
+        # (A, C, D) (A, C, E) (A, C, F)
+        # (A, D, E) (A, D, F)
+        # (A, E, F)
+        a = h1
+        b, c, d, e = r2
+        f = r3[-1] # This is the 6th horse
+        
+        # This matches the user's example: 1st:1, 2nd:2,3,4,5, 3rd:3,4,5,6
+        # Combinations: 1-2-3, 1-2-4, 1-2-5, 1-2-6, 1-3-4, 1-3-5, 1-3-6, 1-4-5, 1-4-6, 1-5-6
+        raw_list = [
+            (a,b,c), (a,b,d), (a,b,e), (a,b,f), 
+            (a,c,d), (a,c,e), (a,c,f), 
+            (a,d,e), (a,d,f), 
+            (a,e,f)
+        ]
+        for combo in raw_list:
+            c_sorted = sorted(list(combo))
+            est = get_est_odds(c_sorted)
+            tickets.append({
+                "horses": c_sorted,
+                "names": " - ".join([name_map.get(h, str(h)) for h in c_sorted]),
+                "odds": est,
+                "trigami": est < 10.0
+            })
+        
+        strategies.append({
+            "name": "的中重視 1-4-4 フォーメーション",
+            "type": "Formation",
+            "tickets": tickets,
+            "description": "軸が堅いレース向け。手堅く的中を狙います。"
+        })
+
+        # 2. 5-Horse Box (10 points)
+        box_h = sorted_df.iloc[:5]['Umaban'].tolist()
+        from itertools import combinations
+        box_tickets = []
+        for combo in combinations(box_h, 3):
+            c_sorted = sorted(list(combo))
+            est = get_est_odds(c_sorted)
+            box_tickets.append({
+                "horses": c_sorted,
+                "names": " - ".join([name_map.get(h, str(h)) for h in c_sorted]),
+                "odds": est,
+                "trigami": est < 10.0
+            })
+        
+        strategies.append({
+            "name": "3連複 5頭ボックス",
+            "type": "Box",
+            "tickets": box_tickets,
+            "description": "上位の実力が拮抗している順当なレース向け。安心感のある買い方です。"
+        })
+
+    else:
+        # --- S/A Rank: Rough ---
+        # "Hole Axis" = Highest Index among horses with Popularity >= 6
+        hole_df = sorted_df[sorted_df['Popularity'] >= 6]
+        if hole_df.empty:
+            # Fallback to 5th or 6th top index if no popularity data or no holes
+            hole_axis_idx = 4 if len(sorted_df) > 4 else 0
+        else:
+            hole_axis_idx = hole_df.index[0]
+            
+        h_axis = sorted_df.iloc[hole_axis_idx]['Umaban']
+        
+        # 1. 1-Head Axis Flux (10 points)
+        # Axis: Hole, Opponents: Top 5 Favorites (usually sorted_df excluding hole axis)
+        opponents = [h for h in sorted_df['Umaban'].tolist() if h != h_axis][:5]
+        
+        flux_tickets = []
+        from itertools import combinations
+        for combo in combinations(opponents, 2):
+            c_sorted = sorted([h_axis] + list(combo))
+            est = get_est_odds(c_sorted)
+            flux_tickets.append({
+                "horses": c_sorted,
+                "names": " - ".join([name_map.get(h, str(h)) for h in c_sorted]),
+                "odds": est,
+                "trigami": est < 10.0
+            })
+            
+        strategies.append({
+            "name": "穴1頭軸流し",
+            "type": "Flux",
+            "tickets": flux_tickets,
+            "description": "高指数・人気薄を軸に据え、オッズの歪み（高配当）を狙います。"
+        })
+
+        # 2. Hole-Axis 1-4-4 Formation (10 points)
+        # Axis: Hole, 2nd/3rd: Combination of Top index and mid-range
+        a = h_axis
+        others = [h for h in sorted_df['Umaban'].tolist() if h != a]
+        b, c, d, e = others[:4]
+        f = others[4] if len(others) > 4 else others[-1]
+        
+        form_tickets = []
+        raw_list = [
+            (a,b,c), (a,b,d), (a,b,e), (a,b,f), 
+            (a,c,d), (a,c,e), (a,c,f), 
+            (a,d,e), (a,d,f), 
+            (a,e,f)
+        ]
+        for combo in raw_list:
+            c_sorted = sorted(list(combo))
+            est = get_est_odds(c_sorted)
+            form_tickets.append({
+                "horses": c_sorted,
+                "names": " - ".join([name_map.get(h, str(h)) for h in c_sorted]),
+                "odds": est,
+                "trigami": est < 10.0
+            })
+            
+        strategies.append({
+            "name": "穴軸 1-4-4 フォーメーション",
+            "type": "Formation",
+            "tickets": form_tickets,
+            "description": "穴馬と有力馬をバランス良く組み合わせ、高配当の取りこぼしを防ぎます。"
+        })
+
+    return strategies
 
 def get_as_race_recommendations(df, odds_list, axis_umaban=None, num_recs=30):
     """
@@ -636,16 +800,16 @@ def calculate_battle_score(df):
                  # This implies we use 35.0 for missing data points.
                  agari_vals.append(35.0)
             
-            # Position
+            # Position (Improved: Average of all corners)
             p_str = str(run.get('Passing', '8'))
             try:
-                match = re.search(r'^(\d+)', p_str)
-                if match:
-                    pos_vals.append(int(match.group(1)))
+                p_parts = [int(t) for t in re.split(r'[,\-()]+', p_str) if t.strip().isdigit()]
+                if p_parts:
+                    pos_vals.append(np.mean(p_parts))
                 else:
-                    pos_vals.append(8)
+                    pos_vals.append(8.0)
             except:
-                pos_vals.append(8)
+                pos_vals.append(8.0)
                 
         # Calculate Averages
         if agari_vals:
@@ -712,10 +876,27 @@ def calculate_battle_score(df):
         df.at[i, 'BattleScore'] = round(total_score, 1)
         df.at[i, 'AgariRank'] = agari_rank # Save for icon logic
         
-        # Save score breakdown for high-res logging
+        # Score Breakdown for High-Res Logging
         df.at[i, 'ScoreBaseOgura'] = round(base_score, 1)
         df.at[i, 'ScoreTimeIndex'] = 0.0
-        df.at[i, 'ScoreMakuri'] = 0.0
+        
+        # C. Makuri (Movement) Score Calculation
+        makuri_pts = 0.0
+        if past:
+            latest_run = past[0] # Focus on latest performance
+            lp_str = str(latest_run.get('Passing', ''))
+            lp_parts = [int(t) for t in re.split(r'[,\-()]+', lp_str) if t.strip().isdigit()]
+            l_rank = latest_run.get('Rank', 99)
+            if lp_parts and l_rank != 99:
+                max_lp = max(lp_parts)
+                l_delta = max_lp - l_rank
+                if l_delta >= 7:
+                    makuri_pts += 5.0
+                    l_agari_rank = latest_run.get('AgariRank', 99)
+                    if l_agari_rank <= 3:
+                        makuri_pts += 2.0
+                        
+        df.at[i, 'ScoreMakuri'] = round(makuri_pts, 1)
         df.at[i, 'ScoreTraining'] = 0.0
         df.at[i, 'ScoreWeight'] = 0.0
         df.at[i, 'ScoreBloodline'] = 0.0

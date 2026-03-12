@@ -171,139 +171,105 @@ class LocalVisionOddsAnalyzer:
             if any(kw in row_text_combined for kw in skip_kw):
                 continue
 
-            # オッズ列付近に数値（小数 or 整数19以上）があるか確認
-            has_odds = False
-            if odds_x_center is not None:
-                for item in row:
-                    t = item['num_text']
-                    dist = abs(item['x_center'] - odds_x_center)
-                    if dist < col_tol * 3:
-                        if re.match(r'^\d+\.\d+$', t) and 1.0 <= float(t) <= 999.9:
-                            has_odds = True
-                            break
-                        if re.match(r'^\d+$', t) and int(t) >= 19:
-                            has_odds = True
-                            break
-            else:
-                for item in row:
-                    t = item['num_text']
-                    if re.match(r'^\d+\.\d+$', t) and item['x_center'] > img_x_max * 0.55:
-                        has_odds = True
-                        break
-
-            if not has_odds:
-                continue
-
-            debug_lines.append(f"Row: {full_text_row[:120]}")
-
-            # --- 性別・年齢・斤量の抽出補助 ---
+            # Determine row-wide attributes
             SEX_NORM = {'壮': '牡', '北': '牡', 'プ': '牝', '#': '牡', '廿': '牡', '幸': '牝'}
+            row_sex_age = None
+            row_weight = None
+            row_umaban = None
             
-            row_shared_data = {"sex_age": None, "weight_carried": None, "umaban": None}
-            
-            # 1. 性別・年齢・斤量・馬番を先読み
             for item in row:
                 t_raw = item['text']
                 t_num = item['num_text'].replace(",", ".")
                 
-                # 性別・年齢
+                # Sex/Age
                 norm_sex = t_raw
                 for k, v in SEX_NORM.items(): norm_sex = norm_sex.replace(k, v)
                 m_sex = re.search(r'([牡牝セ])(\d+)', norm_sex)
-                if m_sex and not row_shared_data["sex_age"]:
-                    row_shared_data["sex_age"] = m_sex.group(0)
+                if m_sex and not row_sex_age:
+                    row_sex_age = m_sex.group(0)
                 
-                # 斤量 (例: 55.0, 57,0)
-                if not row_shared_data["weight_carried"]:
-                    # 斤量らしい数値 (例: 48.0 ~ 62.0)
+                # Weight (斤量)
+                if not row_weight:
                     m_futan = re.search(r'^(\d{2}\.\d)$', t_num)
                     if m_futan:
                         try:
                             fv = float(m_futan.group(1))
-                            if 40.0 <= fv <= 70.0:
-                                row_shared_data["weight_carried"] = f"{fv:.1f}"
+                            if 40.0 <= fv <= 70.0: row_weight = f"{fv:.1f}"
                         except: pass
                 
-                # 馬番 (最左の1-18)
-                if not row_shared_data["umaban"]:
+                # Umaban (Leftmost 1-18)
+                if not row_umaban:
                     if re.match(r'^\d+$', t_num) and 1 <= int(t_num) <= 18:
-                        if odds_x_center is None or item['x_center'] < odds_x_center * 0.5:
-                            row_shared_data["umaban"] = int(t_num)
+                        if odds_x_center is None or item['x_center'] < odds_x_center * 0.7:
+                            row_umaban = int(t_num)
 
-            # 2. オッズと人気の相対位置関係による特定
-            horse_results = []
-            last_odds_val = None
-            
+            # --- Target Win Odds & Popularity for this ROW ---
+            found_odds_val = None
+            found_pop_val = None
+            best_odds_dist = float('inf')
+
             for i, item in enumerate(row):
                 t_num = item['num_text'].replace(",", ".")
                 
-                # オッズ候補 (小数 1.0-999.9)
-                is_odds = False
+                # Odds Candidate
                 if re.match(r'^\d+\.\d+$', t_num):
                     val = float(t_num)
                     if 1.0 <= val <= 999.9:
-                        # 斤量と誤認しないようにチェック (斤量は40-70、オッズもその範囲があり得るが通常右側)
-                        # 一旦全ての小数をオッズ候補とする
-                        is_odds = True
-                        last_odds_val = val
-                
-                if is_odds:
-                    # 次の要素が人気かチェック
-                    pop_val = None
-                    if i + 1 < len(row):
-                        next_item = row[i+1]
-                        nt_num = next_item['num_text'].replace(",", ".")
-                        if re.match(r'^\d+$', nt_num):
-                            iv = int(nt_num)
-                            if 1 <= iv <= 18:
-                                pop_val = iv
-                    
-                    horse_results.append({
-                        "win_odds": last_odds_val,
-                        "popularity": pop_val,
-                        "umaban": None
-                    })
-                    
-                    if pop_val:
-                        debug_lines.append(f"  [人気取得] {int(item['x_center'])}: {pop_val}")
-                    else:
-                        debug_lines.append(f"  [人気取得] {int(item['x_center'])}: None")
+                        # Check distance to odds_x_center
+                        if odds_x_center is not None:
+                            dist = abs(item['x_center'] - odds_x_center)
+                        else:
+                            # Fallback: Prefer right side
+                            dist = abs(item['x_center'] - img_x_max * 0.7)
+                        
+                        # Only take the one closest to our expected column
+                        if dist < best_odds_dist:
+                            best_odds_dist = dist
+                            found_odds_val = val
+                            
+                            # Peek next for popularity
+                            if i + 1 < len(row):
+                                next_item = row[i+1]
+                                nt_num = next_item['num_text'].replace(",", ".")
+                                if re.match(r'^\d+$', nt_num):
+                                    iv = int(nt_num)
+                                    if 1 <= iv <= 18:
+                                        found_pop_val = iv
 
-            if not horse_results:
+            if found_odds_val is None:
                 continue
 
-            for hr in horse_results:
-                # 馬番推定
-                if row_shared_data["umaban"] and len(horse_results) == 1:
-                    hr["umaban"] = row_shared_data["umaban"]
-                else:
-                    horse_order += 1
-                    hr["umaban"] = horse_order
-                
-                rd = {
-                    "umaban": hr["umaban"],
-                    "popularity": hr["popularity"],
-                    "win_odds": hr["win_odds"],
-                    "sex_age": row_shared_data["sex_age"],
-                    "weight_carried": row_shared_data["weight_carried"],
-                    "place_min": None, "place_max": None
-                }
-                
-                # 複勝範囲
-                for item in row:
-                    pr = re.findall(r"(\d+\.\d+)[\-\~](\d+\.\d+)", item['num_text'].replace(",", "."))
-                    if pr:
-                        rd["place_min"] = float(pr[0][0])
-                        rd["place_max"] = float(pr[0][1])
-                        break
+            # Umaban backup
+            if not row_umaban:
+                # If we have a sequence but no umaban found, use order
+                horse_order += 1
+                row_umaban = horse_order
+            
+            # --- CRITICAL BUG FIX: Limit to 18 horses and ensure validity ---
+            if row_umaban > 18 or found_odds_val is None:
+                continue
 
-                if not any(d['umaban'] == rd['umaban'] for d in parsed_data):
-                    debug_lines.append(
-                        f"  => 馬番:{rd['umaban']} 人気:{rd['popularity']} "
-                        f"単勝:{rd['win_odds']} 性齢:{rd['sex_age']} 斤量:{rd['weight_carried']}"
-                    )
-                    parsed_data.append(rd)
-            continue  # 以降の処理をスキップ（上のループで処理済み）
+            rd = {
+                "umaban": row_umaban,
+                "popularity": found_pop_val,
+                "win_odds": found_odds_val,
+                "sex_age": row_sex_age,
+                "weight_carried": row_weight,
+                "place_min": None, "place_max": None
+            }
+            
+            # Place Odds (Min-Max)
+            for item in row:
+                pr = re.findall(r"(\d+\.\d+)[\-\~](\d+\.\d+)", item['num_text'].replace(",", "."))
+                if pr:
+                    rd["place_min"] = float(pr[0][0])
+                    rd["place_max"] = float(pr[0][1])
+                    break
+
+            # Deduplicate by Umaban
+            if not any(d['umaban'] == rd['umaban'] for d in parsed_data):
+                debug_lines.append(f"  [Row Fixed] Umaban:{rd['umaban']} Odds:{rd['win_odds']} Pop:{rd['popularity']}")
+                parsed_data.append(rd)
 
         parsed_data.sort(key=lambda x: x['umaban'])
         return parsed_data, debug_lines

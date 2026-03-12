@@ -76,9 +76,13 @@ def render_session_status(key_prefix=""):
     
     col1, col2 = st.columns(2)
     
+    # Define absolute paths for session files
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    session_umanity = os.path.join(base_dir, "auth_session.json")
+    session_labo = os.path.join(base_dir, "labo_session.json")
+    
     # --- Umanity ---
     with col1:
-        session_umanity = "auth_session.json"
         st.markdown("**🔑 認証 (Umanity / U指数)**")
         if os.path.exists(session_umanity):
             mtime = os.path.getmtime(session_umanity)
@@ -88,13 +92,13 @@ def render_session_status(key_prefix=""):
             st.warning("⚠️ 未ログイン (U指数取得不可)")
         
         if st.button("🔑 Umanity ログイン", key=f"{key_prefix}btn_umanity"):
-            cmd = f'start powershell -NoExit -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py umanity"'
-            os.system(cmd)
+            import subprocess
+            cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py umanity"'
+            subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
             st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
 
     # --- KeibaLab ---
     with col2:
-        session_labo = "labo_session.json"
         st.markdown("**🔑 認証 (競馬ラボ / オメガ指数)**")
         if os.path.exists(session_labo):
             mtime = os.path.getmtime(session_labo)
@@ -104,8 +108,9 @@ def render_session_status(key_prefix=""):
             st.warning("⚠️ 未ログイン (オメガ指数取得不可)")
         
         if st.button("🔑 競馬ラボ ログイン", key=f"{key_prefix}btn_labo"):
-            cmd = f'start powershell -NoExit -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py keibalab"'
-            os.system(cmd)
+            import subprocess
+            cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py keibalab"'
+            subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
             st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
 
 # Custom UI Styling (U-NEXT style dark sidebar)
@@ -1152,7 +1157,7 @@ if nav == "🏠 Single Race Analysis":
                             
                             col_engine, col_btn = st.columns([1, 1])
                             with col_engine:
-                                ocr_engine = st.radio("解析エンジン", ["Gemini AI (推奨)", "EasyOCR (ローカル)"], horizontal=True, help="Gemini APIキーが不安定な場合はローカルを選択してください")
+                                st.info("🔍 OCR解析: EasyOCR (ローカル) を使用します")
                             
                             with col_btn:
                                 st.write("") # Adjust for alignment
@@ -1160,19 +1165,13 @@ if nav == "🏠 Single Race Analysis":
                                 run_vision = st.button("🤖 解析実行", help="画像からオッズデータを自動抽出します", key="btn_vision_ai")
                             
                             if run_vision:
-                                with st.spinner(f"{ocr_engine} で画像を解析中..."):
-                                    if "Gemini" in ocr_engine:
-                                        vision_analyzer = VisionOddsAnalyzer(api_key=GEMINI_API_KEY)
-                                        result = vision_analyzer.analyze_odds_image(uploaded_file.getvalue())
-                                        v_data = result[0]
-                                        v_err = result[1]
-                                        v_dbg = result[2] if len(result) > 2 else []
-                                    else:
-                                        vision_analyzer = get_local_vision_analyzer_v2()
-                                        result = vision_analyzer.analyze_odds_image(uploaded_file.getvalue())
-                                        v_data = result[0]
-                                        v_err = result[1]
-                                        v_dbg = result[2] if len(result) > 2 else []
+                                with st.spinner("EasyOCR で画像を解析中..."):
+                                    # Defaulting to local analyzer as requested
+                                    vision_analyzer = get_local_vision_analyzer_v2()
+                                    result = vision_analyzer.analyze_odds_image(uploaded_file.getvalue())
+                                    v_data = result[0]
+                                    v_err = result[1]
+                                    v_dbg = result[2] if len(result) > 2 else []
                                     
                                     # Store results in session state
                                     st.session_state['last_vision_data'] = v_data
@@ -1194,8 +1193,8 @@ if nav == "🏠 Single Race Analysis":
                                 st.table(prev_df)
                                 
                                 if st.button("📊 抽出データを分析表に反映する", key="apply_vision", type="primary"):
-                                    # Use the correct analyzer for merging
-                                    analyzer = VisionOddsAnalyzer(api_key=GEMINI_API_KEY) if "Gemini" in ocr_engine else get_local_vision_analyzer_v2()
+                                    # Use the local analyzer (EasyOCR)
+                                    analyzer = get_local_vision_analyzer_v2()
                                     st.session_state['df'] = analyzer.merge_vision_data(st.session_state['df'], v_data)
                                     st.session_state['vision_data_applied'] = True # Set flag!
                                     st.success("分析表に反映しました。")
@@ -1204,7 +1203,7 @@ if nav == "🏠 Single Race Analysis":
                                     st.rerun()
 
                             elif st.session_state.get('last_vision_error'):
-                                st.error(f"❌ 画像の解析に失敗しました ({ocr_engine})。\n\n**原因:** {st.session_state['last_vision_error']}")
+                                st.error(f"❌ 画像の解析に失敗しました (EasyOCR)。\n\n**原因:** {st.session_state['last_vision_error']}")
                                     
                             # Show Raw Debug Text if available
                             if st.session_state.get('last_vision_debug'):
@@ -1212,8 +1211,6 @@ if nav == "🏠 Single Race Analysis":
                                     st.info("画像から以下の行テキストを検出しました。パースが不完全な場合はこちらを確認してください。")
                                     for line in st.session_state['last_vision_debug']:
                                         st.write(f"- {line}")
-
-                            if "Gemini" in ocr_engine and st.session_state.get('last_vision_error'):
                                 st.info("💡 解決のヒント: APIキーの更新を検討するか、ローカル解析をお試しください。")
                         
                         col_o1, col_o2 = st.columns(2)
@@ -1260,10 +1257,9 @@ if nav == "🏠 Single Race Analysis":
                         ])
 
                         st.markdown(f"""
-                            <div class="summary-box">
-                                <div class="summary-title">🏁 総合波乱度判定</div>
-                                <div class="summary-rank" style="color: {rank_color}">Chaos Level: {chaos_data['rank']}</div>
-                                <p style="font-size: 16px; line-height: 1.6;">{chaos_data['reason']}</p>
+                            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {rank_color}; margin-bottom: 20px;">
+                                <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: 💣 {chaos_data['rank']} (Score: {chaos_data.get('chaos_score', 0)})</h1>
+                                <p style="font-size: 18px; color: #555; margin-top: 5px;">判定理由: {chaos_data['reason']}</p>
                             </div>
                         """, unsafe_allow_html=True)
                         
@@ -1337,10 +1333,49 @@ if nav == "🏠 Single Race Analysis":
                         
                         df = calc_derived_cols(df)
 
-                        # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
-                        st.subheader("🤖 中穴スナイパー分析")
+                        st.divider()
+
+                        # --- [NEW] 精選10点予想 (Special 10-Point Prediction) ---
+                        st.subheader("🎯 精選10点予想 (3連複)")
+                        strategies = calculator.generate_10point_strategy(df, chaos_data['rank'])
                         
-                        # 波乱度ランクを取得
+                        if "error" in strategies:
+                            st.error(strategies["error"])
+                        else:
+                            strat_cols = st.columns(len(strategies))
+                            for idx, strat in enumerate(strategies):
+                                with strat_cols[idx]:
+                                    bg_color = "#f0f7ff" if "Formation" in strat['type'] else "#fffaf0"
+                                    st.markdown(f"""
+                                    <div style="background-color: {bg_color}; padding: 15px; border-radius: 10px; border: 1px solid #ddd; height: 100%;">
+                                        <h4 style="margin-top: 0; color: #333; font-size: 1.1rem;">{strat['name']}</h4>
+                                        <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">{strat['description']}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    # Create table data
+                                    rows = []
+                                    trigami_found = False
+                                    for t in strat['tickets']:
+                                        prefix = "⚠️" if t['trigami'] else "✅"
+                                        if t['trigami']: trigami_found = True
+                                        rows.append({
+                                            "買い目": f"{prefix} {', '.join(map(str, t['horses']))}",
+                                            "馬名": t['names'],
+                                            "推計": f"{t['odds']}倍"
+                                        })
+                                    
+                                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                                    
+                                    if trigami_found:
+                                        st.caption("⚠️: トリガミ（10倍以下）の可能性があります。オッズを確認してください。")
+
+                        st.divider()
+
+                        # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
+                        st.subheader("🤖 中穴スナイパー分析 (詳細配分)")
+                        
+                        # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
                         c_rank = chaos_data['rank']
                         pop_ranges = {'S': '15〜45', 'A': '12〜35', 'B': '10〜30', 'C': '10〜30'}
                         current_pop_range = pop_ranges.get(c_rank, '10〜30')
@@ -1519,7 +1554,7 @@ if nav == "🏠 Single Race Analysis":
                             return alert
                         view_df['Alert'] = view_df.apply(add_time_icon, axis=1)
 
-                    # Format Agari (34.5 (1))
+                    # Format Agari (34.5 (1位) 🚀)
                     def fmt_agari(row):
                         a = row.get('AvgAgari', 99.9)
                         r = row.get('AgariRank', 99)
@@ -1541,64 +1576,73 @@ if nav == "🏠 Single Race Analysis":
                         trusted = row.get('PosTrust', False)
                     
                         if p >= 99.0: return "-"
-                        icon = " 🦁" if (p <= 5.0 and trusted) else ""
+                        icon = " 🦁" if p <= 5.0 else ""
                         return f"{p:.1f}{icon}"
                     
                     view_df['AvgPosition'] = view_df.apply(fmt_pos, axis=1)
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
-                    # New column set with Projected Score highlighted
-                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'Weight', 'WeightCarried', 'Trainer', 'PrevCorners', 'PrevAgari', 'JockeyChange', 'Bloodline',
-                            'Name', 'Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'BattleScore', 'Alert', 'RiskFlags']
+                    # Merge previous screenshot columns with latest advanced columns
+                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'Jockey', 'JockeyChange', 'Name', 
+                            'Projected Score', 'NIndex', 'BattleScore', 'Strength (X)', 'Suitability (Y)', 
+                            'SpeedIndex', 'AvgAgari', 'AvgPosition', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
-                    # 1. Threshold calculation for consistent coloring (Top 5 / Bottom 5)
-                    sort_col_main = 'Projected Score' if 'Projected Score' in view_df.columns else 'BattleScore'
-                    top_5_names = []
-                    bot_5_names = []
-
-                    if sort_col_main in view_df.columns:
-                        temp_df = view_df.sort_values(by=sort_col_main, ascending=False)
-                        top_5_names = temp_df.head(5)['Name'].tolist()
-                        bot_5_names = temp_df.tail(5)['Name'].tolist()
-
                     column_config = {
+                        "Rank": st.column_config.NumberColumn("Rank"),
                         "Umaban": st.column_config.NumberColumn("馬番"),
                         "Popularity": st.column_config.NumberColumn("人気", format="%d"),
                         "Odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
                         "OddsGap": st.column_config.TextColumn("オッズ断層"),
                         "SexAge": st.column_config.TextColumn("性別/年齢"),
-                        "Weight": st.column_config.TextColumn("当日馬体重(増減)"),
+                        "WeightHistory": st.column_config.TextColumn("当日馬体重(増減)"),
                         "WeightCarried": st.column_config.TextColumn("斤量"),
-                        "PrevCorners": st.column_config.TextColumn("前走通過順位"),
-                        "PrevAgari": st.column_config.TextColumn("前走上がり3F"),
-                        "JockeyChange": st.column_config.TextColumn("乗り替えわり"),
+                        "Trainer": st.column_config.TextColumn("Trainer"),
                         "Bloodline": st.column_config.TextColumn("血統(父/母父)"),
+                        "Jockey": st.column_config.TextColumn("騎手"),
+                        "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
                         "Projected Score": st.column_config.NumberColumn("⭐ 予測スコア", format="%.1f"),
                         "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
+                        "BattleScore": st.column_config.NumberColumn("🔥 総合戦闘力", format="%.1f"),
                         "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f"),
                         "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.0f"),
-                        "BattleScore": st.column_config.NumberColumn("🔥 戦闘力", format="%.1f"),
+                        "SpeedIndex": st.column_config.NumberColumn("スピード指数 (旧)", format="%.1f"),
+                        "AvgAgari": st.column_config.TextColumn("上がり3F (順位)"),
+                        "AvgPosition": st.column_config.TextColumn("平均位置取り"),
+                        "Alert": st.column_config.TextColumn("Alert"),
                         "RiskFlags": st.column_config.TextColumn("不安要素"),
                     }
 
                     try:
-                        def color_projected(s):
+                        def color_battlescore(s):
+                            # Segmented colors based on rank position as in the vivid version
                             colors = []
-                            for idx, row in view_df.loc[s.index].iterrows():
-                                name = row['Name']
-                                if name in top_5_names:
-                                    colors.append("background-color: #fff5f5; color: #c92a2a; font-weight: bold") 
-                                elif name in bot_5_names:
-                                    colors.append("background-color: #e7f5ff; color: #1971c2; font-weight: bold") 
-                                else:
-                                    colors.append("background-color: #c3fae8; color: #2b8a3e;") # Modern Green
+                            n = len(s)
+                            for i in range(n):
+                                if i < 5: # Top 5
+                                    colors.append("background-color: #d9480f; color: white; font-weight: bold") 
+                                elif i >= n - 5: # Bottom 5
+                                    colors.append("background-color: #1864ab; color: white; font-weight: bold") 
+                                else: # Middle
+                                    colors.append("background-color: #ebfbee; color: #2b8a3e; font-weight: bold") 
                             return colors
 
                         def color_rank(s):
-                            return ["background-color: yellow; color: black" if 1 <= (int(v) if str(v).isdigit() else 99) <= 5 else "" for v in s]
+                            # Yellow for top 5, Dark for others
+                            colors = []
+                            for v in s:
+                                try:
+                                    r = int(v)
+                                    if 1 <= r <= 5: colors.append("background-color: #fab005; color: black; font-weight: bold")
+                                    else: colors.append("background-color: #2b2f32; color: #adb5bd; font-weight: bold")
+                                except: colors.append("")
+                            return colors
+
+                        def color_advanced_metrics(s):
+                            # Subtle blue for specialized indices
+                            return ["background-color: #f1f3f5; color: #495057;" for _ in s]
 
                         def color_alert(s):
                             colors = []
@@ -1611,18 +1655,18 @@ if nav == "🏠 Single Race Analysis":
                             return colors
 
                         styled_df = view_df.style
-                        if 'Projected Score' in view_df.columns:
-                            styled_df = styled_df.apply(color_projected, axis=0, subset=['Projected Score'])
+                        if 'BattleScore' in view_df.columns:
+                            styled_df = styled_df.apply(color_battlescore, axis=0, subset=['BattleScore'])
                         if 'Rank' in view_df.columns:
                             styled_df = styled_df.apply(color_rank, axis=0, subset=['Rank'])
+                        
+                        advanced_cols = [c for c in ['Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'SpeedIndex'] if c in view_df.columns]
+                        if advanced_cols:
+                            styled_df = styled_df.apply(color_advanced_metrics, axis=0, subset=advanced_cols)
+                        
                         if 'Alert' in view_df.columns:
                             styled_df = styled_df.apply(color_alert, axis=0, subset=['Alert'])
                         
-                        def color_odds_gap(s):
-                            return ["background-color: #ffcccc; color: #cc0000; font-weight: bold" if v == "⚠断層" else "" for v in s]
-                        if 'OddsGap' in view_df.columns:
-                            styled_df = styled_df.apply(color_odds_gap, axis=0, subset=['OddsGap'])
-
                         st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
                     except Exception as e:
                         st.warning(f"Display Error: {e}")
@@ -1787,6 +1831,12 @@ if nav == "🏠 Single Race Analysis":
                             <span><span style="color:#339af0;">●</span> Bottom 5 (Caution)</span>
                         </div>
                         """, unsafe_allow_html=True)
+
+                        # Pre-calculate top/bottom names for coloring (Fix for NameError)
+                        sort_col = 'BattleScore' if 'BattleScore' in df.columns else df.columns[0]
+                        temp_sorted = df.sort_values(by=sort_col, ascending=False)
+                        top_5_names = temp_sorted.head(5)['Name'].tolist()
+                        bot_5_names = temp_sorted.tail(5)['Name'].tolist()
 
                         # Construct DOT string (LR Layout - User's favorite)
                         dot = 'digraph {'
@@ -1986,7 +2036,7 @@ if nav == "🏠 Single Race Analysis":
                                 r = df[df['Name'] == name]
                                 if not r.empty:
                                     row = r.iloc[0]
-                                    score_val = row.get(sort_col_main, 0.0)
+                                    score_val = row.get(sort_col, 0.0)
                                     st.markdown(f"**{row['Umaban']} - {name}** (予測スコア: {float(score_val):.1f})")
                         else:
                             st.info("消し推奨に該当する馬はいませんでした。")
@@ -3325,6 +3375,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         # Clear specific tab4 data to force re-fetch
         if 'test_adv_data' in st.session_state:
             del st.session_state['test_adv_data']
+        # Clear base data to force reload for consistency
+        st.session_state['df'] = None
 
     # Read from main tab's state by default
     current_input_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
@@ -3365,7 +3417,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_test = df_test.sort_values(by=score_col, ascending=False).reset_index(drop=True)
 
         # 0. Session Status
-        with st.expander("🔑 認証・セッション管理 (Advanced Data)"):
+        with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
             render_session_status(key_prefix="test_")
         
         # 1. Influence Weights Initialization (Updated defaults for Robustness)
@@ -4433,12 +4485,11 @@ if nav == "🔬 実験その３(馬番パターン)":
                                 - 丁寧な日本語で回答してください。
                                 """
                                 
-                                response = chat_client.client.models.generate_content(
-                                    model="gemini-2.0-flash",
+                                j_answer = chat_client.generate_content(
                                     contents=[system_prompt, f"ユーザーの質問: {pattern_query}"],
-                                    config=genai_types.GenerateContentConfig(temperature=0.2)
+                                    temperature=0.2
                                 )
-                                st.session_state.rpps_chat_answer = response.text
+                                st.session_state.rpps_chat_answer = j_answer
                         except Exception as e:
                             st.error(f"AI解析中にエラーが発生しました: {e}")
 

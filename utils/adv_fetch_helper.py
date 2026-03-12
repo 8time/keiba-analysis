@@ -48,7 +48,9 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        session_path = "auth_session.json"
+        # Session files are in the parent directory (project root)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        session_path = os.path.join(base_dir, "auth_session.json")
         context_kwargs = {
             "user_agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
         }
@@ -65,60 +67,92 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
             await page.wait_for_selector('tr.HorseList, tr.Entry', timeout=8000)
         except: pass
             
-        # Extract Race Date
+        # --- 0. Extract Race Date (CRITICAL for Umanity) ---
         date_str = ""
         try:
             title = await page.title()
             m_date = re.search(r'(\d{4})年(\d+)月(\d+)日', title)
             if m_date:
+                # Format to YYYYMMDD
                 date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
-        except: pass
+            
+            if not date_str:
+                # Try finding date in specific meta tags or text
+                date_loc = page.locator('.RaceData01')
+                if await date_loc.count() > 0:
+                    dt_txt = await date_loc.first.text_content()
+                    m_date = re.search(r'(\d{4})[年/](\d+)[月/](\d+)', dt_txt or "")
+                    if m_date:
+                        date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
+            
+            if not date_str and race_id and len(str(race_id)) >= 4:
+                # Last resort fallback: Year from ID + current month/day
+                date_str = f"{str(race_id)[:4]}{datetime.now().strftime('%m%d')}"
+                
+            sys.stderr.write(f"DEBUG: Date extracted: {date_str} for {race_id}\n")
+        except Exception as e:
+            sys.stderr.write(f"DEBUG: Date extraction failed: {e}\n")
 
         # Row extraction from Shutuba
-        rows = await page.locator('tr.HorseList, tr.Entry').all()
+        rows = await page.locator('tr.HorseList, tr.Entry, tr[class*="Horse"]').all()
+        logger.debug(f"Found {len(rows)} horse rows on Shutuba page for {race_id}")
         for row in rows:
             try:
                 # Better Umaban selector
-                um_loc = row.locator('td.Umaban, td[class*="Umaban"]')
+                um_loc = row.locator('td.Umaban, td[class*="Umaban"], td.Waku')
                 if await um_loc.count() > 0:
                     txt = (await um_loc.first.text_content(timeout=1000)).strip()
                     m = re.search(r'(\d+)', txt)
-                    if not m: continue
-                    umaban = int(m.group(1))
+                    if not m: 
+                        txt = await um_loc.first.inner_text()
+                        m = re.search(r'(\d+)', txt)
                     
-                    advanced_data[umaban] = {
+                    if m:
+                        umaban = int(m.group(1))
+                        if umaban not in advanced_data:
+                            advanced_data[umaban] = {
+                                'WeightStr': "", 'Popularity': 99, 'Odds': 0.0,
+                                'TrainingScore': 0.0, 'BloodlineFlag': "",
+                                'TrainingEval': "", 'HorseID': "", 'UIndex': 0.0, 'LaboIndex': 0.0
+                            }
+
+                        # Weight
+                        w_loc = row.locator('td.Weight')
+                        if await w_loc.count() > 0:
+                            advanced_data[umaban]['WeightStr'] = (await w_loc.first.text_content(timeout=1000)).strip().replace(' ', '')
+                        
+                        # Popularity
+                        pop_loc = row.locator('td.Popular_Ninki, td[class*="Popular_Ninki"]')
+                        if await pop_loc.count() > 0:
+                            p_txt = (await pop_loc.first.text_content(timeout=1000)).strip()
+                            m_p = re.search(r'(\d+)', p_txt)
+                            if m_p: advanced_data[umaban]['Popularity'] = int(m_p.group(1))
+
+                        # Odds
+                        odds_loc = row.locator('span[id^="odds-"]')
+                        if await odds_loc.count() > 0:
+                            o_txt = (await odds_loc.first.text_content(timeout=1000)).strip()
+                            m_o = re.search(r'(\d+\.\d+)', o_txt)
+                            if m_o: advanced_data[umaban]['Odds'] = float(m_o.group(1))
+
+                        # HorseID
+                        h_loc = row.locator('td.HorseInfo a, td[class*="Horse"] a')
+                        if await h_loc.count() > 0:
+                            href = await h_loc.first.get_attribute('href', timeout=1000)
+                            if href:
+                                m_id = re.search(r'horse/(\d+)', href)
+                                if m_id: advanced_data[umaban]['HorseID'] = m_id.group(1)
+            except: pass
+        
+        # Ensure top_horse_ids exist in advanced_data even if shutuba parse failed
+        if top_horse_ids:
+            for u in top_horse_ids:
+                if u not in advanced_data:
+                    advanced_data[u] = {
                         'WeightStr': "", 'Popularity': 99, 'Odds': 0.0,
                         'TrainingScore': 0.0, 'BloodlineFlag': "",
                         'TrainingEval': "", 'HorseID': "", 'UIndex': 0.0, 'LaboIndex': 0.0
                     }
-
-                    # Weight
-                    w_loc = row.locator('td.Weight')
-                    if await w_loc.count() > 0:
-                        advanced_data[umaban]['WeightStr'] = (await w_loc.first.text_content(timeout=1000)).strip().replace(' ', '')
-                    
-                    # Popularity
-                    pop_loc = row.locator('td.Popular_Ninki, td[class*="Popular_Ninki"]')
-                    if await pop_loc.count() > 0:
-                        p_txt = (await pop_loc.first.text_content(timeout=1000)).strip()
-                        m_p = re.search(r'(\d+)', p_txt)
-                        if m_p: advanced_data[umaban]['Popularity'] = int(m_p.group(1))
-
-                    # Odds
-                    odds_loc = row.locator('span[id^="odds-"]')
-                    if await odds_loc.count() > 0:
-                        o_txt = (await odds_loc.first.text_content(timeout=1000)).strip()
-                        m_o = re.search(r'(\d+\.\d+)', o_txt)
-                        if m_o: advanced_data[umaban]['Odds'] = float(m_o.group(1))
-
-                    # HorseID
-                    h_loc = row.locator('td.HorseInfo a, td[class*="Horse"] a')
-                    if await h_loc.count() > 0:
-                        href = await h_loc.first.get_attribute('href', timeout=1000)
-                        if href:
-                            m_id = re.search(r'horse/(\d+)', href)
-                            if m_id: advanced_data[umaban]['HorseID'] = m_id.group(1)
-            except: pass
 
         # --- 2. Oikiri (Training Tab) ---
         try:
@@ -159,86 +193,112 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
                 except: pass
         except: pass
 
-        # --- 3. Bloodline ---
+        # --- 3. Bloodline (Concurrency Limited) ---
         target_umaban = top_horse_ids if top_horse_ids else list(advanced_data.keys())[:10]
         target_h = [(u, advanced_data[u]['HorseID']) for u in target_umaban if u in advanced_data and advanced_data[u]['HorseID']]
         if target_h:
-            tasks = [fetch_horse_bloodline(context, h_id) for _, h_id in target_h]
-            b_results = await asyncio.gather(*tasks)
-            for i, (u, _) in enumerate(target_h):
-                advanced_data[u]['BloodlineFlag'] = b_results[i]
+            sem = asyncio.Semaphore(5) # Max 5 concurrent bloodline pages
+            async def limited_bloodline(u, h_id):
+                async with sem:
+                    res = await fetch_horse_bloodline(context, h_id)
+                    advanced_data[u]['BloodlineFlag'] = res
+            
+            await asyncio.gather(*[limited_bloodline(u, h_id) for u, h_id in target_h])
 
         # --- 4. Umanity (U-Index) ---
-        if date_str and len(race_id) == 12:
-            u_id = f"{date_str}{race_id[4:6]}{race_id[6:8]}{race_id[8:10]}{race_id[10:12]}"
+        if date_str and len(str(race_id)) == 12:
+            rid_str = str(race_id)
+            # JRA 16-digit code: YYYYMMDD + Venue(2) + Meeting(2) + Day(2) + Race(2)
+            u_id = f"{date_str}{rid_str[4:]}"
             u_url = f"https://umanity.jp/racedata/race_8.php?code={u_id}"
+            sys.stderr.write(f"DEBUG: Umanity URL: {u_url}\n")
             try:
                 upage = await context.new_page()
-                await upage.goto(u_url, timeout=18000, wait_until='commit')
-                rows_u = await upage.locator('table.shutuba_table tr, tr.odd, tr.even').all()
-                for row_u in rows_u:
-                    cells = await row_u.locator('td').all()
-                    if len(cells) >= 11:
+                await upage.goto(u_url, timeout=20000, wait_until='domcontentloaded')
+                
+                u_title = await upage.title()
+                if "ログイン" in u_title or "Login" in u_title:
+                    sys.stderr.write("WARNING: Umanity redirected to login. Session might be invalid.\n")
+                
+                u_col = -1
+                rows_u = await upage.locator('.race_table_01 tr, table.shutuba_table tr, table#shutubatable tr, tr.odd, tr.even').all()
+                for i, row_u in enumerate(rows_u):
+                    cells = await row_u.locator('td, th').all()
+                    if not cells: continue
+                    
+                    # 1. Detect Header
+                    if u_col == -1:
+                        row_txt = await row_u.inner_text()
+                        if 'U指数' in row_txt or '指数' in row_txt:
+                            for c_idx, cell in enumerate(cells):
+                                c_txt = await cell.text_content()
+                                if 'U指数' in (c_txt or ''):
+                                    u_col = c_idx
+                                    break
+                        continue # Skip header row or look for header
+                    
+                    # 2. Extract Data using dynamic column
+                    if len(cells) >= max(2, u_col + 1):
                         try:
-                            # Use Umaban column to match
-                            # Umanity table: 0: Waku, 1: Umaban, 2: Mark, 3: U-Index...
-                            n_txt = await cells[1].text_content(timeout=500)
+                            n_txt = await cells[1].text_content()
                             m_n = re.search(r'(\d+)', n_txt or '')
                             if m_n:
                                 u_num = int(m_n.group(1))
                                 if u_num in advanced_data:
-                                    # Index 3: U-Index
-                                    i_txt = await cells[3].text_content(timeout=500)
-                                    m_i = re.search(r'(\d+\.?\d*)', i_txt or '')
+                                    target_col = u_col if u_col != -1 else 3
+                                    i_txt = (await cells[target_col].text_content()).strip()
+                                    if '**' in i_txt: continue
+                                    m_i = re.search(r'(\d+\.\d+|\d+)', i_txt)
                                     if m_i:
                                         import math
                                         advanced_data[u_num]['UIndex'] = math.floor(float(m_i.group(1)) * 10) / 10.0
                         except: pass
                 await upage.close()
-            except: pass
+            except Exception as e:
+                sys.stderr.write(f"ERROR: Umanity fetch failed: {e}\n")
 
-        # --- 5. KeibaLab (Omega Index) ---
-        labo_session = "labo_session.json"
-        labo_context = context
-        if os.path.exists(labo_session):
-            # If for some reason we need a separate context for labo (usually not required if cookies don't conflict)
-            # but to be safe we just use the same context or check if we should create a new one.
-            # For now, let's just use a new context if labo_session exists to avoid confusion with umanity cookies
-            labo_context = await browser.new_context(
-                user_agent=context_kwargs["user_agent"],
-                storage_state=labo_session
-            )
-        
-        labo_url = f"https://www.keibalab.jp/db/race/{race_id}/omega.html"
+        # --- 5. KeibaLab (Omega Index - Non-login method) ---
+        # Using syutsuba.html (Easy Race Card) which often shows indices without login
+        labo_url = f"https://www.keibalab.jp/db/race/{race_id}/syutsuba.html"
+        sys.stderr.write(f"DEBUG: KeibaLab (Easy Card) URL: {labo_url}\n")
         try:
-            lpage = await labo_context.new_page()
-            await lpage.goto(labo_url, timeout=15000, wait_until='commit')
-            # Look for Omega Index inside the table
-            # Usually in a table with Umaban and OmegaIndex columns
-            rows_l = await lpage.locator('table.dbTable tr').all()
+            lpage = await context.new_page() # Use main context, login not strictly required here
+            await lpage.goto(labo_url, timeout=20000, wait_until='domcontentloaded')
+            
+            l_col = -1
+            rows_l = await lpage.locator('table.dbTable tr, .shutubaTable tr, table tr').all()
             for row_l in rows_l:
+                cells = await row_l.locator('td, th').all()
+                if not cells: continue
+                
+                # 1. Detect Header
+                if l_col == -1:
+                    row_txt = await row_l.inner_text()
+                    if '指数' in row_txt or 'オメガ' in row_txt:
+                        for c_idx, cell in enumerate(cells):
+                            c_txt = await cell.text_content()
+                            if '指数' in (c_txt or '') or 'オメガ' in (c_txt or ''):
+                                l_col = c_idx
+                                break
+                    continue
+                
+                # 2. Data extraction
                 try:
-                    cells = await row_l.locator('td').all()
-                    if len(cells) >= 5:
-                        # Umaban is usually first or second digit
-                        txt = await row_l.text_content()
-                        # Extract Umaban and Index using positional logic or text search
-                        # Omega Index page columns: Umaban, Name, ... Omega Index
-                        # Let's try to find Umaban and float index in the same row
-                        nums = re.findall(r'(\d+\.?\d*)', txt)
-                        if len(nums) >= 2:
-                            u_num = int(nums[0])
+                    if len(cells) >= max(2, l_col + 1):
+                        u_txt = await cells[1].text_content()
+                        m_u = re.search(r'(\d+)', u_txt or "")
+                        if m_u:
+                            u_num = int(m_u.group(1))
                             if u_num in advanced_data:
-                                # The Omega Index is usually a value like 91.0
-                                # It's often at a specific column but let's be robust
-                                for n in nums[1:]:
-                                    val = float(n)
-                                    if 50.0 < val < 130.0: # Heuristic range for Omega Index
-                                        advanced_data[u_num]['LaboIndex'] = val
-                                        break
+                                target_col = l_col if l_col != -1 else 7
+                                o_txt = await cells[target_col].text_content()
+                                m_o = re.search(r'(\d+\.\d+|\d+)', o_txt or "")
+                                if m_o:
+                                    advanced_data[u_num]['LaboIndex'] = float(m_o.group(1))
                 except: pass
             await lpage.close()
-        except: pass
+        except Exception as e:
+            sys.stderr.write(f"ERROR: KeibaLab fetch failed: {e}\n")
 
         await browser.close()
     return advanced_data
