@@ -51,13 +51,22 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
         # Session files are in the parent directory (project root)
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         session_path = os.path.join(base_dir, "auth_session.json")
-        context_kwargs = {
-            "user_agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        }
+        labo_session_path = os.path.join(base_dir, "labo_session.json")
+        ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        context_kwargs = {"user_agent": ua}
         if os.path.exists(session_path):
             context_kwargs["storage_state"] = session_path
-            
+            sys.stderr.write(f"DEBUG: Loaded auth_session.json for Umanity\n")
+
         context = await browser.new_context(**context_kwargs)
+
+        # Separate context for KeibaLab (labo_session.json)
+        labo_context_kwargs = {"user_agent": ua}
+        if os.path.exists(labo_session_path):
+            labo_context_kwargs["storage_state"] = labo_session_path
+            sys.stderr.write(f"DEBUG: Loaded labo_session.json for KeibaLab\n")
+        labo_context = await browser.new_context(**labo_context_kwargs)
+
         page = await context.new_page()
         
         # --- 1. Shutuba Page ---
@@ -257,12 +266,11 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
             except Exception as e:
                 sys.stderr.write(f"ERROR: Umanity fetch failed: {e}\n")
 
-        # --- 5. KeibaLab (Omega Index - Non-login method) ---
-        # Using syutsuba.html (Easy Race Card) which often shows indices without login
+        # --- 5. KeibaLab (Omega Index) ---
         labo_url = f"https://www.keibalab.jp/db/race/{race_id}/syutsuba.html"
-        sys.stderr.write(f"DEBUG: KeibaLab (Easy Card) URL: {labo_url}\n")
+        sys.stderr.write(f"DEBUG: KeibaLab URL: {labo_url}\n")
         try:
-            lpage = await context.new_page() # Use main context, login not strictly required here
+            lpage = await labo_context.new_page()  # Use labo_context with labo_session.json
             await lpage.goto(labo_url, timeout=20000, wait_until='domcontentloaded')
             
             l_col = -1
@@ -300,6 +308,7 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
         except Exception as e:
             sys.stderr.write(f"ERROR: KeibaLab fetch failed: {e}\n")
 
+        await labo_context.close()
         await browser.close()
     return advanced_data
 

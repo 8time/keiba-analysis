@@ -84,10 +84,13 @@ def render_session_status(key_prefix=""):
             st.warning("⚠️ 未ログイン (U指数取得不可)")
         
         if st.button("🔑 Umanity ログイン", key=f"{key_prefix}btn_umanity"):
-            import subprocess
-            cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py umanity"'
-            subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
+            import subprocess, sys as _sys
+            if _sys.platform == 'win32':
+                cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py umanity"'
+                subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
+            else:
+                st.warning("⚠️ このボタンはWindows環境専用です。Streamlit Cloud環境では `create_session.py umanity` をローカルで実行し、生成された `auth_session.json` をアップロードしてください。")
 
     # --- KeibaLab ---
     with col2:
@@ -100,10 +103,13 @@ def render_session_status(key_prefix=""):
             st.warning("⚠️ 未ログイン (オメガ指数取得不可)")
         
         if st.button("🔑 競馬ラボ ログイン", key=f"{key_prefix}btn_labo"):
-            import subprocess
-            cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py keibalab"'
-            subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
+            import subprocess, sys as _sys
+            if _sys.platform == 'win32':
+                cmd = f'powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; py create_session.py keibalab"'
+                subprocess.Popen(['powershell', '-Command', cmd], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                st.info("別窓でブラウザが起動しました。完了後に窓を閉じてください。")
+            else:
+                st.warning("⚠️ このボタンはWindows環境専用です。Streamlit Cloud環境では `create_session.py keibalab` をローカルで実行し、生成された `labo_session.json` をアップロードしてください。")
 
 # Custom UI Styling (U-NEXT style dark sidebar)
 st.markdown("""
@@ -1414,6 +1420,11 @@ if nav == "🏠 Single Race Analysis":
                         
                         if 'Alert' in view_df.columns:
                             styled_df = styled_df.apply(color_alert, axis=0, subset=['Alert'])
+
+                        def color_oddsgap(s):
+                            return ["color: red; font-weight: bold;" if "断層" in str(v) else "" for v in s]
+                        if 'OddsGap' in view_df.columns:
+                            styled_df = styled_df.apply(color_oddsgap, axis=0, subset=['OddsGap'])
                         
                         st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
                     except Exception as e:
@@ -3378,43 +3389,34 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         """, unsafe_allow_html=True)
 
         st.write("### 📊 影響率（ウェイト）設定")
-        # Column distribution matching the result table:
-        # 馬番(1), 馬名(2), 特徴(1), 人気(1), 馬体重(1.5), 調教(1.2), U指(1.2), オメガ(1), 血統(1), 元順(1), 元スコ(1.2), DIY2(1.2), DIY1(1.2), Test(1.5), 備考(3)
-        # We need to map 10 inputs across these.
-        cols = st.columns([1, 2, 1, 1.5, 1.2, 1.2, 1, 1, 1, 1.2, 1.2, 1.2, 1.5, 3]) 
-        
-        with cols[0]: st.empty() # 馬番
-        with cols[1]: 
-            sw["Jockey"] = st.number_input("% (騎手)", value=sw["Jockey"], min_value=0.0, max_value=100.0, step=1.0, key="w_jockey", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">騎手 %</div>', unsafe_allow_html=True)
-        with cols[2]: 
-            sw["Popularity"] = st.number_input("% (人気)", value=sw["Popularity"], min_value=0.0, max_value=100.0, step=1.0, key="w_pop", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">人気 %</div>', unsafe_allow_html=True)
-        with cols[3]: 
-            sw["Weight"] = st.number_input("% (馬体)", value=sw["Weight"], min_value=0.0, max_value=100.0, step=1.0, key="w_weight", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">馬体 %</div>', unsafe_allow_html=True)
-        with cols[4]: 
-            sw["Training"] = st.number_input("% (調教)", value=sw["Training"], min_value=0.0, max_value=100.0, step=1.0, key="w_train", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">調教 %</div>', unsafe_allow_html=True)
-        with cols[5]: 
-            sw["UIndex"] = st.number_input("% (U指)", value=sw["UIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_uindex", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">U指 %</div>', unsafe_allow_html=True)
-        with cols[6]: 
-            sw["LaboIndex"] = st.number_input("% (オメガ)", value=sw["LaboIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_labo", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">オメガ %</div>', unsafe_allow_html=True)
-        with cols[7]: 
-            sw["Bloodline"] = st.number_input("% (血統)", value=sw["Bloodline"], min_value=0.0, max_value=100.0, step=1.0, key="w_blood", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">血統 %</div>', unsafe_allow_html=True)
-        with cols[8]: st.empty() # 元順
-        with cols[9]: 
-            sw["Base"] = st.number_input("% (基本)", value=sw.get("Base", 0.0), min_value=0.0, max_value=100.0, step=1.0, key="w_base", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">基本 %</div>', unsafe_allow_html=True)
-        with cols[10]:
-            sw["DIY2"] = st.number_input("% (末脚)", value=sw["DIY2"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy2", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">末脚 %</div>', unsafe_allow_html=True)
-        with cols[11]:
-            sw["DIY1"] = st.number_input("% (DIY1)", value=sw["DIY1"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy1", label_visibility="collapsed")
-            st.markdown('<div class="weight-header">DIY1 %</div>', unsafe_allow_html=True)
+        # 15列: 結果テーブルと列順を合わせる
+        # 馬番 | 馬名(騎手%) | 人気% | 馬体% | 調教% | U指% | オメガ% | 血統% | 元順 | 元スコ(基本%) | N指 | DIY2% | DIY指(DIY1%) | Test | 備考
+        wcols = st.columns([0.5, 1.5, 0.7, 0.9, 0.8, 0.8, 1.0, 0.7, 0.7, 1.0, 0.7, 0.7, 0.8, 0.8, 1.5])
+        with wcols[0]: st.markdown("**馬番**")
+        with wcols[1]:
+            sw["Jockey"] = st.number_input("騎手%", value=sw["Jockey"], min_value=0.0, max_value=100.0, step=1.0, key="w_jockey")
+        with wcols[2]:
+            sw["Popularity"] = st.number_input("人気%", value=sw["Popularity"], min_value=0.0, max_value=100.0, step=1.0, key="w_pop")
+        with wcols[3]:
+            sw["Weight"] = st.number_input("馬体%", value=sw["Weight"], min_value=0.0, max_value=100.0, step=1.0, key="w_weight")
+        with wcols[4]:
+            sw["Training"] = st.number_input("調教%", value=sw["Training"], min_value=0.0, max_value=100.0, step=1.0, key="w_train")
+        with wcols[5]:
+            sw["UIndex"] = st.number_input("U指%", value=sw["UIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_uindex")
+        with wcols[6]:
+            sw["LaboIndex"] = st.number_input("オメガ%", value=sw["LaboIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_labo")
+        with wcols[7]:
+            sw["Bloodline"] = st.number_input("血統%", value=sw["Bloodline"], min_value=0.0, max_value=100.0, step=1.0, key="w_blood")
+        with wcols[8]: st.markdown("**元順**")
+        with wcols[9]:
+            sw["Base"] = st.number_input("基本%", value=sw.get("Base", 0.0), min_value=0.0, max_value=100.0, step=1.0, key="w_base")
+        with wcols[10]: st.markdown("**N指**")
+        with wcols[11]:
+            sw["DIY2"] = st.number_input("末脚%", value=sw["DIY2"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy2")
+        with wcols[12]:
+            sw["DIY1"] = st.number_input("DIY1%", value=sw["DIY1"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy1")
+        with wcols[13]: st.markdown("**Test**")
+        with wcols[14]: st.markdown("**備考**")
         
         # Add a summary row for total
         total_w = sum(sw.values())
