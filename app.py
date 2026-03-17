@@ -1167,23 +1167,11 @@ if nav == "🏠 Single Race Analysis":
 
                     st.markdown(f"""
                         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {rank_color}; margin-bottom: 20px;">
-                            <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: 💣 {chaos_data['rank']} (Score: {chaos_data.get('chaos_score', 0)})</h1>
+                            <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: 💣 {chaos_data['rank']} (Score: {chaos_data.get('chaos_score', 0):.1f})</h1>
                             <p style="font-size: 18px; color: #555; margin-top: 5px;">判定理由: {chaos_data['reason']}</p>
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # Recommended Bets Section
-                    st.markdown("### 🎫 推奨買い目")
-                    rec_col1, rec_col2 = st.columns([2, 1])
-                    with rec_col1:
-                        top_horses = df.head(3)
-                        if chaos_data['rank'] in ['S', 'A']:
-                            st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
-                        else:
-                            st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
-                    with rec_col2:
-                        st.button("📋 買い目を生成 (ChatGPT連携)", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
-
                     # Evidence Table
                     with st.expander("📊 判定根拠エビデンス表", expanded=True):
                         st.table(pd.DataFrame(evidence_list))
@@ -1241,154 +1229,6 @@ if nav == "🏠 Single Race Analysis":
                         return res
                     
                     df = calc_derived_cols(df)
-
-                    st.divider()
-
-                    # --- [NEW] 精選10点予想 (Special 10-Point Prediction) ---
-                    st.subheader("🎯 精選10点予想 (3連複)")
-                    strategies = calculator.generate_10point_strategy(df, chaos_data['rank'])
-                    
-                    if "error" in strategies:
-                        st.error(strategies["error"])
-                    else:
-                        strat_cols = st.columns(len(strategies))
-                        for idx, strat in enumerate(strategies):
-                            with strat_cols[idx]:
-                                bg_color = "#f0f7ff" if "Formation" in strat['type'] else "#fffaf0"
-                                st.markdown(f"""
-                                <div style="background-color: {bg_color}; padding: 15px; border-radius: 10px; border: 1px solid #ddd; height: 100%;">
-                                    <h4 style="margin-top: 0; color: #333; font-size: 1.1rem;">{strat['name']}</h4>
-                                    <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">{strat['description']}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                # Create table data
-                                rows = []
-                                trigami_found = False
-                                for t in strat['tickets']:
-                                    prefix = "⚠️" if t['trigami'] else "✅"
-                                    if t['trigami']: trigami_found = True
-                                    rows.append({
-                                        "買い目": f"{prefix} {', '.join(map(str, t['horses']))}",
-                                        "馬名": t['names'],
-                                        "推計": f"{t['odds']}倍"
-                                    })
-                                
-                                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-                                
-                                if trigami_found:
-                                    st.caption("⚠️: トリガミ（10倍以下）の可能性があります。オッズを確認してください。")
-
-                    st.divider()
-
-                    # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
-                    st.subheader("🤖 中穴スナイパー分析 (詳細配分)")
-                    
-                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
-                    c_rank = chaos_data['rank']
-                    pop_ranges = {'S': '15〜45', 'A': '12〜35', 'B': '10〜30', 'C': '10〜30'}
-                    current_pop_range = pop_ranges.get(c_rank, '10〜30')
-                    
-                    if c_rank in ['B', 'C']:
-                        st.caption(f"3頭の人気合計が{current_pop_range}の組み合わせに絞り、波乱度に応じた中穴ゾーンをピンポイントで抽出します。")
-                    else:
-                        st.caption(f"波乱度{c_rank}に基づき、人気合計が{current_pop_range}の広範な組み合わせから期待値を最大化します。")
-                    
-                    bet_budget = st.number_input("買い目生成用 予算 (円)", min_value=1000, value=10000, step=1000, key="ai_bet_budget_unified")
-                    
-                    # ロジック呼び出し
-                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
-                    c_rank = chaos_data['rank']
-                    unified_pool = calculator.generate_unified_sniper_pool(df, c_rank)
-                    
-                    if 'error' in unified_pool:
-                        st.error(f"分析プール生成エラー: {unified_pool['error']}")
-                    else:
-                        # 予算配分を実行
-                        allocated_res = calculator.allocate_unified_budget(unified_pool, bet_budget)
-                        
-                        rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(c_rank, "#333")
-                        
-                        # ステータス表示
-                        f1, f2, f3 = st.columns([1, 1, 1])
-                        with f1:
-                            st.markdown(f"""
-                                <div style="background-color: {rank_color}; color: white; padding: 10px; border-radius: 5px; text-align: center;">
-                                    <div style="font-size: 12px;">波乱度判定</div>
-                                    <div style="font-size: 28px; font-weight: bold;">{c_rank}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                        with f2:
-                            min_o, max_o = unified_pool['odds_range']
-                            st.metric("適用オッズレンジ", f"{min_o}〜{max_o}倍")
-                        with f3:
-                            st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
-
-                        st.write(f"### 🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)")
-                        
-                        if allocated_res.get('tickets'):
-                            # パターン別に分離
-                            tickets_a = [t for t in allocated_res['tickets'] if t.get('type') == 'A']
-                            tickets_b = [t for t in allocated_res['tickets'] if t.get('type') == 'B']
-                            bonus_t = [t for t in allocated_res['tickets'] if t.get('is_bonus')]
-                            
-                            # 2カラム表示 (スクリーンショットのデザインを再現)
-                            col_pa, col_pb = st.columns(2)
-                            
-                            with col_pa:
-                                st.markdown("#### 🟦 パターンA (上位5頭から2頭)")
-                                if tickets_a:
-                                    rows_a = []
-                                    for t in tickets_a:
-                                        rows_a.append({
-                                            "組合せ": ", ".join(map(str, t['horses'])),
-                                            "想定オッズ": f"{t['est_odds']}倍",
-                                            "スコア計": round(t['total_score'], 1)
-                                        })
-                                    st.table(pd.DataFrame(rows_a))
-                                else:
-                                    st.caption("該当なし")
-                                    
-                            with col_pb:
-                                st.markdown("#### 🟧 パターンB (上位5頭から1頭)")
-                                if tickets_b:
-                                    rows_b = []
-                                    for t in tickets_b:
-                                        rows_b.append({
-                                            "組合せ": ", ".join(map(str, t['horses'])),
-                                            "想定オッズ": f"{t['est_odds']}倍",
-                                            "スコア計": round(t['total_score'], 1)
-                                        })
-                                    st.table(pd.DataFrame(rows_b))
-                                else:
-                                    st.caption("該当なし")
-
-                            # ボーナスと詳細
-                            if bonus_t:
-                                st.info(f"🎁 **ボーナス枠**: {', '.join(map(str, bonus_t[0]['horses']))} ({bonus_t[0]['est_odds']}倍) / スコア計: {round(bonus_t[0]['total_score'], 1)}")
-
-                            # 予算配分の詳細は表の下に
-                            st.success(f"合計購入金額: **{allocated_res.get('actual_total', 0):,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res.get('unit_price', 0)}円)")
-                            
-                            with st.expander("📝 買い目詳細 (金額・馬名付)", expanded=False):
-                                full_rows = []
-                                for t in allocated_res['tickets']:
-                                    full_rows.append({
-                                        "種別": "ボーナス" if t.get('is_bonus') else f"パターン{t['type']}",
-                                        "組合せ": ", ".join(map(str, t['horses'])),
-                                        "馬名": " - ".join(t['names']),
-                                        "購入金額": f"{t['amount']}円",
-                                        "想定払戻": f"{t['est_payout']:,}円"
-                                    })
-                                st.dataframe(pd.DataFrame(full_rows), use_container_width=True)
-                        else:
-                            st.warning("条件に合う買い目が見つかりませんでした。")
-
-                        # 除外ログ
-                        with st.expander("🕵️ 除外ログ (フィルタリング詳細)", expanded=False):
-                            st.caption("以下の組み合わせは、オッズまたは人気の条件により除外されました。")
-                            for log in unified_pool['exclusion_log']:
-                                st.write(f"- {log}")
 
                     st.divider()
 
@@ -2278,6 +2118,172 @@ if nav == "🏠 Single Race Analysis":
                             st.warning("推奨できる相手馬が見つかりませんでした（全頭が除外条件に該当）。")
                     elif len(axis_selections) > 0:
                         st.info("※上で軸馬を「あと1頭」選んでください。")
+
+
+                    # =========================================================
+                    # 買い目点数より下のセクション
+                    # =========================================================
+                    st.divider()
+                    # Recommended Bets Section
+                    st.markdown("### 🎫 推奨買い目")
+                    rec_col1, rec_col2 = st.columns([2, 1])
+                    with rec_col1:
+                        top_horses = df.head(3)
+                        if chaos_data['rank'] in ['S', 'A']:
+                            st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                        else:
+                            st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                    with rec_col2:
+                        st.button("📋 買い目を生成 (ChatGPT連携)", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
+
+                    st.divider()
+                    # --- [NEW] 精選10点予想 (Special 10-Point Prediction) ---
+                    st.subheader("🎯 精選10点予想 (3連複)")
+                    strategies = calculator.generate_10point_strategy(df, chaos_data['rank'])
+                    
+                    if "error" in strategies:
+                        st.error(strategies["error"])
+                    else:
+                        strat_cols = st.columns(len(strategies))
+                        for idx, strat in enumerate(strategies):
+                            with strat_cols[idx]:
+                                bg_color = "#f0f7ff" if "Formation" in strat['type'] else "#fffaf0"
+                                st.markdown(f"""
+                                <div style="background-color: {bg_color}; padding: 15px; border-radius: 10px; border: 1px solid #ddd; height: 100%;">
+                                    <h4 style="margin-top: 0; color: #333; font-size: 1.1rem;">{strat['name']}</h4>
+                                    <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">{strat['description']}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                # Create table data
+                                rows = []
+                                trigami_found = False
+                                for t in strat['tickets']:
+                                    prefix = "⚠️" if t['trigami'] else "✅"
+                                    if t['trigami']: trigami_found = True
+                                    rows.append({
+                                        "買い目": f"{prefix} {', '.join(map(str, t['horses']))}",
+                                        "馬名": t['names'],
+                                        "推計": f"{t['odds']:.1f}倍"
+                                    })
+                                
+                                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                                
+                                if trigami_found:
+                                    st.caption("⚠️: トリガミ（10倍以下）の可能性があります。オッズを確認してください。")
+
+                    st.divider()
+
+                    # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
+                    st.subheader("🤖 中穴スナイパー分析 (詳細配分)")
+                    
+                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
+                    c_rank = chaos_data['rank']
+                    pop_ranges = {'S': '15〜45', 'A': '12〜35', 'B': '10〜30', 'C': '10〜30'}
+                    current_pop_range = pop_ranges.get(c_rank, '10〜30')
+                    
+                    if c_rank in ['B', 'C']:
+                        st.caption(f"3頭の人気合計が{current_pop_range}の組み合わせに絞り、波乱度に応じた中穴ゾーンをピンポイントで抽出します。")
+                    else:
+                        st.caption(f"波乱度{c_rank}に基づき、人気合計が{current_pop_range}の広範な組み合わせから期待値を最大化します。")
+                    
+                    bet_budget = st.number_input("買い目生成用 予算 (円)", min_value=1000, value=10000, step=1000, key="ai_bet_budget_unified")
+                    
+                    # ロジック呼び出し
+                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
+                    c_rank = chaos_data['rank']
+                    unified_pool = calculator.generate_unified_sniper_pool(df, c_rank)
+                    
+                    if 'error' in unified_pool:
+                        st.error(f"分析プール生成エラー: {unified_pool['error']}")
+                    else:
+                        # 予算配分を実行
+                        allocated_res = calculator.allocate_unified_budget(unified_pool, bet_budget)
+                        
+                        rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(c_rank, "#333")
+                        
+                        # ステータス表示
+                        f1, f2, f3 = st.columns([1, 1, 1])
+                        with f1:
+                            st.markdown(f"""
+                                <div style="background-color: {rank_color}; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+                                    <div style="font-size: 12px;">波乱度判定</div>
+                                    <div style="font-size: 28px; font-weight: bold;">{c_rank}</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        with f2:
+                            min_o, max_o = unified_pool['odds_range']
+                            st.metric("適用オッズレンジ", f"{min_o:.1f}〜{max_o:.1f}倍")
+                        with f3:
+                            st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
+
+                        st.write(f"### 🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)")
+                        
+                        if allocated_res.get('tickets'):
+                            # パターン別に分離
+                            tickets_a = [t for t in allocated_res['tickets'] if t.get('type') == 'A']
+                            tickets_b = [t for t in allocated_res['tickets'] if t.get('type') == 'B']
+                            bonus_t = [t for t in allocated_res['tickets'] if t.get('is_bonus')]
+                            
+                            # 2カラム表示 (スクリーンショットのデザインを再現)
+                            col_pa, col_pb = st.columns(2)
+                            
+                            with col_pa:
+                                st.markdown("#### 🟦 パターンA (上位5頭から2頭)")
+                                if tickets_a:
+                                    rows_a = []
+                                    for t in tickets_a:
+                                        rows_a.append({
+                                            "組合せ": ", ".join(map(str, t['horses'])),
+                                            "想定オッズ": f"{t['est_odds']:.1f}倍",
+                                            "スコア計": round(t['total_score'], 1)
+                                        })
+                                    st.table(pd.DataFrame(rows_a))
+                                else:
+                                    st.caption("該当なし")
+                                    
+                            with col_pb:
+                                st.markdown("#### 🟧 パターンB (上位5頭から1頭)")
+                                if tickets_b:
+                                    rows_b = []
+                                    for t in tickets_b:
+                                        rows_b.append({
+                                            "組合せ": ", ".join(map(str, t['horses'])),
+                                            "想定オッズ": f"{t['est_odds']}倍",
+                                            "スコア計": round(t['total_score'], 1)
+                                        })
+                                    st.table(pd.DataFrame(rows_b))
+                                else:
+                                    st.caption("該当なし")
+
+                            # ボーナスと詳細
+                            if bonus_t:
+                                st.info(f"🎁 **ボーナス枠**: {', '.join(map(str, bonus_t[0]['horses']))} ({bonus_t[0]['est_odds']:.1f}倍) / スコア計: {round(bonus_t[0]['total_score'], 1)}")
+
+                            # 予算配分の詳細は表の下に
+                            st.success(f"合計購入金額: **{allocated_res.get('actual_total', 0):,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res.get('unit_price', 0):,}円)")
+                            
+                            with st.expander("📝 買い目詳細 (金額・馬名付)", expanded=False):
+                                full_rows = []
+                                for t in allocated_res['tickets']:
+                                    full_rows.append({
+                                        "種別": "ボーナス" if t.get('is_bonus') else f"パターン{t['type']}",
+                                        "組合せ": ", ".join(map(str, t['horses'])),
+                                        "馬名": " - ".join(t['names']),
+                                        "購入金額": f"{t['amount']}円",
+                                        "想定払戻": f"{t['est_payout']:,}円"
+                                    })
+                                st.dataframe(pd.DataFrame(full_rows), use_container_width=True)
+                        else:
+                            st.warning("条件に合う買い目が見つかりませんでした。")
+
+                        # 除外ログ
+                        with st.expander("🕵️ 除外ログ (フィルタリング詳細)", expanded=False):
+                            st.caption("以下の組み合わせは、オッズまたは人気の条件により除外されました。")
+                            for log in unified_pool['exclusion_log']:
+                                st.write(f"- {log}")
+
+                    st.divider()
 
                     
 
