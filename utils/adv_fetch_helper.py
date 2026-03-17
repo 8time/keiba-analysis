@@ -7,6 +7,7 @@ import asyncio
 import logging
 from datetime import datetime
 from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.ERROR)
@@ -164,43 +165,94 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
                     }
 
         # --- 2. Oikiri (Training Tab) ---
+        # Strategy: get full HTML then parse with BS4 (more reliable than locator selectors)
         try:
             o_url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
-            await page.goto(o_url, wait_until='commit', timeout=12000)
-            # Use specific class provided by Netkeiba for Oikiri tables
-            rows_o = await page.locator('table.OikiriTable tr, tr.HorseList').all()
-            for row in rows_o:
-                try:
-                    cells = await row.locator('td').all()
-                    if len(cells) < 3: continue
-                    
-                    # Identify Umaban
-                    u_loc = row.locator('td.Umaban, td[class*="Umaban"]')
-                    if await u_loc.count() > 0:
-                        u_txt = await u_loc.first.text_content(timeout=1000)
-                        m_u = re.search(r'(\d+)', u_txt or '')
-                        if m_u:
-                            u = int(m_u.group(1))
-                            if u in advanced_data:
-                                # Standard Evaluation Grade Column (often index 5 or class-based)
-                                # Based on HTML verification, the grade is in a cell with classes like 'Rank_...'
-                                eval_grade = ""
-                                eval_loc = row.locator('td[class^="Rank_"], td.Evaluation')
-                                if await eval_loc.count() > 0:
-                                    eval_grade = (await eval_loc.first.text_content(timeout=1000)).strip().upper()
-                                
-                                if not eval_grade and len(cells) >= 6:
-                                    # Fallback to column index based on HTML dump
-                                    eval_grade = (await cells[5].text_content(timeout=1000)).strip().upper()
-                                    
-                                m_g = re.search(r'([A-D])', eval_grade)
-                                if m_g:
-                                    g = m_g.group(1)
-                                    advanced_data[u]['TrainingEval'] = g
-                                    score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
-                                    advanced_data[u]['TrainingScore'] = score_map.get(g, 0.0)
-                except: pass
-        except: pass
+            await page.goto(o_url, wait_until='domcontentloaded', timeout=15000)
+            try:
+                await page.wait_for_selector('table', timeout=8000)
+            except: pass
+
+            o_html = await page.content()
+            o_soup = BeautifulSoup(o_html, 'html.parser')
+            sys.stderr.write(f"DEBUG Oikiri: got HTML len={len(o_html)}\n")
+
+            # Detect "評価" header column index
+            eval_col_idx = -1
+            for tbl in o_soup.find_all('table'):
+                header_row = tbl.find('tr')
+                if not header_row: continue
+                ths = header_row.find_all(['th', 'td'])
+                for idx, th in enumerate(ths):
+                    txt = th.get_text(strip=True)
+                    if '評価' in txt or '評価' in txt:
+                        eval_col_idx = idx
+                        break
+                if eval_col_idx >= 0:
+                    break
+            sys.stderr.write(f"DEBUG Oikiri: eval_col_idx={eval_col_idx}\n")
+
+            score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
+
+            # Parse all rows across all tables
+            for tr in o_soup.find_all('tr'):
+                tds = tr.find_all('td')
+                if len(tds) < 3: continue
+
+                # 1. Find umaban: td.Umaban or first numeric-only cell with value 1-18
+                umaban = None
+                u_td = tr.find('td', class_=re.compile(r'Umaban', re.I))
+                if u_td:
+                    m_u = re.search(r'(\d+)', u_td.get_text())
+                    if m_u: umaban = int(m_u.group(1))
+                if umaban is None:
+                    # Fallback: first 1-2 cells that are single numbers 1-18
+                    for td in tds[:3]:
+                        ct = td.get_text(strip=True)
+                        if ct.isdigit() and 1 <= int(ct) <= 18:
+                            umaban = int(ct)
+                            break
+
+                if umaban is None or umaban not in advanced_data:
+                    continue
+
+                # 2. Find grade: class-based first, then header-col, then scan all cells
+                eval_grade = ""
+
+                # a) Class-based: span/td with class containing Hyoka/Hyouka/Rank_ + letter
+                for el in tr.find_all(class_=re.compile(r'Hyoka|Hyouka|Rank_|OikiriRank', re.I)):
+                    cls_str = ' '.join(el.get('class', [])).upper()
+                    m_c = re.search(r'(?:HYOKA|HYOUKA|RANK)[_-]?([A-D])\b', cls_str)
+                    if m_c:
+                        eval_grade = m_c.group(1)
+                        break
+                    # Also check text content
+                    txt = el.get_text(strip=True).upper()
+                    if txt in ('A', 'B', 'C', 'D'):
+                        eval_grade = txt
+                        break
+
+                # b) Header column index
+                if not eval_grade and eval_col_idx >= 0 and len(tds) > eval_col_idx:
+                    ct = tds[eval_col_idx].get_text(strip=True).upper()
+                    if ct in ('A', 'B', 'C', 'D'):
+                        eval_grade = ct
+
+                # c) Scan every cell for isolated A/B/C/D
+                if not eval_grade:
+                    for td in tds:
+                        ct = td.get_text(strip=True).upper()
+                        if ct in ('A', 'B', 'C', 'D'):
+                            eval_grade = ct
+                            break
+
+                if eval_grade:
+                    advanced_data[umaban]['TrainingEval'] = eval_grade
+                    advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
+                    sys.stderr.write(f"DEBUG Oikiri: horse {umaban} → {eval_grade}\n")
+
+        except Exception as e:
+            sys.stderr.write(f"ERROR: Oikiri fetch failed: {e}\n")
 
         # --- 3. Bloodline (Concurrency Limited) ---
         target_umaban = top_horse_ids if top_horse_ids else list(advanced_data.keys())[:10]
