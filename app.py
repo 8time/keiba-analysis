@@ -769,8 +769,10 @@ if nav == "💰 BetSync（資金管理）":
         # ─────────────────────────────────────────
         st.divider()
         
-        # Singleton client
-        kaggle_chat = KaggleChatClient(api_key=GEMINI_API_KEY)
+        # Singleton client（session_state 経由で再利用）
+        if "kaggle_chat_client" not in st.session_state:
+            st.session_state.kaggle_chat_client = KaggleChatClient(api_key=GEMINI_API_KEY)
+        kaggle_chat = st.session_state.kaggle_chat_client
 
         st.subheader("📊 Kaggleデータ分析チャット (2010-2025)")
         st.caption("Geminiを使用して過去15年分のデータを抽出・分析します。質問を入力してください。")
@@ -883,7 +885,8 @@ if nav == "💰 BetSync（資金管理）":
                     st.write(k_prompt)
                 
                 with st.chat_message("assistant"):
-                    with st.spinner("Kaggle データをロード/分析中..."):
+                    _spinner_msg = "📦 Kaggle データを初回ダウンロード中（約1〜2分）..." if not kaggle_chat.is_loaded() else "🔍 データを分析中..."
+                    with st.spinner(_spinner_msg):
                         ans_text, ans_df = kaggle_chat.ask(k_prompt)
                         st.write(ans_text)
                         if ans_df is not None:

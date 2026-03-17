@@ -5,11 +5,14 @@ import os
 import logging
 import json
 import re
+import pickle
 from datetime import datetime
 import google.genai as genai
 from google.genai import types as genai_types
 
 logger = logging.getLogger(__name__)
+
+CACHE_PATH = "/tmp/keiba_kaggle_cache.pkl"
 
 class KaggleChatClient:
     _instance = None
@@ -32,6 +35,7 @@ class KaggleChatClient:
         self.dataset_id = "noriyukifurufuru/japan-horse-racing-2010-2025"
         self.data_path = None
         self.dfs = {}
+        self._loaded = False
         self.client = genai.Client(api_key=api_key) if api_key else None
         self.interactions_file = os.path.join("data", "kaggle_interactions.json")
         self.initialized = True
@@ -42,34 +46,60 @@ class KaggleChatClient:
             with open(self.interactions_file, 'w', encoding='utf-8') as f:
                 json.dump([], f)
 
+    def is_loaded(self) -> bool:
+        """データがメモリにロード済みかどうかを返す"""
+        return self._loaded and bool(self.dfs)
+
     def load_data(self):
-        """Kaggle からデータをロードしてメモリに保持する"""
-        if self.dfs:
+        """Kaggle からデータをロードしてメモリに保持する（/tmp pickle キャッシュ対応）"""
+        if self._loaded and self.dfs:
             return True
-            
+
+        # /tmp pickle キャッシュを試みる
+        try:
+            if os.path.exists(CACHE_PATH):
+                logger.info(f"Loading Kaggle data from cache: {CACHE_PATH}")
+                with open(CACHE_PATH, 'rb') as f:
+                    self.dfs = pickle.load(f)
+                self._loaded = True
+                logger.info("Kaggle data loaded from cache.")
+                return True
+        except Exception as e:
+            logger.warning(f"Cache load failed, will re-download: {e}")
+            self.dfs = {}
+
         try:
             logger.info("Downloading/Loading Kaggle dataset...")
             self.data_path = kagglehub.dataset_download(self.dataset_id)
-            
+
             files = {
                 "races": "keiba_races.csv",
                 "results": "keiba_results.csv",
                 "payouts": "keiba_payouts.csv"
             }
-            
+
             for key, filename in files.items():
                 full_path = os.path.join(self.data_path, filename)
                 logger.info(f"Loading {filename}...")
                 self.dfs[key] = pd.read_csv(
-                    full_path, 
-                    encoding='utf-8', 
-                    on_bad_lines='skip', 
+                    full_path,
+                    encoding='utf-8',
+                    on_bad_lines='skip',
                     engine='python'
                 )
                 # 基本的な前処理
                 if key == 'races':
                     self.dfs[key]['date'] = pd.to_datetime(self.dfs[key]['date'], errors='coerce')
-            
+
+            # /tmp にキャッシュ保存
+            try:
+                with open(CACHE_PATH, 'wb') as f:
+                    pickle.dump(self.dfs, f)
+                logger.info(f"Kaggle data cached to {CACHE_PATH}")
+            except Exception as ce:
+                logger.warning(f"Cache save failed (non-fatal): {ce}")
+
+            self._loaded = True
             logger.info("Kaggle data loaded successfully.")
             return True
         except Exception as e:
