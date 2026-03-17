@@ -302,14 +302,15 @@ def validate_horse_name(name):
 def fetch_sanrenpuku_odds(race_id):
     """
     Fetches Sanrenpuku (Trio / 3連複) odds ordered by popularity.
-    Uses official API with zlib decompression, falls back to HTML scraping.
+    Uses netkeiba JSON API with zlib decompression.
+    Plain requests is used (curl_cffi impersonate mode fails on Streamlit Cloud).
     """
-    import json, zlib, base64
+    import json, zlib, base64, requests as _req
 
     is_nar = _is_nar(race_id)
     domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
     api_url = f"https://{domain}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html"
-    
+
     params = {
         "pid": f"api_get_{'nar' if is_nar else 'jra'}_odds",
         "race_id": race_id,
@@ -321,28 +322,25 @@ def fetch_sanrenpuku_odds(race_id):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-        "Accept-Encoding": "gzip, deflate, br",
         "Referer": f"https://{domain}/odds/index.html?type=b7&race_id={race_id}",
         "X-Requested-With": "XMLHttpRequest",
     }
 
     try:
-        from curl_cffi import requests as _curl
-        _resp = _curl.get(api_url, params=params, headers=api_headers, impersonate="chrome120", timeout=15)
-        if _resp.status_code != 200:
-            raise ValueError(f"HTTP {_resp.status_code}")
+        _resp = _req.get(api_url, params=params, headers=api_headers, timeout=15)
+        _resp.raise_for_status()
         data = _resp.json()
         api_status = data.get('status', '')
         raw = data.get('data', '')
         reason = data.get('reason', '')
-        if not raw or api_status in ('NG',) or reason in ('history odds empty', 'result odds empty'):
+        if not raw or api_status == 'NG' or reason in ('history odds empty', 'result odds empty'):
             logger.info(f"Sanrenpuku API: status={api_status} reason={reason} for {race_id}")
             return []
-        if raw and isinstance(raw, str) and len(raw) > 10:
+        if isinstance(raw, str) and len(raw) > 10:
             decoded = base64.b64decode(raw)
             try:
                 decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
-            except:
+            except Exception:
                 decompressed = zlib.decompress(decoded)
             odds_data = json.loads(decompressed.decode('utf-8'))
 
@@ -351,46 +349,26 @@ def fetch_sanrenpuku_odds(race_id):
                 if len(key) == 6:
                     try:
                         h1, h2, h3 = int(key[0:2]), int(key[2:4]), int(key[4:6])
-                        odds_val = float(val) if val not in ['', '---.-', '0'] else 0.0
+                        odds_val = float(val) if val not in ('', '---.-', '0') else 0.0
                         if odds_val > 0:
                             results.append({
                                 'Combination': f"{h1}-{h2}-{h3}",
                                 'Horses': [h1, h2, h3],
                                 'Odds': odds_val,
-                                'Rank': 0
+                                'Rank': 0,
                             })
-                    except: continue
+                    except Exception:
+                        continue
 
             results.sort(key=lambda x: x['Odds'])
-            for i, item in enumerate(results): item['Rank'] = i + 1
-            if results: return results
+            for i, item in enumerate(results):
+                item['Rank'] = i + 1
+            return results
 
     except Exception as e:
         logger.warning(f"Sanrenpuku API failed for {race_id}: {e}")
 
-    # Fallback to HTML scraping
-    html_url = f"https://{domain}/odds/index.html?type=b7&race_id={race_id}&housiki=c99"
-    html = fetch_robust_html(html_url)
-    if not html: return []
-
-    soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-    html_results = []
-    for row in soup.find_all('tr'):
-        cols = row.find_all('td')
-        if len(cols) >= 4:
-            try:
-                rank_text, comb_raw, odds_text = cols[0].text.strip(), cols[2].text.strip(), cols[3].text.strip()
-                comb_text = re.sub(r'[\n\s]+', '-', comb_raw)
-                if rank_text.isdigit() and '-' in comb_text and odds_text and '---' not in odds_text:
-                    h1, h2, h3 = [int(x.strip()) for x in comb_text.split('-')]
-                    html_results.append({
-                        'Combination': f"{h1}-{h2}-{h3}",
-                        'Horses': [h1, h2, h3],
-                        'Odds': float(odds_text),
-                        'Rank': int(rank_text)
-                    })
-            except: continue
-    return html_results
+    return []
 
 @retry(tries=3, delay=1)
 def fetch_win_odds(race_id):
