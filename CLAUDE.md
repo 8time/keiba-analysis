@@ -5,6 +5,53 @@
 - OCR：EasyOCR（置き換え禁止）
 - データソース：netkeiba.com
 
+# ファイル構造
+```
+keiba_analysis/
+├── app.py                    # Streamlitメインアプリ（エントリポイント）約270KB
+├── create_session.py         # Playwright認証セッション生成スクリプト
+├── data_schema.md            # データ構造の仕様書
+├── requirements.txt          # 依存ライブラリ
+│
+├── core/                     # メインロジック
+│   ├── scraper.py            # netkeiba HTMLスクレイピング（fetch_robust_html等）
+│   ├── calculator.py         # オッズ計算・指数計算
+│   ├── odds_tracker.py       # オッズ変動トラッキング（OddsTrackerクラス）
+│   ├── odds_analyzer.py      # オッズ分析（OddsAnalyzerクラス）
+│   ├── odds_logger.py        # オッズログ保存
+│   ├── history_manager.py    # レース履歴管理（race_history.csv の読み書き）
+│   ├── simulator_engine.py   # シミュレーション計算
+│   ├── theory_rmhs.py        # RMHS理論実装
+│   ├── vision_analyzer.py    # Gemini Vision APIでのOCR（VisionOddsAnalyzer）
+│   ├── local_vision_analyzer.py # EasyOCRでのローカルOCR（LocalVisionOddsAnalyzer）
+│   └── kaggle_client.py      # Kaggle Notebook連携（KaggleChatClient）
+│
+├── utils/
+│   ├── fetch_helper.py       # シンプルHTTPフェッチユーティリティ
+│   └── adv_fetch_helper.py   # Scrapling DynamicFetcher（fetch_robust_html実装）
+│
+├── scripts/
+│   ├── odds_tracker.py       # オッズトラッカー実行スクリプト
+│   ├── race_position_scanner.py # レース着順スキャン
+│   ├── track_odds_runner.py  # オッズ追跡ランナー
+│   ├── scrapling_jra.py      # JRAスクレイピングテスト
+│   ├── test_odds_analyzer.py # オッズ分析テスト
+│   ├── verify_refactoring.py # リファクタリング検証
+│   └── debug/                # デバッグ・一時テストスクリプト
+│
+├── data/
+│   ├── odds_history.db       # SQLiteオッズ履歴DB
+│   ├── kaggle_interactions.json
+│   └── history/              # レース履歴JSONファイル
+│
+└── （ルートの動的生成ファイル）
+    ├── race_history.csv      # レース解析結果（app.pyが生成・参照）
+    ├── betsync_data.json     # ベットシンク設定永続化
+    ├── saved_logic_notes.json # ロジックメモ永続化
+    ├── auth_session.json     # Playwright認証セッション（gitignore推奨）
+    └── labo_session.json     # Playwright Labo認証セッション（gitignore推奨）
+```
+
 # 禁止事項
 - スクレイピング処理をOCRに置き換えない
 - 既存の関数シグネチャを変更しない
