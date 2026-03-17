@@ -1125,6 +1125,12 @@ if nav == "🏠 Single Race Analysis":
                         st.session_state['vision_data_applied'] = True
                         st.session_state['last_race_id'] = race_id_input
 
+                    # --- オッズ・人気未取得 警告バナー ---
+                    _pop_missing = 'Popularity' in df.columns and (pd.to_numeric(df['Popularity'], errors='coerce') >= 99).any()
+                    _odds_missing = 'Odds' in df.columns and (pd.to_numeric(df['Odds'], errors='coerce') >= 9999.0).any()
+                    if _pop_missing or _odds_missing:
+                        st.warning("⚠️ オッズ・人気データ未取得（発売前または取得エラー）")
+
                     # --- [NEW] RACE SUMMARY BLOCK (TOP PRIORITY) ---
                     st.markdown("""
                         <style>
@@ -1337,6 +1343,16 @@ if nav == "🏠 Single Race Analysis":
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
+                    # Mask sentinel values for display (99=未取得人気, 9999.0=未取得オッズ)
+                    if 'Popularity' in view_df.columns:
+                        view_df['Popularity'] = view_df['Popularity'].apply(
+                            lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 99)) else str(int(x))
+                        )
+                    if 'Odds' in view_df.columns:
+                        view_df['Odds'] = view_df['Odds'].apply(
+                            lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 9999.0)) else f'{x:.1f}'
+                        )
+
                     # Merge previous screenshot columns with latest advanced columns
                     cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'Jockey', 'JockeyChange', 'Name', 
                             'Projected Score', 'NIndex', 'BattleScore', 'Strength (X)', 'Suitability (Y)', 
@@ -1382,8 +1398,8 @@ if nav == "🏠 Single Race Analysis":
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
                         "Umaban": st.column_config.NumberColumn("馬番"),
-                        "Popularity": st.column_config.NumberColumn("人気", format="%d"),
-                        "Odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
+                        "Popularity": st.column_config.TextColumn("人気"),
+                        "Odds": st.column_config.TextColumn("単勝オッズ"),
                         "OddsGap": st.column_config.TextColumn("オッズ断層"),
                         "SexAge": st.column_config.TextColumn("性別/年齢"),
                         "WeightHistory": st.column_config.TextColumn("当日馬体重(増減)"),
@@ -2974,7 +2990,17 @@ if nav == "📊 History & Review":
                                      'ResultAgari', 'Memo', 'Alert']
                     
                     disp_view = disp_view[[c for c in disp_cols if c in disp_view.columns]]
-                    
+
+                    # Mask sentinel values for display (99=未取得人気, 9999.0=未取得オッズ)
+                    if 'Popularity' in disp_view.columns:
+                        disp_view['Popularity'] = disp_view['Popularity'].apply(
+                            lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 99)) else str(int(x))
+                        )
+                    if 'Odds' in disp_view.columns:
+                        disp_view['Odds'] = disp_view['Odds'].apply(
+                            lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 9999.0)) else f'{x:.1f}'
+                        )
+
                     # Format Agari
                     def fmt_agari_disp(row):
                         a = row.get('AvgAgari', 99.9)
@@ -3004,10 +3030,10 @@ if nav == "📊 History & Review":
                         "ResultAgari": st.column_config.NumberColumn("✨ 結果上がり", format="%.1f"),
                         "Umaban": st.column_config.NumberColumn("馬番"),
                         "Jockey": st.column_config.TextColumn("騎手"),
-                        "Odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
-                        "Popularity": st.column_config.NumberColumn("人気", format="%d"),
+                        "Odds": st.column_config.TextColumn("単勝オッズ"),
+                        "Popularity": st.column_config.TextColumn("人気"),
                     }
-                    
+
                     # Styling
                     try:
                         styled = disp_view.style
@@ -3545,6 +3571,12 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_test = df.copy()
         score_col = 'Projected Score' if 'Projected Score' in df_test.columns else 'BattleScore'
         df_test = df_test.sort_values(by=score_col, ascending=False).reset_index(drop=True)
+
+        # --- オッズ・人気未取得 警告バナー ---
+        _pop_missing_t = 'Popularity' in df_test.columns and (pd.to_numeric(df_test['Popularity'], errors='coerce') >= 99).any()
+        _odds_missing_t = 'Odds' in df_test.columns and (pd.to_numeric(df_test['Odds'], errors='coerce') >= 9999.0).any()
+        if _pop_missing_t or _odds_missing_t:
+            st.warning("⚠️ オッズ・人気データ未取得（発売前または取得エラー）")
 
         # 0. Session Status
         with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
