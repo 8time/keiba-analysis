@@ -191,11 +191,7 @@ with st.sidebar:
             "📦 データ保管庫",
             "🧪 新ロジックテスト(FEW+マクリ)",
             "💾 ロジック置き場",
-            "── 🔭 N氏の研究室 ──",
-            "📚 RMHS分析",
-            "🏇 過去走R理論スキャン",
-            "🔬 実験その３(馬番パターン)",
-            "🎯 馬番配置AI",
+            "🔭 N氏の研究室",
         ],
         label_visibility="collapsed"
     )
@@ -3830,235 +3826,722 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         st.info("「Single Race Analysis」タブに戻り、**🚀 Analyze Race** ボタンを押して最新のデータを取得してください。")
 
 # ──────────────────────────────────────────────
-# 📚 【新理論】RMHS分析 タブ
+# 🔭 N氏の研究室 — 統合ページ（4タブ）
 # ──────────────────────────────────────────────
-if nav == "📚 RMHS分析":
-    st.header("📚 【新理論】R/M/H/S 分析")
-    st.markdown("レース結果データから、R（リバウンド）、M（マクリ）、H（ハイペース耐性）、S（スロー末脚）の4理論に該当する馬を抽出します。")
+if nav == "🔭 N氏の研究室":
+    st.header("🔭 N氏の研究室")
+    nlab_tab1, nlab_tab2, nlab_tab3, nlab_tab4 = st.tabs([
+        "📚 RMHS分析",
+        "🏇 過去走R理論スキャン",
+        "🔬 実験その３(馬番パターン)",
+        "🎯 馬番配置AI",
+    ])
+
+    with nlab_tab1:
+        st.header("📚 【新理論】R/M/H/S 分析")
+        st.markdown("レース結果データから、R（リバウンド）、M（マクリ）、H（ハイペース耐性）、S（スロー末脚）の4理論に該当する馬を抽出します。")
     
-    col1, col2, col3 = st.columns([2, 5, 2])
-    with col1:
-        target_id_input = st.text_input("分析対象 RaceID (12桁)", value=st.session_state.get('main_race_id_input', ''), key="rmhs_id_input")
-    with col2:
-        theory_filter = st.radio(
-            "理論フィルタ", 
-            ["すべて", "R理論 (Rebound)", "M理論 (Move)", "H理論 (High-pace Hang)", "S理論 (Slow-pace Surge)"], 
-            horizontal=True
-        )
-    with col3:
-        st.write("") # Spacer
-        analyze_btn = st.button("🔍 RMHS分析を実行", use_container_width=True, key="rmhs_analyze_btn")
+        col1, col2, col3 = st.columns([2, 5, 2])
+        with col1:
+            target_id_input = st.text_input("分析対象 RaceID (12桁)", value=st.session_state.get('main_race_id_input', ''), key="rmhs_id_input")
+        with col2:
+            theory_filter = st.radio(
+                "理論フィルタ", 
+                ["すべて", "R理論 (Rebound)", "M理論 (Move)", "H理論 (High-pace Hang)", "S理論 (Slow-pace Surge)"], 
+                horizontal=True
+            )
+        with col3:
+            st.write("") # Spacer
+            analyze_btn = st.button("🔍 RMHS分析を実行", use_container_width=True, key="rmhs_analyze_btn")
         
-    if analyze_btn and target_id_input:
-        with st.spinner("詳細結果データを取得中..."):
-            comp = fetch_comprehensive_result(target_id_input)
+        if analyze_btn and target_id_input:
+            with st.spinner("詳細結果データを取得中..."):
+                comp = fetch_comprehensive_result(target_id_input)
             
-        if not comp or not comp.get('horses'):
-            st.error("レース結果が取得できませんでした。未開催かRaceIDが間違っている可能性があります。")
-        else:
-            # Prepare RMHS Input
-            race_info = comp['race_info']
-            # Pace Classification
-            p_first = race_info.get('first_half', 0.0)
-            p_second = race_info.get('second_half', 0.0)
-            pace_class, pace_diff = theory_rmhs.RMHSAnalyzer.calculate_pace(p_first, p_second)
-            race_info['pace_class'] = pace_class
-            race_info['pace_diff'] = pace_diff
+            if not comp or not comp.get('horses'):
+                st.error("レース結果が取得できませんでした。未開催かRaceIDが間違っている可能性があります。")
+            else:
+                # Prepare RMHS Input
+                race_info = comp['race_info']
+                # Pace Classification
+                p_first = race_info.get('first_half', 0.0)
+                p_second = race_info.get('second_half', 0.0)
+                pace_class, pace_diff = theory_rmhs.RMHSAnalyzer.calculate_pace(p_first, p_second)
+                race_info['pace_class'] = pace_class
+                race_info['pace_diff'] = pace_diff
             
-            # Leaders and Closers for H/S logic
-            field_size = race_info.get('field_size', 0)
-            front_finish = []
-            for u, h in comp['horses'].items():
-                p_list = theory_rmhs.RMHSAnalyzer.parse_passing(h['Passing'] or "")
-                last_p = p_list[-1] if p_list else 99
-                if last_p <= 4:
-                    front_finish.append(h['Rank'])
+                # Leaders and Closers for H/S logic
+                field_size = race_info.get('field_size', 0)
+                front_finish = []
+                for u, h in comp['horses'].items():
+                    p_list = theory_rmhs.RMHSAnalyzer.parse_passing(h['Passing'] or "")
+                    last_p = p_list[-1] if p_list else 99
+                    if last_p <= 4:
+                        front_finish.append(h['Rank'])
             
-            race_info['front_finish'] = front_finish
+                race_info['front_finish'] = front_finish
             
-            # Agari Rank
-            all_agari = sorted([h['Agari'] for h in comp['horses'].values() if h['Agari'] > 0])
-            def get_agari_rank(val):
-                if val <= 0: return 99
-                try: return all_agari.index(val) + 1
-                except: return 99
+                # Agari Rank
+                all_agari = sorted([h['Agari'] for h in comp['horses'].values() if h['Agari'] > 0])
+                def get_agari_rank(val):
+                    if val <= 0: return 99
+                    try: return all_agari.index(val) + 1
+                    except: return 99
             
-            # Analyze each horse
-            theory_results = []
-            for u, h in comp['horses'].items():
-                p_list = theory_rmhs.RMHSAnalyzer.parse_passing(h['Passing'] or "")
-                h_input = {
-                    'umaban': u,
-                    'finish_position': h['Rank'],
-                    'time': h['Time'],
-                    'pos_1c': p_list[0] if len(p_list) > 0 else None,
-                    'pos_2c': p_list[1] if len(p_list) > 1 else None,
-                    'pos_3c': p_list[2] if len(p_list) > 2 else None,
-                    'pos_4c': p_list[-1] if p_list else None,
-                    'last3f_rank': get_agari_rank(h['Agari'])
+                # Analyze each horse
+                theory_results = []
+                for u, h in comp['horses'].items():
+                    p_list = theory_rmhs.RMHSAnalyzer.parse_passing(h['Passing'] or "")
+                    h_input = {
+                        'umaban': u,
+                        'finish_position': h['Rank'],
+                        'time': h['Time'],
+                        'pos_1c': p_list[0] if len(p_list) > 0 else None,
+                        'pos_2c': p_list[1] if len(p_list) > 1 else None,
+                        'pos_3c': p_list[2] if len(p_list) > 2 else None,
+                        'pos_4c': p_list[-1] if p_list else None,
+                        'last3f_rank': get_agari_rank(h['Agari'])
+                    }
+                    res = theory_rmhs.RMHSAnalyzer.analyze_horse(h_input, race_info)
+                
+                    # Format for display
+                    theory_str = []
+                    if res['R']['flag'] is True: theory_str.append(f"🔴R({res['R']['score']})")
+                    if res['M']['flag'] is True: theory_str.append(f"🔵M({res['M']['score']})")
+                    if res['H']['flag'] is True: theory_str.append(f"🟢H({res['H']['score']})")
+                    if res['S']['flag'] is True: theory_str.append(f"🟡S({res['S']['score']})")
+                
+                    theory_results.append({
+                        '馬番': u,
+                        '馬名': h.get('Name', 'Unknown'),
+                        '着順': h['Rank'],
+                        '通過順位': h['Passing'],
+                        '上がり3F': h['Agari'],
+                        '単勝オッズ': h.get('ResultOdds', 0.0),
+                        '人気': h.get('Popularity', 99),
+                        'RMHS判定': " ".join(theory_str) if theory_str else "-"
+                    })
+                
+                df_rmhs = pd.DataFrame(theory_results).sort_values('着順')
+            
+                # Apply Filter
+                if theory_filter == "R理論 (Rebound)":
+                    df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('R', na=False)]
+                elif theory_filter == "M理論 (Move)":
+                    df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('M', na=False)]
+                elif theory_filter == "H理論 (High-pace Hang)":
+                    df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('H', na=False)]
+                elif theory_filter == "S理論 (Slow-pace Surge)":
+                    df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('S', na=False)]
+            
+                st.subheader(f"📊 RMHS分析結果 (Pace: {pace_class} {pace_diff:+.1f}s) - {theory_filter}")
+            
+                def highlight_theory(s):
+                    return ['background-color: rgba(255, 243, 205, 0.3)' if val != "-" else '' for val in s]
+
+                st.dataframe(df_rmhs.style.apply(highlight_theory, subset=['RMHS判定']), use_container_width=True)
+            
+                with st.expander("📖 理論の解説"):
+                    st.markdown("""
+                    - **R理論 (Rebound)**: 道中で不利や置かれ気味で順位を落とすが、直線で猛然と巻き返した馬。次走注目。
+                    - **M理論 (Move)**: 向正面～3角で一気に進出。脚を使い切って最後甘くなったが、見せ場十分の馬。
+                    - **H理論 (High-pace Hang)**: ハイペースの中、前線で踏ん張り先行勢の中で最先着。展開不向きの中での好走。
+                    - **S理論 (Slow-pace Surge)**: スローペースで展開が向かない後方から、上がり最速級で追い込み。差し届かずの負けに価値あり。
+                    """)
+
+
+    # ──────────────────────────────────────────────
+    # ──────────────────────────────────────────────
+    # 🏇 過去走R理論スキャン タブ
+    # ──────────────────────────────────────────────
+
+    with nlab_tab2:
+        st.header("🏇 指定場 過去走R理論スキャン")
+        st.markdown("指定した日付の**全競馬場（全レース）**または特定の競馬場を対象に、全出走馬の**過去5走**を自動スキャンし、R理論（Rebound）に合致する「次走注目馬」を抽出します。")
+        st.warning("⚠️ **注意**: アクセス制限(BAN)対策として1レースごとに2秒の待機時間を設けています。全場スキャン（約36レース）には約2分、1場のスキャン（12レース）には約40秒かかります。")
+    
+        col_d1, col_d2 = st.columns([3, 1])
+        with col_d1:
+            default_date = datetime.now().strftime("%Y%m%d")
+            scan_date_input = st.text_input("スキャン対象日付 (YYYYMMDD形式)", value=default_date, key="r_scan_date_input")
+        with col_d2:
+            st.write("") # Spacer
+            fetch_venues_btn = st.button("📅 開催場一覧を取得", use_container_width=True)
+        
+        if fetch_venues_btn and scan_date_input:
+            st.session_state.r_scan_race_list = scraper.get_race_list_for_date(scan_date_input)
+        
+        if 'r_scan_race_list' in st.session_state and st.session_state.r_scan_race_list:
+            race_list = st.session_state.r_scan_race_list
+            if not race_list:
+                st.error("指定された日付のレース情報が見つかりませんでした。")
+            else:
+                # Group by venue code (characters 4-6 of race_id)
+                venues = {}
+                for r in race_list:
+                    # e.g., 202406050811 -> '06'
+                    v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
+                    if v_code not in venues:
+                        venues[v_code] = []
+                    venues[v_code].append(r)
+            
+                VENUE_NAMES = {
+                    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
+                    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
+                    "36": "大井", "42": "船橋", "43": "川崎", "44": "浦和", "65": "園田", 
+                    "62": "名古屋", "54": "門別", "50": "帯広", "45": "盛岡", "46": "水沢"
                 }
-                res = theory_rmhs.RMHSAnalyzer.analyze_horse(h_input, race_info)
+            
+                v_options = list(venues.keys())
+                def format_venue(code):
+                    name = VENUE_NAMES.get(code, f"コード {code}")
+                    count = len(venues.get(code, []))
+                    return f"{name} ({count}レース)"
+            
+                st.markdown("---")
+                col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+                with col_v1:
+                    selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue)
+                with col_v2:
+                    st.write("")
+                    run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary")
+                with col_v3:
+                    st.write("")
+                    run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True)
+            
+                # Helper to run scan logic
+                def perform_scan(target_races, label):
+                    total_races = len(target_races)
+                    st.success(f"✅ {label} の {total_races} レースをスキャン開始します...")
                 
-                # Format for display
-                theory_str = []
-                if res['R']['flag'] is True: theory_str.append(f"🔴R({res['R']['score']})")
-                if res['M']['flag'] is True: theory_str.append(f"🔵M({res['M']['score']})")
-                if res['H']['flag'] is True: theory_str.append(f"🟢H({res['H']['score']})")
-                if res['S']['flag'] is True: theory_str.append(f"🟡S({res['S']['score']})")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    extracted_horses = []
                 
-                theory_results.append({
-                    '馬番': u,
-                    '馬名': h.get('Name', 'Unknown'),
-                    '着順': h['Rank'],
-                    '通過順位': h['Passing'],
-                    '上がり3F': h['Agari'],
-                    '単勝オッズ': h.get('ResultOdds', 0.0),
-                    '人気': h.get('Popularity', 99),
-                    'RMHS判定': " ".join(theory_str) if theory_str else "-"
-                })
+                    for i, race_info in enumerate(target_races):
+                        r_id = race_info['race_id']
+                        r_name = race_info['race_name']
+                        r_num = race_info['race_num']
+                    
+                        v_code = r_id[4:6] if len(r_id) == 12 else "Unknown"
+                        v_name = VENUE_NAMES.get(v_code, v_code)
+                    
+                        status_text.text(f"⏳ スキャン中... ({i+1}/{total_races}): {v_name} {r_num} {r_name}")
+                    
+                        df_race = scraper.get_race_data(r_id)
+                        if not df_race.empty:
+                            for index, row in df_race.iterrows():
+                                past_runs = row.get('PastRuns', [])
+                                for p_idx, run in enumerate(past_runs[:5]):
+                                    if theory_rmhs.RMHSAnalyzer.analyze_past_run_for_r(run):
+                                        extracted_horses.append({
+                                            '競馬場・R': f"{v_name} {r_num}",
+                                            '馬番': row['Umaban'],
+                                            '馬名': row['Name'],
+                                            '予想オッズ': row.get('Odds', 0.0),
+                                            '合致した過去走': run.get('Date', 'Unknown'),
+                                            '過去走成績': f"{run.get('Rank')}着 (通過:{run.get('Passing')} 上がり:{run.get('Agari')} 差:{run.get('Margin')})"
+                                        })
+                                        break
+                    
+                        progress_bar.progress((i + 1) / total_races)
+                        if i < total_races - 1:
+                            time.sleep(2.0)
                 
-            df_rmhs = pd.DataFrame(theory_results).sort_values('着順')
-            
-            # Apply Filter
-            if theory_filter == "R理論 (Rebound)":
-                df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('R', na=False)]
-            elif theory_filter == "M理論 (Move)":
-                df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('M', na=False)]
-            elif theory_filter == "H理論 (High-pace Hang)":
-                df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('H', na=False)]
-            elif theory_filter == "S理論 (Slow-pace Surge)":
-                df_rmhs = df_rmhs[df_rmhs['RMHS判定'].str.contains('S', na=False)]
-            
-            st.subheader(f"📊 RMHS分析結果 (Pace: {pace_class} {pace_diff:+.1f}s) - {theory_filter}")
-            
-            def highlight_theory(s):
-                return ['background-color: rgba(255, 243, 205, 0.3)' if val != "-" else '' for val in s]
+                    status_text.text(f"✅ スキャン完了！ {label} のチェックが終わりました。")
+                    progress_bar.empty()
+                    return extracted_horses
 
-            st.dataframe(df_rmhs.style.apply(highlight_theory, subset=['RMHS判定']), use_container_width=True)
+                results = []
+                if run_all_scan_btn:
+                    all_races = [r for venue_races in venues.values() for r in venue_races]
+                    results = perform_scan(all_races, "全開催場")
+                elif run_single_scan_btn and selected_v_code:
+                    results = perform_scan(venues[selected_v_code], VENUE_NAMES.get(selected_v_code, selected_v_code))
             
-            with st.expander("📖 理論の解説"):
-                st.markdown("""
-                - **R理論 (Rebound)**: 道中で不利や置かれ気味で順位を落とすが、直線で猛然と巻き返した馬。次走注目。
-                - **M理論 (Move)**: 向正面～3角で一気に進出。脚を使い切って最後甘くなったが、見せ場十分の馬。
-                - **H理論 (High-pace Hang)**: ハイペースの中、前線で踏ん張り先行勢の中で最先着。展開不向きの中での好走。
-                - **S理論 (Slow-pace Surge)**: スローペースで展開が向かない後方から、上がり最速級で追い込み。差し届かずの負けに価値あり。
-                """)
+                if results:
+                    st.subheader(f"🎯 R理論（Rebound） 次走注目馬 ({len(results)}頭)")
+                    df_extracted = pd.DataFrame(results)
+                    st.dataframe(df_extracted, use_container_width=True)
+                elif run_all_scan_btn or run_single_scan_btn:
+                    st.info("該当する馬は見つかりませんでした。")
 
+    # ──────────────────────────────────────────────
+    # 💾 ロジック置き場
+    # ──────────────────────────────────────────────
 
-# ──────────────────────────────────────────────
-# ──────────────────────────────────────────────
-# 🏇 過去走R理論スキャン タブ
-# ──────────────────────────────────────────────
-if nav == "🏇 過去走R理論スキャン":
-    st.header("🏇 指定場 過去走R理論スキャン")
-    st.markdown("指定した日付の**全競馬場（全レース）**または特定の競馬場を対象に、全出走馬の**過去5走**を自動スキャンし、R理論（Rebound）に合致する「次走注目馬」を抽出します。")
-    st.warning("⚠️ **注意**: アクセス制限(BAN)対策として1レースごとに2秒の待機時間を設けています。全場スキャン（約36レース）には約2分、1場のスキャン（12レース）には約40秒かかります。")
-    
-    col_d1, col_d2 = st.columns([3, 1])
-    with col_d1:
-        default_date = datetime.now().strftime("%Y%m%d")
-        scan_date_input = st.text_input("スキャン対象日付 (YYYYMMDD形式)", value=default_date, key="r_scan_date_input")
-    with col_d2:
-        st.write("") # Spacer
-        fetch_venues_btn = st.button("📅 開催場一覧を取得", use_container_width=True)
-        
-    if fetch_venues_btn and scan_date_input:
-        st.session_state.r_scan_race_list = scraper.get_race_list_for_date(scan_date_input)
-        
-    if 'r_scan_race_list' in st.session_state and st.session_state.r_scan_race_list:
-        race_list = st.session_state.r_scan_race_list
-        if not race_list:
-            st.error("指定された日付のレース情報が見つかりませんでした。")
-        else:
-            # Group by venue code (characters 4-6 of race_id)
+    with nlab_tab3:
+        st.header("🔬 実験その３: 馬番ポジション・パターンスキャナー Pro v2.0")
+        st.markdown("""
+        同日同場のレース間で、騎手・厩舎の **馬番配置** に特定のパターンを検出し、**穴馬候補をスコアリング**するツールです。
+
+        #### 検出パターン (v2.0)
+        | パターン | 条件 |
+        |---|---|
+        | **P1: 裏同士** | 異なる頭数のレース間で裏番号が一致 |
+        | **P2: 裏表逆** | 一方の馬番 = 他方の裏番号 |
+        | **P3: 一の位一致** | 馬番の一の位が同じ |
+        | **P4: 表循環** | 大頭数側の馬番を小頭数で循環させると一致 |
+        | **P4: 裏循環** | 大頭数側の裏番を小頭数で循環させた値が小頭数側の裏番と一致 |
+
+        #### スコアリング (v2.0)
+        | ボーナス | 条件 | 加点 |
+        |---|---|---|
+        | Base | パターン1種類ごと | +1 |
+        | Overlap | 3種類以上同時検出 | +3 |
+        | Strategic Entry | 当日のEntity出走がちょうど2回 | +3 |
+        | Longshot | 7人気以上 or オッズ20倍以上 | +1 |
+        | Best Period | 開催日数3〜8日目 | +1 |
+        """)
+
+        st.divider()
+
+        col_d1, col_d2 = st.columns([3, 1])
+        with col_d1:
+            default_date = datetime.now().strftime("%Y%m%d")
+            rpps_date = st.text_input("スキャン対象日付 (YYYYMMDD)", value=default_date, key="rpps_date_input")
+        with col_d2:
+            st.write("") 
+            fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", use_container_width=True)
+
+        if fetch_venues_btn and rpps_date:
+            res = scraper.get_race_list_for_date(rpps_date)
+            if not res:
+                st.error(f"⚠️ {rpps_date} の開催場を取得できませんでした。データセンターIP制限によりブロックされているか、該当日の開催が空の可能性があります。少し時間を置いて再試行してください。")
+            else:
+                st.success(f"✅ {len(res)} レース分の開催情報を取得しました。")
+            st.session_state.rpps_venue_list = res
+
+        selected_race_urls = []
+        if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
+            race_list = st.session_state.rpps_venue_list
+            # Group by venue
             venues = {}
             for r in race_list:
-                # e.g., 202406050811 -> '06'
                 v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
-                if v_code not in venues:
-                    venues[v_code] = []
+                if v_code not in venues: venues[v_code] = []
                 venues[v_code].append(r)
-            
+        
             VENUE_NAMES = {
-                "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
-                "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
-                "36": "大井", "42": "船橋", "43": "川崎", "44": "浦和", "65": "園田", 
-                "62": "名古屋", "54": "門別", "50": "帯広", "45": "盛岡", "46": "水沢"
+                "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京","06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
+                "36":"大井","42":"船橋","43":"川崎","44":"浦和","65":"園田","62":"名古屋","54":"門別","50":"帯広","45":"盛岡","46":"水沢"
             }
-            
             v_options = list(venues.keys())
-            def format_venue(code):
-                name = VENUE_NAMES.get(code, f"コード {code}")
-                count = len(venues.get(code, []))
-                return f"{name} ({count}レース)"
-            
-            st.markdown("---")
-            col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
-            with col_v1:
-                selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue)
-            with col_v2:
-                st.write("")
-                run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary")
-            with col_v3:
-                st.write("")
-                run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True)
-            
-            # Helper to run scan logic
-            def perform_scan(target_races, label):
-                total_races = len(target_races)
-                st.success(f"✅ {label} の {total_races} レースをスキャン開始します...")
-                
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                extracted_horses = []
-                
-                for i, race_info in enumerate(target_races):
-                    r_id = race_info['race_id']
-                    r_name = race_info['race_name']
-                    r_num = race_info['race_num']
-                    
-                    v_code = r_id[4:6] if len(r_id) == 12 else "Unknown"
-                    v_name = VENUE_NAMES.get(v_code, v_code)
-                    
-                    status_text.text(f"⏳ スキャン中... ({i+1}/{total_races}): {v_name} {r_num} {r_name}")
-                    
-                    df_race = scraper.get_race_data(r_id)
-                    if not df_race.empty:
-                        for index, row in df_race.iterrows():
-                            past_runs = row.get('PastRuns', [])
-                            for p_idx, run in enumerate(past_runs[:5]):
-                                if theory_rmhs.RMHSAnalyzer.analyze_past_run_for_r(run):
-                                    extracted_horses.append({
-                                        '競馬場・R': f"{v_name} {r_num}",
-                                        '馬番': row['Umaban'],
-                                        '馬名': row['Name'],
-                                        '予想オッズ': row.get('Odds', 0.0),
-                                        '合致した過去走': run.get('Date', 'Unknown'),
-                                        '過去走成績': f"{run.get('Rank')}着 (通過:{run.get('Passing')} 上がり:{run.get('Agari')} 差:{run.get('Margin')})"
-                                    })
-                                    break
-                    
-                    progress_bar.progress((i + 1) / total_races)
-                    if i < total_races - 1:
-                        time.sleep(2.0)
-                
-                status_text.text(f"✅ スキャン完了！ {label} のチェックが終わりました。")
-                progress_bar.empty()
-                return extracted_horses
+            def format_v(c):
+                return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
+        
+            selected_v = st.selectbox("スキャンする競馬場を選択", v_options, format_func=format_v, key="rpps_selected_venue")
+            if selected_v:
+                # Generate URLs for all races in this venue
+                for r in venues[selected_v]:
+                    r_id = r['race_id']
+                    selected_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
 
-            results = []
-            if run_all_scan_btn:
-                all_races = [r for venue_races in venues.values() for r in venue_races]
-                results = perform_scan(all_races, "全開催場")
-            elif run_single_scan_btn and selected_v_code:
-                results = perform_scan(venues[selected_v_code], VENUE_NAMES.get(selected_v_code, selected_v_code))
+        st.divider()
+
+        col_l, col_r = st.columns([1, 2])
+        with col_l:
+            entity = st.radio("👤 比較対象", options=["jockey", "trainer", "both"], index=0,
+                              format_func=lambda x: {"jockey": "🏇 騎手", "trainer": "🏋 厩舎", "both": "🔀 両方"}.get(x, x),
+                              key="rpps_entity", horizontal=True)
+            min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
+
+        with col_r:
+            st.info(f"""
+            **現在の設定**: {len(selected_race_urls)} レースをスキャン対象としています。
+        
+            **スコア目安**:
+            - 🔴 7以上: 超注目穴馬
+            - 🟠 5〜6: 要警戒穴馬
+            - 🟡 3〜4: 気になる馬
+            - ⚪ 1〜2: 参考程度
+            """)
+
+        st.divider()
+
+        if 'rpps_result_df' not in st.session_state:
+            st.session_state.rpps_result_df = None
+
+        scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
+
+        if scan_btn and selected_race_urls:
+            import scripts.race_position_scanner as rpps
+        
+            urls = selected_race_urls
+            st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def update_progress(idx, total, msg):
+                if total > 0:
+                    progress_bar.progress((idx + 1) / total)
+                status_text.caption(msg)
+
+            with st.spinner("スクレイピング・パターン検出中... (しばらくお待ちください)"):
+                try:
+                    df_result = rpps.run_scan(
+                        urls=urls,
+                        entity=entity,
+                        min_patterns=int(min_patterns),
+                        output_csv=None,
+                        progress_callback=update_progress,
+                    )
+                    st.session_state.rpps_result_df = df_result
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+            progress_bar.empty()
+            status_text.empty()
+
+        # --- Result Display ---
+        df_res = st.session_state.rpps_result_df
+        if df_res is not None:
+            if df_res.empty:
+                st.warning("パターンが検出された馬はいませんでした。スキャン範囲や比較対象を変えてお試しください。")
+            else:
+                st.success(f"✅ {len(df_res)} 頭の候補を検出しました！")
             
-            if results:
-                st.subheader(f"🎯 R理論（Rebound） 次走注目馬 ({len(results)}頭)")
-                df_extracted = pd.DataFrame(results)
-                st.dataframe(df_extracted, use_container_width=True)
-            elif run_all_scan_btn or run_single_scan_btn:
-                st.info("該当する馬は見つかりませんでした。")
+                # Highlight warning rows
+                if "warning" in df_res.columns and df_res["warning"].any():
+                    st.warning("⚠️ 取消/除外馬が含まれるレースがあります。警告列を確認してください。")
+
+                st.subheader("📊 スコアランキング (スコア降順)")
+
+                def color_score(val):
+                    if val >= 7: return "background-color: #8B0000; color: white; font-weight: bold"
+                    if val >= 5: return "background-color: #cc0000; color: white; font-weight: bold"
+                    if val >= 3: return "background-color: #ff9900; color: black"
+                    if val >= 2: return "background-color: #ffff66; color: black"
+                    return ""
+
+                def color_best_period(val):
+                    return "background-color: #ccffcc; color: black" if val else ""
+
+                try:
+                    style_cols = {"score": color_score}
+                    if "is_best_period" in df_res.columns:
+                        style_cols["is_best_period"] = color_best_period
+                    styled_res = df_res.style.applymap(lambda v: color_score(v), subset=["score"])
+                    if "is_best_period" in df_res.columns:
+                        styled_res = styled_res.applymap(color_best_period, subset=["is_best_period"])
+
+                    # Display only readable columns
+                    display_cols = [c for c in [
+                        "race_id", "race_number", "horse_number", "horse_name",
+                        "jockey", "trainer", "patterns", "score",
+                        "odds", "rank", "is_best_period", "warning"
+                    ] if c in df_res.columns]
+
+                    st.dataframe(
+                        df_res[display_cols].style.applymap(
+                            color_score, subset=["score"] if "score" in display_cols else []
+                        ),
+                        column_config={
+                            "race_id": st.column_config.TextColumn("Race ID"),
+                            "race_number": st.column_config.NumberColumn("R", format="%dR"),
+                            "horse_number": st.column_config.NumberColumn("馬番"),
+                            "horse_name": st.column_config.TextColumn("馬名"),
+                            "jockey": st.column_config.TextColumn("騎手"),
+                            "trainer": st.column_config.TextColumn("厩舎"),
+                            "patterns": st.column_config.TextColumn("検出パターン"),
+                            "score": st.column_config.NumberColumn("🔥 スコア"),
+                            "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
+                            "rank": st.column_config.NumberColumn("人気", format="%d位"),
+                            "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
+                            "warning": st.column_config.TextColumn("⚠️ 警告"),
+                        },
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                except Exception as e_disp:
+                    st.warning(f"スタイルエラー: {e_disp}")
+                    st.dataframe(df_res, use_container_width=True)
+
+                # CSV download
+                csv_bytes = df_res.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
+                st.download_button(
+                    label="💾 CSVダウンロード",
+                    data=csv_bytes,
+                    file_name="pattern_scan_result.csv",
+                    mime="text/csv",
+                    key="rpps_csv_download"
+                )
+
+                st.divider()
+                st.subheader("📈 パターン別 検出数")
+                all_patterns = []
+                for pats in df_res.get("patterns", pd.Series()):
+                    if pats:
+                        all_patterns.extend(str(pats).split(","))
+                if all_patterns:
+                    pat_series = pd.Series(all_patterns).value_counts()
+                    st.bar_chart(pat_series)
+
+                # --- [NEW] Pattern Explanation AI Chat ---
+                st.divider()
+                st.subheader("🤖 パターン解説チャット")
+                st.caption("検出されたパターンがなぜその配置といえるのか、AIがロジカルに解説します。")
+            
+                # 永続化用のセッションステート
+                if 'rpps_chat_answer' not in st.session_state:
+                    st.session_state.rpps_chat_answer = ""
+            
+                # 入力フォームでUIを安定させる
+                with st.form(key="rpps_explanation_form", clear_on_submit=False):
+                    pattern_query = st.text_input("質問を入力してください（例：15頭立て13番と16頭立て13番が片方循環で一致するのはなぜ？）", value="", placeholder="例）13番がなぜ片方循環（表）で一致しているのか？")
+                    submit_button = st.form_submit_button("💬 質問する")
+                
+                if submit_button:
+                    if not pattern_query:
+                        st.warning("質問を入力してください。")
+                    else:
+                        with st.spinner("AIが解析中..."):
+                            try:
+                                from core.kaggle_client import KaggleChatClient
+                                chat_client = KaggleChatClient(api_key=st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+                            
+                                if not chat_client.client:
+                                    st.error("APIキーが設定されていないため、AIチャットを使用できません。")
+                                else:
+                                    system_prompt = """
+                                    あなたは競馬の「馬番配置パターン」分析のエキスパートです。
+                                    以下の定義と数式に基づいて、ユーザーの質問に対して具体的に計算過程を示して解説してください。
+
+                                    【用語・解析ロジック詳細】
+                                    1. 裏番号 (ura_number): (出走頭数 - 馬番) + 1
+                                    2. P1: 裏同士: 異なる頭数のレース間で裏番号が一致。
+                                    3. P2: 裏表逆: 一方の馬番 = 他方の裏番号。
+                                    4. P3: 1の位一致: 馬番は違うが1の位が同じ。
+                                    5. P4: 片方循環: 
+                                       - 大きい頭数のレース(N)の馬番(X)を、小さい頭数のレース(M)の頭数で割った余りで投影。
+                                       - 計算式: projected = ((X - 1) % M) + 1
+                                       - この projected が小さい頭数のレースの馬番（表）または裏番号（裏）と一致する場合。
+
+                                    【回答時の注意】
+                                    - 必ず質問にある数字を使って計算式を書いてください。
+                                    - 「片方循環(表)」であれば、大きい頭数から算出した projected が、小さい頭数側の馬番と等しいことを説明してください。
+                                    - 丁寧な日本語で回答してください。
+                                    """
+                                
+                                    j_answer = chat_client.generate_content(
+                                        contents=[system_prompt, f"ユーザーの質問: {pattern_query}"],
+                                        temperature=0.2
+                                    )
+                                    st.session_state.rpps_chat_answer = j_answer
+                            except Exception as e:
+                                st.error(f"AI解析中にエラーが発生しました: {e}")
+
+                # 答えがある場合は表示
+                if st.session_state.rpps_chat_answer:
+                    st.markdown("### 📝 AIの解説")
+                    st.markdown(st.session_state.rpps_chat_answer)
+                    st.success("解説が完了しました。")
+                    if st.button("🗑️ 解説を消去"):
+                        st.session_state.rpps_chat_answer = ""
+                        st.rerun()
+
+    # ──────────────────────────────────────────────
+    # 📦 データ保管庫 (Storage Hub) タブ
+    # ──────────────────────────────────────────────
+
+    with nlab_tab4:
+        st.subheader("🎯 馬番配置AI — 3層構造 意思決定エンジン")
+        st.caption("設計思想：「どの馬が来るか」ではなく「市場の歪みを拾う」AI")
+
+        bango_tab1, bango_tab2, bango_tab3, bango_tab4 = st.tabs([
+            "🏟️ Layer1 レース選別",
+            "🐴 Layer2 馬抽出（配置スコア）",
+            "🎫 Layer3 馬券最適化",
+            "📖 スコア設定",
+        ])
+
+        # ------ Layer1：レース選別 ------
+        with bango_tab1:
+            st.markdown("#### レース選別 — このレースを買う価値があるか？")
+            st.info("堅すぎるレース・ノイズが多いレースを除外し、配置理論が効く局面のみを選別します。")
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                bango_head_count = st.number_input("頭数", min_value=2, max_value=18, value=16,
+                                                    key="bango_head_count")
+                bango_race_class = st.selectbox("クラス",
+                    ["未勝利", "1勝クラス", "2勝クラス", "3勝クラス", "オープン", "重賞"],
+                    key="bango_race_class")
+            with col2:
+                bango_pop_conc = st.slider("1位人気の単勝支持率 %", 10, 80, 30, key="bango_pop_conc")
+                bango_track_bias = st.selectbox("脚質偏り",
+                    ["バランス型", "先行有利", "差し有利", "逃げ有利"], key="bango_track_bias")
+            with col3:
+                bango_venue = st.selectbox("競馬場",
+                    ["東京", "中山", "阪神", "京都", "中京", "小倉", "函館", "札幌", "福島", "新潟"],
+                    key="bango_venue")
+                bango_track_cond = st.selectbox("馬場状態", ["良", "稍重", "重", "不良"],
+                                                 key="bango_track_cond")
+
+            if st.button("🔍 レース価値を判定", type="primary", key="bango_layer1_btn"):
+                score = 50
+                if bango_head_count >= 14: score += 15
+                elif bango_head_count <= 8: score -= 15
+                if bango_pop_conc >= 50: score -= 20
+                elif bango_pop_conc <= 25: score += 10
+                if bango_track_cond in ["重", "不良"]: score += 10
+                if bango_track_bias in ["先行有利", "逃げ有利"]: score -= 5
+
+                race_value = min(100, max(0, score))
+                collapse_score = min(100, max(0,
+                    (15 if bango_head_count >= 14 else 0) +
+                    (20 if bango_track_bias == "先行有利" and bango_head_count >= 14 else 0) +
+                    (10 if bango_track_cond in ["重", "不良"] else 0)
+                ))
+                avoid = race_value < 40
+
+                col_a, col_b, col_c = st.columns(3)
+                color = "🟢" if race_value >= 60 else ("🟡" if race_value >= 40 else "🔴")
+                col_a.metric("レース期待値スコア", f"{color} {race_value} / 100")
+                col_b.metric("崩壊スコア（波乱度）", f"{collapse_score} / 100")
+                col_c.metric("判定", "✅ 勝負レース" if not avoid else "⛔ 見送り推奨")
+                if avoid:
+                    st.warning("このレースは見送りを推奨します。")
+                elif race_value >= 70:
+                    st.success("高期待値レースです。Layer2 へ進んでください。")
+                else:
+                    st.info("配置スコアが高い馬がいれば検討可。")
+
+        # ------ Layer2：馬抽出 ------
+        with bango_tab2:
+            st.markdown("#### 馬抽出 — 市場が過小評価している馬を見つける")
+
+            num_horses = st.number_input("出走頭数", 2, 18, 8, key="bango_num_horses")
+
+            cols_hdr = st.columns([1, 2, 2, 2, 2, 2])
+            for h_lbl, c in zip(["馬番", "馬名", "人気", "単勝オッズ", "◎", "●"], cols_hdr):
+                c.markdown(f"**{h_lbl}**")
+
+            horse_data = []
+            for i in range(int(num_horses)):
+                cols = st.columns([1, 2, 2, 2, 2, 2])
+                bn = cols[0].number_input("", 1, 18, i+1, key=f"bango_bn_{i}",
+                                           label_visibility="collapsed")
+                nm = cols[1].text_input("", f"馬{i+1}", key=f"bango_nm_{i}",
+                                         label_visibility="collapsed")
+                nk = cols[2].number_input("", 1, 18, i+1, key=f"bango_nk_{i}",
+                                           label_visibility="collapsed")
+                od = cols[3].number_input("", 1.0, 999.9, float(5+i*3), 0.1,
+                                           key=f"bango_od_{i}", label_visibility="collapsed")
+                mr = cols[4].checkbox("◎", key=f"bango_mr_{i}")
+                tm = cols[5].checkbox("●", key=f"bango_tm_{i}")
+                horse_data.append({"馬番": bn, "馬名": nm, "人気": nk,
+                                   "単勝オッズ": od, "◎": mr, "●": tm})
+
+            st.markdown("---")
+            st.markdown("#### 配置パターン入力")
+            pc1, pc2 = st.columns(2)
+            with pc1:
+                ura_doshi = st.text_input("裏同士（馬番カンマ区切り）", key="bango_ura_doshi",
+                                           placeholder="例: 3,5")
+                ura_hyou  = st.text_input("裏表逆（馬番カンマ区切り）", key="bango_ura_hyou",
+                                           placeholder="例: 1,16")
+            with pc2:
+                ichinohi  = st.text_input("一の位被り（馬番カンマ区切り）", key="bango_ichi",
+                                           placeholder="例: 3,13")
+                henhou    = st.text_input("片方循環（馬番カンマ区切り）", key="bango_hen",
+                                           placeholder="例: 7,15")
+
+            if st.button("🐴 配置スコアを算出", type="primary", key="bango_layer2_btn"):
+                import math as _bmath
+                def _bango_parse(s):
+                    try: return set(int(x.strip()) for x in s.split(",") if x.strip())
+                    except: return set()
+
+                ura_set  = _bango_parse(ura_doshi)
+                hyou_set = _bango_parse(ura_hyou)
+                ichi_set = _bango_parse(ichinohi)
+                hen_set  = _bango_parse(henhou)
+
+                results = []
+                for h in horse_data:
+                    bn = h["馬番"]; sc = 0; patterns = []
+                    if bn in ura_set:  sc += 3; patterns.append("裏同士(3pt)")
+                    if bn in hyou_set: sc += 3; patterns.append("裏表逆(3pt)")
+                    if bn in ichi_set: sc += 1; patterns.append("一の位被り(1pt)")
+                    if bn in hen_set:  sc += 4; patterns.append("片方循環(4pt)")
+                    if h["◎"]:         sc += 6; patterns.append("◎マーク(+6pt)")
+                    if h["●"]:         sc += 4; patterns.append("●マーク(+4pt)")
+                    if h["人気"] >= 7: sc += 1; patterns.append("人気薄(+1pt)")
+                    value = round(sc * _bmath.log(max(1.1, h["単勝オッズ"])), 2)
+                    results.append({
+                        "馬番": bn, "馬名": h["馬名"], "人気": h["人気"],
+                        "単勝オッズ": h["単勝オッズ"], "配置スコア": sc,
+                        "期待値スコア": value,
+                        "該当パターン": " / ".join(patterns) if patterns else "—",
+                    })
+
+                df_bango = pd.DataFrame(results).sort_values("期待値スコア", ascending=False)
+                st.dataframe(df_bango, use_container_width=True)
+                st.session_state["bango_results"] = df_bango.to_dict("records")
+
+                top = df_bango[df_bango["配置スコア"] > 0]
+                if not top.empty:
+                    st.success(
+                        f"注目馬：{top.iloc[0]['馬名']}（{top.iloc[0]['馬番']}番）"
+                        f"— 期待値スコア {top.iloc[0]['期待値スコア']}"
+                    )
+
+        # ------ Layer3：馬券最適化 ------
+        with bango_tab3:
+            st.markdown("#### 馬券最適化 — 単・複・ワイド・見送りを自動判定")
+            if "bango_results" not in st.session_state:
+                st.warning("先に Layer2 で配置スコアを算出してください。")
+            else:
+                df3 = pd.DataFrame(st.session_state["bango_results"])
+                df3 = df3.sort_values("期待値スコア", ascending=False)
+                st.dataframe(
+                    df3[["馬番", "馬名", "人気", "単勝オッズ", "配置スコア", "期待値スコア"]],
+                    use_container_width=True
+                )
+                st.markdown("---")
+                st.markdown("#### 推奨券種")
+                for _, row in df3[df3["配置スコア"] > 0].iterrows():
+                    od = row["単勝オッズ"]; sc = row["配置スコア"]
+                    if sc >= 8 and od >= 10:
+                        adv = "🎯 **単勝** 推奨（高スコア×高オッズ）"
+                    elif sc >= 5 and od >= 5:
+                        adv = "📗 **複勝＋ワイド** 推奨（安定回収）"
+                    elif sc >= 3:
+                        adv = "📘 **ワイド相手** として採用"
+                    else:
+                        adv = "⚪ 様子見"
+                    st.write(
+                        f"**{int(row['馬番'])}番 {row['馬名']}**"
+                        f"（人気{int(row['人気'])} / {od}倍）→ {adv}"
+                    )
+                st.markdown("---")
+                bankroll = st.number_input("本日の軍資金（円）", 100, 100000, 3000, 100,
+                                            key="bango_bankroll")
+                kelly = st.slider("ケリー基準（使用割合 %）", 5, 30, 10, key="bango_kelly")
+                bet = int(bankroll * kelly / 100 / 100) * 100
+                st.info(f"1点あたりの目安：**{bet:,}円**（{kelly}%基準）")
+
+        # ------ スコア設定 ------
+        with bango_tab4:
+            st.markdown("""
+            | パターン | ベーススコア | 加算条件 | 加点 |
+            |---|---|---|---|
+            | 裏同士 / 裏表逆 | 3pt | 騎手・厩舎の両方で一致 | +4pt |
+            | 片方循環 | 4pt | 3種類以上のパターン重複 | +5pt |
+            | 一の位被り | 1pt | 7番人気以下の人気薄 | +1pt |
+            | ◎マーク | +6pt | 全出走が同一配置タイプ | 最優先 |
+            | ●マーク | +4pt | 異競馬場・同レース番号・同配置 | 高評価 |
+            """)
+            st.markdown("""
+            #### 設計3原則
+            1. **市場の歪みを拾う** — オッズが過小評価している馬を狙う
+            2. **配置スコアはレース選別と結合して初めて意味を持つ**
+            3. **買い方（券種・点数・配分）で成績は大きく変わる** — Layer3を必ず通す
+            """)
+
 
 # ──────────────────────────────────────────────
 # 💾 ロジック置き場
@@ -4232,277 +4715,7 @@ if nav == "💾 ロジック置き場":
 # ──────────────────────────────────────────────
 # 🔬 実験その3: 馬番パターンスキャナー Pro v2.0
 # ──────────────────────────────────────────────
-if nav == "🔬 実験その３(馬番パターン)":
-    st.header("🔬 実験その３: 馬番ポジション・パターンスキャナー Pro v2.0")
-    st.markdown("""
-    同日同場のレース間で、騎手・厩舎の **馬番配置** に特定のパターンを検出し、**穴馬候補をスコアリング**するツールです。
 
-    #### 検出パターン (v2.0)
-    | パターン | 条件 |
-    |---|---|
-    | **P1: 裏同士** | 異なる頭数のレース間で裏番号が一致 |
-    | **P2: 裏表逆** | 一方の馬番 = 他方の裏番号 |
-    | **P3: 一の位一致** | 馬番の一の位が同じ |
-    | **P4: 表循環** | 大頭数側の馬番を小頭数で循環させると一致 |
-    | **P4: 裏循環** | 大頭数側の裏番を小頭数で循環させた値が小頭数側の裏番と一致 |
-
-    #### スコアリング (v2.0)
-    | ボーナス | 条件 | 加点 |
-    |---|---|---|
-    | Base | パターン1種類ごと | +1 |
-    | Overlap | 3種類以上同時検出 | +3 |
-    | Strategic Entry | 当日のEntity出走がちょうど2回 | +3 |
-    | Longshot | 7人気以上 or オッズ20倍以上 | +1 |
-    | Best Period | 開催日数3〜8日目 | +1 |
-    """)
-
-    st.divider()
-
-    col_d1, col_d2 = st.columns([3, 1])
-    with col_d1:
-        default_date = datetime.now().strftime("%Y%m%d")
-        rpps_date = st.text_input("スキャン対象日付 (YYYYMMDD)", value=default_date, key="rpps_date_input")
-    with col_d2:
-        st.write("") 
-        fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", use_container_width=True)
-
-    if fetch_venues_btn and rpps_date:
-        res = scraper.get_race_list_for_date(rpps_date)
-        if not res:
-            st.error(f"⚠️ {rpps_date} の開催場を取得できませんでした。データセンターIP制限によりブロックされているか、該当日の開催が空の可能性があります。少し時間を置いて再試行してください。")
-        else:
-            st.success(f"✅ {len(res)} レース分の開催情報を取得しました。")
-        st.session_state.rpps_venue_list = res
-
-    selected_race_urls = []
-    if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
-        race_list = st.session_state.rpps_venue_list
-        # Group by venue
-        venues = {}
-        for r in race_list:
-            v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
-            if v_code not in venues: venues[v_code] = []
-            venues[v_code].append(r)
-        
-        VENUE_NAMES = {
-            "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京","06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
-            "36":"大井","42":"船橋","43":"川崎","44":"浦和","65":"園田","62":"名古屋","54":"門別","50":"帯広","45":"盛岡","46":"水沢"
-        }
-        v_options = list(venues.keys())
-        def format_v(c):
-            return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
-        
-        selected_v = st.selectbox("スキャンする競馬場を選択", v_options, format_func=format_v, key="rpps_selected_venue")
-        if selected_v:
-            # Generate URLs for all races in this venue
-            for r in venues[selected_v]:
-                r_id = r['race_id']
-                selected_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
-
-    st.divider()
-
-    col_l, col_r = st.columns([1, 2])
-    with col_l:
-        entity = st.radio("👤 比較対象", options=["jockey", "trainer", "both"], index=0,
-                          format_func=lambda x: {"jockey": "🏇 騎手", "trainer": "🏋 厩舎", "both": "🔀 両方"}.get(x, x),
-                          key="rpps_entity", horizontal=True)
-        min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
-
-    with col_r:
-        st.info(f"""
-        **現在の設定**: {len(selected_race_urls)} レースをスキャン対象としています。
-        
-        **スコア目安**:
-        - 🔴 7以上: 超注目穴馬
-        - 🟠 5〜6: 要警戒穴馬
-        - 🟡 3〜4: 気になる馬
-        - ⚪ 1〜2: 参考程度
-        """)
-
-    st.divider()
-
-    if 'rpps_result_df' not in st.session_state:
-        st.session_state.rpps_result_df = None
-
-    scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
-
-    if scan_btn and selected_race_urls:
-        import scripts.race_position_scanner as rpps
-        
-        urls = selected_race_urls
-        st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        def update_progress(idx, total, msg):
-            if total > 0:
-                progress_bar.progress((idx + 1) / total)
-            status_text.caption(msg)
-
-        with st.spinner("スクレイピング・パターン検出中... (しばらくお待ちください)"):
-            try:
-                df_result = rpps.run_scan(
-                    urls=urls,
-                    entity=entity,
-                    min_patterns=int(min_patterns),
-                    output_csv=None,
-                    progress_callback=update_progress,
-                )
-                st.session_state.rpps_result_df = df_result
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-                import traceback
-                st.code(traceback.format_exc())
-
-        progress_bar.empty()
-        status_text.empty()
-
-    # --- Result Display ---
-    df_res = st.session_state.rpps_result_df
-    if df_res is not None:
-        if df_res.empty:
-            st.warning("パターンが検出された馬はいませんでした。スキャン範囲や比較対象を変えてお試しください。")
-        else:
-            st.success(f"✅ {len(df_res)} 頭の候補を検出しました！")
-            
-            # Highlight warning rows
-            if "warning" in df_res.columns and df_res["warning"].any():
-                st.warning("⚠️ 取消/除外馬が含まれるレースがあります。警告列を確認してください。")
-
-            st.subheader("📊 スコアランキング (スコア降順)")
-
-            def color_score(val):
-                if val >= 7: return "background-color: #8B0000; color: white; font-weight: bold"
-                if val >= 5: return "background-color: #cc0000; color: white; font-weight: bold"
-                if val >= 3: return "background-color: #ff9900; color: black"
-                if val >= 2: return "background-color: #ffff66; color: black"
-                return ""
-
-            def color_best_period(val):
-                return "background-color: #ccffcc; color: black" if val else ""
-
-            try:
-                style_cols = {"score": color_score}
-                if "is_best_period" in df_res.columns:
-                    style_cols["is_best_period"] = color_best_period
-                styled_res = df_res.style.applymap(lambda v: color_score(v), subset=["score"])
-                if "is_best_period" in df_res.columns:
-                    styled_res = styled_res.applymap(color_best_period, subset=["is_best_period"])
-
-                # Display only readable columns
-                display_cols = [c for c in [
-                    "race_id", "race_number", "horse_number", "horse_name",
-                    "jockey", "trainer", "patterns", "score",
-                    "odds", "rank", "is_best_period", "warning"
-                ] if c in df_res.columns]
-
-                st.dataframe(
-                    df_res[display_cols].style.applymap(
-                        color_score, subset=["score"] if "score" in display_cols else []
-                    ),
-                    column_config={
-                        "race_id": st.column_config.TextColumn("Race ID"),
-                        "race_number": st.column_config.NumberColumn("R", format="%dR"),
-                        "horse_number": st.column_config.NumberColumn("馬番"),
-                        "horse_name": st.column_config.TextColumn("馬名"),
-                        "jockey": st.column_config.TextColumn("騎手"),
-                        "trainer": st.column_config.TextColumn("厩舎"),
-                        "patterns": st.column_config.TextColumn("検出パターン"),
-                        "score": st.column_config.NumberColumn("🔥 スコア"),
-                        "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
-                        "rank": st.column_config.NumberColumn("人気", format="%d位"),
-                        "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
-                        "warning": st.column_config.TextColumn("⚠️ 警告"),
-                    },
-                    use_container_width=True,
-                    hide_index=True,
-                )
-            except Exception as e_disp:
-                st.warning(f"スタイルエラー: {e_disp}")
-                st.dataframe(df_res, use_container_width=True)
-
-            # CSV download
-            csv_bytes = df_res.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
-            st.download_button(
-                label="💾 CSVダウンロード",
-                data=csv_bytes,
-                file_name="pattern_scan_result.csv",
-                mime="text/csv",
-                key="rpps_csv_download"
-            )
-
-            st.divider()
-            st.subheader("📈 パターン別 検出数")
-            all_patterns = []
-            for pats in df_res.get("patterns", pd.Series()):
-                if pats:
-                    all_patterns.extend(str(pats).split(","))
-            if all_patterns:
-                pat_series = pd.Series(all_patterns).value_counts()
-                st.bar_chart(pat_series)
-
-            # --- [NEW] Pattern Explanation AI Chat ---
-            st.divider()
-            st.subheader("🤖 パターン解説チャット")
-            st.caption("検出されたパターンがなぜその配置といえるのか、AIがロジカルに解説します。")
-            
-            # 永続化用のセッションステート
-            if 'rpps_chat_answer' not in st.session_state:
-                st.session_state.rpps_chat_answer = ""
-            
-            # 入力フォームでUIを安定させる
-            with st.form(key="rpps_explanation_form", clear_on_submit=False):
-                pattern_query = st.text_input("質問を入力してください（例：15頭立て13番と16頭立て13番が片方循環で一致するのはなぜ？）", value="", placeholder="例）13番がなぜ片方循環（表）で一致しているのか？")
-                submit_button = st.form_submit_button("💬 質問する")
-                
-            if submit_button:
-                if not pattern_query:
-                    st.warning("質問を入力してください。")
-                else:
-                    with st.spinner("AIが解析中..."):
-                        try:
-                            from core.kaggle_client import KaggleChatClient
-                            chat_client = KaggleChatClient(api_key=st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"))
-                            
-                            if not chat_client.client:
-                                st.error("APIキーが設定されていないため、AIチャットを使用できません。")
-                            else:
-                                system_prompt = """
-                                あなたは競馬の「馬番配置パターン」分析のエキスパートです。
-                                以下の定義と数式に基づいて、ユーザーの質問に対して具体的に計算過程を示して解説してください。
-
-                                【用語・解析ロジック詳細】
-                                1. 裏番号 (ura_number): (出走頭数 - 馬番) + 1
-                                2. P1: 裏同士: 異なる頭数のレース間で裏番号が一致。
-                                3. P2: 裏表逆: 一方の馬番 = 他方の裏番号。
-                                4. P3: 1の位一致: 馬番は違うが1の位が同じ。
-                                5. P4: 片方循環: 
-                                   - 大きい頭数のレース(N)の馬番(X)を、小さい頭数のレース(M)の頭数で割った余りで投影。
-                                   - 計算式: projected = ((X - 1) % M) + 1
-                                   - この projected が小さい頭数のレースの馬番（表）または裏番号（裏）と一致する場合。
-
-                                【回答時の注意】
-                                - 必ず質問にある数字を使って計算式を書いてください。
-                                - 「片方循環(表)」であれば、大きい頭数から算出した projected が、小さい頭数側の馬番と等しいことを説明してください。
-                                - 丁寧な日本語で回答してください。
-                                """
-                                
-                                j_answer = chat_client.generate_content(
-                                    contents=[system_prompt, f"ユーザーの質問: {pattern_query}"],
-                                    temperature=0.2
-                                )
-                                st.session_state.rpps_chat_answer = j_answer
-                        except Exception as e:
-                            st.error(f"AI解析中にエラーが発生しました: {e}")
-
-            # 答えがある場合は表示
-            if st.session_state.rpps_chat_answer:
-                st.markdown("### 📝 AIの解説")
-                st.markdown(st.session_state.rpps_chat_answer)
-                st.success("解説が完了しました。")
-                if st.button("🗑️ 解説を消去"):
-                    st.session_state.rpps_chat_answer = ""
-                    st.rerun()
 
 # ──────────────────────────────────────────────
 # 📦 データ保管庫 (Storage Hub) タブ
@@ -4680,273 +4893,6 @@ if nav == "📦 データ保管庫":
         """)
     else:
         st.info("保管庫は現在空です。")
-
-# ──────────────────────────────────────────────
-# 🔭 N氏の研究室 — セパレータ選択時
-# ──────────────────────────────────────────────
-if nav == "── 🔭 N氏の研究室 ──":
-    st.header("🔭 N氏の研究室")
-    st.markdown("""
-    サイドバーから研究室内のページを選択してください。
-
-    | ページ | 内容 |
-    |---|---|
-    | 📚 RMHS分析 | R/M/H/S理論による馬の次走傾向分析 |
-    | 🏇 過去走R理論スキャン | 複数レースから「R理論」該当馬を一括抽出 |
-    | 🔬 実験その３(馬番パターン) | 騎手・厩舎の馬番配置パターンスキャナー |
-    | 🎯 馬番配置AI | 3層構造の意思決定エンジン（新機能） |
-    """)
-
-# ──────────────────────────────────────────────
-# 🎯 馬番配置AI — 3層構造 意思決定エンジン
-# ──────────────────────────────────────────────
-if nav == "🎯 馬番配置AI":
-    import math as _math
-
-    st.title("🎯 馬番配置AI")
-    st.caption("Layer1: レース選別 → Layer2: 馬抽出 → Layer3: 馬券最適化")
-    st.markdown("""
-    **設計思想**：「どの馬が来るか」ではなく「市場の歪みを拾う」AI
-
-    3つのLayerを順番に使うことで、期待値の高い馬券を絞り込みます。
-    """)
-
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🏟️ Layer1 レース選別",
-        "🐴 Layer2 馬抽出（配置スコア）",
-        "🎫 Layer3 馬券最適化",
-        "📖 スコアリング設定",
-    ])
-
-    # ============================================================
-    # タブ1：レース選別AI
-    # ============================================================
-    with tab1:
-        st.subheader("レース選別 — このレースを買う価値があるか？")
-        st.info("堅すぎるレース・ノイズが多いレースを除外し、配置理論が効く局面のみを選別します。")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            head_count = st.number_input("頭数", min_value=2, max_value=18, value=16, step=1)
-            race_class = st.selectbox("クラス", ["未勝利", "1勝クラス", "2勝クラス", "3勝クラス", "オープン", "重賞"])
-        with col2:
-            popularity_concentration = st.slider(
-                "人気集中度（1位人気の単勝支持率 %）",
-                min_value=10, max_value=80, value=30
-            )
-            track_bias = st.selectbox("脚質偏り", ["バランス型", "先行有利", "差し有利", "逃げ有利"])
-        with col3:
-            venue = st.selectbox("競馬場", ["東京", "中山", "阪神", "京都", "中京", "小倉", "函館", "札幌", "福島", "新潟"])
-            track_cond = st.selectbox("馬場状態", ["良", "稍重", "重", "不良"])
-
-        if st.button("🔍 レース価値を判定", type="primary", key="bai_layer1_btn"):
-            score = 50
-            if head_count >= 14:
-                score += 15
-            elif head_count <= 8:
-                score -= 15
-            if popularity_concentration >= 50:
-                score -= 20
-            elif popularity_concentration <= 25:
-                score += 10
-            if track_cond in ["重", "不良"]:
-                score += 10
-            if track_bias in ["先行有利", "逃げ有利"]:
-                score -= 5
-
-            race_value = min(100, max(0, score))
-            collapse_score = min(100, max(0,
-                (15 if head_count >= 14 else 0) +
-                (20 if track_bias == "先行有利" and head_count >= 14 else 0) +
-                (10 if track_cond in ["重", "不良"] else 0)
-            ))
-            avoid = race_value < 40
-
-            st.markdown("---")
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                color = "🟢" if race_value >= 60 else ("🟡" if race_value >= 40 else "🔴")
-                st.metric("レース期待値スコア", f"{color} {race_value} / 100")
-            with col_b:
-                st.metric("崩壊スコア（波乱度）", f"{collapse_score} / 100")
-            with col_c:
-                verdict = "✅ 勝負レース" if not avoid else "⛔ 見送り推奨"
-                st.metric("判定", verdict)
-
-            if avoid:
-                st.warning("このレースは見送りを推奨します。配置理論が機能しにくい条件です。")
-            elif race_value >= 70:
-                st.success("配置理論が効きやすい高期待値レースです。Layer2 へ進んでください。")
-            else:
-                st.info("普通のレースです。配置スコアが高い馬がいれば検討可。")
-
-    # ============================================================
-    # タブ2：馬抽出AI（配置スコア）
-    # ============================================================
-    with tab2:
-        st.subheader("馬抽出 — 市場が過小評価している馬を見つける")
-        st.info("◎マーク・●マーク・配置パターンスコアを統合し、妙味のある馬を抽出します。")
-
-        st.markdown("#### 馬番入力（最大18頭）")
-        num_horses = st.number_input("出走頭数", min_value=2, max_value=18, value=8, step=1, key="bai_num_h")
-
-        cols_header = st.columns([1, 2, 2, 2, 2, 2])
-        cols_header[0].markdown("**馬番**")
-        cols_header[1].markdown("**馬名**")
-        cols_header[2].markdown("**人気**")
-        cols_header[3].markdown("**単勝オッズ**")
-        cols_header[4].markdown("**◎マーク**")
-        cols_header[5].markdown("**●マーク**")
-
-        horse_data = []
-        for i in range(int(num_horses)):
-            cols = st.columns([1, 2, 2, 2, 2, 2])
-            bango = cols[0].number_input("", min_value=1, max_value=18, value=i+1,
-                                          key=f"bai_bango_{i}", label_visibility="collapsed")
-            name  = cols[1].text_input("", value=f"馬{i+1}", key=f"bai_name_{i}",
-                                        label_visibility="collapsed")
-            ninki = cols[2].number_input("", min_value=1, max_value=18, value=i+1,
-                                          key=f"bai_ninki_{i}", label_visibility="collapsed")
-            odds  = cols[3].number_input("", min_value=1.0, max_value=999.9, value=5.0+i*3,
-                                          step=0.1, key=f"bai_odds_{i}", label_visibility="collapsed")
-            maru  = cols[4].checkbox("◎", key=f"bai_maru_{i}")
-            tama  = cols[5].checkbox("●", key=f"bai_tama_{i}")
-            horse_data.append({
-                "馬番": bango, "馬名": name, "人気": ninki,
-                "単勝オッズ": odds, "◎": maru, "●": tama,
-            })
-
-        st.markdown("---")
-        st.markdown("#### 配置パターン一括入力")
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            ura_doshi = st.text_input("裏同士（馬番をカンマ区切り）", placeholder="例: 3,5", key="bai_ura_doshi")
-            ura_hyou  = st.text_input("裏表逆（馬番をカンマ区切り）", placeholder="例: 1,16", key="bai_ura_hyou")
-        with col_p2:
-            ichinohi  = st.text_input("一の位被り（馬番をカンマ区切り）", placeholder="例: 3,13", key="bai_ichinohi")
-            henhou    = st.text_input("片方循環（馬番をカンマ区切り）", placeholder="例: 7,15", key="bai_henhou")
-
-        if st.button("🐴 配置スコアを算出", type="primary", key="bai_layer2_btn"):
-            def _parse_nums(s):
-                try:
-                    return set(int(x.strip()) for x in s.split(",") if x.strip())
-                except Exception:
-                    return set()
-
-            ura_set  = _parse_nums(ura_doshi)
-            hyou_set = _parse_nums(ura_hyou)
-            ichi_set = _parse_nums(ichinohi)
-            hen_set  = _parse_nums(henhou)
-
-            results = []
-            for h in horse_data:
-                bn = h["馬番"]
-                score = 0
-                patterns = []
-                if bn in ura_set:
-                    score += 3; patterns.append("裏同士(3pt)")
-                if bn in hyou_set:
-                    score += 3; patterns.append("裏表逆(3pt)")
-                if bn in ichi_set:
-                    score += 1; patterns.append("一の位被り(1pt)")
-                if bn in hen_set:
-                    score += 4; patterns.append("片方循環(4pt)")
-                if h["◎"]:
-                    score += 6; patterns.append("◎マーク(+6pt)")
-                if h["●"]:
-                    score += 4; patterns.append("●マーク(+4pt)")
-                if h["人気"] >= 7:
-                    score += 1; patterns.append("人気薄(+1pt)")
-                value = round(score * _math.log(max(1.1, h["単勝オッズ"])), 2)
-                results.append({
-                    "馬番": bn,
-                    "馬名": h["馬名"],
-                    "人気": h["人気"],
-                    "単勝オッズ": h["単勝オッズ"],
-                    "配置スコア": score,
-                    "期待値スコア(value)": value,
-                    "該当パターン": " / ".join(patterns) if patterns else "—",
-                })
-
-            df_bai = pd.DataFrame(results).sort_values("期待値スコア(value)", ascending=False)
-            st.dataframe(df_bai, use_container_width=True)
-
-            top_bai = df_bai[df_bai["配置スコア"] > 0]
-            if not top_bai.empty:
-                st.success(
-                    f"注目馬：{top_bai.iloc[0]['馬名']}（馬番{top_bai.iloc[0]['馬番']}）"
-                    f"— 期待値スコア {top_bai.iloc[0]['期待値スコア(value)']}"
-                )
-
-            st.session_state["bango_ai_results"] = df_bai.to_dict("records")
-
-    # ============================================================
-    # タブ3：馬券最適化AI
-    # ============================================================
-    with tab3:
-        st.subheader("馬券最適化 — 単・複・ワイド・見送りを自動判定")
-
-        if "bango_ai_results" not in st.session_state:
-            st.warning("先に Layer2 で配置スコアを算出してください。")
-        else:
-            df3 = pd.DataFrame(st.session_state["bango_ai_results"])
-            df3 = df3.sort_values("期待値スコア(value)", ascending=False)
-
-            st.dataframe(
-                df3[["馬番", "馬名", "人気", "単勝オッズ", "配置スコア", "期待値スコア(value)"]],
-                use_container_width=True
-            )
-
-            st.markdown("---")
-            st.markdown("#### 推奨券種")
-
-            for _, row in df3[df3["配置スコア"] > 0].iterrows():
-                odds_val = row["単勝オッズ"]
-                sc = row["配置スコア"]
-                name = row["馬名"]
-                bango = row["馬番"]
-
-                if sc >= 8 and odds_val >= 10:
-                    advice = "🎯 **単勝** 推奨（高スコア×高オッズ — 期待値高）"
-                elif sc >= 5 and odds_val >= 5:
-                    advice = "📗 **複勝 + ワイド** 推奨（安定回収を狙う）"
-                elif sc >= 3:
-                    advice = "📘 **ワイド相手** として採用（配置あり、確認要）"
-                else:
-                    advice = "⚪ 様子見（スコア低）"
-
-                st.write(f"**{int(bango)}番 {name}**（人気{int(row['人気'])} / {odds_val}倍）→ {advice}")
-
-            st.markdown("---")
-            st.markdown("#### 資金配分メモ")
-            bankroll = st.number_input("本日の軍資金（円）", min_value=100, max_value=100000,
-                                        value=3000, step=100, key="bai_bankroll")
-            kelly = st.slider("ケリー基準（使用割合 %）", 5, 30, 10, key="bai_kelly")
-            bet_amount = int(bankroll * kelly / 100 / 100) * 100
-            st.info(f"1点あたりの目安：**{bet_amount:,}円**（{kelly}%基準）")
-
-    # ============================================================
-    # タブ4：スコアリング設定
-    # ============================================================
-    with tab4:
-        st.subheader("スコアリング設定")
-        st.markdown("""
-        | パターン | ベーススコア | 加算条件 | 加点 |
-        |---|---|---|---|
-        | 裏同士 / 裏表逆 | 3pt | 騎手・厩舎の両方で一致 | +4pt |
-        | 片方循環 | 4pt | 3種類以上のパターン重複 | +5pt |
-        | 一の位被り | 1pt | 7番人気以下の人気薄 | +1pt |
-        | ◎マーク | +6pt | 全出走が同一配置タイプ（騎手・厩舎） | 最優先評価 |
-        | ●マーク | +4pt | 異競馬場・同レース番号・同配置 | 高評価 |
-        """)
-
-        st.markdown("---")
-        st.markdown("""
-        #### 設計3原則
-        1. **市場の歪みを拾う** — 「どの馬が来るか」ではなく「オッズが過小評価している馬」を狙う
-        2. **配置スコアはレース選別と結合して初めて意味を持つ** — Layer1なしでLayer2だけを使わない
-        3. **買い方（券種・点数・配分）で成績は大きく変わる** — Layer3を必ず通す
-        """)
 
 # ──────────────────────────────────────────────
 # --- Footer ---
