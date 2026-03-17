@@ -19,6 +19,7 @@ from datetime import datetime
 import random
 import asyncio
 from scrapling import DynamicFetcher
+from scrapling.fetchers import Fetcher as ScraplingFetcher
 import logging
 logger = logging.getLogger(__name__)
 # Silence Scrapling's internal noisy warnings/logs
@@ -316,12 +317,27 @@ def fetch_sanrenpuku_odds(race_id):
         "compress": "1",
         "output": "json",
     }
-    headers = _get_headers(referer=f"https://{domain}/odds/index.html?type=b7&race_id={race_id}", ajax=True)
+    api_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": f"https://{domain}/odds/index.html?type=b7&race_id={race_id}",
+        "X-Requested-With": "XMLHttpRequest",
+    }
 
     try:
-        response = requests.get(api_url, params=params, headers=headers, timeout=10)
-        data = response.json()
+        from curl_cffi import requests as _curl
+        _resp = _curl.get(api_url, params=params, headers=api_headers, impersonate="chrome120", timeout=15)
+        if _resp.status_code != 200:
+            raise ValueError(f"HTTP {_resp.status_code}")
+        data = _resp.json()
+        api_status = data.get('status', '')
         raw = data.get('data', '')
+        reason = data.get('reason', '')
+        if not raw or api_status in ('NG',) or reason in ('history odds empty', 'result odds empty'):
+            logger.info(f"Sanrenpuku API: status={api_status} reason={reason} for {race_id}")
+            return []
         if raw and isinstance(raw, str) and len(raw) > 10:
             decoded = base64.b64decode(raw)
             try:

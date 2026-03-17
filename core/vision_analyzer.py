@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class VisionOddsAnalyzer:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-1.5-flash"
+        self.model_id = "gemini-3.1-flash-lite-preview"
 
     def analyze_odds_image(self, image_bytes: bytes):
         """
@@ -58,7 +58,7 @@ class VisionOddsAnalyzer:
         }
 
         import time
-        models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.1-flash-lite-preview"]
+        models_to_try = ["gemini-3.1-flash-lite-preview"]
         last_error = ""
 
         for model_id in models_to_try:

@@ -694,6 +694,173 @@ def generate_10point_strategy(df, chaos_rank):
 
     return strategies
 
+
+def generate_sanrenpuku_10(
+    ranking_df,
+    chaos_rank,
+    score_col='BattleScore',
+    odds_col='Odds',
+    horse_num_col='Umaban',
+    horse_name_col='Name',
+    popularity_col='Popularity',
+    min_score_ratio=0.6,
+):
+    """
+    2強軸＋期待値上位フィルタによる3連複10点生成。
+    バトルスコア上位2頭を軸に固定し、波乱度に応じて相手を選ぶ。
+    """
+    if ranking_df is None or ranking_df.empty or len(ranking_df) < 3:
+        return {"bets": [], "warning": "出走馬が3頭未満のため買い目を生成できません", "bet_count": 0}
+
+    # スコアカラムの存在チェック（Projected Score優先）
+    if 'Projected Score' in ranking_df.columns:
+        score_col = 'Projected Score'
+    elif score_col not in ranking_df.columns:
+        score_col = 'BattleScore'
+
+    df = ranking_df.sort_values(score_col, ascending=False).reset_index(drop=True)
+
+    jiku_1 = df.iloc[0]
+    jiku_2 = df.iloc[1]
+
+    aite_candidates = df.iloc[2:].copy()
+
+    threshold = jiku_1[score_col] * min_score_ratio
+    aite_candidates = aite_candidates[aite_candidates[score_col] >= threshold]
+
+    if len(aite_candidates) < 1:
+        return {
+            "bets": [], "bet_count": 0,
+            "warning": f"足切り後の相手候補が0頭になりました（閾値:{threshold:.1f}）。min_score_ratioを下げてください。",
+        }
+
+    if chaos_rank in ["S", "A"]:
+        if odds_col in aite_candidates.columns:
+            aite_candidates = aite_candidates.sort_values(odds_col, ascending=False)
+        strategy = f"波乱狙い（{chaos_rank}ランク）：2強軸＋高オッズ相手"
+    else:
+        aite_candidates = aite_candidates.sort_values(score_col, ascending=False)
+        strategy = f"堅実（{chaos_rank}ランク）：2強軸＋高スコア相手"
+
+    aite_selected = aite_candidates.head(10)
+    aite_nums = aite_selected[horse_num_col].tolist()
+
+    bets = []
+    for aite_num in aite_nums:
+        combo = tuple(sorted([jiku_1[horse_num_col], jiku_2[horse_num_col], aite_num]))
+        bets.append(combo)
+
+    j1_odds = float(pd.to_numeric(jiku_1.get(odds_col, 5.0), errors='coerce') or 5.0)
+    j2_odds = float(pd.to_numeric(jiku_2.get(odds_col, 5.0), errors='coerce') or 5.0)
+    avg_jiku_odds = (j1_odds + j2_odds) / 2
+    torigami_risk = avg_jiku_odds < 5.0 and len(bets) >= 8
+
+    warning = ""
+    if torigami_risk:
+        warning = (
+            f"⚠️ トリガミ注意：軸2頭の平均オッズが{avg_jiku_odds:.1f}倍と低めです。"
+            f"相手を{len(bets)}頭から6〜7頭に絞ることを検討してください。"
+        )
+
+    return {
+        "bets": bets,
+        "jiku_1": jiku_1,
+        "jiku_2": jiku_2,
+        "aite_list": aite_nums,
+        "strategy": strategy,
+        "warning": warning,
+        "torigami_risk": torigami_risk,
+        "bet_count": len(bets),
+        "score_col": score_col,
+    }
+
+
+def generate_sanrenpuku_from_odds(
+    odds_df,
+    ranking_df,
+    score_col='BattleScore',
+    horse_num_col='Umaban',
+    odds_col='オッズ',
+    horse1_col='horse1',
+    horse2_col='horse2',
+    horse3_col='horse3',
+    pool_size=5,
+    min_odds=50.0,
+    max_odds=300.0,
+    top_n=10,
+    min_score_horses=1,
+):
+    """
+    3連複人気順オッズ × スコアTop5フィルタ による買い目10点提案。
+    価格帯フィルタ（デフォルト5,000〜30,000円 = 50〜300倍）で中穴に絞る。
+    """
+    if odds_df is None or odds_df.empty or ranking_df is None or ranking_df.empty:
+        return {"bets": [], "warning": "オッズデータまたはスコアデータが取得できていません", "bet_count": 0}
+
+    # score_col 自動選択
+    if 'Projected Score' in ranking_df.columns:
+        score_col = 'Projected Score'
+    elif score_col not in ranking_df.columns and 'BattleScore' in ranking_df.columns:
+        score_col = 'BattleScore'
+
+    top_horses = set(
+        ranking_df.sort_values(score_col, ascending=False)
+        .head(pool_size)[horse_num_col]
+        .tolist()
+    )
+
+    filtered = odds_df.copy()
+    for col in [horse1_col, horse2_col, horse3_col]:
+        filtered[col] = pd.to_numeric(filtered[col], errors='coerce')
+    filtered[odds_col] = pd.to_numeric(filtered[odds_col], errors='coerce')
+    filtered = filtered.dropna(subset=[horse1_col, horse2_col, horse3_col, odds_col])
+
+    def _has_top(row):
+        return len({int(row[horse1_col]), int(row[horse2_col]), int(row[horse3_col])} & top_horses) >= min_score_horses
+
+    # フィルタ①: 価格帯（オッズ50〜300倍）
+    in_range = filtered[(filtered[odds_col] >= min_odds) & (filtered[odds_col] <= max_odds)]
+    in_range = in_range[in_range.apply(_has_top, axis=1)]
+
+    warning = ""
+    if in_range.empty:
+        # 価格帯フィルタを外して再試行
+        fallback = filtered[filtered.apply(_has_top, axis=1)]
+        if fallback.empty:
+            return {
+                "bets": [], "bet_count": 0,
+                "warning": "条件に合う買い目が見つかりませんでした。スコアTop5の馬が含まれる組み合わせがオッズデータにありません。",
+                "top_horses": top_horses,
+            }
+        result_df = fallback.sort_values(odds_col, ascending=True).head(top_n)
+        warning = "⚠️ 価格帯フィルタを外して再検索しました（よく出る価格帯外の可能性あり）"
+        filtered_count = len(fallback)
+        price_range = "フィルタなし"
+    else:
+        result_df = in_range.sort_values(odds_col, ascending=True).head(top_n)
+        filtered_count = len(in_range)
+        price_range = f"{min_odds * 100:.0f}円〜{max_odds * 100:.0f}円"
+
+    bets = []
+    for _, row in result_df.iterrows():
+        combo = tuple(sorted([int(row[horse1_col]), int(row[horse2_col]), int(row[horse3_col])]))
+        bets.append({
+            "combo": combo,
+            "odds": float(row[odds_col]),
+            "top5_count": len(set(combo) & top_horses),
+        })
+
+    return {
+        "bets": bets,
+        "top_horses": top_horses,
+        "filtered_count": filtered_count,
+        "warning": warning,
+        "bet_count": len(bets),
+        "price_range": price_range,
+        "score_col": score_col,
+    }
+
+
 def get_as_race_recommendations(df, odds_list, axis_umaban=None, num_recs=30):
     """
     Special Sanrenpuku recommendations for High Difficulty (A/S) Races.

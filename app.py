@@ -699,7 +699,7 @@ if nav == "💰 BetSync（資金管理）":
         </div>""")
                     inp_c1, inp_c2, inp_c3 = st.columns([1.5, 3, 0.7])
                     with inp_c1:
-                        rv = st.radio("", options=["❌ 負", "✅ 勝"], index=None, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
+                        rv = st.radio("勝敗", options=["❌ 負", "✅ 勝"], index=None, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
                         if rv is not None:
                             _ss['bs_races'][ri]['win'] = (rv == "✅ 勝")
                             _ss['bs_races'][ri]['decided'] = True
@@ -726,7 +726,7 @@ if nav == "💰 BetSync（資金管理）":
         </div>""")
                     ec1, ec2, ec3 = st.columns([1, 2, 0.5])
                     with ec1:
-                        rv = st.radio("", options=["❌ 負", "✅ 勝"], index=1 if r['win'] else 0, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
+                        rv = st.radio("勝敗", options=["❌ 負", "✅ 勝"], index=1 if r['win'] else 0, horizontal=True, key=f"bs_radio_{r_id}", label_visibility="collapsed")
                         nw = (rv == "✅ 勝")
                         if nw != r['win']:
                             _ss['bs_races'][ri]['win'] = nw
@@ -862,7 +862,7 @@ if nav == "💰 BetSync（資金管理）":
                                     return val
                             df_display["race_id"] = df_display["race_id"].apply(to_netkeiba_url)
 
-                        st.dataframe(df_display, use_container_width=True, column_config=col_config)
+                        st.dataframe(df_display, width='stretch', column_config=col_config)
                     
                     # 的中保存ボタン
                     if msg["role"] == "assistant":
@@ -887,7 +887,7 @@ if nav == "💰 BetSync（資金管理）":
                         ans_text, ans_df = kaggle_chat.ask(k_prompt)
                         st.write(ans_text)
                         if ans_df is not None:
-                            st.dataframe(ans_df, use_container_width=True)
+                            st.dataframe(ans_df, width='stretch')
                         st.session_state.kaggle_chat_history.append({
                             "role": "assistant", 
                             "content": ans_text, 
@@ -1013,8 +1013,8 @@ if nav == "🏠 Single Race Analysis":
                 rid = main_h_confirm["rid"]
                 st.warning(f"Race ID: {rid} を解析用に読み込みますか？")
                 c_my, c_mn = st.columns(2)
-                with c_my: st.button("✅ 実行", on_click=execute_main_race_action, use_container_width=True, key="main_race_conf_yes")
-                with c_mn: st.button("❌ キャンセル", on_click=lambda: st.session_state.update({"main_race_action_confirm": None}), use_container_width=True, key="main_race_conf_no")
+                with c_my: st.button("✅ 実行", on_click=execute_main_race_action, width='stretch', key="main_race_conf_yes")
+                with c_mn: st.button("❌ キャンセル", on_click=lambda: st.session_state.update({"main_race_action_confirm": None}), width='stretch', key="main_race_conf_no")
 
             # Prepare list (Last 5 races)
             df_h_unique = df_h_main.drop_duplicates(subset=['RaceID']).copy()
@@ -1258,7 +1258,7 @@ if nav == "🏠 Single Race Analysis":
                             line_chart = alt.Chart(history_df[history_df['odds_type']=='win']).mark_line(point=True).encode(
                                 x='timestamp:T', y='odds_value:Q', color='umaban:N'
                             ).interactive()
-                            st.altair_chart(line_chart, use_container_width=True)
+                            st.altair_chart(line_chart, width='stretch')
                         
                         st.markdown("#### ⚠️ Anomalies Detected")
                         alerts = analyzer.detect_abnormal_odds(df)
@@ -1343,6 +1343,42 @@ if nav == "🏠 Single Race Analysis":
                             'SpeedIndex', 'AvgAgari', 'AvgPosition', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
+                    # --- Column order persistence (user_prefs.json) ---
+                    _prefs_path_sra = os.path.join(os.getcwd(), "user_prefs.json")
+                    try:
+                        import json as _json_sra
+                        with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                            _prefs_sra = _json_sra.load(_f)
+                        _saved_sra = _prefs_sra.get('single_race_col_order', [])
+                        if _saved_sra:
+                            _ordered_sra = [c for c in _saved_sra if c in view_df.columns]
+                            _rest_sra = [c for c in view_df.columns if c not in _ordered_sra]
+                            view_df = view_df[_ordered_sra + _rest_sra]
+                    except: pass
+
+                    with st.expander("📋 列の表示順序を設定（選択順が左から右の順になります）", expanded=False):
+                        _cur_cols_sra = list(view_df.columns)
+                        _sel_cols_sra = st.multiselect(
+                            "表示する列・順序（上から選んだ順に左から表示）",
+                            options=_cur_cols_sra, default=_cur_cols_sra,
+                            key="single_race_col_order_sel"
+                        )
+                        if st.button("💾 この列順を保存", key="btn_save_single_col_order"):
+                            try:
+                                import json as _json_sra2
+                                try:
+                                    with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                        _prefs_sra2 = _json_sra2.load(_f)
+                                except: _prefs_sra2 = {}
+                                _prefs_sra2['single_race_col_order'] = _sel_cols_sra
+                                with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                                    _json_sra2.dump(_prefs_sra2, _f, ensure_ascii=False, indent=2)
+                                st.success("✅ 列順を保存しました（次回から自動反映）")
+                            except Exception as _e:
+                                st.error(f"保存失敗: {_e}")
+                        if _sel_cols_sra:
+                            view_df = view_df[[c for c in _sel_cols_sra if c in view_df.columns]]
+
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
                         "Umaban": st.column_config.NumberColumn("馬番"),
@@ -1426,10 +1462,10 @@ if nav == "🏠 Single Race Analysis":
                         if 'OddsGap' in view_df.columns:
                             styled_df = styled_df.apply(color_oddsgap, axis=0, subset=['OddsGap'])
                         
-                        st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
+                        st.dataframe(styled_df, column_config=column_config, width='stretch', hide_index=True)
                     except Exception as e:
                         st.warning(f"Display Error: {e}")
-                        st.dataframe(view_df)
+                        st.dataframe(view_df, hide_index=True)
 
                     # --- RESURRECTED: Composite Chart (Dual-Axis with Altair) ---
                     st.subheader("✨ Index Analysis Chart")
@@ -1493,7 +1529,7 @@ if nav == "🏠 Single Race Analysis":
                     else:
                         composite_chart = bars.properties(height=450)
                     
-                    st.altair_chart(composite_chart, use_container_width=True)
+                    st.altair_chart(composite_chart, width='stretch')
                     # --------------------------
                     
                     # --- 強適マップ 散布図 (Main Feature) ---
@@ -1546,7 +1582,7 @@ if nav == "🏠 Single Race Analysis":
                         zone_m_df = pd.DataFrame({'x': [8], 'y': [95], 'label': ['◎ 強い×合う（推奨ゾーン）']})
                         zone_m = alt.Chart(zone_m_df).mark_text(align='left', color='#cc2222', fontSize=12, fontWeight='bold').encode(x='x:Q', y='y:Q', text='label:N')
                     
-                        st.altair_chart((diag_m + zone_m + pts_m + num_m + name_m).properties(height=550).interactive(), use_container_width=True)
+                        st.altair_chart((diag_m + zone_m + pts_m + num_m + name_m).properties(height=550).interactive(), width='stretch')
                     except Exception as e_sc:
                         st.warning(f"強適マップの描画中にエラー: {e_sc}")
                     
@@ -1841,7 +1877,7 @@ if nav == "🏠 Single Race Analysis":
                     with col_save2:
                         st.write("") # Adjust alignment
                         st.write("") 
-                        if st.button("✨ この分析内容を履歴に保存", type="primary", use_container_width=True):
+                        if st.button("✨ この分析内容を履歴に保存", type="primary", width='stretch'):
                             if 'df' in st.session_state:
                                 df_to_save = st.session_state['df']
                                 # Get race name from session state or placeholder
@@ -1913,15 +1949,46 @@ if nav == "🏠 Single Race Analysis":
                             st.caption("予測スコア上位5頭に「推奨穴馬（🔥）」を加え、期待値上位の買い目を抽出します。トリガミを防ぐ資金管理も自動計算します。")
                             
                         _rec_cache_key = f"sanrenpuku_odds_{race_id_input}"
+
+                        @st.cache_data(ttl=60, show_spinner=False)
+                        def _fetch_sanrenpuku_cached(_race_id: str):
+                            return scraper.fetch_sanrenpuku_odds(_race_id)
+
                         if st.button("🎯 推奨買い目を取得・更新", key="btn_fetch_san_recs"):
                             with st.spinner("3連複オッズ取得中..."):
-                                st.session_state[_rec_cache_key] = scraper.fetch_sanrenpuku_odds(race_id_input)
+                                _fetched = _fetch_sanrenpuku_cached(race_id_input)
+                                st.session_state[_rec_cache_key] = _fetched
+                                # Store top-20 DataFrame for external use
+                                if _fetched:
+                                    st.session_state["sanrenpuku_odds_df"] = pd.DataFrame([
+                                        {
+                                            "人気": item["Rank"],
+                                            "馬番組": item["Combination"],
+                                            "オッズ": item["Odds"],
+                                            "horse1": item["Horses"][0],
+                                            "horse2": item["Horses"][1],
+                                            "horse3": item["Horses"][2],
+                                        }
+                                        for item in _fetched[:100]
+                                    ])
+                                else:
+                                    st.session_state["sanrenpuku_odds_df"] = pd.DataFrame()
 
                         odds_list = st.session_state.get(_rec_cache_key, None)
                         if odds_list is None:
                             st.info("ボタンを押すと推奨買い目を表示します（発売開始後にご利用ください）")
                         else:
                             try:
+                                # Top-20 人気順オッズ表示
+                                if odds_list:
+                                    st.markdown("##### 📊 3連複 人気順オッズ（上位20件）")
+                                    top20_df = pd.DataFrame([
+                                        {"人気": item["Rank"], "馬番組": item["Combination"], "オッズ": item["Odds"]}
+                                        for item in odds_list[:20]
+                                    ])
+                                    st.dataframe(top20_df, width='stretch', hide_index=True)
+                                    st.divider()
+
                                 # Use Projected Score to define top-5 axis horses
                                 if 'Projected Score' in df.columns:
                                     df_for_recs = df.copy()
@@ -1930,7 +1997,51 @@ if nav == "🏠 Single Race Analysis":
                                     df_for_recs = df
 
                                 if not odds_list:
-                                    st.error("データ取得失敗: 3連複のオッズ・人気データが取得できませんでした。")
+                                    st.warning("3連複オッズの自動取得に失敗しました。\n\n"
+                                               "**考えられる原因：**\n"
+                                               "- 発売開始前（レース30〜60分前から購入可能）\n"
+                                               "- レース終了後（過去レースはオッズ非公開）\n"
+                                               "- 一時的な接続エラー")
+                                    # --- 手動入力フォールバック ---
+                                    with st.expander("✏️ 手動入力で続行する（netkeiba の3連複ページを見ながら入力）", expanded=False):
+                                        st.caption("ネットケイバ → 対象レース → 「オッズ・購入」→「三連複」タブ → 人気順で上位10件を入力")
+                                        _mi_sc = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                                        _mi_top5 = df.sort_values(_mi_sc, ascending=False).head(5)
+                                        _mi_n2n = dict(zip(df['Umaban'], df['Name']))
+                                        st.markdown("**スコアTop5（参考）**")
+                                        _mi_disp = _mi_top5[['Umaban', 'Name', 'Popularity', _mi_sc]].copy()
+                                        _mi_disp.columns = ['馬番', '馬名', '人気', 'スコア']
+                                        st.dataframe(_mi_disp, width='stretch', hide_index=True)
+                                        st.markdown("**3連複オッズを入力（0のままの行は無視）**")
+                                        from itertools import combinations as _combs
+                                        _mi_rows_input = []
+                                        _mi_cols_a, _mi_cols_b = st.columns(2)
+                                        _mi_all_combos = list(_combs(sorted(_mi_top5['Umaban'].tolist()), 3))
+                                        # 追加で相手馬をいくつか足す（Top5以外の上位馬との組み合わせ）
+                                        _mi_extra = df.sort_values(_mi_sc, ascending=False).iloc[5:8]['Umaban'].tolist()
+                                        for _ext in _mi_extra:
+                                            for _axis in _mi_top5['Umaban'].tolist()[:2]:
+                                                for _axis2 in _mi_top5['Umaban'].tolist()[2:4]:
+                                                    _combo3 = tuple(sorted([_axis, _axis2, _ext]))
+                                                    if _combo3 not in _mi_all_combos:
+                                                        _mi_all_combos.append(_combo3)
+                                        for _ci, (_ma, _mb, _mc) in enumerate(_mi_all_combos[:20]):
+                                            _lbl = f"{_ma}-{_mb}-{_mc}（{_mi_n2n.get(_ma,'?')}/{_mi_n2n.get(_mb,'?')}/{_mi_n2n.get(_mc,'?')}）"
+                                            _col_use = _mi_cols_a if _ci % 2 == 0 else _mi_cols_b
+                                            with _col_use:
+                                                _ov = st.number_input(_lbl, min_value=0.0, max_value=9999.9, value=0.0, step=0.1, key=f"mi_odds_{_ma}_{_mb}_{_mc}", format="%.1f")
+                                            if _ov > 0:
+                                                _mi_rows_input.append({"horse1": _ma, "horse2": _mb, "horse3": _mc, "オッズ": _ov, "人気": 0, "馬番組": f"{_ma}-{_mb}-{_mc}"})
+                                        if st.button("💾 入力したオッズを保存", key="btn_save_manual_odds"):
+                                            if _mi_rows_input:
+                                                _mi_df = pd.DataFrame(_mi_rows_input)
+                                                _mi_df = _mi_df.sort_values("オッズ").reset_index(drop=True)
+                                                _mi_df["人気"] = range(1, len(_mi_df) + 1)
+                                                st.session_state["sanrenpuku_odds_df"] = _mi_df
+                                                st.success(f"✅ {len(_mi_df)}件のオッズを保存しました。下の「3連複 中穴10点」セクションで買い目を確認できます。")
+                                                st.rerun()
+                                            else:
+                                                st.warning("オッズが入力されていません。")
                                     recs = []
                                 else:
                                     # Define top-5 horses based on Projected Score
@@ -2080,7 +2191,7 @@ if nav == "🏠 Single Race Analysis":
                                             "推奨購入額(円)": f"¥{r['RecommendedBet']:,}",
                                         } for r in recs
                                     ])
-                                    st.dataframe(rec_df.style.apply(highlight_dark_horse, axis=1), use_container_width=True)
+                                    st.dataframe(rec_df.style.apply(highlight_dark_horse, axis=1), width='stretch')
                                 else:
                                     is_nar = False
                                     if 'race_id_input' in locals() and len(race_id_input) >= 6:
@@ -2156,40 +2267,127 @@ if nav == "🏠 Single Race Analysis":
                         st.button("📋 買い目を生成 (ChatGPT連携)", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
 
                     st.divider()
-                    # --- [NEW] 精選10点予想 (Special 10-Point Prediction) ---
-                    st.subheader("🎯 精選10点予想 (3連複)")
-                    strategies = calculator.generate_10point_strategy(df, chaos_data['rank'])
-                    
-                    if "error" in strategies:
-                        st.error(strategies["error"])
+                    # --- 精選10点予想: 2強軸＋期待値上位フィルタ ---
+                    _chaos_r = chaos_data['rank']
+                    if _chaos_r in ['S', 'A']:
+                        st.subheader("🔥 3連複スペシャル（波乱狙い）")
+                        st.caption("2強軸＋高オッズ相手 で高配当を狙います")
                     else:
-                        strat_cols = st.columns(len(strategies))
-                        for idx, strat in enumerate(strategies):
-                            with strat_cols[idx]:
-                                bg_color = "#f0f7ff" if "Formation" in strat['type'] else "#fffaf0"
-                                st.markdown(f"""
-                                <div style="background-color: {bg_color}; padding: 15px; border-radius: 10px; border: 1px solid #ddd; height: 100%;">
-                                    <h4 style="margin-top: 0; color: #333; font-size: 1.1rem;">{strat['name']}</h4>
-                                    <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">{strat['description']}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                # Create table data
-                                rows = []
-                                trigami_found = False
-                                for t in strat['tickets']:
-                                    prefix = "⚠️" if t['trigami'] else "✅"
-                                    if t['trigami']: trigami_found = True
-                                    rows.append({
-                                        "買い目": f"{prefix} {', '.join(map(str, t['horses']))}",
-                                        "馬名": t['names'],
-                                        "推計": f"{t['odds']:.1f}倍"
-                                    })
-                                
-                                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-                                
-                                if trigami_found:
-                                    st.caption("⚠️: トリガミ（10倍以下）の可能性があります。オッズを確認してください。")
+                        st.subheader("💚 3連複スペシャル（堅実）")
+                        st.caption("2強軸＋高スコア相手 で的中率重視の構成です")
+
+                    _san_threshold = st.slider(
+                        "足切り閾値（軸1位スコアの何割未満を除外）",
+                        min_value=0.4, max_value=0.8, value=0.6, step=0.05,
+                        key="sanrenpuku_threshold_sra",
+                        help="値を上げると相手が絞られ、下げると相手が広がります"
+                    )
+                    _san_result = calculator.generate_sanrenpuku_10(
+                        df, _chaos_r, min_score_ratio=_san_threshold
+                    )
+
+                    if _san_result.get("warning") and not _san_result["bets"]:
+                        st.error(_san_result["warning"])
+                    else:
+                        _j1 = _san_result.get("jiku_1")
+                        _j2 = _san_result.get("jiku_2")
+                        if _j1 is not None and _j2 is not None:
+                            _sc = _san_result.get("score_col", "BattleScore")
+                            _jc1, _jc2 = st.columns(2)
+                            with _jc1:
+                                st.metric(
+                                    label=f"軸① {_j1['Name']}（{int(_j1['Umaban'])}番）",
+                                    value=f"スコア {_j1[_sc]:.1f}",
+                                    delta=f"{_j1.get('Popularity', '-')}番人気 / {_j1.get('Odds', '-')}倍",
+                                )
+                            with _jc2:
+                                st.metric(
+                                    label=f"軸② {_j2['Name']}（{int(_j2['Umaban'])}番）",
+                                    value=f"スコア {_j2[_sc]:.1f}",
+                                    delta=f"{_j2.get('Popularity', '-')}番人気 / {_j2.get('Odds', '-')}倍",
+                                )
+                            st.caption(f"戦略：{_san_result.get('strategy', '')}")
+
+                        if _san_result.get("warning"):
+                            st.warning(_san_result["warning"])
+
+                        if _san_result["bets"]:
+                            _num_to_name = dict(zip(df['Umaban'], df['Name']))
+                            _bet_rows = []
+                            for _i, (_a, _b, _c) in enumerate(_san_result["bets"]):
+                                _bet_rows.append({
+                                    "#": _i + 1,
+                                    "買い目（馬番）": f"{_a}-{_b}-{_c}",
+                                    "馬名": " - ".join(_num_to_name.get(_n, str(_n)) for _n in [_a, _b, _c]),
+                                })
+                            st.markdown(f"#### 🎫 3連複買い目（{_san_result['bet_count']}点）")
+                            st.dataframe(pd.DataFrame(_bet_rows), width='stretch', hide_index=True)
+                        else:
+                            st.info("買い目を生成できませんでした。足切り閾値を下げてみてください。")
+
+                    st.divider()
+
+                    # --- 3連複：人気順オッズ × スコアTop5フィルタ ---
+                    st.subheader("🎯 3連複 中穴10点（オッズ×スコアフィルタ）")
+                    st.caption("市場の人気順オッズにスコアTop5フィルタを重ね、5,000〜30,000円帯の中穴を10点に絞ります。")
+                    _sof_odds_df = st.session_state.get("sanrenpuku_odds_df", pd.DataFrame())
+                    if _sof_odds_df.empty or 'horse1' not in _sof_odds_df.columns:
+                        st.warning("3連複オッズデータが未取得です。上部の「🎯 推奨買い目を取得・更新」ボタンを押してからご利用ください。")
+                    else:
+                        with st.expander("⚙️ 買い目フィルタ設定", expanded=False):
+                            _sof_c1, _sof_c2, _sof_c3 = st.columns(3)
+                            with _sof_c1:
+                                _sof_min_p = st.number_input("最低価格帯（円）", min_value=1000, max_value=50000, value=5000, step=1000, key="sof_min_price_sra")
+                            with _sof_c2:
+                                _sof_max_p = st.number_input("最高価格帯（円）", min_value=5000, max_value=500000, value=30000, step=5000, key="sof_max_price_sra")
+                            with _sof_c3:
+                                _sof_msh = st.selectbox("スコアTop5が何頭以上含まれる買い目を採用", options=[1, 2, 3], index=0, key="sof_min_score_sra", help="1=広め、2=絞り")
+
+                        _sof_sc = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                        _sof_top5 = df.sort_values(_sof_sc, ascending=False).head(5)
+                        st.markdown("##### 🏆 スコアTop5（このいずれかが買い目に含まれる）")
+                        _sof_top5_disp = _sof_top5[['Umaban', 'Name', 'Popularity', 'Odds', _sof_sc]].copy()
+                        _sof_top5_disp.columns = ['馬番', '馬名', '人気', '単勝オッズ', 'スコア']
+                        st.dataframe(_sof_top5_disp, width='stretch', hide_index=True)
+
+                        _sof_result = calculator.generate_sanrenpuku_from_odds(
+                            odds_df=_sof_odds_df,
+                            ranking_df=df,
+                            score_col=_sof_sc,
+                            horse_num_col='Umaban',
+                            odds_col='オッズ',
+                            horse1_col='horse1',
+                            horse2_col='horse2',
+                            horse3_col='horse3',
+                            pool_size=5,
+                            min_odds=_sof_min_p / 100,
+                            max_odds=_sof_max_p / 100,
+                            top_n=10,
+                            min_score_horses=_sof_msh,
+                        )
+                        if _sof_result.get("warning"):
+                            st.warning(_sof_result["warning"])
+                        if _sof_result["bets"]:
+                            _sof_num2name = dict(zip(df['Umaban'], df['Name']))
+                            _sof_top_h = _sof_result["top_horses"]
+                            _sof_rows = []
+                            for _si, _sbet in enumerate(_sof_result["bets"]):
+                                _sa, _sb, _sc_ = _sbet["combo"]
+                                _sof_rows.append({
+                                    "#": _si + 1,
+                                    "買い目（馬番）": f"{_sa}-{_sb}-{_sc_}",
+                                    "馬名": " - ".join(_sof_num2name.get(_n, str(_n)) for _n in [_sa, _sb, _sc_]),
+                                    "想定オッズ": f"{_sbet['odds']:.1f}倍",
+                                    "Top5含む": f"{_sbet['top5_count']}頭 " + " ".join(f"★{_sof_num2name.get(_n, str(_n))}" for _n in [_sa, _sb, _sc_] if _n in _sof_top_h),
+                                })
+                            st.markdown(
+                                f"#### 🎫 3連複買い目（{_sof_result['bet_count']}点）"
+                                f"　価格帯：{_sof_result['price_range']}"
+                                f"　候補数：{_sof_result['filtered_count']}件中上位10点"
+                            )
+                            st.dataframe(pd.DataFrame(_sof_rows), width='stretch', hide_index=True)
+                        else:
+                            st.error("条件に合う買い目が見つかりませんでした。価格帯の設定を変えてみてください。")
 
                     st.divider()
 
@@ -2292,7 +2490,7 @@ if nav == "🏠 Single Race Analysis":
                                         "購入金額": f"{t['amount']}円",
                                         "想定払戻": f"{t['est_payout']:,}円"
                                     })
-                                st.dataframe(pd.DataFrame(full_rows), use_container_width=True)
+                                st.dataframe(pd.DataFrame(full_rows), width='stretch')
                         else:
                             st.warning("条件に合う買い目が見つかりませんでした。")
 
@@ -2598,7 +2796,7 @@ if nav == "🔍 Race Scanner (Batch)":
                             display_df = tmp_df[cols_show].head(10).copy()
                             rename_map = {'Umaban': '馬番', 'Name': '馬名', 'Jockey': '騎手', 'Difficulty': '難易度', 'OguraIndex': 'OguraIdx', 'SpeedIndex': 'SpeedIdx', '_score': 'TotalScore'}
                             display_df.columns = [rename_map.get(c, c) for c in display_df.columns]
-                            st.dataframe(display_df, use_container_width=True, hide_index=True)
+                            st.dataframe(display_df, width='stretch', hide_index=True)
 
                             # Link to Single Race
                             st.markdown(f"✨ [このレースをシングルタブで詳細分析する](/?race_id={r['id']})")
@@ -2880,7 +3078,7 @@ if nav == "📊 History & Review":
                             styled = styled.apply(color_alert, axis=0, subset=['Alert'])
                             styled = styled.apply(row_style, axis=1)
                         
-                        st.dataframe(styled, column_config=disp_col_config, use_container_width=True, hide_index=True)
+                        st.dataframe(styled, column_config=disp_col_config, width='stretch', hide_index=True)
                         
                         # --- NEW: プロ推奨買い目 (オッズ断層フォーメーション) ---
                         st.subheader("🎯 プロ推奨買い目 (オッズ断層フォーメーション)")
@@ -2927,7 +3125,7 @@ if nav == "📊 History & Review":
                                             "想定払戻": st.column_config.TextColumn("想定払戻金"),
                                             "状態": st.column_config.TextColumn("判定"),
                                         },
-                                        use_container_width=True,
+                                        width='stretch',
                                         hide_index=True
                                     )
                                     st.success(f"💰 合計投資予定額: ¥{pro_result['actual_total_bet']:,} (予算 ¥{target_budget:,})")
@@ -2936,7 +3134,7 @@ if nav == "📊 History & Review":
 
                     except Exception as e:
                         st.warning(f"表示エラー (raw data表示): {e}")
-                        st.dataframe(disp_view, use_container_width=True)
+                        st.dataframe(disp_view, width='stretch')
 
                     # --- NEW: Predicted vs Actual Difficulty Display in Review ---
                     if race_results:
@@ -2989,7 +3187,7 @@ if nav == "📊 History & Review":
                                 "ActualRank": "✨ 着順",
                                 "BattleScore": st.column_config.NumberColumn("戦闘力", format="%.1f"),
                             },
-                            use_container_width=True,
+                            width='stretch',
                             hide_index=True
                         )
                     
@@ -3152,8 +3350,8 @@ if nav == "📊 History & Review":
                 st.error(f"Race ID: {rid} の履歴データを完全に削除しますか？")
             
             cy, cn = st.columns(2)
-            with cy: st.button("✅ 実行", on_click=execute_race_action, use_container_width=True, key="race_conf_yes")
-            with cn: st.button("❌ キャンセル", on_click=cancel_race_action, use_container_width=True, key="race_conf_no")
+            with cy: st.button("✅ 実行", on_click=execute_race_action, width='stretch', key="race_conf_yes")
+            with cn: st.button("❌ キャンセル", on_click=cancel_race_action, width='stretch', key="race_conf_no")
             st.write("")
 
         # Prepare unique race list
@@ -3266,7 +3464,7 @@ if nav == "📊 History & Review":
                 if missed_list:
                     df_missed = pd.concat(missed_list)
                     if cols_show:
-                        st.dataframe(df_missed[cols_show].sort_values(by='Date', ascending=False), use_container_width=True)
+                        st.dataframe(df_missed[cols_show].sort_values(by='Date', ascending=False), width='stretch')
                 else:
                     st.success("No significant misses yet! (or no data)")
                 
@@ -3664,7 +3862,44 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         
         # Re-sort by New Score
         df_test_res = df_test_res.sort_values(by="Test_Score", ascending=False).reset_index(drop=True)
-        
+        df_test_res.index = range(1, len(df_test_res) + 1)
+
+        # --- Column order persistence (user_prefs.json) ---
+        _prefs_path_lt = os.path.join(os.getcwd(), "user_prefs.json")
+        try:
+            import json as _json_lt
+            with open(_prefs_path_lt, 'r', encoding='utf-8') as _f:
+                _prefs_lt = _json_lt.load(_f)
+            _saved_lt = _prefs_lt.get('logic_test_col_order', [])
+            if _saved_lt:
+                _ordered_lt = [c for c in _saved_lt if c in df_test_res.columns]
+                _rest_lt = [c for c in df_test_res.columns if c not in _ordered_lt]
+                df_test_res = df_test_res[_ordered_lt + _rest_lt]
+        except: pass
+
+        with st.expander("📋 列の表示順序を設定（選択順が左から右の順になります）", expanded=False):
+            _cur_cols_lt = list(df_test_res.columns)
+            _sel_cols_lt = st.multiselect(
+                "表示する列・順序（上から選んだ順に左から表示）",
+                options=_cur_cols_lt, default=_cur_cols_lt,
+                key="logic_test_col_order_sel"
+            )
+            if st.button("💾 この列順を保存", key="btn_save_logic_col_order"):
+                try:
+                    import json as _json_lt2
+                    try:
+                        with open(_prefs_path_lt, 'r', encoding='utf-8') as _f:
+                            _prefs_lt2 = _json_lt2.load(_f)
+                    except: _prefs_lt2 = {}
+                    _prefs_lt2['logic_test_col_order'] = _sel_cols_lt
+                    with open(_prefs_path_lt, 'w', encoding='utf-8') as _f:
+                        _json_lt2.dump(_prefs_lt2, _f, ensure_ascii=False, indent=2)
+                    st.success("✅ 列順を保存しました（次回から自動反映）")
+                except Exception as _e:
+                    st.error(f"保存失敗: {_e}")
+            if _sel_cols_lt:
+                df_test_res = df_test_res[[c for c in _sel_cols_lt if c in df_test_res.columns]]
+
         def highlight_flags(r):
             bg = ''
             if '究極仕上' in r['加点内訳(備考)']: bg = 'background-color: #004d00;' # Darker Green
@@ -3678,9 +3913,41 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         if (df_test_res['N指数'] == 0).any() and (df_test_res['Test_Score'] == 0).any():
              st.warning("⚠️ **データ不足の馬がいます**: 新馬戦やデータ取得失敗により、N指数・戦闘力が0の馬には⚠️マークを表示しています。")
 
+        with st.expander("📖 DIY指数・DIY2(末脚指数)の説明", expanded=True):
+            st.markdown("""
+**DIY指数（タイム偏差指数）**
+> 馬が過去走で記録したタイムを、同距離・同馬場の**標準タイム**と比較してスコア化した独自指数。
+> - 基準値は **50**（標準タイムちょうど）
+> - 標準より速いほど高スコア（上限なし）、遅いほど低スコア
+> - 距離が異なる過去走も、距離別標準タイムで正規化して比較
+> - 計算式：`(標準タイム - 実タイム) × スケール + 50`
+
+| スコア目安 | 意味 |
+|---|---|
+| 60以上 | 非常に速い（上位クラス水準） |
+| 52〜59 | 標準より速い |
+| 48〜51 | ほぼ標準 |
+| 47以下 | 標準より遅い |
+
+---
+
+**DIY2（末脚偏差指数）**
+> 馬の**上がり3F**を、同レース出走馬の平均と標準偏差で偏差値化した指数。末脚の相対的な強さを示す。
+> - 基準値は **50**（フィールド平均）
+> - 上がりが速いほど高スコア（[10, 90]にクリップ）
+> - 計算式：`(フィールド平均上がり - 当該馬上がり) / フィールド標準偏差 × 10 + 50`
+
+| スコア目安 | 意味 |
+|---|---|
+| 60以上 | 末脚が非常に強い（差し・追込向き） |
+| 52〜59 | 末脚が平均より強い |
+| 48〜51 | ほぼ平均的な末脚 |
+| 47以下 | 末脚が弱い（先行・逃げ向き） |
+""")
+
         st.dataframe(
             df_test_res.style.apply(highlight_flags, axis=1), 
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "元の順位": st.column_config.NumberColumn("元の順位", help="ベーススコアでの順位"),
                 "元のスコア": st.column_config.NumberColumn("元のスコア", format="%.1f"),
@@ -3695,12 +3962,134 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             }
         )
         
+        # --- 3連複スペシャル (2強軸ロジック) ---
+        st.divider()
+        _test_chaos_r = calculator.evaluate_race_chaos_v3(df_test).get('rank', 'B') if hasattr(calculator, 'evaluate_race_chaos_v3') else calculator.evaluate_race_chaos_v2(df_test).get('rank', 'B')
+        if _test_chaos_r in ['S', 'A']:
+            st.subheader("🔥 3連複スペシャル（波乱狙い）")
+            st.caption("2強軸＋高オッズ相手 で高配当を狙います")
+        else:
+            st.subheader("💚 3連複スペシャル（堅実）")
+            st.caption("2強軸＋高スコア相手 で的中率重視の構成です")
+
+        _test_threshold = st.slider(
+            "足切り閾値（軸1位スコアの何割未満を除外）",
+            min_value=0.4, max_value=0.8, value=0.6, step=0.05,
+            key="sanrenpuku_threshold_test",
+            help="値を上げると相手が絞られ、下げると相手が広がります"
+        )
+        _test_san = calculator.generate_sanrenpuku_10(
+            df_test, _test_chaos_r, min_score_ratio=_test_threshold
+        )
+
+        if _test_san.get("warning") and not _test_san["bets"]:
+            st.error(_test_san["warning"])
+        else:
+            _tj1 = _test_san.get("jiku_1")
+            _tj2 = _test_san.get("jiku_2")
+            if _tj1 is not None and _tj2 is not None:
+                _tsc = _test_san.get("score_col", "BattleScore")
+                _tc1, _tc2 = st.columns(2)
+                with _tc1:
+                    st.metric(
+                        label=f"軸① {_tj1['Name']}（{int(_tj1['Umaban'])}番）",
+                        value=f"スコア {_tj1[_tsc]:.1f}",
+                        delta=f"{_tj1.get('Popularity', '-')}番人気 / {_tj1.get('Odds', '-')}倍",
+                    )
+                with _tc2:
+                    st.metric(
+                        label=f"軸② {_tj2['Name']}（{int(_tj2['Umaban'])}番）",
+                        value=f"スコア {_tj2[_tsc]:.1f}",
+                        delta=f"{_tj2.get('Popularity', '-')}番人気 / {_tj2.get('Odds', '-')}倍",
+                    )
+                st.caption(f"戦略：{_test_san.get('strategy', '')}")
+
+            if _test_san.get("warning"):
+                st.warning(_test_san["warning"])
+
+            if _test_san["bets"]:
+                _tnum_to_name = dict(zip(df_test['Umaban'], df_test['Name']))
+                _tbet_rows = []
+                for _ti, (_ta, _tb, _tc_) in enumerate(_test_san["bets"]):
+                    _tbet_rows.append({
+                        "#": _ti + 1,
+                        "買い目（馬番）": f"{_ta}-{_tb}-{_tc_}",
+                        "馬名": " - ".join(_tnum_to_name.get(_n, str(_n)) for _n in [_ta, _tb, _tc_]),
+                    })
+                st.markdown(f"#### 🎫 3連複買い目（{_test_san['bet_count']}点）")
+                st.dataframe(pd.DataFrame(_tbet_rows), width='stretch', hide_index=True)
+            else:
+                st.info("買い目を生成できませんでした。足切り閾値を下げてみてください。")
+
+        # --- 3連複：人気順オッズ × スコアTop5フィルタ ---
+        st.divider()
+        st.subheader("🎯 3連複 中穴10点（オッズ×スコアフィルタ）")
+        st.caption("市場の人気順オッズにスコアTop5フィルタを重ね、5,000〜30,000円帯の中穴を10点に絞ります。")
+        _tsof_odds_df = st.session_state.get("sanrenpuku_odds_df", pd.DataFrame())
+        if _tsof_odds_df.empty or 'horse1' not in _tsof_odds_df.columns:
+            st.warning("3連複オッズデータが未取得です。「Single Race Analysis」タブの「🎯 推奨買い目を取得・更新」ボタンを押してからご利用ください。")
+        else:
+            with st.expander("⚙️ 買い目フィルタ設定", expanded=False):
+                _tsof_c1, _tsof_c2, _tsof_c3 = st.columns(3)
+                with _tsof_c1:
+                    _tsof_min_p = st.number_input("最低価格帯（円）", min_value=1000, max_value=50000, value=5000, step=1000, key="tsof_min_price")
+                with _tsof_c2:
+                    _tsof_max_p = st.number_input("最高価格帯（円）", min_value=5000, max_value=500000, value=30000, step=5000, key="tsof_max_price")
+                with _tsof_c3:
+                    _tsof_msh = st.selectbox("スコアTop5が何頭以上含まれる買い目を採用", options=[1, 2, 3], index=0, key="tsof_min_score", help="1=広め、2=絞り")
+
+            _tsof_sc = 'Projected Score' if 'Projected Score' in df_test.columns else 'BattleScore'
+            _tsof_top5 = df_test.sort_values(_tsof_sc, ascending=False).head(5)
+            st.markdown("##### 🏆 スコアTop5（このいずれかが買い目に含まれる）")
+            _tsof_top5_disp = _tsof_top5[['Umaban', 'Name', 'Popularity', 'Odds', _tsof_sc]].copy()
+            _tsof_top5_disp.columns = ['馬番', '馬名', '人気', '単勝オッズ', 'スコア']
+            st.dataframe(_tsof_top5_disp, width='stretch', hide_index=True)
+
+            _tsof_result = calculator.generate_sanrenpuku_from_odds(
+                odds_df=_tsof_odds_df,
+                ranking_df=df_test,
+                score_col=_tsof_sc,
+                horse_num_col='Umaban',
+                odds_col='オッズ',
+                horse1_col='horse1',
+                horse2_col='horse2',
+                horse3_col='horse3',
+                pool_size=5,
+                min_odds=_tsof_min_p / 100,
+                max_odds=_tsof_max_p / 100,
+                top_n=10,
+                min_score_horses=_tsof_msh,
+            )
+            if _tsof_result.get("warning"):
+                st.warning(_tsof_result["warning"])
+            if _tsof_result["bets"]:
+                _tsof_n2n = dict(zip(df_test['Umaban'], df_test['Name']))
+                _tsof_th = _tsof_result["top_horses"]
+                _tsof_rows = []
+                for _tsi, _tsbet in enumerate(_tsof_result["bets"]):
+                    _tsa, _tsb, _tsc_ = _tsbet["combo"]
+                    _tsof_rows.append({
+                        "#": _tsi + 1,
+                        "買い目（馬番）": f"{_tsa}-{_tsb}-{_tsc_}",
+                        "馬名": " - ".join(_tsof_n2n.get(_n, str(_n)) for _n in [_tsa, _tsb, _tsc_]),
+                        "想定オッズ": f"{_tsbet['odds']:.1f}倍",
+                        "Top5含む": f"{_tsbet['top5_count']}頭 " + " ".join(f"★{_tsof_n2n.get(_n, str(_n))}" for _n in [_tsa, _tsb, _tsc_] if _n in _tsof_th),
+                    })
+                st.markdown(
+                    f"#### 🎫 3連複買い目（{_tsof_result['bet_count']}点）"
+                    f"　価格帯：{_tsof_result['price_range']}"
+                    f"　候補数：{_tsof_result['filtered_count']}件中上位10点"
+                )
+                st.dataframe(pd.DataFrame(_tsof_rows), width='stretch', hide_index=True)
+            else:
+                st.error("条件に合う買い目が見つかりませんでした。価格帯の設定を変えてみてください。")
+
         st.divider()
         memo_val_test = st.text_input("📝 メモ (Memo)", key="memo_val_test", placeholder="この解析に関するメモを入力...")
-        
+
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("💾 解析結果をJSON保存 (Save JSON)", type="secondary", use_container_width=True):
+            if st.button("💾 解析結果をJSON保存 (Save JSON)", type="secondary", width='stretch'):
                 try:
                     import json
                     save_dir = os.path.join(os.getcwd(), "data", "history")
@@ -3730,7 +4119,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                     logger.error(f"Save Error: {traceback.format_exc()}")
         
         with col_btn2:
-            if st.button("📊 履歴(CSV)に登録", type="primary", use_container_width=True):
+            if st.button("📊 履歴(CSV)に登録", type="primary", width='stretch'):
                  try:
                      # For CSV history, we might need more columns than df_test_res has.
                      # But history_manager.save_race_data handles missing columns.
@@ -3776,7 +4165,7 @@ if nav == "🔭 N氏の研究室":
             )
         with col3:
             st.write("") # Spacer
-            analyze_btn = st.button("🔍 RMHS分析を実行", use_container_width=True, key="rmhs_analyze_btn")
+            analyze_btn = st.button("🔍 RMHS分析を実行", width='stretch', key="rmhs_analyze_btn")
         
         if analyze_btn and target_id_input:
             with st.spinner("詳細結果データを取得中..."):
@@ -3863,7 +4252,7 @@ if nav == "🔭 N氏の研究室":
                 def highlight_theory(s):
                     return ['background-color: rgba(255, 243, 205, 0.3)' if val != "-" else '' for val in s]
 
-                st.dataframe(df_rmhs.style.apply(highlight_theory, subset=['RMHS判定']), use_container_width=True)
+                st.dataframe(df_rmhs.style.apply(highlight_theory, subset=['RMHS判定']), width='stretch')
             
                 with st.expander("📖 理論の解説"):
                     st.markdown("""
@@ -3890,7 +4279,7 @@ if nav == "🔭 N氏の研究室":
             scan_date_input = st.text_input("スキャン対象日付 (YYYYMMDD形式)", value=default_date, key="r_scan_date_input")
         with col_d2:
             st.write("") # Spacer
-            fetch_venues_btn = st.button("📅 開催場一覧を取得", use_container_width=True, key="r_scan_fetch_venues_btn")
+            fetch_venues_btn = st.button("📅 開催場一覧を取得", width='stretch', key="r_scan_fetch_venues_btn")
         
         if fetch_venues_btn and scan_date_input:
             st.session_state.r_scan_race_list = scraper.get_race_list_for_date(scan_date_input)
@@ -3928,10 +4317,10 @@ if nav == "🔭 N氏の研究室":
                     selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue, key="r_scan_selected_venue")
                 with col_v2:
                     st.write("")
-                    run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary", key="r_scan_run_all_btn")
+                    run_all_scan_btn = st.button("🌍 全開催場をスキャン", width='stretch', type="primary", key="r_scan_run_all_btn")
                 with col_v3:
                     st.write("")
-                    run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True, key="r_scan_run_single_btn")
+                    run_single_scan_btn = st.button("🚀 選択した場のみスキャン", width='stretch', key="r_scan_run_single_btn")
             
                 # Helper to run scan logic
                 def perform_scan(target_races, label):
@@ -3986,7 +4375,7 @@ if nav == "🔭 N氏の研究室":
                 if results:
                     st.subheader(f"🎯 R理論（Rebound） 次走注目馬 ({len(results)}頭)")
                     df_extracted = pd.DataFrame(results)
-                    st.dataframe(df_extracted, use_container_width=True)
+                    st.dataframe(df_extracted, width='stretch')
                 elif run_all_scan_btn or run_single_scan_btn:
                     st.info("該当する馬は見つかりませんでした。")
 
@@ -4026,7 +4415,7 @@ if nav == "🔭 N氏の研究室":
             rpps_date = st.text_input("スキャン対象日付 (YYYYMMDD)", value=default_date, key="rpps_date_input")
         with col_d2:
             st.write("") 
-            fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", use_container_width=True)
+            fetch_venues_btn = st.button("📅 開催場を取得", key="rpps_fetch_venues", width='stretch')
 
         if fetch_venues_btn and rpps_date:
             res = scraper.get_race_list_for_date(rpps_date)
@@ -4176,12 +4565,12 @@ if nav == "🔭 N氏の研究室":
                             "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
                             "warning": st.column_config.TextColumn("⚠️ 警告"),
                         },
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True,
                     )
                 except Exception as e_disp:
                     st.warning(f"スタイルエラー: {e_disp}")
-                    st.dataframe(df_res, use_container_width=True)
+                    st.dataframe(df_res, width='stretch')
 
                 # CSV download
                 csv_bytes = df_res.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
@@ -4403,7 +4792,7 @@ if nav == "🔭 N氏の研究室":
                     })
 
                 df_bango = pd.DataFrame(results).sort_values("期待値スコア", ascending=False)
-                st.dataframe(df_bango, use_container_width=True)
+                st.dataframe(df_bango, width='stretch')
                 st.session_state["bango_results"] = df_bango.to_dict("records")
 
                 top = df_bango[df_bango["配置スコア"] > 0]
@@ -4423,7 +4812,7 @@ if nav == "🔭 N氏の研究室":
                 df3 = df3.sort_values("期待値スコア", ascending=False)
                 st.dataframe(
                     df3[["馬番", "馬名", "人気", "単勝オッズ", "配置スコア", "期待値スコア"]],
-                    use_container_width=True
+                    width='stretch'
                 )
                 st.markdown("---")
                 st.markdown("#### 推奨券種")
@@ -4538,9 +4927,9 @@ if nav == "💾 ロジック置き場":
             
         c_yes, c_no = st.columns(2)
         with c_yes:
-            st.button("✅ はい", on_click=execute_action, key="confirm_action_yes", use_container_width=True)
+            st.button("✅ はい", on_click=execute_action, key="confirm_action_yes", width='stretch')
         with c_no:
-            st.button("❌ キャンセル", on_click=cancel_action, key="confirm_action_no", use_container_width=True)
+            st.button("❌ キャンセル", on_click=cancel_action, key="confirm_action_no", width='stretch')
         st.write("")
 
     if not logics:
@@ -4598,7 +4987,7 @@ if nav == "💾 ロジック置き場":
     st.subheader("✍️ エディタ")
     
     # "Clear" button to act like the previous "新規作成"
-    if st.button("✨ 新規作成 (クリア)", use_container_width=False):
+    if st.button("✨ 新規作成 (クリア)", width='content'):
         st.session_state.logic_name_input = ""
         st.session_state.logic_memo_input = ""
         st.session_state.logic_ag_input = ""
@@ -4734,10 +5123,10 @@ if nav == "📦 データ保管庫":
                 U指数=('UIndex', lambda x: '✅' if x.notna().any() else '-') if 'UIndex' in df_date.columns else ('RaceID', lambda x: '-'),
                 オメガ指数=('LaboIndex', lambda x: '✅' if x.notna().any() else '-') if 'LaboIndex' in df_date.columns else ('RaceID', lambda x: '-'),
             ).reset_index()
-            st.dataframe(race_summary, use_container_width=True)
+            st.dataframe(race_summary, width='stretch')
 
             with st.expander("📋 生データを表示（全カラム）"):
-                st.dataframe(df_date, use_container_width=True)
+                st.dataframe(df_date, width='stretch')
         else:
             st.warning("データが見つかりませんでした。")
     else:
@@ -4777,7 +5166,7 @@ if nav == "📦 データ保管庫":
         if not uploaded_df.empty:
             st.success(f"✅ ファイル読み込み成功: {len(uploaded_df)} 行 / {uploaded_df.shape[1]} カラム")
             with st.expander("📋 プレビュー（最初の10行）"):
-                st.dataframe(uploaded_df.head(10), use_container_width=True)
+                st.dataframe(uploaded_df.head(10), width='stretch')
 
             if st.button("⬆️ 保管庫に同期する", type="primary", key="hub_sync_btn"):
                 result = history_manager.merge_uploaded_csv(uploaded_df)

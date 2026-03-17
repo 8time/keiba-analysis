@@ -111,7 +111,7 @@ class KaggleChatClient:
         - コードのみを出力し、解説は含めないでください。
         """
 
-        models_to_try = ["gemini-2.0-flash", "gemini-3.1-flash-lite-preview", "gemini-1.5-flash", "gemini-1.5-pro"]
+        models_to_try = ["gemini-3.1-flash-lite-preview"]
         last_error = ""
 
         for model_id in models_to_try:
@@ -183,13 +183,7 @@ class KaggleChatClient:
             return "API Key が設定されていないため、AI機能を利用できません。"
 
         import time
-        # 通知に基づき、将来のモデル gemini-3.1-flash-lite-preview をリストに追加
-        models_to_try = [
-            "gemini-2.0-flash", 
-            "gemini-3.1-flash-lite-preview", 
-            "gemini-1.5-flash", 
-            "gemini-1.5-pro"
-        ]
+        models_to_try = ["gemini-3.1-flash-lite-preview"]
         last_error = ""
 
         for model_id in models_to_try:

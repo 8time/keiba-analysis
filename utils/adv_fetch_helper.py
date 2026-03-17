@@ -165,91 +165,112 @@ async def fetch_advanced_data(race_id, top_horse_ids=None):
                     }
 
         # --- 2. Oikiri (Training Tab) ---
-        # Strategy: get full HTML then parse with BS4 (more reliable than locator selectors)
+        # Page is div-based (OikiriAllWrapper), NO tables. Wait for wrapper then allow JS to render.
         try:
             o_url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
             await page.goto(o_url, wait_until='domcontentloaded', timeout=15000)
             try:
-                await page.wait_for_selector('table', timeout=8000)
+                await page.wait_for_selector('.OikiriAllWrapper', timeout=8000)
             except: pass
+            # Extra wait for JS-rendered horse rows
+            await page.wait_for_timeout(3000)
 
             o_html = await page.content()
             o_soup = BeautifulSoup(o_html, 'html.parser')
             sys.stderr.write(f"DEBUG Oikiri: got HTML len={len(o_html)}\n")
 
-            # Detect "評価" header column index
-            eval_col_idx = -1
-            for tbl in o_soup.find_all('table'):
-                header_row = tbl.find('tr')
-                if not header_row: continue
-                ths = header_row.find_all(['th', 'td'])
-                for idx, th in enumerate(ths):
-                    txt = th.get_text(strip=True)
-                    if '評価' in txt or '評価' in txt:
-                        eval_col_idx = idx
-                        break
-                if eval_col_idx >= 0:
-                    break
-            sys.stderr.write(f"DEBUG Oikiri: eval_col_idx={eval_col_idx}\n")
+            # Check for no-data indicator (past races / data not yet available)
+            info_box = o_soup.find(class_=re.compile(r'Race_Infomation_Box|RaceInfomation', re.I))
+            if info_box:
+                msg = info_box.get_text(strip=True)[:80]
+                sys.stderr.write(f"DEBUG Oikiri: No data available - {msg}\n")
+                # Skip parsing — no training data for this race
+            else:
+                score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
 
-            score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
-
-            # Parse all rows across all tables
-            for tr in o_soup.find_all('tr'):
-                tds = tr.find_all('td')
-                if len(tds) < 3: continue
-
-                # 1. Find umaban: td.Umaban or first numeric-only cell with value 1-18
-                umaban = None
-                u_td = tr.find('td', class_=re.compile(r'Umaban', re.I))
-                if u_td:
-                    m_u = re.search(r'(\d+)', u_td.get_text())
-                    if m_u: umaban = int(m_u.group(1))
-                if umaban is None:
-                    # Fallback: first 1-2 cells that are single numbers 1-18
-                    for td in tds[:3]:
-                        ct = td.get_text(strip=True)
-                        if ct.isdigit() and 1 <= int(ct) <= 18:
-                            umaban = int(ct)
+                # Detect "評価" header column index from any table
+                eval_col_idx = -1
+                for tbl in o_soup.find_all('table'):
+                    header_row = tbl.find('tr')
+                    if not header_row: continue
+                    ths = header_row.find_all(['th', 'td'])
+                    for idx, th in enumerate(ths):
+                        if '評価' in th.get_text(strip=True):
+                            eval_col_idx = idx
                             break
-
-                if umaban is None or umaban not in advanced_data:
-                    continue
-
-                # 2. Find grade: class-based first, then header-col, then scan all cells
-                eval_grade = ""
-
-                # a) Class-based: span/td with class containing Hyoka/Hyouka/Rank_ + letter
-                for el in tr.find_all(class_=re.compile(r'Hyoka|Hyouka|Rank_|OikiriRank', re.I)):
-                    cls_str = ' '.join(el.get('class', [])).upper()
-                    m_c = re.search(r'(?:HYOKA|HYOUKA|RANK)[_-]?([A-D])\b', cls_str)
-                    if m_c:
-                        eval_grade = m_c.group(1)
+                    if eval_col_idx >= 0:
                         break
-                    # Also check text content
-                    txt = el.get_text(strip=True).upper()
-                    if txt in ('A', 'B', 'C', 'D'):
-                        eval_grade = txt
-                        break
+                sys.stderr.write(f"DEBUG Oikiri: eval_col_idx={eval_col_idx}\n")
 
-                # b) Header column index
-                if not eval_grade and eval_col_idx >= 0 and len(tds) > eval_col_idx:
-                    ct = tds[eval_col_idx].get_text(strip=True).upper()
-                    if ct in ('A', 'B', 'C', 'D'):
-                        eval_grade = ct
+                def _extract_oikiri_row(tr_el):
+                    """Extract (umaban, eval_grade) from a <tr> or horse-div row element."""
+                    tds = tr_el.find_all(['td', 'div'], recursive=False) if tr_el.name == 'tr' else tr_el.find_all(['td', 'div'])
+                    all_cells = tr_el.find_all(['td', 'th'])
+                    if not all_cells:
+                        all_cells = tr_el.find_all('div', class_=True)
 
-                # c) Scan every cell for isolated A/B/C/D
-                if not eval_grade:
-                    for td in tds:
-                        ct = td.get_text(strip=True).upper()
-                        if ct in ('A', 'B', 'C', 'D'):
-                            eval_grade = ct
+                    # Find umaban
+                    umaban = None
+                    u_el = tr_el.find(class_=re.compile(r'Umaban|HorseNum|umaban', re.I))
+                    if u_el:
+                        m_u = re.search(r'(\d+)', u_el.get_text())
+                        if m_u: umaban = int(m_u.group(1))
+                    if umaban is None:
+                        for cell in all_cells[:3]:
+                            ct = cell.get_text(strip=True)
+                            if ct.isdigit() and 1 <= int(ct) <= 18:
+                                umaban = int(ct)
+                                break
+
+                    # Find grade
+                    eval_grade = ""
+                    # a) Class-based
+                    for el in tr_el.find_all(class_=re.compile(r'Hyoka|Hyouka|Rank_|OikiriRank|TrainRank', re.I)):
+                        cls_str = ' '.join(el.get('class', [])).upper()
+                        m_c = re.search(r'(?:HYOKA|HYOUKA|RANK)[_-]?([A-D])\b', cls_str)
+                        if m_c:
+                            eval_grade = m_c.group(1)
                             break
+                        txt = el.get_text(strip=True).upper()
+                        if txt in ('A', 'B', 'C', 'D'):
+                            eval_grade = txt
+                            break
+                    # b) Header column index (tables only)
+                    if not eval_grade and eval_col_idx >= 0:
+                        tds_only = tr_el.find_all('td')
+                        if len(tds_only) > eval_col_idx:
+                            ct = tds_only[eval_col_idx].get_text(strip=True).upper()
+                            if ct in ('A', 'B', 'C', 'D'):
+                                eval_grade = ct
+                    # c) Scan all cells for isolated A/B/C/D
+                    if not eval_grade:
+                        for cell in tr_el.find_all(['td', 'span', 'div']):
+                            ct = cell.get_text(strip=True).upper()
+                            if ct in ('A', 'B', 'C', 'D'):
+                                eval_grade = ct
+                                break
 
-                if eval_grade:
-                    advanced_data[umaban]['TrainingEval'] = eval_grade
-                    advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
-                    sys.stderr.write(f"DEBUG Oikiri: horse {umaban} → {eval_grade}\n")
+                    return umaban, eval_grade
+
+                # Strategy 1: table rows
+                parsed_any = False
+                for tr in o_soup.find_all('tr'):
+                    if len(tr.find_all('td')) < 2: continue
+                    umaban, eval_grade = _extract_oikiri_row(tr)
+                    if umaban and umaban in advanced_data and eval_grade:
+                        advanced_data[umaban]['TrainingEval'] = eval_grade
+                        advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
+                        sys.stderr.write(f"DEBUG Oikiri: horse {umaban} → {eval_grade}\n")
+                        parsed_any = True
+
+                # Strategy 2: div-based horse rows (OikiriHorse / HorseList divs)
+                if not parsed_any:
+                    for horse_div in o_soup.find_all(class_=re.compile(r'OikiriHorse|HorseList|oikiri_horse', re.I)):
+                        umaban, eval_grade = _extract_oikiri_row(horse_div)
+                        if umaban and umaban in advanced_data and eval_grade:
+                            advanced_data[umaban]['TrainingEval'] = eval_grade
+                            advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
+                            sys.stderr.write(f"DEBUG Oikiri div: horse {umaban} → {eval_grade}\n")
 
         except Exception as e:
             sys.stderr.write(f"ERROR: Oikiri fetch failed: {e}\n")
