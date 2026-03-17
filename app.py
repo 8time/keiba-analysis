@@ -1974,7 +1974,6 @@ if nav == "🏠 Single Race Analysis":
                             with st.spinner("3連複オッズ取得中..."):
                                 _fetched = _fetch_sanrenpuku_cached(race_id_input)
                                 st.session_state[_rec_cache_key] = _fetched
-                                # Store top-20 DataFrame for external use
                                 if _fetched:
                                     st.session_state["sanrenpuku_odds_df"] = pd.DataFrame([
                                         {
@@ -1987,8 +1986,10 @@ if nav == "🏠 Single Race Analysis":
                                         }
                                         for item in _fetched[:100]
                                     ])
+                                    st.rerun()
                                 else:
                                     st.session_state["sanrenpuku_odds_df"] = pd.DataFrame()
+                                    st.caption("⚠️ オッズ未取得。発売前または取得エラーの可能性があります。")
 
                         odds_list = st.session_state.get(_rec_cache_key, None)
                         if odds_list is None:
@@ -2013,52 +2014,7 @@ if nav == "🏠 Single Race Analysis":
                                     df_for_recs = df
 
                                 if not odds_list:
-                                    st.warning("3連複オッズの自動取得に失敗しました。\n\n"
-                                               "**考えられる原因：**\n"
-                                               "- 発売開始前（レース30〜60分前から購入可能）\n"
-                                               "- レース終了後（過去レースはオッズ非公開）\n"
-                                               "- 一時的な接続エラー")
-                                    # --- 手動入力フォールバック ---
-                                    with st.expander("✏️ 手動入力で続行する（netkeiba の3連複ページを見ながら入力）", expanded=False):
-                                        st.caption("ネットケイバ → 対象レース → 「オッズ・購入」→「三連複」タブ → 人気順で上位10件を入力")
-                                        _mi_sc = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
-                                        _mi_top5 = df.sort_values(_mi_sc, ascending=False).head(5)
-                                        _mi_n2n = dict(zip(df['Umaban'], df['Name']))
-                                        st.markdown("**スコアTop5（参考）**")
-                                        _mi_disp = _mi_top5[['Umaban', 'Name', 'Popularity', _mi_sc]].copy()
-                                        _mi_disp.columns = ['馬番', '馬名', '人気', 'スコア']
-                                        st.dataframe(_mi_disp, width='stretch', hide_index=True)
-                                        st.markdown("**3連複オッズを入力（0のままの行は無視）**")
-                                        from itertools import combinations as _combs
-                                        _mi_rows_input = []
-                                        _mi_cols_a, _mi_cols_b = st.columns(2)
-                                        _mi_all_combos = list(_combs(sorted(_mi_top5['Umaban'].tolist()), 3))
-                                        # 追加で相手馬をいくつか足す（Top5以外の上位馬との組み合わせ）
-                                        _mi_extra = df.sort_values(_mi_sc, ascending=False).iloc[5:8]['Umaban'].tolist()
-                                        for _ext in _mi_extra:
-                                            for _axis in _mi_top5['Umaban'].tolist()[:2]:
-                                                for _axis2 in _mi_top5['Umaban'].tolist()[2:4]:
-                                                    _combo3 = tuple(sorted([_axis, _axis2, _ext]))
-                                                    if _combo3 not in _mi_all_combos:
-                                                        _mi_all_combos.append(_combo3)
-                                        for _ci, (_ma, _mb, _mc) in enumerate(_mi_all_combos[:20]):
-                                            _lbl = f"{_ma}-{_mb}-{_mc}（{_mi_n2n.get(_ma,'?')}/{_mi_n2n.get(_mb,'?')}/{_mi_n2n.get(_mc,'?')}）"
-                                            _col_use = _mi_cols_a if _ci % 2 == 0 else _mi_cols_b
-                                            with _col_use:
-                                                _ov = st.number_input(_lbl, min_value=0.0, max_value=9999.9, value=0.0, step=0.1, key=f"mi_odds_{_ma}_{_mb}_{_mc}", format="%.1f")
-                                            if _ov > 0:
-                                                _mi_rows_input.append({"horse1": _ma, "horse2": _mb, "horse3": _mc, "オッズ": _ov, "人気": 0, "馬番組": f"{_ma}-{_mb}-{_mc}"})
-                                        if st.button("💾 入力したオッズを保存", key="btn_save_manual_odds"):
-                                            if _mi_rows_input:
-                                                _mi_df = pd.DataFrame(_mi_rows_input)
-                                                _mi_df = _mi_df.sort_values("オッズ").reset_index(drop=True)
-                                                _mi_df["人気"] = range(1, len(_mi_df) + 1)
-                                                st.session_state["sanrenpuku_odds_df"] = _mi_df
-                                                st.success(f"✅ {len(_mi_df)}件のオッズを保存しました。下の「3連複 中穴10点」セクションで買い目を確認できます。")
-                                                st.rerun()
-                                            else:
-                                                st.warning("オッズが入力されていません。")
-                                    recs = []
+                                    st.info("📡 3連複オッズ未取得。発売開始後（レース約30〜60分前）に「推奨買い目を取得・更新」ボタンを押してください。")
                                 else:
                                     # Define top-5 horses based on Projected Score
                                     sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
@@ -2348,7 +2304,7 @@ if nav == "🏠 Single Race Analysis":
                     st.caption("市場の人気順オッズにスコアTop5フィルタを重ね、5,000〜30,000円帯の中穴を10点に絞ります。")
                     _sof_odds_df = st.session_state.get("sanrenpuku_odds_df", pd.DataFrame())
                     if _sof_odds_df.empty or 'horse1' not in _sof_odds_df.columns:
-                        st.warning("3連複オッズデータが未取得です。上部の「🎯 推奨買い目を取得・更新」ボタンを押してからご利用ください。")
+                        st.info("📡 オッズ取得後に自動表示されます。発売開始後に「推奨買い目を取得・更新」ボタンを押してください。")
                     else:
                         with st.expander("⚙️ 買い目フィルタ設定", expanded=False):
                             _sof_c1, _sof_c2, _sof_c3 = st.columns(3)
@@ -4059,7 +4015,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         st.caption("市場の人気順オッズにスコアTop5フィルタを重ね、5,000〜30,000円帯の中穴を10点に絞ります。")
         _tsof_odds_df = st.session_state.get("sanrenpuku_odds_df", pd.DataFrame())
         if _tsof_odds_df.empty or 'horse1' not in _tsof_odds_df.columns:
-            st.warning("3連複オッズデータが未取得です。「Single Race Analysis」タブの「🎯 推奨買い目を取得・更新」ボタンを押してからご利用ください。")
+            st.info("📡 オッズ取得後に自動表示されます。発売開始後に「推奨買い目を取得・更新」ボタンを押してください。")
         else:
             with st.expander("⚙️ 買い目フィルタ設定", expanded=False):
                 _tsof_c1, _tsof_c2, _tsof_c3 = st.columns(3)
