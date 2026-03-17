@@ -9,17 +9,40 @@ from datetime import datetime, timedelta
 # Standard Times (Approximations) based on netkeiba usage
 STANDARD_TIMES = {
     '芝': {
-        1000: 57.5, 1200: 68.3, 1400: 81.0, 1600: 93.5,
-        1800: 107.5, 2000: 120.0, 2200: 132.5, 2400: 145.5,
+        1000: 57.5, 1150: 67.0, 1200: 68.3, 1300: 76.5,
+        1400: 81.0, 1500: 87.5, 1600: 93.5, 1650: 97.0,
+        1700: 100.5, 1800: 107.5, 1900: 114.0, 2000: 120.0,
+        2100: 126.5, 2200: 132.5, 2400: 145.5,
         2500: 152.0, 3000: 184.0, 3200: 198.0, 3400: 215.0
     },
     'ダ': {
-        1000: 59.5, 1200: 71.8, 1400: 84.8, 1600: 98.5,
-        1700: 105.5, 1800: 112.5, 1900: 119.0, 2000: 126.0, 
+        1000: 59.5, 1150: 69.5, 1200: 71.8, 1300: 79.0,
+        1400: 84.8, 1500: 91.5, 1600: 98.5,
+        1700: 105.5, 1800: 112.5, 1900: 119.0, 2000: 126.0,
         2100: 133.0, 2400: 154.0
     }
 }
 DEFAULT_STD = STANDARD_TIMES['芝']
+
+
+def _get_std_time(surf, dist):
+    """Return standard time for given surface+distance, interpolating if exact key missing."""
+    std_times = STANDARD_TIMES.get(surf, STANDARD_TIMES['芝'])
+    if dist in std_times:
+        return std_times[dist]
+    keys = sorted(std_times.keys())
+    if dist <= keys[0]:
+        # Extrapolate below minimum: pace-based
+        return std_times[keys[0]] * dist / keys[0]
+    if dist >= keys[-1]:
+        return std_times[keys[-1]] * dist / keys[-1]
+    # Linear interpolation between surrounding keys
+    for i in range(len(keys) - 1):
+        if keys[i] < dist < keys[i + 1]:
+            t0, t1 = std_times[keys[i]], std_times[keys[i + 1]]
+            d0, d1 = keys[i], keys[i + 1]
+            return t0 + (t1 - t0) * (dist - d0) / (d1 - d0)
+    return None
 
 def calculate_solid_race(df):
     """Placeholder for Solid Race (Low Difficulty) logic."""
@@ -304,36 +327,35 @@ def calculate_diy_index(df):
         index_vals = []
         for run in past[:10]:
             try:
-                # 1. Get Time (e.g. 1:12.3 -> 72.3)
-                time_str = str(run.get('TimeStr', ''))
-                if not time_str:
-                    # Fallback to Time (seconds) if available
-                    time_sec = float(run.get('Time', 0))
-                else:
-                    parts = time_str.split(':')
-                    if len(parts) == 2:
+                # 1. Get Time (seconds)
+                time_sec = float(run.get('Time', 0))
+                if time_sec <= 0:
+                    time_str = str(run.get('TimeStr', ''))
+                    if ':' in time_str:
+                        parts = time_str.split(':')
                         time_sec = int(parts[0]) * 60 + float(parts[1])
-                    else:
-                        time_sec = float(parts[0])
-                
+                    elif time_str:
+                        time_sec = float(time_str)
+
+                if time_sec <= 0:
+                    continue
+
                 # 2. Get Distance & Surface
                 dist = int(run.get('Distance', 0))
+                if dist <= 0:
+                    continue
                 surf = '芝' if '芝' in str(run.get('Surface', '')) else 'ダ'
-                
-                # 3. Get Standard Time
-                std_times = STANDARD_TIMES.get(surf, {})
-                std_time = std_times.get(dist)
-                
-                if std_time and time_sec > 0:
-                    # DIY Index Calculation
-                    val = (std_time - time_sec) * 0.8 + 50
-                    index_vals.append(val)
-                elif time_sec > 0:
-                    # Fallback approach if distance-specific standard time is missing
-                    # We can use a rough estimate: 1200m -> 72s approx, etc.
-                    # Or just skip if we want high accuracy.
-                    # User requested fallback: let's use a very rough one or just neutral 50.
-                    index_vals.append(50.0) 
+
+                # 3. Get Standard Time (with interpolation for unlisted distances)
+                std_time = _get_std_time(surf, dist)
+                if std_time is None or std_time <= 0:
+                    continue
+
+                # 4. DIY Index: deviation from standard pace, bias-corrected per distance
+                # Scale factor: larger distances need smaller multiplier for numeric stability
+                scale = 100.0 / dist * 12.0  # normalise so 1200m gives ~0.8 equivalent
+                val = (std_time - time_sec) * scale + 50
+                index_vals.append(val)
             except:
                 continue
                 
@@ -382,20 +404,25 @@ def calculate_diy2_index(df):
     # Calculate T-Score (Deviation)
     # Higher score = faster finish (lower agari time)
     valid_field_agari = [a for a in horse_avg_agari if not np.isnan(a)]
-    
+
     if len(valid_field_agari) >= 2:
         field_mean = np.mean(valid_field_agari)
         field_std = np.std(valid_field_agari)
-        if field_std == 0: field_std = 1.0
-        
+        if field_std < 0.1: field_std = 0.5  # Avoid division by near-zero
+
         for i, row in df.iterrows():
-            a = row.get('_tmp_avg_agari')
+            a = df.at[i, '_tmp_avg_agari'] if '_tmp_avg_agari' in df.columns else np.nan
             if pd.notna(a):
-                # Standardized score: (mean - value) because lower agari is better
                 t_score = 50 + 10 * (field_mean - a) / field_std
-                df.at[i, 'DIY2_Index'] = round(t_score, 1)
+                # Clamp to reasonable range
+                df.at[i, 'DIY2_Index'] = round(max(10.0, min(90.0, t_score)), 1)
             else:
                 df.at[i, 'DIY2_Index'] = 50.0
+    elif len(valid_field_agari) == 1:
+        # Only one horse has data: give it a slightly above-average score
+        for i, row in df.iterrows():
+            a = df.at[i, '_tmp_avg_agari'] if '_tmp_avg_agari' in df.columns else np.nan
+            df.at[i, 'DIY2_Index'] = 55.0 if pd.notna(a) else 50.0
     else:
         df['DIY2_Index'] = 50.0
 

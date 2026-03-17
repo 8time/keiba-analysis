@@ -3459,16 +3459,14 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         # 4. Calculation and Table Display
         adv_data = st.session_state.get('test_adv_data', {})
         
-        # Ensure indices exist in columns and recalculate if missing but data exists
-        if 'DIY_Index' not in df_test.columns or df_test['DIY_Index'].sum() == 0:
-             if adv_data: # If we have advanced data, assume we should have indices
-                 df_test = calculator.calculate_diy_index(df_test)
-                 st.session_state['df'] = df_test
-        
-        if 'DIY2_Index' not in df_test.columns or df_test['DIY2_Index'].sum() == 0:
-             if adv_data:
-                 df_test = calculator.calculate_diy2_index(df_test)
-                 st.session_state['df'] = df_test
+        # Ensure indices exist — always recalculate from PastRuns (no adv_data gate)
+        if 'DIY_Index' not in df_test.columns or (df_test['DIY_Index'] == 0).all():
+            df_test = calculator.calculate_diy_index(df_test)
+            st.session_state['df'] = df_test
+
+        if 'DIY2_Index' not in df_test.columns or (df_test['DIY2_Index'] == 50).all() or (df_test['DIY2_Index'] == 0).all():
+            df_test = calculator.calculate_diy2_index(df_test)
+            st.session_state['df'] = df_test
 
         if 'DIY_Index' not in df_test.columns: df_test['DIY_Index'] = 0.0
         if 'DIY2_Index' not in df_test.columns: df_test['DIY2_Index'] = 0.0
