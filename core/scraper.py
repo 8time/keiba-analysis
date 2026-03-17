@@ -391,31 +391,36 @@ def fetch_win_odds(race_id):
             except: decompressed = zlib.decompress(decoded)
             odds_data = json.loads(decompressed.decode('utf-8'))
             results = {int(k): (float(v) if v and v not in ['---.-', '0'] else 0.0) for k, v in odds_data.items() if k.isdigit()}
-            return pd.Series(results)
+            if results:
+                return pd.Series(results)
     except Exception as e:
         logger.warning(f"Win API failed for {race_id}: {e}")
 
-        if results: return pd.Series(results)
-
-    # --- Fallback to Result Page if empty (for past races) ---
-    logger.info("[WinOdds] Falling back to result.html for historic data")
-    res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
-    res_html = fetch_robust_html(res_url)
-    if res_html:
-        rsoup = BeautifulSoup(res_html, 'html.parser', from_encoding='utf-8')
-        # ResultTable01 is standard for JRA/NAR result pages
-        r_rows = rsoup.select('tr.HorseList, tr[class*="HorseList"]')
-        res_odds = {}
-        for rr in r_rows:
+    # --- Fallback: db.netkeiba.com (静的HTML・確定済みレース対応) ---
+    # result.html はJS動的レンダリングのため使用不可
+    logger.info("[WinOdds] Falling back to db.netkeiba.com for historic data")
+    db_url = f"https://db.netkeiba.com/race/{race_id}/"
+    try:
+        db_res = requests.get(db_url, headers=_get_headers(), timeout=10)
+        db_soup = BeautifulSoup(db_res.content, 'html.parser', from_encoding='euc-jp')
+        db_odds = {}
+        # race_table_01: tds[2]=馬番, tds[12]=単勝オッズ, tds[13]=人気
+        for row in db_soup.select('table.race_table_01 tr'):
+            tds = row.find_all('td')
+            if len(tds) < 13:
+                continue
             try:
-                tds = rr.find_all('td')
-                if len(tds) > 10:
-                    u_val = int(re.search(r'(\d+)', tds[2].text).group(1)) # Umaban is index 2
-                    o_val = float(re.search(r'(\d+\.?\d*)', tds[10].text).group(1)) # Odds is index 10
-                    res_odds[u_val] = o_val
-            except: pass
-        if res_odds: 
-            return pd.Series(res_odds)
+                umaban = int(re.search(r'(\d+)', tds[2].get_text()).group(1))
+                odds_txt = tds[12].get_text(strip=True)
+                o_val = float(re.search(r'(\d+\.?\d*)', odds_txt).group(1))
+                if o_val > 0:
+                    db_odds[umaban] = o_val
+            except Exception:
+                continue
+        if db_odds:
+            return pd.Series(db_odds)
+    except Exception as e:
+        logger.warning(f"Win DB fallback failed for {race_id}: {e}")
 
     return pd.Series({})
 
