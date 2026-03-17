@@ -3846,9 +3846,10 @@ if nav == "🔭 N氏の研究室":
             target_id_input = st.text_input("分析対象 RaceID (12桁)", value=st.session_state.get('main_race_id_input', ''), key="rmhs_id_input")
         with col2:
             theory_filter = st.radio(
-                "理論フィルタ", 
-                ["すべて", "R理論 (Rebound)", "M理論 (Move)", "H理論 (High-pace Hang)", "S理論 (Slow-pace Surge)"], 
-                horizontal=True
+                "理論フィルタ",
+                ["すべて", "R理論 (Rebound)", "M理論 (Move)", "H理論 (High-pace Hang)", "S理論 (Slow-pace Surge)"],
+                horizontal=True,
+                key="rmhs_theory_filter"
             )
         with col3:
             st.write("") # Spacer
@@ -3966,7 +3967,7 @@ if nav == "🔭 N氏の研究室":
             scan_date_input = st.text_input("スキャン対象日付 (YYYYMMDD形式)", value=default_date, key="r_scan_date_input")
         with col_d2:
             st.write("") # Spacer
-            fetch_venues_btn = st.button("📅 開催場一覧を取得", use_container_width=True)
+            fetch_venues_btn = st.button("📅 開催場一覧を取得", use_container_width=True, key="r_scan_fetch_venues_btn")
         
         if fetch_venues_btn and scan_date_input:
             st.session_state.r_scan_race_list = scraper.get_race_list_for_date(scan_date_input)
@@ -4001,13 +4002,13 @@ if nav == "🔭 N氏の研究室":
                 st.markdown("---")
                 col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
                 with col_v1:
-                    selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue)
+                    selected_v_code = st.selectbox("特定の競馬場を選択（個別スキャン用）", v_options, format_func=format_venue, key="r_scan_selected_venue")
                 with col_v2:
                     st.write("")
-                    run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary")
+                    run_all_scan_btn = st.button("🌍 全開催場をスキャン", use_container_width=True, type="primary", key="r_scan_run_all_btn")
                 with col_v3:
                     st.write("")
-                    run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True)
+                    run_single_scan_btn = st.button("🚀 選択した場のみスキャン", use_container_width=True, key="r_scan_run_single_btn")
             
                 # Helper to run scan logic
                 def perform_scan(target_races, label):
