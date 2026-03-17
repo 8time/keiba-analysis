@@ -1218,7 +1218,8 @@ if nav == "🏠 Single Race Analysis":
                                     last_date = datetime.strptime(last_run.get('Date', '2000.01.01'), "%Y.%m.%d")
                                     if (datetime.now() - last_date).days > 180: r_list.append("休明")
                                 except: pass
-                                w_val = last_run.get('Weight', "-")
+                                w_raw = last_run.get('Weight', "-")
+                                w_val = f"{w_raw:.1f}" if isinstance(w_raw, (int, float)) else str(w_raw)
                             risks.append(", ".join(r_list) if r_list else "-")
                             corners.append(c_val)
                             weight_raw.append(w_val)
@@ -1900,7 +1901,15 @@ if nav == "🏠 Single Race Analysis":
                             st.subheader("🎯 指数上位＋推奨穴馬の最適買い目")
                             st.caption("予測スコア上位5頭に「推奨穴馬（🔥）」を加え、期待値上位の買い目を抽出します。トリガミを防ぐ資金管理も自動計算します。")
                             
-                        with st.spinner("オッズ取得・計算中..."):
+                        _rec_cache_key = f"sanrenpuku_odds_{race_id_input}"
+                        if st.button("🎯 推奨買い目を取得・更新", key="btn_fetch_san_recs"):
+                            with st.spinner("3連複オッズ取得中..."):
+                                st.session_state[_rec_cache_key] = scraper.fetch_sanrenpuku_odds(race_id_input)
+
+                        odds_list = st.session_state.get(_rec_cache_key, None)
+                        if odds_list is None:
+                            st.info("ボタンを押すと推奨買い目を表示します（発売開始後にご利用ください）")
+                        else:
                             try:
                                 # Use Projected Score to define top-5 axis horses
                                 if 'Projected Score' in df.columns:
@@ -1908,7 +1917,6 @@ if nav == "🏠 Single Race Analysis":
                                     df_for_recs['BattleScore'] = df_for_recs['Projected Score']
                                 else:
                                     df_for_recs = df
-                                odds_list = scraper.fetch_sanrenpuku_odds(race_id_input)
 
                                 if not odds_list:
                                     st.error("データ取得失敗: 3連複のオッズ・人気データが取得できませんでした。")
