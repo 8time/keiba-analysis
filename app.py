@@ -2015,6 +2015,7 @@ if nav == "🏠 Single Race Analysis":
 
                                 if not odds_list:
                                     st.info("📡 3連複オッズ未取得。発売開始後（レース約30〜60分前）に「推奨買い目を取得・更新」ボタンを押してください。")
+                                    recs = []
                                 else:
                                     # Define top-5 horses based on Projected Score
                                     sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
