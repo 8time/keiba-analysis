@@ -190,10 +190,12 @@ with st.sidebar:
             "📊 History & Review",
             "📦 データ保管庫",
             "🧪 新ロジックテスト(FEW+マクリ)",
+            "💾 ロジック置き場",
+            "── 🔭 N氏の研究室 ──",
             "📚 RMHS分析",
             "🏇 過去走R理論スキャン",
-            "💾 ロジック置き場",
             "🔬 実験その３(馬番パターン)",
+            "🎯 馬番配置AI",
         ],
         label_visibility="collapsed"
     )
@@ -4678,6 +4680,273 @@ if nav == "📦 データ保管庫":
         """)
     else:
         st.info("保管庫は現在空です。")
+
+# ──────────────────────────────────────────────
+# 🔭 N氏の研究室 — セパレータ選択時
+# ──────────────────────────────────────────────
+if nav == "── 🔭 N氏の研究室 ──":
+    st.header("🔭 N氏の研究室")
+    st.markdown("""
+    サイドバーから研究室内のページを選択してください。
+
+    | ページ | 内容 |
+    |---|---|
+    | 📚 RMHS分析 | R/M/H/S理論による馬の次走傾向分析 |
+    | 🏇 過去走R理論スキャン | 複数レースから「R理論」該当馬を一括抽出 |
+    | 🔬 実験その３(馬番パターン) | 騎手・厩舎の馬番配置パターンスキャナー |
+    | 🎯 馬番配置AI | 3層構造の意思決定エンジン（新機能） |
+    """)
+
+# ──────────────────────────────────────────────
+# 🎯 馬番配置AI — 3層構造 意思決定エンジン
+# ──────────────────────────────────────────────
+if nav == "🎯 馬番配置AI":
+    import math as _math
+
+    st.title("🎯 馬番配置AI")
+    st.caption("Layer1: レース選別 → Layer2: 馬抽出 → Layer3: 馬券最適化")
+    st.markdown("""
+    **設計思想**：「どの馬が来るか」ではなく「市場の歪みを拾う」AI
+
+    3つのLayerを順番に使うことで、期待値の高い馬券を絞り込みます。
+    """)
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🏟️ Layer1 レース選別",
+        "🐴 Layer2 馬抽出（配置スコア）",
+        "🎫 Layer3 馬券最適化",
+        "📖 スコアリング設定",
+    ])
+
+    # ============================================================
+    # タブ1：レース選別AI
+    # ============================================================
+    with tab1:
+        st.subheader("レース選別 — このレースを買う価値があるか？")
+        st.info("堅すぎるレース・ノイズが多いレースを除外し、配置理論が効く局面のみを選別します。")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            head_count = st.number_input("頭数", min_value=2, max_value=18, value=16, step=1)
+            race_class = st.selectbox("クラス", ["未勝利", "1勝クラス", "2勝クラス", "3勝クラス", "オープン", "重賞"])
+        with col2:
+            popularity_concentration = st.slider(
+                "人気集中度（1位人気の単勝支持率 %）",
+                min_value=10, max_value=80, value=30
+            )
+            track_bias = st.selectbox("脚質偏り", ["バランス型", "先行有利", "差し有利", "逃げ有利"])
+        with col3:
+            venue = st.selectbox("競馬場", ["東京", "中山", "阪神", "京都", "中京", "小倉", "函館", "札幌", "福島", "新潟"])
+            track_cond = st.selectbox("馬場状態", ["良", "稍重", "重", "不良"])
+
+        if st.button("🔍 レース価値を判定", type="primary", key="bai_layer1_btn"):
+            score = 50
+            if head_count >= 14:
+                score += 15
+            elif head_count <= 8:
+                score -= 15
+            if popularity_concentration >= 50:
+                score -= 20
+            elif popularity_concentration <= 25:
+                score += 10
+            if track_cond in ["重", "不良"]:
+                score += 10
+            if track_bias in ["先行有利", "逃げ有利"]:
+                score -= 5
+
+            race_value = min(100, max(0, score))
+            collapse_score = min(100, max(0,
+                (15 if head_count >= 14 else 0) +
+                (20 if track_bias == "先行有利" and head_count >= 14 else 0) +
+                (10 if track_cond in ["重", "不良"] else 0)
+            ))
+            avoid = race_value < 40
+
+            st.markdown("---")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                color = "🟢" if race_value >= 60 else ("🟡" if race_value >= 40 else "🔴")
+                st.metric("レース期待値スコア", f"{color} {race_value} / 100")
+            with col_b:
+                st.metric("崩壊スコア（波乱度）", f"{collapse_score} / 100")
+            with col_c:
+                verdict = "✅ 勝負レース" if not avoid else "⛔ 見送り推奨"
+                st.metric("判定", verdict)
+
+            if avoid:
+                st.warning("このレースは見送りを推奨します。配置理論が機能しにくい条件です。")
+            elif race_value >= 70:
+                st.success("配置理論が効きやすい高期待値レースです。Layer2 へ進んでください。")
+            else:
+                st.info("普通のレースです。配置スコアが高い馬がいれば検討可。")
+
+    # ============================================================
+    # タブ2：馬抽出AI（配置スコア）
+    # ============================================================
+    with tab2:
+        st.subheader("馬抽出 — 市場が過小評価している馬を見つける")
+        st.info("◎マーク・●マーク・配置パターンスコアを統合し、妙味のある馬を抽出します。")
+
+        st.markdown("#### 馬番入力（最大18頭）")
+        num_horses = st.number_input("出走頭数", min_value=2, max_value=18, value=8, step=1, key="bai_num_h")
+
+        cols_header = st.columns([1, 2, 2, 2, 2, 2])
+        cols_header[0].markdown("**馬番**")
+        cols_header[1].markdown("**馬名**")
+        cols_header[2].markdown("**人気**")
+        cols_header[3].markdown("**単勝オッズ**")
+        cols_header[4].markdown("**◎マーク**")
+        cols_header[5].markdown("**●マーク**")
+
+        horse_data = []
+        for i in range(int(num_horses)):
+            cols = st.columns([1, 2, 2, 2, 2, 2])
+            bango = cols[0].number_input("", min_value=1, max_value=18, value=i+1,
+                                          key=f"bai_bango_{i}", label_visibility="collapsed")
+            name  = cols[1].text_input("", value=f"馬{i+1}", key=f"bai_name_{i}",
+                                        label_visibility="collapsed")
+            ninki = cols[2].number_input("", min_value=1, max_value=18, value=i+1,
+                                          key=f"bai_ninki_{i}", label_visibility="collapsed")
+            odds  = cols[3].number_input("", min_value=1.0, max_value=999.9, value=5.0+i*3,
+                                          step=0.1, key=f"bai_odds_{i}", label_visibility="collapsed")
+            maru  = cols[4].checkbox("◎", key=f"bai_maru_{i}")
+            tama  = cols[5].checkbox("●", key=f"bai_tama_{i}")
+            horse_data.append({
+                "馬番": bango, "馬名": name, "人気": ninki,
+                "単勝オッズ": odds, "◎": maru, "●": tama,
+            })
+
+        st.markdown("---")
+        st.markdown("#### 配置パターン一括入力")
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            ura_doshi = st.text_input("裏同士（馬番をカンマ区切り）", placeholder="例: 3,5", key="bai_ura_doshi")
+            ura_hyou  = st.text_input("裏表逆（馬番をカンマ区切り）", placeholder="例: 1,16", key="bai_ura_hyou")
+        with col_p2:
+            ichinohi  = st.text_input("一の位被り（馬番をカンマ区切り）", placeholder="例: 3,13", key="bai_ichinohi")
+            henhou    = st.text_input("片方循環（馬番をカンマ区切り）", placeholder="例: 7,15", key="bai_henhou")
+
+        if st.button("🐴 配置スコアを算出", type="primary", key="bai_layer2_btn"):
+            def _parse_nums(s):
+                try:
+                    return set(int(x.strip()) for x in s.split(",") if x.strip())
+                except Exception:
+                    return set()
+
+            ura_set  = _parse_nums(ura_doshi)
+            hyou_set = _parse_nums(ura_hyou)
+            ichi_set = _parse_nums(ichinohi)
+            hen_set  = _parse_nums(henhou)
+
+            results = []
+            for h in horse_data:
+                bn = h["馬番"]
+                score = 0
+                patterns = []
+                if bn in ura_set:
+                    score += 3; patterns.append("裏同士(3pt)")
+                if bn in hyou_set:
+                    score += 3; patterns.append("裏表逆(3pt)")
+                if bn in ichi_set:
+                    score += 1; patterns.append("一の位被り(1pt)")
+                if bn in hen_set:
+                    score += 4; patterns.append("片方循環(4pt)")
+                if h["◎"]:
+                    score += 6; patterns.append("◎マーク(+6pt)")
+                if h["●"]:
+                    score += 4; patterns.append("●マーク(+4pt)")
+                if h["人気"] >= 7:
+                    score += 1; patterns.append("人気薄(+1pt)")
+                value = round(score * _math.log(max(1.1, h["単勝オッズ"])), 2)
+                results.append({
+                    "馬番": bn,
+                    "馬名": h["馬名"],
+                    "人気": h["人気"],
+                    "単勝オッズ": h["単勝オッズ"],
+                    "配置スコア": score,
+                    "期待値スコア(value)": value,
+                    "該当パターン": " / ".join(patterns) if patterns else "—",
+                })
+
+            df_bai = pd.DataFrame(results).sort_values("期待値スコア(value)", ascending=False)
+            st.dataframe(df_bai, use_container_width=True)
+
+            top_bai = df_bai[df_bai["配置スコア"] > 0]
+            if not top_bai.empty:
+                st.success(
+                    f"注目馬：{top_bai.iloc[0]['馬名']}（馬番{top_bai.iloc[0]['馬番']}）"
+                    f"— 期待値スコア {top_bai.iloc[0]['期待値スコア(value)']}"
+                )
+
+            st.session_state["bango_ai_results"] = df_bai.to_dict("records")
+
+    # ============================================================
+    # タブ3：馬券最適化AI
+    # ============================================================
+    with tab3:
+        st.subheader("馬券最適化 — 単・複・ワイド・見送りを自動判定")
+
+        if "bango_ai_results" not in st.session_state:
+            st.warning("先に Layer2 で配置スコアを算出してください。")
+        else:
+            df3 = pd.DataFrame(st.session_state["bango_ai_results"])
+            df3 = df3.sort_values("期待値スコア(value)", ascending=False)
+
+            st.dataframe(
+                df3[["馬番", "馬名", "人気", "単勝オッズ", "配置スコア", "期待値スコア(value)"]],
+                use_container_width=True
+            )
+
+            st.markdown("---")
+            st.markdown("#### 推奨券種")
+
+            for _, row in df3[df3["配置スコア"] > 0].iterrows():
+                odds_val = row["単勝オッズ"]
+                sc = row["配置スコア"]
+                name = row["馬名"]
+                bango = row["馬番"]
+
+                if sc >= 8 and odds_val >= 10:
+                    advice = "🎯 **単勝** 推奨（高スコア×高オッズ — 期待値高）"
+                elif sc >= 5 and odds_val >= 5:
+                    advice = "📗 **複勝 + ワイド** 推奨（安定回収を狙う）"
+                elif sc >= 3:
+                    advice = "📘 **ワイド相手** として採用（配置あり、確認要）"
+                else:
+                    advice = "⚪ 様子見（スコア低）"
+
+                st.write(f"**{int(bango)}番 {name}**（人気{int(row['人気'])} / {odds_val}倍）→ {advice}")
+
+            st.markdown("---")
+            st.markdown("#### 資金配分メモ")
+            bankroll = st.number_input("本日の軍資金（円）", min_value=100, max_value=100000,
+                                        value=3000, step=100, key="bai_bankroll")
+            kelly = st.slider("ケリー基準（使用割合 %）", 5, 30, 10, key="bai_kelly")
+            bet_amount = int(bankroll * kelly / 100 / 100) * 100
+            st.info(f"1点あたりの目安：**{bet_amount:,}円**（{kelly}%基準）")
+
+    # ============================================================
+    # タブ4：スコアリング設定
+    # ============================================================
+    with tab4:
+        st.subheader("スコアリング設定")
+        st.markdown("""
+        | パターン | ベーススコア | 加算条件 | 加点 |
+        |---|---|---|---|
+        | 裏同士 / 裏表逆 | 3pt | 騎手・厩舎の両方で一致 | +4pt |
+        | 片方循環 | 4pt | 3種類以上のパターン重複 | +5pt |
+        | 一の位被り | 1pt | 7番人気以下の人気薄 | +1pt |
+        | ◎マーク | +6pt | 全出走が同一配置タイプ（騎手・厩舎） | 最優先評価 |
+        | ●マーク | +4pt | 異競馬場・同レース番号・同配置 | 高評価 |
+        """)
+
+        st.markdown("---")
+        st.markdown("""
+        #### 設計3原則
+        1. **市場の歪みを拾う** — 「どの馬が来るか」ではなく「オッズが過小評価している馬」を狙う
+        2. **配置スコアはレース選別と結合して初めて意味を持つ** — Layer1なしでLayer2だけを使わない
+        3. **買い方（券種・点数・配分）で成績は大きく変わる** — Layer3を必ず通す
+        """)
 
 # ──────────────────────────────────────────────
 # --- Footer ---
