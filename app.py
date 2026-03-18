@@ -2236,6 +2236,18 @@ if nav == "🏠 Single Race Analysis":
                     # 買い目点数より下のセクション
                     # =========================================================
                     st.divider()
+                    # Recommended Bets Section
+                    st.markdown("### 🎫 推奨買い目")
+                    rec_col1, rec_col2 = st.columns([2, 1])
+                    with rec_col1:
+                        top_horses = df.head(3)
+                        if chaos_data['rank'] in ['S', 'A']:
+                            st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                        else:
+                            st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                    with rec_col2:
+                        st.button("📋 買い目を生成", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
+
                     # --- 精選10点予想: 2強軸＋期待値上位フィルタ ---
                     _chaos_r = chaos_data['rank']
 
@@ -2287,19 +2299,6 @@ if nav == "🏠 Single Race Analysis":
                             st.dataframe(pd.DataFrame(_bet_rows), width='stretch', hide_index=True)
                         else:
                             st.info("買い目を生成できませんでした。足切り閾値を下げてみてください。")
-
-                    st.divider()
-                    # Recommended Bets Section
-                    st.markdown("### 🎫 推奨買い目")
-                    rec_col1, rec_col2 = st.columns([2, 1])
-                    with rec_col1:
-                        top_horses = df.head(3)
-                        if chaos_data['rank'] in ['S', 'A']:
-                            st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
-                        else:
-                            st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
-                    with rec_col2:
-                        st.button("📋 買い目を生成", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
 
                     st.divider()
 
