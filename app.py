@@ -1959,8 +1959,8 @@ if nav == "🏠 Single Race Analysis":
                         if _chaos_rank in ['A', 'S']:
                             st.html("""
                             <div style="background-color: #3d0000; border: 3px solid #ff4500; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 0 30px #ff450077;">
-                                <h3 style="color: #ffd700; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
-                                <p style="color: #ffcccc; text-align: center; margin-top: 0; font-size: 1.1em; font-weight: bold;">このレースは難易度がA/S判定のため、自動的に高配当特化の「選択した軸2頭 ＋ その他の全馬」の組み合わせに切り替わりました。</p>
+                                <h3 style="color: #ffff00; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
+                                <p style="color: #ffffff; text-align: center; margin-top: 0; font-size: 1.1em; font-weight: bold;">このレースは難易度がA/S判定のため、自動的に高配当特化の「選択した軸2頭 ＋ その他の全馬」の組み合わせに切り替わりました。</p>
                             </div>
                             """)
                         else:
