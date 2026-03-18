@@ -3894,15 +3894,19 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
 
         def highlight_flags(r):
             bg = ''
-            if '究極仕上' in r['加点内訳(備考)']: bg = 'background-color: #004d00;' # Darker Green
-            elif '馬体増減' in r['加点内訳(備考)']: bg = 'background-color: #4d0000;' # Darker Red
-            elif '調教A' in r['加点内訳(備考)']: bg = 'background-color: #4d3d00;' # Darker Gold
-            
+            note = str(r.get('加点内訳(備考)', '')) if '加点内訳(備考)' in r.index else ''
+            if '究極仕上' in note: bg = 'background-color: #004d00;'
+            elif '馬体増減' in note: bg = 'background-color: #4d0000;'
+            elif '調教A' in note: bg = 'background-color: #4d3d00;'
             text_col = 'color: #ffffff;' if bg else ''
             return [bg + text_col for _ in r]
 
         # Display Warning if missing data horses exist
-        if (df_test_res['N指数'] == 0).any() and (df_test_res['Test_Score'] == 0).any():
+        if '加点内訳(備考)' not in df_test_res.columns:
+            df_test_res['加点内訳(備考)'] = ''
+        _n_col = df_test_res['N指数'] if 'N指数' in df_test_res.columns else pd.Series([1])
+        _ts_col = df_test_res['Test_Score'] if 'Test_Score' in df_test_res.columns else pd.Series([1])
+        if (_n_col == 0).any() and (_ts_col == 0).any():
              st.warning("⚠️ **データ不足の馬がいます**: 新馬戦やデータ取得失敗により、N指数・戦闘力が0の馬には⚠️マークを表示しています。")
 
         with st.expander("📖 DIY指数・DIY2(末脚指数)の説明", expanded=True):
