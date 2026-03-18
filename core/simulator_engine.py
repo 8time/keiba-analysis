@@ -1,8 +1,6 @@
 
 import pandas as pd
 import numpy as np
-import kagglehub
-from kagglehub import KaggleDatasetAdapter
 import os
 import logging
 from datetime import datetime
@@ -19,6 +17,7 @@ class BacktestSimulator:
     def load_data(self, start_date=None, end_date=None, bet_type='単勝'):
         """Kaggle からデータをロードしてシミュレーション用に整形する"""
         try:
+            import kagglehub  # 遅延インポート: 起動時の network 呼出を回避
             logger.info("ROBUST_PD_READ_MODE: Enabled (manual pd.read_csv with on_bad_lines=skip)")
             logger.info(f"Downloading/Loading dataset for {bet_type}...")
             # データセットのダウンロード（ローカルパス取得）

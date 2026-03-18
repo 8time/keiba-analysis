@@ -1,6 +1,5 @@
 
 import pandas as pd
-import kagglehub
 import os
 import logging
 import json
@@ -69,6 +68,7 @@ class KaggleChatClient:
             self.dfs = {}
 
         try:
+            import kagglehub  # 遅延インポート: 起動時の network 呼出を回避
             logger.info("Downloading/Loading Kaggle dataset...")
             self.data_path = kagglehub.dataset_download(self.dataset_id)
 
