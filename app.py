@@ -4538,9 +4538,10 @@ if nav == "🤓 N氏の研究室":
 
                     # Display only readable columns
                     display_cols = [c for c in [
-                        "race_id", "race_number", "horse_number", "horse_name",
-                        "jockey", "trainer", "patterns", "score",
-                        "odds", "rank", "is_best_period", "warning"
+                        "race_number", "horse_number", "horse_name",
+                        "jockey", "trainer", "score",
+                        "patterns_detected", "match_details",
+                        "odds", "odds_rank", "is_best_period", "warning"
                     ] if c in df_res.columns]
 
                     st.dataframe(
@@ -4548,16 +4549,16 @@ if nav == "🤓 N氏の研究室":
                             color_score, subset=["score"] if "score" in display_cols else []
                         ),
                         column_config={
-                            "race_id": st.column_config.TextColumn("Race ID"),
                             "race_number": st.column_config.NumberColumn("R", format="%dR"),
                             "horse_number": st.column_config.NumberColumn("馬番"),
                             "horse_name": st.column_config.TextColumn("馬名"),
                             "jockey": st.column_config.TextColumn("騎手"),
                             "trainer": st.column_config.TextColumn("厩舎"),
-                            "patterns": st.column_config.TextColumn("検出パターン"),
                             "score": st.column_config.NumberColumn("🔥 スコア"),
+                            "patterns_detected": st.column_config.TextColumn("検出パターン"),
+                            "match_details": st.column_config.TextColumn("マッチ詳細", width="large"),
                             "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
-                            "rank": st.column_config.NumberColumn("人気", format="%d位"),
+                            "odds_rank": st.column_config.NumberColumn("人気", format="%d位"),
                             "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
                             "warning": st.column_config.TextColumn("⚠️ 警告"),
                         },
