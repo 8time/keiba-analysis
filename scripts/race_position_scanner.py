@@ -137,6 +137,36 @@ def _fetch_html(url: str) -> Optional[BeautifulSoup]:
 
     return None
 
+def _fetch_odds_api(race_id: str) -> dict:
+    """netkeiba オッズ API から単勝オッズ・人気を取得。
+    戻り値: {馬番(int): (odds(float), rank(int)), ...}
+    """
+    result = {}
+    try:
+        api_url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1"
+        h = HEADERS.copy()
+        h["Referer"] = "https://race.netkeiba.com/"
+        resp = requests.get(api_url, headers=h, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            win_odds = data.get("data", {}).get("odds", {}).get("1", {})
+            for umaban_str, vals in win_odds.items():
+                # vals = ["オッズ", "", "人気"]
+                if isinstance(vals, list) and len(vals) >= 3:
+                    try:
+                        odds_val = float(vals[0]) if vals[0] else 0.0
+                    except (ValueError, TypeError):
+                        odds_val = 0.0
+                    try:
+                        rank_val = int(vals[2]) if vals[2] else 99
+                    except (ValueError, TypeError):
+                        rank_val = 99
+                    result[int(umaban_str)] = (odds_val, rank_val)
+    except Exception:
+        pass
+    return result
+
+
 def _parse_float(val: str) -> float:
     try:
         m = re.search(r'(\d+\.\d+)', val)
@@ -227,8 +257,19 @@ def scrape_race(url: str) -> Optional[Race]:
         field_size=field_size,
         horses=horses
     )
-    # print(f"[DEBUG] Race {race_num} built with {len(horses)} horses")
     race.compute_ura()
+
+    # 出馬表HTMLではオッズが動的ロードのため取れない → API で補完
+    needs_odds = any(h.odds == 0.0 or h.odds_rank == 99 for h in race.horses)
+    if needs_odds:
+        odds_map = _fetch_odds_api(race_id)
+        if odds_map:
+            for h in race.horses:
+                if h.horse_number in odds_map:
+                    o, r = odds_map[h.horse_number]
+                    h.odds = o
+                    h.odds_rank = r
+
     return race
 
 # ──────────────────────────────────────────────
