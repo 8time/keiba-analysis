@@ -382,6 +382,14 @@ class RacePositionScanner:
 
         # Compile Results
         results = []
+        # 日付を推定 (race_id の先頭8桁 YYYYMMDD ではなく YYYY+場+回+日 形式)
+        # race_id例: 202506010811 → 2025年 場06 01回 08日目 11R
+        # 日付はスキャン対象日 = 全レース共通と仮定
+        scan_date = ""
+        if races:
+            rid = races[0].race_id
+            scan_date = rid[:4] + rid[4:6] + rid[6:8]  # 簡易日付キー
+
         for ra in races:
             # Re-check trainer multiple entry for scoring
             trainer_counts = defaultdict(int)
@@ -389,24 +397,24 @@ class RacePositionScanner:
 
             for h in ra.horses:
                 if len(h.matched_details) < self.min_patterns: continue
-                
+
                 # --- SCORING (Ver 2.0) ---
                 score = 0
                 # Base: +1 per evidence recorded
                 score += len(h.matched_details)
-                
+
                 # Bonus 1 (Overlap): +2 if >= 2 distinct types (P1~P4)
                 if len(h.matched_patterns) >= 2:
                     score += 2
-                    
+
                 # Bonus 2 (Trainer Entry): +2 if same trainer has 2+ in this race
                 if trainer_counts[h.trainer] >= 2:
                     score += 2
-                    
+
                 # Bonus 3 (Longshot): +1 if odds_rank >= 7 or odds >= 20.0
                 if h.odds_rank >= 7 or h.odds >= 20.0:
                     score += 1
-                
+
                 results.append({
                     "race_number": ra.race_number,
                     "horse_number": h.horse_number,
@@ -417,11 +425,100 @@ class RacePositionScanner:
                     "patterns_detected": ",".join(sorted(list(h.matched_patterns))),
                     "match_details": " | ".join(h.matched_details),
                     "odds": h.odds,
-                    "odds_rank": h.odds_rank
+                    "odds_rank": h.odds_rank,
+                    # ◎●シグナル用メタ (後で上書き)
+                    "field_size": ra.field_size,
+                    "venue": ra.venue,
+                    "race_id": ra.race_id,
+                    "date": scan_date,
                 })
 
         df = pd.DataFrame(results)
         if not df.empty:
+            # --- ◎●シグナル統合 ---
+            try:
+                from scripts.signals.models import Entry as SigEntry
+                from scripts.signals.pipeline import run_special_signal_pipeline
+                from scripts.signals.output import (
+                    build_double_circle_summary, build_bullet_summary,
+                )
+                from scripts.signals.grouping import (
+                    build_entity_daily_venue_groups,
+                    filter_double_circle_candidate_groups,
+                    build_trainer_cross_venue_race_groups,
+                    filter_bullet_candidate_groups,
+                )
+                from scripts.signals.double_circle import evaluate_all_double_circle_groups
+                from scripts.signals.bullet_signal import evaluate_all_bullet_groups
+
+                # 全馬(フィルタ前)の Entry を作成 (◎●は全馬で判定する必要がある)
+                all_entries = []
+                for ra in races:
+                    for h in ra.horses:
+                        all_entries.append(SigEntry(
+                            date=scan_date, venue=ra.venue, race_id=ra.race_id,
+                            race_number=ra.race_number, field_size=ra.field_size,
+                            horse_number=h.horse_number, horse_name=h.horse_name,
+                            jockey=h.jockey, trainer=h.trainer,
+                            odds=h.odds, odds_rank=h.odds_rank,
+                            patterns_detected=",".join(sorted(list(h.matched_patterns))),
+                            match_details=" | ".join(h.matched_details),
+                            existing_score=0,
+                        ))
+
+                # パイプライン実行
+                run_special_signal_pipeline(all_entries)
+
+                # 結果をDFにマッピング (race_number + horse_number でキー)
+                sig_map = {}
+                for e in all_entries:
+                    sig_map[(e.race_number, e.horse_number)] = e
+
+                # DataFrame に列追加
+                df["special_marks"] = ""
+                df["jockey_dc_flag"] = False
+                df["jockey_dc_rule"] = ""
+                df["trainer_dc_flag"] = False
+                df["trainer_dc_rule"] = ""
+                df["trainer_bullet_flag"] = False
+                df["trainer_bullet_rules"] = ""
+
+                for idx, row in df.iterrows():
+                    key = (row["race_number"], row["horse_number"])
+                    if key in sig_map:
+                        e = sig_map[key]
+                        df.at[idx, "special_marks"] = e.special_marks
+                        df.at[idx, "jockey_dc_flag"] = e.jockey_double_circle_flag
+                        df.at[idx, "jockey_dc_rule"] = e.jockey_double_circle_rule_type or ""
+                        df.at[idx, "trainer_dc_flag"] = e.trainer_double_circle_flag
+                        df.at[idx, "trainer_dc_rule"] = e.trainer_double_circle_rule_type or ""
+                        df.at[idx, "trainer_bullet_flag"] = e.trainer_bullet_flag
+                        df.at[idx, "trainer_bullet_rules"] = ",".join(e.trainer_bullet_rule_types)
+                        # スコア加算
+                        bonus = 0
+                        if e.jockey_double_circle_flag: bonus += 3
+                        if e.trainer_double_circle_flag: bonus += 3
+                        if e.trainer_bullet_flag: bonus += 2
+                        df.at[idx, "score"] = row["score"] + bonus
+
+                # ◎●サマリーを保持 (UIで表示用)
+                dc_groups = build_entity_daily_venue_groups(all_entries)
+                dc_cands = filter_double_circle_candidate_groups(dc_groups)
+                dc_results = evaluate_all_double_circle_groups(dc_cands)
+                bt_groups = build_trainer_cross_venue_race_groups(all_entries)
+                bt_cands = filter_bullet_candidate_groups(bt_groups)
+                bt_results = evaluate_all_bullet_groups(bt_cands)
+
+                self._dc_summary = build_double_circle_summary(dc_groups, dc_results)
+                self._bt_summary = build_bullet_summary(bt_groups, bt_results)
+
+            except Exception as sig_err:
+                print(f"[WARN] ◎●シグナル統合でエラー (既存結果は影響なし): {sig_err}")
+                import traceback
+                traceback.print_exc()
+                self._dc_summary = []
+                self._bt_summary = []
+
             df = df.sort_values(by=["score", "race_number"], ascending=[False, True])
         return df
 
@@ -461,12 +558,34 @@ def run_scan(
 ):
     scanner = RacePositionScanner(entity_mode=entity, min_patterns=min_patterns)
     df = scanner.scan(urls, progress_callback=progress_callback)
-    
+
     if output_csv and not df.empty:
         df.to_csv(output_csv, index=False, encoding='utf-8-sig')
         print(f"[INFO] Saved results to {output_csv}")
-    
+
     return df
+
+
+def run_scan_with_signals(
+    urls: List[str],
+    entity: str = "jockey",
+    min_patterns: int = 1,
+    output_csv: Optional[str] = None,
+    progress_callback: Optional[Callable] = None
+):
+    """run_scan + ◎●サマリーを返す拡張版。
+    戻り値: (df, dc_summary, bt_summary)
+    """
+    scanner = RacePositionScanner(entity_mode=entity, min_patterns=min_patterns)
+    df = scanner.scan(urls, progress_callback=progress_callback)
+
+    if output_csv and not df.empty:
+        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+
+    dc_summary = getattr(scanner, '_dc_summary', [])
+    bt_summary = getattr(scanner, '_bt_summary', [])
+
+    return df, dc_summary, bt_summary
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RacePositionPatternScanner Ver 2.0")

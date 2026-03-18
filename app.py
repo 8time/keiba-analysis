@@ -4488,7 +4488,7 @@ if nav == "🤓 N氏の研究室":
 
             with st.spinner("スクレイピング・パターン検出中... (しばらくお待ちください)"):
                 try:
-                    df_result = rpps.run_scan(
+                    df_result, dc_summary, bt_summary = rpps.run_scan_with_signals(
                         urls=urls,
                         entity=entity,
                         min_patterns=int(min_patterns),
@@ -4496,6 +4496,8 @@ if nav == "🤓 N氏の研究室":
                         progress_callback=update_progress,
                     )
                     st.session_state.rpps_result_df = df_result
+                    st.session_state.rpps_dc_summary = dc_summary
+                    st.session_state.rpps_bt_summary = bt_summary
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
                     import traceback
@@ -4539,7 +4541,7 @@ if nav == "🤓 N氏の研究室":
                     # Display only readable columns
                     display_cols = [c for c in [
                         "race_number", "horse_number", "horse_name",
-                        "jockey", "trainer", "score",
+                        "jockey", "trainer", "score", "special_marks",
                         "patterns_detected", "match_details",
                         "odds", "odds_rank", "is_best_period", "warning"
                     ] if c in df_res.columns]
@@ -4555,6 +4557,7 @@ if nav == "🤓 N氏の研究室":
                             "jockey": st.column_config.TextColumn("騎手"),
                             "trainer": st.column_config.TextColumn("厩舎"),
                             "score": st.column_config.NumberColumn("🔥 スコア"),
+                            "special_marks": st.column_config.TextColumn("◎● シグナル"),
                             "patterns_detected": st.column_config.TextColumn("検出パターン"),
                             "match_details": st.column_config.TextColumn("マッチ詳細", width="large"),
                             "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
@@ -4580,9 +4583,45 @@ if nav == "🤓 N氏の研究室":
                 )
 
                 st.divider()
+
+                # --- ◎●シグナル サマリー ---
+                dc_sum = st.session_state.get("rpps_dc_summary", [])
+                bt_sum = st.session_state.get("rpps_bt_summary", [])
+
+                if dc_sum or bt_sum:
+                    st.subheader("◎● シグナル サマリー")
+
+                if dc_sum:
+                    st.markdown("**◎ (当日全出走 統一パターン)**")
+                    df_dc = pd.DataFrame(dc_sum)
+                    st.dataframe(df_dc, column_config={
+                        "date": st.column_config.TextColumn("日付"),
+                        "venue": st.column_config.TextColumn("場"),
+                        "entity_type": st.column_config.TextColumn("対象"),
+                        "entity_name": st.column_config.TextColumn("名前"),
+                        "rule_type": st.column_config.TextColumn("統一タイプ"),
+                        "entry_count": st.column_config.NumberColumn("出走数"),
+                        "race_numbers": st.column_config.TextColumn("R番号"),
+                        "horse_numbers": st.column_config.TextColumn("馬番"),
+                    }, hide_index=True, width='stretch')
+
+                if bt_sum:
+                    st.markdown("**● (場跨ぎ 同一R番号 一致)**")
+                    df_bt = pd.DataFrame(bt_sum)
+                    st.dataframe(df_bt, column_config={
+                        "date": st.column_config.TextColumn("日付"),
+                        "trainer": st.column_config.TextColumn("厩舎"),
+                        "race_number": st.column_config.NumberColumn("R番号"),
+                        "venues": st.column_config.TextColumn("競馬場"),
+                        "rule_types": st.column_config.TextColumn("一致パターン"),
+                        "matched_pairs_count": st.column_config.NumberColumn("ペア数"),
+                    }, hide_index=True, width='stretch')
+
+                st.divider()
                 st.subheader("📈 パターン別 検出数")
                 all_patterns = []
-                for pats in df_res.get("patterns", pd.Series()):
+                pat_col = "patterns_detected" if "patterns_detected" in df_res.columns else "patterns"
+                for pats in df_res.get(pat_col, pd.Series()):
                     if pats:
                         all_patterns.extend(str(pats).split(","))
                 if all_patterns:
