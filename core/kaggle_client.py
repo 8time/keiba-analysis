@@ -115,25 +115,48 @@ class KaggleChatClient:
                 return "データの読み込みに失敗しました。", None
 
         import time
-        
+
+        # 実データからサンプル値を動的取得してプロンプトに注入
+        try:
+            venue_samples = sorted(self.dfs['races']['venue'].dropna().unique().tolist())[:20]
+            bet_type_samples = sorted(self.dfs['payouts']['bet_type'].dropna().unique().tolist())
+            rank_sample = self.dfs['results']['rank'].dropna().iloc[0] if not self.dfs['results'].empty else 1
+            rank_type = type(rank_sample).__name__
+            race_class_samples = sorted(self.dfs['races']['race_class'].dropna().unique().tolist())[:10]
+            date_range = f"{self.dfs['races']['date'].min().date()} 〜 {self.dfs['races']['date'].max().date()}"
+        except Exception:
+            venue_samples = ['中山', '東京', '阪神', '京都', '中京', '小倉', '函館', '札幌', '福島', '新潟']
+            bet_type_samples = ['単勝', '複勝', '馬連', 'ワイド', '三連複', '三連単', '馬単', '枠連']
+            rank_type = 'int'
+            race_class_samples = []
+            date_range = '不明'
+
         prompt = f"""
         あなたは競馬データ分析の専門家です。
         以下の pandas DataFrame を使用して、ユーザーの質問に答える Python コードを生成してください。
-        
+
         DataFrame構成:
         - df_races: レース情報 (race_id, date, venue, race_name, distance, course_type, race_class)
         - df_results: 走破結果 (race_id, rank, number, horse_id, horse_name, odds, popularity)
         - df_payouts: 払戻 (race_id, bet_type, horse_num, payout)
-        
+
+        【実データのサンプル値】
+        - df_races['venue'] の実際の値 (先頭20件): {venue_samples}
+        - df_payouts['bet_type'] の実際の値: {bet_type_samples}
+        - df_results['rank'] の型: {rank_type} (数値比較する際は型に合わせること)
+        - df_races['race_class'] のサンプル: {race_class_samples}
+        - df_races['date'] の範囲: {date_range}
+
         重要事項:
-        - df_payouts['bet_type'] の値には '単勝', '複勝', '馬連', 'ワイド', '三連複', '三連単', '馬単', '枠連', '枠単' が含まれます。
-        - 三連複・三連単などの「三」は漢数字を使用してください。
-        - `df_payouts['payout']` は数値変換してから計算してください。
+        - venue フィルタは上記の実際の値リストを参照して正確に一致させること。
+        - bet_type フィルタも上記の実際の値を使うこと（例: '三連複' ではなく実際の値）。
+        - `df_payouts['payout']` は pd.to_numeric() で数値変換してから計算してください。
         - 日付フィルタは `df_races['date']` (datetime型) を使用してください。
         - フィルタ結果が空の可能性があるため、`.iloc[0]` を使う前に `.empty` をチェックしてください。
-        
+        - rank が int 型なら数値で比較、str 型なら文字列で比較すること。
+
         ユーザーの質問: {query}
-        
+
         出力ルール:
         - 変数名 `result_df` または `result_text` に回答を格納してください。
         - レースIDを表示する際は `[レースID](https://db.netkeiba.com/race/レースID/)` 形式にしてください。
@@ -179,6 +202,11 @@ class KaggleChatClient:
                     
                     res_df = namespace.get('result_df')
                     res_text = namespace.get('result_text')
+                    # 結果が空のときは生成コードをログに出力（デバッグ用）
+                    is_empty = (res_df is None or (hasattr(res_df, 'empty') and res_df.empty)) and not res_text
+                    if is_empty:
+                        logger.warning(f"Query returned empty result. Generated code:\n{code}")
+                        return f"該当するデータが見つかりませんでした。\n\n<details><summary>生成コード（デバッグ）</summary>\n\n```python\n{code}\n```\n</details>", None
                     return res_text, res_df
 
                 except Exception as e:
