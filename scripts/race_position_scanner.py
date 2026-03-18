@@ -184,8 +184,12 @@ def scrape_race(url: str) -> Optional[Race]:
         name_td = row.select_one("td[class^='HorseInfo']") or row.select_one("td[class^='Horse_Info']")
         jock_td = row.select_one("td[class^='Jockey']")
         train_td = row.select_one("td[class^='Trainer']")
-        odds_td = row.select_one("td[class^='Odds']")
-        pop_td = row.select_one("td[class^='Popular']")
+        # オッズ: span[id^='odds-'] を優先、fallback で td.Popular(非Ninki)
+        odds_span = row.select_one("span[id^='odds-']")
+        odds_td = odds_span.parent if odds_span else row.select_one("td[class^='Odds']")
+        # 人気: span[id^='ninki-'] を優先、fallback で td.Popular_Ninki
+        pop_span = row.select_one("span[id^='ninki-']")
+        pop_td = pop_span.parent if pop_span else row.select_one("td.Popular_Ninki")
 
         if not (num_td and name_td):
             # Fallback to broader search if class prefix fails
@@ -193,8 +197,10 @@ def scrape_race(url: str) -> Optional[Race]:
             name_td = name_td or row.find("td", class_=re.compile(r"HorseInfo|Horse_Info"))
             jock_td = jock_td or row.find("td", class_=re.compile(r"Jockey"))
             train_td = train_td or row.find("td", class_=re.compile(r"Trainer"))
-            odds_td = odds_td or row.find("td", class_=re.compile(r"Odds"))
-            pop_td = pop_td or row.find("td", class_=re.compile(r"Popular"))
+            if not odds_td:
+                odds_td = row.find("td", class_=re.compile(r"Odds"))
+            if not pop_td:
+                pop_td = row.find("td", class_=re.compile(r"Popular_Ninki"))
 
         if not (num_td and name_td):
             continue
@@ -208,8 +214,8 @@ def scrape_race(url: str) -> Optional[Race]:
             horse_name=h_name,
             jockey=jock_td.text.strip() if (jock_td and jock_td.text.strip()) else "不明",
             trainer=train_td.text.strip() if (train_td and train_td.text.strip()) else "不明",
-            odds=_parse_float(odds_td.text.strip()) if odds_td else 0.0,
-            odds_rank=_parse_int(pop_td.text.strip()) if pop_td else 99
+            odds=_parse_float(odds_span.text.strip() if odds_span else (odds_td.text.strip() if odds_td else "0")),
+            odds_rank=_parse_int(pop_span.text.strip() if pop_span else (pop_td.text.strip() if pop_td else "99"))
         )
         horses.append(horse)
 
