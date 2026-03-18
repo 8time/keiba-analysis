@@ -4475,6 +4475,7 @@ if nav == "🤓 N氏の研究室":
 
         if scan_btn and selected_race_urls:
             import scripts.race_position_scanner as rpps
+            from scripts.race_position_scanner import run_scan_with_signals
         
             urls = selected_race_urls
             st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
@@ -4488,7 +4489,7 @@ if nav == "🤓 N氏の研究室":
 
             with st.spinner("スクレイピング・パターン検出中... (しばらくお待ちください)"):
                 try:
-                    df_result, dc_summary, bt_summary = rpps.run_scan_with_signals(
+                    df_result, dc_summary, bt_summary = run_scan_with_signals(
                         urls=urls,
                         entity=entity,
                         min_patterns=int(min_patterns),
