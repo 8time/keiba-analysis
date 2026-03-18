@@ -4731,13 +4731,13 @@ if nav == "🔭 N氏の研究室":
             horse_data = []
             for i in range(int(num_horses)):
                 cols = st.columns([1, 2, 2, 2, 2, 2])
-                bn = cols[0].number_input("", 1, 18, i+1, key=f"bango_bn_{i}",
+                bn = cols[0].number_input("馬番", 1, 18, i+1, key=f"bango_bn_{i}",
                                            label_visibility="collapsed")
-                nm = cols[1].text_input("", f"馬{i+1}", key=f"bango_nm_{i}",
+                nm = cols[1].text_input("馬名", f"馬{i+1}", key=f"bango_nm_{i}",
                                          label_visibility="collapsed")
-                nk = cols[2].number_input("", 1, 18, i+1, key=f"bango_nk_{i}",
+                nk = cols[2].number_input("人気", 1, 18, i+1, key=f"bango_nk_{i}",
                                            label_visibility="collapsed")
-                od = cols[3].number_input("", 1.0, 999.9, float(5+i*3), 0.1,
+                od = cols[3].number_input("単勝オッズ", 1.0, 999.9, float(5+i*3), 0.1,
                                            key=f"bango_od_{i}", label_visibility="collapsed")
                 mr = cols[4].checkbox("◎", key=f"bango_mr_{i}")
                 tm = cols[5].checkbox("●", key=f"bango_tm_{i}")

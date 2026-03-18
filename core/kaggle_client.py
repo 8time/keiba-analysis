@@ -84,8 +84,7 @@ class KaggleChatClient:
                 self.dfs[key] = pd.read_csv(
                     full_path,
                     encoding='utf-8',
-                    on_bad_lines='skip',
-                    engine='python'
+                    on_bad_lines='skip'
                 )
                 # 基本的な前処理
                 if key == 'races':
