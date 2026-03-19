@@ -1975,13 +1975,15 @@ if nav == "🏠 Single Race Analysis":
                             
                         _rec_cache_key = f"sanrenpuku_odds_{race_id_input}"
 
-                        @st.cache_data(ttl=60, show_spinner=False)
+                        @st.cache_data(ttl=120, show_spinner=False)
                         def _fetch_sanrenpuku_cached(_race_id: str):
                             return scraper.fetch_sanrenpuku_odds(_race_id)
 
                         if st.button("🎯 推奨買い目を取得・更新", key="btn_fetch_san_recs"):
+                            _fetch_sanrenpuku_cached.clear()  # 古いキャッシュをクリア
                             with st.spinner("3連複オッズ取得中..."):
                                 _fetched = _fetch_sanrenpuku_cached(race_id_input)
+                                st.caption(f"取得件数: {len(_fetched) if _fetched else 0}")
                                 st.session_state[_rec_cache_key] = _fetched
                                 if _fetched:
                                     st.session_state["sanrenpuku_odds_df"] = pd.DataFrame([
