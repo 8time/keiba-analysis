@@ -1385,14 +1385,32 @@ if nav == "🏠 Single Race Analysis":
                         _all_cols = _ordered + _rest
                         view_df = view_df[_all_cols]
 
+                    _col_label_map = {
+                        "Rank": "順位", "Umaban": "馬番", "Popularity": "人気",
+                        "Odds": "単勝オッズ", "OddsGap": "オッズ断層",
+                        "SexAge": "性別/年齢", "WeightHistory": "当日馬体重(増減)",
+                        "WeightCarried": "斤量", "Trainer": "厩舎",
+                        "Bloodline": "血統(父/母父)", "Jockey": "騎手",
+                        "JockeyChange": "乗替", "Name": "馬名",
+                        "Projected Score": "⭐予測スコア", "NIndex": "N指数",
+                        "BattleScore": "🔥総合戦闘力",
+                        "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
+                        "SpeedIndex": "スピード指数", "AvgAgari": "上がり3F(順位)",
+                        "AvgPosition": "平均位置取り", "Alert": "アラート",
+                        "RiskFlags": "不安要素",
+                    }
+                    _col_display = [_col_label_map.get(c, c) for c in _all_cols]
+                    _display_to_col = {_col_label_map.get(c, c): c for c in _all_cols}
+
                     with st.popover("⚙ 列順設定"):
                         st.caption("選択順が左→右の表示順になります")
-                        _col_sel = st.multiselect(
+                        _disp_sel = st.multiselect(
                             "表示する列を選択",
-                            options=_all_cols,
-                            default=_all_cols,
+                            options=_col_display,
+                            default=_col_display,
                             key="sra_col_order_sel",
                         )
+                        _col_sel = [_display_to_col[d] for d in _disp_sel if d in _display_to_col]
                         if _col_sel and _col_sel != _all_cols:
                             view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
                             # Save user's column order
