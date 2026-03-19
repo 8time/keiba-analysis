@@ -1362,47 +1362,28 @@ if nav == "🏠 Single Race Analysis":
                             'SpeedIndex', 'AvgAgari', 'AvgPosition', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
-                    # --- Column visibility/order: auto-save on_change (user_prefs.json) ---
+                    # --- Column order persistence (user_prefs.json) ---
                     import json as _json_sra
                     _prefs_path_sra = os.path.join(os.getcwd(), "user_prefs.json")
-                    _cur_cols_sra = list(view_df.columns)
-
-                    # Load saved column list from prefs
-                    _saved_sra = []
                     try:
                         with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
                             _saved_sra = _json_sra.load(_f).get('single_race_col_order', [])
+                        if _saved_sra:
+                            _ordered = [c for c in _saved_sra if c in view_df.columns]
+                            _rest = [c for c in view_df.columns if c not in _ordered]
+                            view_df = view_df[_ordered + _rest]
                     except: pass
 
-                    # Build default selection: respect saved order/visibility
-                    _default_sra = [c for c in _saved_sra if c in _cur_cols_sra] or _cur_cols_sra
-
-                    # Initialize session_state on first load
-                    if "single_race_col_order_sel" not in st.session_state:
-                        st.session_state["single_race_col_order_sel"] = _default_sra
-
-                    def _auto_save_col_order_sra():
-                        sel = st.session_state.get("single_race_col_order_sel", _cur_cols_sra)
+                    # Auto-save current column order for next session
+                    try:
                         try:
-                            try:
-                                with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
-                                    _p = _json_sra.load(_f)
-                            except: _p = {}
-                            _p['single_race_col_order'] = sel
-                            with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
-                                _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
-                        except: pass
-
-                    _sel_cols_sra = st.multiselect(
-                        "表示列",
-                        options=_cur_cols_sra,
-                        default=st.session_state["single_race_col_order_sel"],
-                        key="single_race_col_order_sel",
-                        label_visibility="collapsed",
-                        on_change=_auto_save_col_order_sra,
-                    )
-                    if _sel_cols_sra:
-                        view_df = view_df[[c for c in _sel_cols_sra if c in view_df.columns]]
+                            with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                _p = _json_sra.load(_f)
+                        except: _p = {}
+                        _p['single_race_col_order'] = list(view_df.columns)
+                        with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                            _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
+                    except: pass
 
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
