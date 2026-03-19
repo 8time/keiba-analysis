@@ -302,40 +302,57 @@ def validate_horse_name(name):
 def fetch_sanrenpuku_odds(race_id):
     """
     Fetches Sanrenpuku (Trio / 3連複) odds ordered by popularity.
-    Uses netkeiba JSON API with zlib decompression.
-    Plain requests is used (curl_cffi impersonate mode fails on Streamlit Cloud).
+    Uses netkeiba JSONP API (type=7, action=init, sort=ninki).
+    Response format: odds['7'][rank] = [odds_str, None, rank_int, combo_6digit]
     """
-    import json, zlib, base64, requests as _req
+    import json, zlib, base64, re, requests as _req
 
     is_nar = _is_nar(race_id)
     domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
     api_url = f"https://{domain}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html"
 
+    # JSONP callback (any unique string works)
+    import time
+    cb = f"jQuery_{int(time.time() * 1000)}"
+
     params = {
+        "callback": cb,
         "pid": f"api_get_{'nar' if is_nar else 'jra'}_odds",
+        "input": "UTF-8",
+        "output": "jsonp",
         "race_id": race_id,
-        "type": "b7",
+        "type": "7",
+        "action": "init",
+        "sort": "ninki",
         "compress": "1",
-        "output": "json",
     }
     api_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept": "*/*",
         "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-        "Referer": f"https://{domain}/odds/index.html?type=b7&race_id={race_id}",
-        "X-Requested-With": "XMLHttpRequest",
+        "Referer": f"https://{domain}/odds/index.html?type=b7&race_id={race_id}&housiki=c99",
     }
 
     try:
         _resp = _req.get(api_url, params=params, headers=api_headers, timeout=15)
         _resp.raise_for_status()
-        data = _resp.json()
+
+        # Strip JSONP wrapper: callback_name({...})
+        text = _resp.text
+        jsonp_match = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
+        if jsonp_match:
+            data = json.loads(jsonp_match.group(1))
+        else:
+            data = json.loads(text)
+
         api_status = data.get('status', '')
         raw = data.get('data', '')
-        reason = data.get('reason', '')
-        if not raw or api_status == 'NG' or reason in ('history odds empty', 'result odds empty'):
-            logger.info(f"Sanrenpuku API: status={api_status} reason={reason} for {race_id}")
+
+        if not raw:
+            logger.info(f"Sanrenpuku API: status={api_status} empty data for {race_id}")
             return []
+
+        # --- New format: data is compressed string → dict with odds['7'][rank] ---
         if isinstance(raw, str) and len(raw) > 10:
             decoded = base64.b64decode(raw)
             try:
@@ -343,13 +360,43 @@ def fetch_sanrenpuku_odds(race_id):
             except Exception:
                 decompressed = zlib.decompress(decoded)
             odds_data = json.loads(decompressed.decode('utf-8'))
+        elif isinstance(raw, dict):
+            odds_data = raw
+        else:
+            return []
 
-            results = []
+        results = []
+
+        # New API format: odds_data['odds']['7'][rank_str] = [odds_str, None, rank_int, combo_6digit]
+        odds_by_type = odds_data.get('odds', odds_data)
+        trio_data = odds_by_type.get('7', odds_by_type)
+
+        if isinstance(trio_data, dict):
+            for rank_key, val in trio_data.items():
+                try:
+                    if isinstance(val, list) and len(val) >= 4:
+                        odds_str = str(val[0]).replace(',', '')
+                        rank_int = int(val[2])
+                        combo = str(val[3])
+                        odds_val = float(odds_str) if odds_str not in ('', '---.-', '0') else 0.0
+                        if odds_val > 0 and len(combo) == 6:
+                            h1, h2, h3 = int(combo[0:2]), int(combo[2:4]), int(combo[4:6])
+                            results.append({
+                                'Combination': f"{h1}-{h2}-{h3}",
+                                'Horses': [h1, h2, h3],
+                                'Odds': odds_val,
+                                'Rank': rank_int,
+                            })
+                except Exception:
+                    continue
+
+        # Fallback: old format (flat dict with 6-char keys)
+        if not results:
             for key, val in odds_data.items():
                 if len(key) == 6:
                     try:
                         h1, h2, h3 = int(key[0:2]), int(key[2:4]), int(key[4:6])
-                        odds_val = float(val) if val not in ('', '---.-', '0') else 0.0
+                        odds_val = float(str(val).replace(',', '')) if val not in ('', '---.-', '0') else 0.0
                         if odds_val > 0:
                             results.append({
                                 'Combination': f"{h1}-{h2}-{h3}",
@@ -360,10 +407,11 @@ def fetch_sanrenpuku_odds(race_id):
                     except Exception:
                         continue
 
-            results.sort(key=lambda x: x['Odds'])
-            for i, item in enumerate(results):
+        results.sort(key=lambda x: x['Odds'])
+        for i, item in enumerate(results):
+            if item['Rank'] == 0:
                 item['Rank'] = i + 1
-            return results
+        return results
 
     except Exception as e:
         logger.warning(f"Sanrenpuku API failed for {race_id}: {e}")
