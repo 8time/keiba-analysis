@@ -1371,25 +1371,40 @@ if nav == "🏠 Single Race Analysis":
                     # --- Column order persistence (user_prefs.json) ---
                     import json as _json_sra
                     _prefs_path_sra = os.path.join(os.getcwd(), "user_prefs.json")
+                    _saved_sra = []
                     try:
                         with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
                             _saved_sra = _json_sra.load(_f).get('single_race_col_order', [])
-                        if _saved_sra:
-                            _ordered = [c for c in _saved_sra if c in view_df.columns]
-                            _rest = [c for c in view_df.columns if c not in _ordered]
-                            view_df = view_df[_ordered + _rest]
                     except: pass
 
-                    # Auto-save current column order for next session
-                    try:
-                        try:
-                            with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
-                                _p = _json_sra.load(_f)
-                        except: _p = {}
-                        _p['single_race_col_order'] = list(view_df.columns)
-                        with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
-                            _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
-                    except: pass
+                    _all_cols = list(view_df.columns)
+                    # Restore saved order if available
+                    if _saved_sra:
+                        _ordered = [c for c in _saved_sra if c in _all_cols]
+                        _rest = [c for c in _all_cols if c not in _ordered]
+                        _all_cols = _ordered + _rest
+                        view_df = view_df[_all_cols]
+
+                    with st.popover("⚙ 列順設定"):
+                        st.caption("選択順が左→右の表示順になります")
+                        _col_sel = st.multiselect(
+                            "表示する列を選択",
+                            options=_all_cols,
+                            default=_all_cols,
+                            key="sra_col_order_sel",
+                        )
+                        if _col_sel and _col_sel != _all_cols:
+                            view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
+                            # Save user's column order
+                            try:
+                                try:
+                                    with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                        _p = _json_sra.load(_f)
+                                except: _p = {}
+                                _p['single_race_col_order'] = _col_sel
+                                with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                                    _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
+                            except: pass
 
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
