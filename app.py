@@ -1216,31 +1216,37 @@ if nav == "🏠 Single Race Analysis":
 
                         for _, row in res.iterrows():
                             p_runs = row.get('PastRuns', [])
-                            r_list, c_val, w_val, a_val, j_flag = [], "-", "-", "-", "-"
+                            r_list, c_val, a_val, j_flag = [], "-", "-", "-"
+
+                            # 当日馬体重(増減): scraper の Weight カラムを使用
+                            today_w = str(row.get('Weight', ''))
+                            if today_w and today_w not in ('', '-', '発走前のため未公開'):
+                                w_val = today_w  # e.g. "456(+4)" or "456(-2)"
+                            else:
+                                w_val = "未公開"
+
                             if p_runs:
                                 last_run = p_runs[0]
                                 c_val = last_run.get('Passing', "-")
                                 a_val = f"{last_run.get('Agari', 0.0):.1f}" if last_run.get('Agari', 0.0) > 0 else "-"
-                                
+
                                 # Jockey change check
                                 current_jockey = str(row.get('Jockey', ''))
                                 prev_jockey = str(last_run.get('PrevJockey', ''))
                                 if current_jockey and prev_jockey and current_jockey != prev_jockey and prev_jockey != "-":
                                     j_flag = "乗替"
-                                
+
                                 if 'ダ' in current_surf and not any('ダ' in str(pr.get('Surface', '')) for pr in p_runs): r_list.append("初ダ")
                                 try:
                                     last_date = datetime.strptime(last_run.get('Date', '2000.01.01'), "%Y.%m.%d")
                                     if (datetime.now() - last_date).days > 180: r_list.append("休明")
                                 except: pass
-                                w_raw = last_run.get('Weight', "-")
-                                w_val = f"{w_raw:.1f}" if isinstance(w_raw, (int, float)) else str(w_raw)
                             risks.append(", ".join(r_list) if r_list else "-")
                             corners.append(c_val)
                             weight_raw.append(w_val)
                             prev_agari.append(a_val)
                             jockey_flag.append(j_flag)
-                            
+
                         res['RiskFlags'], res['PrevCorners'], res['WeightHistory'], res['PrevAgari'], res['JockeyChange'] = risks, corners, weight_raw, prev_agari, jockey_flag
                         return res
                     
