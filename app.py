@@ -1378,12 +1378,6 @@ if nav == "🏠 Single Race Analysis":
                     except: pass
 
                     _all_cols = list(view_df.columns)
-                    # Restore saved order if available
-                    if _saved_sra:
-                        _ordered = [c for c in _saved_sra if c in _all_cols]
-                        _rest = [c for c in _all_cols if c not in _ordered]
-                        _all_cols = _ordered + _rest
-                        view_df = view_df[_all_cols]
 
                     _col_label_map = {
                         "Rank": "順位", "Umaban": "馬番", "Popularity": "人気",
@@ -1399,30 +1393,41 @@ if nav == "🏠 Single Race Analysis":
                         "AvgPosition": "平均位置取り", "Alert": "アラート",
                         "RiskFlags": "不安要素",
                     }
-                    _col_display = [_col_label_map.get(c, c) for c in _all_cols]
+
+                    # Restore saved order if available
+                    _default_cols = _all_cols[:]
+                    if _saved_sra:
+                        _valid_saved = [c for c in _saved_sra if c in _all_cols]
+                        if _valid_saved:
+                            _default_cols = _valid_saved
+
                     _display_to_col = {_col_label_map.get(c, c): c for c in _all_cols}
+                    _col_to_display = {c: _col_label_map.get(c, c) for c in _all_cols}
+                    _all_display = [_col_to_display[c] for c in _all_cols]
+                    _default_display = [_col_to_display[c] for c in _default_cols]
 
                     with st.popover("⚙ 列順設定"):
                         st.caption("選択順が左→右の表示順になります")
                         _disp_sel = st.multiselect(
                             "表示する列を選択",
-                            options=_col_display,
-                            default=_col_display,
+                            options=_all_display,
+                            default=_default_display,
                             key="sra_col_order_sel",
                         )
-                        _col_sel = [_display_to_col[d] for d in _disp_sel if d in _display_to_col]
-                        if _col_sel and _col_sel != _all_cols:
-                            view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
-                            # Save user's column order
-                            try:
-                                try:
-                                    with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
-                                        _p = _json_sra.load(_f)
-                                except: _p = {}
-                                _p['single_race_col_order'] = _col_sel
-                                with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
-                                    _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
-                            except: pass
+
+                    _col_sel = [_display_to_col[d] for d in _disp_sel if d in _display_to_col]
+                    if _col_sel:
+                        view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
+                    # Save column order
+                    try:
+                        try:
+                            with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                _p = _json_sra.load(_f)
+                        except: _p = {}
+                        _p['single_race_col_order'] = _col_sel if _col_sel else _all_cols
+                        with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                            _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
+                    except: pass
 
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
