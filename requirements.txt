@@ -18,3 +18,4 @@ browserforge
 msgspec
 kagglehub
 cloudscraper
+patchright
