@@ -1,4 +1,4 @@
-﻿import sys, io
+import sys, io
 sys.setrecursionlimit(10000) # Increased to handle Torch initialization
 import os
 import logging
@@ -2384,8 +2384,8 @@ if nav == "🏠 Single Race Analysis":
                                 })
                             st.markdown(
                                 f"#### 🎫 3連複買い目（{_sof_result['bet_count']}点）"
-                                f"　価格帯：{_sof_result['price_range']}"
-                                f"　候補数：{_sof_result['filtered_count']}件中上位10点"
+                                f"  価格帯：{_sof_result['price_range']}"
+                                f"  候補数：{_sof_result['filtered_count']}件中上位10点"
                             )
                             st.dataframe(pd.DataFrame(_sof_rows), width='stretch', hide_index=True)
                         else:
@@ -4099,8 +4099,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                     })
                 st.markdown(
                     f"#### 🎫 3連複買い目（{_tsof_result['bet_count']}点）"
-                    f"　価格帯：{_tsof_result['price_range']}"
-                    f"　候補数：{_tsof_result['filtered_count']}件中上位10点"
+                    f"  価格帯：{_tsof_result['price_range']}"
+                    f"  候補数：{_tsof_result['filtered_count']}件中上位10点"
                 )
                 st.dataframe(pd.DataFrame(_tsof_rows), width='stretch', hide_index=True)
             else:
@@ -4431,6 +4431,7 @@ if nav == "🤓 N氏の研究室":
         | **Signal T●** | 厩舎が異なる場・同一Rで好配置一致 | +2 |
         | **Longshot** | 7人気以下 または 単勝20倍以上 | +1 |
         | **J1R (Single Ride)** | 当該場での騎乗が当日1回のみ | (表示のみ) |
+        """)
 
         st.divider()
 
@@ -4736,26 +4737,24 @@ if nav == "🤓 N氏の研究室":
                                 if not chat_client.client:
                                     st.error("APIキーが設定されていないため、AIチャットを使用できません。")
                                 else:
-                                    system_prompt = """
-                                    あなたは競馬の「馬番配置パターン」分析のエキスパートです。
-                                    以下の定義と数式に基づいて、ユーザーの質問に対して具体的に計算過程を示して解説してください。
+                                    system_prompt = """あなたは競馬の「馬番配置パターン」分析のエキスパートです。
+以下の定義と数式に基づいて、ユーザーの質問に対して具体的に計算過程を示して解説してください。
 
-                                    【用語・解析ロジック詳細】
-                                    1. 裏番号 (ura_number): (出走頭数 - 馬番) + 1
-                                    2. P1: 裏同士: 異なる頭数のレース間で裏番号が一致。
-                                    3. P2: 裏表逆: 一方の馬番 = 他方の裏番号。
-                                    4. P3: 1の位一致: 馬番は違うが1の位が同じ。
-                                    5. P4: 片方循環: 
-                                       - 大きい頭数のレース(N)の馬番(X)を、小さい頭数のレース(M)の頭数で割った余りで投影。
-                                       - 計算式: projected = ((X - 1) % M) + 1
-                                       - この projected が小さい頭数のレースの馬番（表）または裏番号（裏）と一致する場合。
+【用語・解析ロジック詳細】
+1. 裏番号 (ura_number): (出走頭数 - 馬番) + 1
+2. P1: 裏同士: 異なる頭数のレース間で裏番号が一致。
+3. P2: 裏表逆: 一方の馬番 = 他方の裏番号。
+4. P3: 1の位一致: 馬番は違うが1の位が同じ。
+5. P4: 片方循環: 
+    - 大きい頭数のレース(N)の馬番(X)を、小さい頭数のレース(M)の頭数で割った余りで投影。
+    - 計算式: projected = ((X - 1) % M) + 1
+    - この projected が小さい頭数のレースの馬番（表）または裏番号（裏）と一致する場合。
 
-                                    【回答時の注意】
-                                    - 必ず質問にある数字を使って計算式を書いてください。
-                                    - 「片方循環(表)」であれば、大きい頭数から算出した projected が、小さい頭数側の馬番と等しいことを説明してください。
-                                    - 丁寧な日本語で回答してください。
-                                    """
-                                
+【回答時の注意】
+- 必ず質問にある数字を使って計算式を書いてください。
+- 「片方循環(表)」であれば、大きい頭数から算出した projected が、小さい頭数側の馬番と等しいことを説明してください。
+- 丁寧な日本語で回答してください。
+"""
                                     j_answer = chat_client.generate_content(
                                         contents=[system_prompt, f"ユーザーの質問: {pattern_query}"],
                                         temperature=0.2
