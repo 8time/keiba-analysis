@@ -964,7 +964,13 @@ if nav == "🏠 Single Race Analysis":
 
         st.caption("Example: 202608020211 または Netkeiba の URL をそのまま貼り付けてもOK")
         
-        race_url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id_input}"
+        # Domain handle
+        _is_nar_in = False
+        try:
+            if int(str(race_id_input)[4:6]) > 10: _is_nar_in = True
+        except: pass
+        _dom = "nar.netkeiba.com" if _is_nar_in else "race.netkeiba.com"
+        race_url = f"https://{_dom}/race/shutuba.html?race_id={race_id_input}"
         st.markdown(f"✨ **[Netkeiba レースページを開く]({race_url})**")
 
     # Determine default profile based on Netkeiba JRA venue code (digits 4-5 of Race ID)
@@ -2946,7 +2952,12 @@ if nav == "📊 History & Review":
                     
                     # 4. Display - Race Info Header
                     race_title = disp_df['RaceName'].iloc[0] if 'RaceName' in disp_df.columns else f"Race {display_race_id}"
-                    race_url = f"https://race.netkeiba.com/race/shutuba.html?race_id={display_race_id}"
+                    _is_nar_disp = False
+                    try:
+                        if int(str(display_race_id)[4:6]) > 10: _is_nar_disp = True
+                    except: pass
+                    _dom_disp = "nar.netkeiba.com" if _is_nar_disp else "race.netkeiba.com"
+                    race_url = f"https://{_dom_disp}/race/shutuba.html?race_id={display_race_id}"
                     st.markdown(f"### 💡 {race_title}")
                     st.markdown(f"✨ **[Netkeiba レースページ]({race_url})**")
                     
@@ -4475,7 +4486,15 @@ if nav == "🤓 N氏の研究室":
             # 全場URL（●シグナル対応のため）
             for rr in race_list:
                 r_id = rr['race_id']
-                all_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+                # Determine JRA vs NAR for URL
+                is_nar_id = False
+                try:
+                    pid_code = int(str(r_id)[4:6])
+                    if pid_code > 10: is_nar_id = True
+                except: pass
+                
+                domain = "nar.netkeiba.com" if is_nar_id else "race.netkeiba.com"
+                all_race_urls.append(f"https://{domain}/race/shutuba.html?race_id={r_id}")
 
             # 競馬場選択 + スキャンモード
             col_sv1, col_sv2 = st.columns([3, 1])
@@ -4500,7 +4519,12 @@ if nav == "🤓 N氏の研究室":
             if selected_v:
                 for r in venues[selected_v]:
                     r_id = r['race_id']
-                    selected_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+                    _is_nar_v = False
+                    try:
+                        if int(str(r_id)[4:6]) > 10: _is_nar_v = True
+                    except: pass
+                    _domain = "nar.netkeiba.com" if _is_nar_v else "race.netkeiba.com"
+                    selected_race_urls.append(f"https://{_domain}/race/shutuba.html?race_id={r_id}")
 
         st.divider()
 
