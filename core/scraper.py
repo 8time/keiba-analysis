@@ -18,12 +18,7 @@ import re
 from datetime import datetime
 import random
 import asyncio
-from scrapling import DynamicFetcher
-from scrapling.fetchers import Fetcher as ScraplingFetcher
-try:
-    from scrapling.fetchers import StealthyFetcher
-except ImportError:
-    StealthyFetcher = None
+from scrapling import Fetcher as ScraplingFetcher, StealthyFetcher, DynamicFetcher
 import logging
 logger = logging.getLogger(__name__)
 # Scrapling / browserforge / curl-cffi の冗長ログを抑制
@@ -115,27 +110,18 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
         headers_extra["Referer"] = referer
 
     # --- Tier 1: Scrapling Fetcher (高速HTTP / curl_cffi + TLS偽装) ---
-    # v0.4: Fetcher.get() はクラスメソッド。インスタンス化不要。
     try:
         page = ScraplingFetcher.get(
             url,
             headers=headers_extra if headers_extra else None,
-            timeout=12000,
+            timeout=12,  # seconds
         )
-        if page:
-            # v0.4: page.content は bytes。文字コードは _decode_content で安全に処理
-            raw = None
-            if hasattr(page, 'content') and page.content:
-                raw = page.content if isinstance(page.content, bytes) else page.content.encode('utf-8')
-            elif hasattr(page, 'body') and page.body:
-                raw = page.body if isinstance(page.body, bytes) else page.body.encode('utf-8')
-            if raw:
-                html = _decode_content(raw)
-                if html and not _is_blocked(html):
-                    logger.debug(f"[scrapling-http] OK: {url}")
-                    return html
+        if page and hasattr(page, 'body'):
+            html = _decode_content(page.body)
+            if html and not _is_blocked(html):
+                return html
     except Exception as e:
-        logger.debug(f"[scrapling-http] failed: {e}")
+        pass
 
     # --- Tier 2: cloudscraper (WAF / Cloudflare 対策) ---
     try:
@@ -161,7 +147,7 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
                 resp2 = curl_requests.get(url, headers=hdrs, impersonate=profile, timeout=15)
                 if resp2.status_code == 200:
                     html = _decode_content(resp2.content)
-                    if not _is_blocked(html):
+                    if html and not _is_blocked(html):
                         logger.debug(f"[curl_cffi-{profile}] OK: {url}")
                         return html
             except:
@@ -169,13 +155,15 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     except Exception:
         pass
 
+    # Skip browser tiers (hang protection for current env)
+    """
     # --- Tier 4: Scrapling DynamicFetcher (Playwright / JS実行) ---
     try:
-        from scrapling import DynamicFetcher
-        fetcher_dyn = DynamicFetcher(headless=True)
-        page = fetcher_dyn.get(url, timeout=40000, network_idle=True)
-        if page:
-            html = page.html_content or ""
+        fetcher_dyn = DynamicFetcher()
+        fetcher_dyn.configure()
+        page = fetcher_dyn.fetch(url, timeout=40000, headless=True)
+        if page and hasattr(page, 'body'):
+            html = _decode_content(page.body)
             if html and not _is_blocked(html):
                 logger.debug(f"[scrapling-dyn] OK: {url}")
                 return html
@@ -185,14 +173,16 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     # --- Tier 5: StealthyFetcher (Patchright / 強力偽装) ---
     if StealthyFetcher:
         try:
-            page = StealthyFetcher.fetch(url, headless=True, timeout=35000, network_idle=True)
-            if page:
-                html = page.html_content or ""
+            # v0.4.1: .fetch() はクラスメソッド。timeout はミリ秒単位
+            page = StealthyFetcher.fetch(url, headless=True, timeout=35000)
+            if page and hasattr(page, 'body'):
+                html = _decode_content(page.body)
                 if html and not _is_blocked(html):
                     logger.debug(f"[scrapling-stealthy] OK: {url}")
                     return html
         except Exception as e:
             logger.debug(f"[scrapling-stealth] failed: {e}")
+    """
 
     logger.error(f"[FATAL] All fetch methods failed: {url}")
     return None
@@ -217,17 +207,19 @@ def _fetch_odds_page_via_stealthy(race_id):
     url = f"https://{domain}/odds/index.html?race_id={race_id}"
 
     try:
+        print(f"DEBUG: StealthyFetcher.fetch START: {url}")
         # v0.4: StealthyFetcher.fetch() はクラスメソッド。
-        # timeout は ms 単位。1秒=1000ms
-        # real_chrome=False → Playwright管理の Chromium を使用（インストール済みの実 Chrome は不要）
+        # timeout は ms 単位。
         page = StealthyFetcher.fetch(
             url,
             headless=True,
-            real_chrome=False,         # Playwright管理の Chromium を使用
-            network_idle=True,
-            timeout=35000,             # 35秒 (ms単位)
-            disable_resources=True,    # 画像・font等不要リソースをブロックし高速化
+            real_chrome=False,
+            # network_idle はハングの原因になることがあるため False に設定
+            network_idle=False,
+            timeout=15000,             # 15秒 (ms単位)
+            disable_resources=True,
         )
+        print(f"DEBUG: StealthyFetcher.fetch DONE. Page: {bool(page)}")
         if not page:
             return {}
 
@@ -243,7 +235,7 @@ def _fetch_odds_page_via_stealthy(race_id):
         for row in rows:
             try:
                 # 馬番
-                uma_el = row.css_first('td.Umaban, td[class*="Umaban"]')
+                uma_el = row.css('td.Umaban, td[class*="Umaban"]').first
                 if uma_el is None:
                     continue
                 uma_text = uma_el.text.strip() if hasattr(uma_el, 'text') else str(uma_el)
@@ -255,7 +247,7 @@ def _fetch_odds_page_via_stealthy(race_id):
                 # 単勝オッズ
                 odds_val = 0.0
                 for sel in ['td.Odds', 'td[class*="Odds"]', 'td.RaceOdds']:
-                    odds_el = row.css_first(sel)
+                    odds_el = row.css(sel).first
                     if odds_el:
                         m_o = re.search(r'([\d.]+)', str(odds_el.text).replace(',', ''))
                         if m_o:
@@ -265,7 +257,7 @@ def _fetch_odds_page_via_stealthy(race_id):
                 # 人気
                 pop_val = 99
                 for sel in ['td.Ninki', 'td[class*="Ninki"]', 'td.Popular']:
-                    pop_el = row.css_first(sel)
+                    pop_el = row.css(sel).first
                     if pop_el:
                         m_p = re.search(r'(\d+)', str(pop_el.text))
                         if m_p:
@@ -610,16 +602,12 @@ def fetch_popularity(race_id):
     """
     pop_map = {}
 
-    # --- Priority 1: Scrapling StealthyFetcher (動的JS対応・要素のみ抽出) ---
+    # --- Priority 1: Scrapling StealthyFetcher (DISABLED - slow/hang in this env) ---
+    """
     stealthy_data = _fetch_odds_page_via_stealthy(race_id)
     if stealthy_data:
-        for umaban, vals in stealthy_data.items():
-            pop = vals.get('popularity', 99)
-            if pop < 99:
-                pop_map[umaban] = pop
-        if pop_map:
-            logger.info(f"[Popularity] StealthyFetcher で {len(pop_map)} 頭の人気を取得")
-            return pop_map
+        # ...
+    """
 
     # --- Priority 2: 静的HTML + BeautifulSoup (JS未実行フォールバック) ---
     logger.info("[Popularity] Stealthy が空: 静的HTMLフォールバックへ")
@@ -1003,7 +991,6 @@ def get_race_data(race_id, use_storage=True):
         url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
         
     logger.info(f"Fetching {'NAR' if is_nar else 'JRA'} Race Data: {url}")
-    
     html = fetch_robust_html(url)
     if not html: return pd.DataFrame()
     
@@ -1050,8 +1037,8 @@ def get_race_data(race_id, use_storage=True):
         if m2: race_dist = int(m2.group(1))
     
     # --- Fetch Supplemental Data ---
-    win_odds_map = fetch_win_odds(race_id) # Robust fetching (API + PW fallback)
-    popularity_map = fetch_popularity(race_id) # NEW: Real-time popularity from type=b0
+    win_odds_map = fetch_win_odds(race_id) 
+    popularity_map = fetch_popularity(race_id) 
     
     # --- Horses ---
     # Robust table detection: search for any of the common classes or the sort_table ID
@@ -1145,8 +1132,12 @@ def get_race_data(race_id, use_storage=True):
         # Jockey
         j_td = row.find('td', class_=re.compile(r'Jockey|jockey'))
         h_data['Jockey'] = j_td.find('a').text.strip() if j_td and j_td.find('a') else ""
+        
+        # Trainer (厩舎)
+        t_td = row.find('td', class_=re.compile(r'Trainer|trainer|厩舎', re.I))
+        h_data['Trainer'] = t_td.text.strip() if t_td else (t_td.get_text(strip=True) if t_td else "-")
 
-        # SexAge/WeightCarried fallback (Search in Jockey TD if missing)
+        # sex-age and weight
         weight_tds = row.find_all('td', class_=re.compile(r'Weight', re.I))
         
         if h_data.get('SexAge', "-") == "-" or h_data.get('WeightCarried', "-") == "-":
