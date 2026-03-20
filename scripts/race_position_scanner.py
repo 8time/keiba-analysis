@@ -137,118 +137,37 @@ def _fetch_html(url: str) -> Optional[BeautifulSoup]:
 
     return None
 
-def _fetch_odds_api(race_id: str) -> dict:
-    """netkeiba オッズ API から単勝オッズ・人気を取得。
-    戻り値: {馬番(int): (odds(float), rank(int)), ...}
-    """
-    result = {}
-    try:
-        api_url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1"
-        h = HEADERS.copy()
-        h["Referer"] = "https://race.netkeiba.com/"
-        resp = requests.get(api_url, headers=h, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            win_odds = data.get("data", {}).get("odds", {}).get("1", {})
-            for umaban_str, vals in win_odds.items():
-                # vals = ["オッズ", "", "人気"]
-                if isinstance(vals, list) and len(vals) >= 3:
-                    try:
-                        odds_val = float(vals[0]) if vals[0] else 0.0
-                    except (ValueError, TypeError):
-                        odds_val = 0.0
-                    try:
-                        rank_val = int(vals[2]) if vals[2] else 99
-                    except (ValueError, TypeError):
-                        rank_val = 99
-                    result[int(umaban_str)] = (odds_val, rank_val)
-    except Exception:
-        pass
-    return result
-
-
-def _parse_float(val: str) -> float:
-    try:
-        m = re.search(r'(\d+\.\d+)', val)
-        return float(m.group(1)) if m else 0.0
-    except:
-        return 0.0
-
-def _parse_int(val: str) -> int:
-    try:
-        m = re.search(r'(\d+)', val)
-        return int(m.group(1)) if m else 99
-    except:
-        return 99
+from core.scraper import get_race_data
 
 def scrape_race(url: str) -> Optional[Race]:
-    soup = _fetch_html(url)
-    if not soup: return None
-
-    # Extract ID and Number
-    race_id_match = re.search(r'race_id=(\d+)', url)
-    if not race_id_match: return None
-    race_id = race_id_match.group(1)
+    # Extract ID from URL
+    m = re.search(r'race_id=(\d+)', url)
+    if not m: return None
+    race_id = m.group(1)
     
-    # race_number (last 2 digits)
+    # Use the robust scraper from core
+    df = get_race_data(race_id, use_storage=False)
+    if df.empty:
+        return None
+        
+    # Meta
     race_num = int(race_id[-2:])
-    
-    # venue code (digits 5-6)
     venue_code = race_id[4:6]
-    
-    # holding day (digits 9-10)
     holding_day = int(race_id[8:10])
-
-    table = soup.select_one("#shutuba_table") or soup.select_one("table.Shutuba_Table")
-    if not table: return None
-
-    rows = table.select("tr.HorseList")
-    horses = []
+    field_size = len(df)
     
-    # Field size (total horses listed, including potential scratches for numbering consistency)
-    field_size = len(rows)
-
-    for idx, row in enumerate(rows):
-        # We need flexible selectors because classes like Umaban can be Umaban1, Umaban2...
-        num_td = row.select_one("td[class^='Umaban']")
-        name_td = row.select_one("td[class^='HorseInfo']") or row.select_one("td[class^='Horse_Info']")
-        jock_td = row.select_one("td[class^='Jockey']")
-        train_td = row.select_one("td[class^='Trainer']")
-        # オッズ: span[id^='odds-'] を優先、fallback で td.Popular(非Ninki)
-        odds_span = row.select_one("span[id^='odds-']")
-        odds_td = odds_span.parent if odds_span else row.select_one("td[class^='Odds']")
-        # 人気: span[id^='ninki-'] を優先、fallback で td.Popular_Ninki
-        pop_span = row.select_one("span[id^='ninki-']")
-        pop_td = pop_span.parent if pop_span else row.select_one("td.Popular_Ninki")
-
-        if not (num_td and name_td):
-            # Fallback to broader search if class prefix fails
-            num_td = num_td or row.find("td", class_=re.compile(r"Umaban"))
-            name_td = name_td or row.find("td", class_=re.compile(r"HorseInfo|Horse_Info"))
-            jock_td = jock_td or row.find("td", class_=re.compile(r"Jockey"))
-            train_td = train_td or row.find("td", class_=re.compile(r"Trainer"))
-            if not odds_td:
-                odds_td = row.find("td", class_=re.compile(r"Odds"))
-            if not pop_td:
-                pop_td = row.find("td", class_=re.compile(r"Popular_Ninki"))
-
-        if not (num_td and name_td):
-            continue
-
-        h_name = name_td.text.strip()
-        # Sometimes name includes breadcrumbs or meta, take the best part
-        if "\n" in h_name: h_name = h_name.split("\n")[0].strip()
-
-        horse = Horse(
-            horse_number=int(num_td.text.strip()),
-            horse_name=h_name,
-            jockey=jock_td.text.strip() if (jock_td and jock_td.text.strip()) else "不明",
-            trainer=train_td.text.strip() if (train_td and train_td.text.strip()) else "不明",
-            odds=_parse_float(odds_span.text.strip() if odds_span else (odds_td.text.strip() if odds_td else "0")),
-            odds_rank=_parse_int(pop_span.text.strip() if pop_span else (pop_td.text.strip() if pop_td else "99"))
+    horses = []
+    for _, row in df.iterrows():
+        h = Horse(
+            horse_number=int(row['Umaban']) if pd.notna(row['Umaban']) else 0,
+            horse_name=str(row['Name']),
+            jockey=str(row.get('Jockey', '不明')),
+            trainer=str(row.get('Trainer', '不明')),
+            odds=float(row.get('Odds', 0.0)),
+            odds_rank=int(row.get('Popularity', 99))
         )
-        horses.append(horse)
-
+        horses.append(h)
+        
     race = Race(
         race_id=race_id,
         race_number=race_num,
@@ -258,18 +177,6 @@ def scrape_race(url: str) -> Optional[Race]:
         horses=horses
     )
     race.compute_ura()
-
-    # 出馬表HTMLではオッズが動的ロードのため取れない → API で補完
-    needs_odds = any(h.odds == 0.0 or h.odds_rank == 99 for h in race.horses)
-    if needs_odds:
-        odds_map = _fetch_odds_api(race_id)
-        if odds_map:
-            for h in race.horses:
-                if h.horse_number in odds_map:
-                    o, r = odds_map[h.horse_number]
-                    h.odds = o
-                    h.odds_rank = r
-
     return race
 
 # ──────────────────────────────────────────────
