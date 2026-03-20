@@ -70,8 +70,8 @@ def run_special_signal_pipeline(entries: List[Entry]) -> List[Entry]:
     bt_candidates = filter_bullet_candidate_groups(bt_groups)
     bt_results = evaluate_all_bullet_groups(bt_candidates)
 
-    # 3. 当日同場でレース1回のみ騎乗または全場通じて1回のみ騎乗の騎手フラグ付け
-    apply_jockey_single_ride(entries, scope="venue")
+    # 3. 全場通じて1回のみ騎乗の騎手フラグ付け (追加要件2)
+    apply_jockey_single_ride(entries, scope="all")
 
     # 4. 各馬へ annotate
     apply_jockey_double_circle_results(entries, dc_results)

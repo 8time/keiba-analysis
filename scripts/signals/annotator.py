@@ -65,10 +65,10 @@ def build_special_marks(entry: Entry) -> str:
     if entry.trainer_double_circle_flag:
         marks.append("T◎")
     if entry.trainer_bullet_flag:
-        marks.append("T●")
+        marks.append("●")
     if entry.jockey_single_ride_flag:
-        marks.append("J1R")  # 当日この競馬場に1回だけ乗る騎手
-    return "|".join(marks)
+        marks.append("[1鞍限定]")
+    return " ".join(marks)
 
 
 def refresh_special_marks(entries: List[Entry]) -> None:

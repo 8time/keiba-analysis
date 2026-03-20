@@ -31,12 +31,17 @@ def is_cycle_match(horse_number_a: int, field_size_a: int,
     if field_size_a == field_size_b:
         return False
     # 頭数の少ない方を循環させる
+    # 頭数の少ない方をターゲットとする
     if field_size_a <= field_size_b:
-        small_n, small_f, big_n = horse_number_a, field_size_a, horse_number_b
+        small_f, big_n, small_n = field_size_a, horse_number_b, horse_number_a
     else:
-        small_n, small_f, big_n = horse_number_b, field_size_b, horse_number_a
+        small_f, big_n, small_n = field_size_b, horse_number_a, horse_number_b
+        
     projected = ((big_n - 1) % small_f) + 1
-    return projected == small_n
+    ura_small = calc_ura_number(small_f, small_n)
+    
+    # ターゲット場の表番または裏番と一致するか
+    return projected == small_n or projected == ura_small
 
 
 def is_reverse_match(horse_number_a: int, field_size_a: int,

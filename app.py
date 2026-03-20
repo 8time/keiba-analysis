@@ -4535,14 +4535,14 @@ if nav == "🤓 N氏の研究室":
                               key='rpps_entity', horizontal=True)
             min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
 
-        # スキャンモードに応じてURLリストを決定
+        # 設計変更：●シグナルと1日1鞍限定判定の正確性を期すため、常に全場のデータを取得・統合してから判定する
+        # スキャン自体は常に全場で行い、表示のみを切り替える
+        active_scan_urls = all_race_urls
         scan_mode_val = st.session_state.get('rpps_scan_mode', 'single')
         if scan_mode_val == 'all':
-            active_scan_urls = all_race_urls
             scan_mode_label = f"全開催場 ({len(all_race_urls)}レース)"
         else:
-            active_scan_urls = selected_race_urls
-            scan_mode_label = f"選択場 ({len(selected_race_urls)}レース)"
+            scan_mode_label = f"選択場 ({len(selected_race_urls)}レース) ※背景で全場統合判定を実行"
 
         with col_r:
             st.info(f'''
@@ -4601,6 +4601,12 @@ if nav == "🤓 N氏の研究室":
         # --- Result Display ---
         df_res = st.session_state.rpps_result_df
         if df_res is not None:
+            # 設計変更に伴うフィルタリング：単場モードの場合は選択された場のみを表示
+            if st.session_state.get('rpps_scan_mode', 'all') == 'single' and 'venue' in df_res.columns:
+                target_v = st.session_state.get('rpps_selected_venue')
+                if target_v:
+                    df_res = df_res[df_res['venue'] == target_v]
+
             if df_res.empty:
                 st.warning("パターンが検出された馬はいませんでした。スキャン範囲や比較対象を変えてお試しください。")
             else:
