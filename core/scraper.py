@@ -20,15 +20,18 @@ import random
 import asyncio
 from scrapling import DynamicFetcher
 from scrapling.fetchers import Fetcher as ScraplingFetcher
+try:
+    from scrapling.fetchers import StealthyFetcher
+except ImportError:
+    StealthyFetcher = None
 import logging
 logger = logging.getLogger(__name__)
-# Silence Scrapling's internal noisy warnings/logs
+# Scrapling / browserforge / curl-cffi の冗長ログを抑制
 logging.getLogger("scrapling").setLevel(logging.ERROR)
-# Silence browserforge and curl-cffi if needed
 logging.getLogger("browserforge").setLevel(logging.ERROR)
 logging.getLogger("curl_cffi").setLevel(logging.ERROR)
 
-# Ensure Proactor Event Loop on Windows for Scrapling/Playwright subprocesses
+# Windows: Scrapling/Playwright サブプロセスのために ProactorEventLoop を使用
 if sys.platform == 'win32':
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -100,55 +103,187 @@ def _is_blocked(html):
 
 def fetch_robust_html(url, referer=None, wait_time=4000):
     """
-    Highly robust HTML fetcher for Streamlit Cloud (Bypasses WAF with multi-tier).
+    HTML取得の多段フォールバック。静的ページ用。
+
+    Tier 1: Scrapling Fetcher (curl_cffi ベースの高速・TLS偽装 HTTP)
+    Tier 2: cloudscraper (WAF/Cloudflare向け)
+    Tier 3: curl_cffi 直接 (複数ブラウザプロファイル切替)
+    Tier 4: Scrapling DynamicFetcher (Playwright フォールバック)
     """
-    # --- Tier 1: cloudscraper (Best for WAF/Cloudflare) ---
+    headers_extra = {}
+    if referer:
+        headers_extra["Referer"] = referer
+
+    # --- Tier 1: Scrapling Fetcher (高速HTTP / curl_cffi + TLS偽装) ---
+    # v0.4: Fetcher.get() はクラスメソッド。インスタンス化不要。
+    try:
+        page = ScraplingFetcher.get(
+            url,
+            headers=headers_extra if headers_extra else None,
+            timeout=12000,
+        )
+        if page:
+            # v0.4: page.content は bytes。文字コードは _decode_content で安全に処理
+            raw = None
+            if hasattr(page, 'content') and page.content:
+                raw = page.content if isinstance(page.content, bytes) else page.content.encode('utf-8')
+            elif hasattr(page, 'body') and page.body:
+                raw = page.body if isinstance(page.body, bytes) else page.body.encode('utf-8')
+            if raw:
+                html = _decode_content(raw)
+                if html and not _is_blocked(html):
+                    logger.debug(f"[scrapling-http] OK: {url}")
+                    return html
+    except Exception as e:
+        logger.debug(f"[scrapling-http] failed: {e}")
+
+    # --- Tier 2: cloudscraper (WAF / Cloudflare 対策) ---
     try:
         import cloudscraper
-        scraper = cloudscraper.create_scraper(browser='chrome')
-        resp = scraper.get(url, timeout=12)
+        cs = cloudscraper.create_scraper(browser='chrome')
+        resp = cs.get(url, timeout=12)
         if resp.status_code == 200:
             html = _decode_content(resp.content)
             if not _is_blocked(html):
                 logger.debug(f"[cloudscraper] OK: {url}")
                 return html
-    except Exception: pass
+    except Exception:
+        pass
 
-    # --- Tier 2: curl_cffi (Strong Impersonation) ---
+    # --- Tier 3: curl_cffi (複数プロファイルで強力偽装) ---
     try:
         from curl_cffi import requests as curl_requests
-        # Use simpler headers to avoid fingerprint mismatch
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
-        if referer: headers["Referer"] = referer
-        
+        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+        if referer:
+            hdrs["Referer"] = referer
         for profile in ["chrome120", "edge101", "safari15"]:
             try:
-                resp2 = curl_requests.get(url, headers=headers, impersonate=profile, timeout=15)
+                resp2 = curl_requests.get(url, headers=hdrs, impersonate=profile, timeout=15)
                 if resp2.status_code == 200:
                     html = _decode_content(resp2.content)
                     if not _is_blocked(html):
                         logger.debug(f"[curl_cffi-{profile}] OK: {url}")
                         return html
-            except: continue
-    except Exception: pass
+            except:
+                continue
+    except Exception:
+        pass
 
-    # --- Tier 3: Scrapling (Playwright) ---
+    # --- Tier 4: Scrapling DynamicFetcher (Playwright / JS実行) ---
     try:
         from scrapling import DynamicFetcher
-        fetcher = DynamicFetcher(headless=True)
-        page = fetcher.get(url, timeout=40)
-        if page and page.content:
-            html = page.content
-            if not _is_blocked(html):
-                logger.debug(f"[scrapling] OK: {url}")
+        fetcher_dyn = DynamicFetcher(headless=True)
+        page = fetcher_dyn.get(url, timeout=40000, network_idle=True)
+        if page:
+            html = page.html_content or ""
+            if html and not _is_blocked(html):
+                logger.debug(f"[scrapling-dyn] OK: {url}")
                 return html
-    except Exception: pass
+    except Exception as e:
+        logger.debug(f"[scrapling-dyn] failed: {e}")
 
-    # --- Tier 4: JRA Official/Database guess (If specifically for date) ---
-    # (Implied in the caller)
+    # --- Tier 5: StealthyFetcher (Patchright / 強力偽装) ---
+    if StealthyFetcher:
+        try:
+            page = StealthyFetcher.fetch(url, headless=True, timeout=35000, network_idle=True)
+            if page:
+                html = page.html_content or ""
+                if html and not _is_blocked(html):
+                    logger.debug(f"[scrapling-stealthy] OK: {url}")
+                    return html
+        except Exception as e:
+            logger.debug(f"[scrapling-stealth] failed: {e}")
 
-    logger.error(f"[FATAL] All fetch methods failed for: {url}")
+    logger.error(f"[FATAL] All fetch methods failed: {url}")
     return None
+
+
+def _fetch_odds_page_via_stealthy(race_id):
+    """
+    StealthyFetcher (Patchright ベース) でオッズページを取得し、
+    CSSセレクタで必要な行だけを Surgical Extraction する。
+    戻り値: {umaban(int): {'odds': float, 'popularity': int}} または {}
+
+    - JSレンダリング後に抽出するため、動的に書き換わるオッズも正確に取れる
+    - ページ全体のHTMLを返さず「必要な要素のみ」を辞書で返すので
+      後段の AI/LLM に渡す際のトークンを最小化できる (Surgical Extraction)
+    """
+    if StealthyFetcher is None:
+        logger.warning("[Stealthy] StealthyFetcher が利用不可。scrapling[all] をインストールしてください。")
+        return {}
+
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    url = f"https://{domain}/odds/index.html?race_id={race_id}"
+
+    try:
+        # v0.4: StealthyFetcher.fetch() はクラスメソッド。
+        # timeout は ms 単位。1秒=1000ms
+        # real_chrome=False → Playwright管理の Chromium を使用（インストール済みの実 Chrome は不要）
+        page = StealthyFetcher.fetch(
+            url,
+            headless=True,
+            real_chrome=False,         # Playwright管理の Chromium を使用
+            network_idle=True,
+            timeout=35000,             # 35秒 (ms単位)
+            disable_resources=True,    # 画像・font等不要リソースをブロックし高速化
+        )
+        if not page:
+            return {}
+
+        result = {}
+
+        # --- Surgical Extraction: オッズ行だけを CSS で狙い打ち ---
+        # netkeiba のオッズ表: tr.HorseList → td.Umaban, td.Odds, td.Ninki
+        rows = page.css('tr.HorseList')
+        if not rows:
+            # フォールバック: table 内の tr を広く検索
+            rows = page.css('table tr')
+
+        for row in rows:
+            try:
+                # 馬番
+                uma_el = row.css_first('td.Umaban, td[class*="Umaban"]')
+                if uma_el is None:
+                    continue
+                uma_text = uma_el.text.strip() if hasattr(uma_el, 'text') else str(uma_el)
+                m_uma = re.search(r'(\d+)', uma_text)
+                if not m_uma:
+                    continue
+                umaban = int(m_uma.group(1))
+
+                # 単勝オッズ
+                odds_val = 0.0
+                for sel in ['td.Odds', 'td[class*="Odds"]', 'td.RaceOdds']:
+                    odds_el = row.css_first(sel)
+                    if odds_el:
+                        m_o = re.search(r'([\d.]+)', str(odds_el.text).replace(',', ''))
+                        if m_o:
+                            odds_val = float(m_o.group(1))
+                            break
+
+                # 人気
+                pop_val = 99
+                for sel in ['td.Ninki', 'td[class*="Ninki"]', 'td.Popular']:
+                    pop_el = row.css_first(sel)
+                    if pop_el:
+                        m_p = re.search(r'(\d+)', str(pop_el.text))
+                        if m_p:
+                            pop_val = int(m_p.group(1))
+                            break
+
+                if umaban > 0:
+                    result[umaban] = {'odds': odds_val, 'popularity': pop_val}
+            except Exception as _re:
+                logger.debug(f"[Stealthy] row parse error: {_re}")
+                continue
+
+        logger.info(f"[Stealthy] Surgical Extraction: {len(result)} 頭分のオッズを取得 ({race_id})")
+        return result
+
+    except Exception as e:
+        logger.warning(f"[Stealthy] fetch_odds_page_via_stealthy failed: {e}")
+        return {}
 
 def fetch_html(url):
     """Legacy wrapper for fetch_robust_html."""
@@ -188,109 +323,101 @@ def get_race_list_for_date(date_str=None):
     # Tier 2: race_list.html (full robust page)
     # Tier 3: sp.netkeiba.com (smartphone version)
     # Tier 4: db.netkeiba.com (Database side - very robust on Cloud)
+    # JRA (race.netkeiba.com), NAR (nar.netkeiba.com), Mobile, and DB sources.
     urls = [
         f"https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}",
+        f"https://nar.netkeiba.com/top/race_list_sub.html?kaisai_date={date_str}",
         f"https://race.netkeiba.com/top/race_list.html?kaisai_date={date_str}",
+        f"https://nar.netkeiba.com/top/race_list.html?kaisai_date={date_str}",
         f"https://sp.netkeiba.com/v2/race/race_list_sub.html?kaisai_date={date_str}",
         f"https://db.netkeiba.com/race/list/{date_str}/"
     ]
     
-    html = None
+    results = []
+    seen_ids = set()
+
     for url in urls:
         html = fetch_robust_html(url)
-        if html and len(html) > 1000: # Success threshold
-            break
+        if not html:
+            continue
+        
+        soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
+        
+        # Selectors to try
+        # 1. RaceList_DataItem (sub fragments)
+        items = soup.find_all('li', class_='RaceList_DataItem')
+        # 2. RaceList_DataList (Main full page container)
+        if not items:
+            items = soup.find_all('dl', class_='RaceList_DataList')
+        # 3. a tags with race_id (most generic)
+        a_links = soup.select('a[href*="race_id="]')
+        
+        found_on_this_page = 0
+        
+        # Process li/dl items
+        for item in items:
+            link = item.find('a', href=re.compile(r'race_id=\d+'))
+            if not link: continue
+            m = re.search(r'race_id=(\d+)', link['href'])
+            if not m: continue
+            race_id = m.group(1)
+            if race_id in seen_ids: continue
+            
+            # Name/Num extraction
+            race_name = ""
+            name_tag = item.find(['span', 'div', 'p'], class_=['ItemTitle', 'RaceName', 'Race_Name'])
+            if name_tag: race_name = name_tag.get_text(strip=True)
+            
+            race_num = ""
+            num_tag = item.find(['div', 'span'], class_=['Race_Num', 'RaceNumber'])
+            if num_tag:
+                txt = num_tag.get_text(strip=True)
+                m2 = re.search(r'(\d+R)', txt)
+                race_num = m2.group(1) if m2 else txt.replace('R', '') + 'R'
+            
+            results.append({
+                "race_id": race_id,
+                "race_name": race_name or race_num or f"Race {race_id[-2:]}",
+                "race_num": race_num,
+            })
+            seen_ids.add(race_id)
+            found_on_this_page += 1
 
-    if not html:
+        # Process loose a_links if no items found
+        if found_on_this_page == 0:
+            for link in a_links:
+                href = link.get('href', '')
+                m = re.search(r'race_id=(\d+)', href)
+                if m:
+                    race_id = m.group(1)
+                    if race_id in seen_ids: continue
+                    
+                    name = ""
+                    parent = link.find_parent(['li', 'dl', 'div'])
+                    if parent:
+                        t = parent.find(['span', 'div'], class_=['ItemTitle', 'RaceName'])
+                        if t: name = t.get_text(strip=True)
+                        
+                    results.append({
+                        "race_id": race_id,
+                        "race_name": name or f"{int(race_id[-2:])}R",
+                        "race_num": f"{int(race_id[-2:])}R"
+                    })
+                    seen_ids.add(race_id)
+                    found_on_this_page += 1
+        
+        # If we found something on this page, we might have enough, 
+        # but let's continue if we suspect there are JRA vs NAR split.
+        # Threshold: if we found 8+ races, it's likely a full venue.
+        # If we have NAR vs JRA, we want both. 
+        # For date_str RPPS scan, we usually want EVERYTHING. 
+        # So we don't break until we've tried at least one JRA and one NAR source.
+
+    if not results:
         logger.warning(f"Failed to fetch race list for {date_str} from all sources.")
         return []
 
-    soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-    results = []
-
-    # Try both fragment and full page selectors
-    # RaceList_DataItem (sub fragment) vs a[href*="race_id="] (general)
-    items = soup.find_all('li', class_='RaceList_DataItem')
-    if not items:
-        # Fallback for full page: find all race links
-        items = soup.find_all('dl', class_='RaceList_DataList') # Main container for races in full page
-    
-    # If still not found, just hunt for race_id links
-    if not items:
-        raw_links = soup.select('a[href*="race_id="]')
-        for link in raw_links:
-            href = link.get('href', '')
-            m = re.search(r'race_id=(\d+)', href)
-            if m:
-                race_id = m.group(1)
-                # Avoid duplicates
-                if any(r['race_id'] == race_id for r in results): continue
-                
-                # Try to find name in parent or siblings
-                name = ""
-                parent = link.find_parent(['li', 'dl', 'div'])
-                if parent:
-                    # Look for title span or similar
-                    t = parent.find(['span', 'div'], class_=['ItemTitle', 'RaceName'])
-                    if t: name = t.get_text(strip=True)
-                
-                results.append({
-                    "race_id": race_id,
-                    "race_name": name or f"Race {race_id[-2:]}",
-                    "race_num": f"{int(race_id[-2:])}R"
-                })
-        return results
-
-    for item in items:
-        link = item.find('a', href=re.compile(r'race_id=\d+'))
-        if not link:
-            continue
-        m = re.search(r'race_id=(\d+)', link['href'])
-        if not m:
-            continue
-        race_id = m.group(1)
-
-        # Race name
-        race_name = ""
-        # Try multiple classes
-        title_tag = item.find(['span', 'div', 'p'], class_=['ItemTitle', 'RaceName', 'Race_Name'])
-        if title_tag:
-            race_name = title_tag.get_text(strip=True)
-
-        # Race number
-        race_num = ""
-        num_tag = item.find(['div', 'span'], class_=['Race_Num', 'RaceNumber'])
-        if num_tag:
-            txt = num_tag.get_text(strip=True)
-            m2 = re.search(r'(\d+R)', txt)
-            if m2:
-                race_num = m2.group(1)
-            else:
-                # Basic cleanup
-                race_num = txt.replace('R', '') + 'R'
-
-        results.append({
-            "race_id": race_id,
-            "race_name": race_name if race_name else race_num or race_id,
-            "race_num": race_num,
-        })
-
-    # Last resort fallback if Netkeiba is totally blocked
-    if not results:
-        logger.warning(f"Netkeiba is blocked. Trying Yahoo Keiba for {date_str}...")
-        # Yahoo Keiba List URL for current/upcoming date
-        # (Simplified implementation to get at least some IDs)
-        pass
-
-    # Ensure unique results by race_id
-    seen = set()
-    unique_results = []
-    for r in results:
-        if r['race_id'] not in seen:
-            unique_results.append(r)
-            seen.add(r['race_id'])
-
-    return unique_results
+    return results
 
 def validate_horse_name(name):
     if not name or "系" in name: return False
@@ -472,62 +599,72 @@ def fetch_win_odds(race_id):
 
     return pd.Series({})
 
-@retry(tries=2, delay=2)
 def fetch_popularity(race_id):
-    """Fetches real-time popularity ranking robustly."""
+    """
+    リアルタイム人気を取得。
+
+    Priority:
+      1. StealthyFetcher (Surgical Extraction) ← JS実行後の動的オッズを正確に抽出
+      2. fetch_robust_html + BeautifulSoup    ← 静的フォールバック
+      3. result.html                          ← 確定済みレース用
+    """
+    pop_map = {}
+
+    # --- Priority 1: Scrapling StealthyFetcher (動的JS対応・要素のみ抽出) ---
+    stealthy_data = _fetch_odds_page_via_stealthy(race_id)
+    if stealthy_data:
+        for umaban, vals in stealthy_data.items():
+            pop = vals.get('popularity', 99)
+            if pop < 99:
+                pop_map[umaban] = pop
+        if pop_map:
+            logger.info(f"[Popularity] StealthyFetcher で {len(pop_map)} 頭の人気を取得")
+            return pop_map
+
+    # --- Priority 2: 静的HTML + BeautifulSoup (JS未実行フォールバック) ---
+    logger.info("[Popularity] Stealthy が空: 静的HTMLフォールバックへ")
     is_nar = _is_nar(race_id)
     domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
     html_url = f"https://{domain}/odds/index.html?race_id={race_id}"
-    
     html = fetch_robust_html(html_url)
-    if not html: return {}
-    
-    soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-    pop_map = {}
-    
-    # Often inside div.OddsTop_Table or just the first table
-    for table in soup.find_all('table'):
-        rows = table.find_all('tr')
-        if not rows: continue
-        
-        # Check if it's the popularity table
-        h_text = table.get_text()
-        if "人気" not in h_text and "馬番" not in h_text: continue
-        
-        for row in rows:
-            try:
-                # 1. Try by specific cell classes
-                p_td = row.find('td', class_=re.compile(r'Popular|Rank|Ninki|Ninki_Index', re.I))
-                u_td = row.find('td', class_=re.compile(r'Umaban|umaban', re.I))
-                
-                if p_td and u_td:
-                    p_text, u_text = p_td.get_text(strip=True), u_td.get_text(strip=True)
-                    m_uma = re.search(r'(\d+)', u_text)
-                    m_pop = re.search(r'(\d+)', p_text)
-                    if m_uma and m_pop:
-                        pop_map[int(m_uma.group(1))] = int(m_pop.group(1))
-            except:
-                continue
-        
-        if pop_map:
-            break
 
-    # --- Fallback to Result Page if empty (for past races) ---
+    if html:
+        soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
+        for table in soup.find_all('table'):
+            h_text = table.get_text()
+            if "人気" not in h_text and "馬番" not in h_text:
+                continue
+            for row in table.find_all('tr'):
+                try:
+                    p_td = row.find('td', class_=re.compile(r'Popular|Rank|Ninki|Ninki_Index', re.I))
+                    u_td = row.find('td', class_=re.compile(r'Umaban|umaban', re.I))
+                    if p_td and u_td:
+                        m_uma = re.search(r'(\d+)', u_td.get_text(strip=True))
+                        m_pop = re.search(r'(\d+)', p_td.get_text(strip=True))
+                        if m_uma and m_pop:
+                            pop_map[int(m_uma.group(1))] = int(m_pop.group(1))
+                except:
+                    continue
+            if pop_map:
+                break
+
+    # --- Priority 3: result.html (確定済みレース用) ---
     if not pop_map:
-        logger.info("[Popularity] Falling back to result.html for historic data")
+        logger.info("[Popularity] result.html フォールバックへ")
         res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
         res_html = fetch_robust_html(res_url)
         if res_html:
             rsoup = BeautifulSoup(res_html, 'html.parser', from_encoding='utf-8')
-            r_rows = rsoup.select('tr.HorseList, tr[class*="HorseList"]')
-            for rr in r_rows:
+            for rr in rsoup.select('tr.HorseList, tr[class*="HorseList"]'):
                 try:
                     tds = rr.find_all('td')
                     if len(tds) > 9:
-                        u_val = int(re.search(r'(\d+)', tds[2].text).group(1)) # Umaban index 2
-                        p_val = int(re.search(r'(\d+)', tds[9].text).group(1)) # Popularity index 9
+                        u_val = int(re.search(r'(\d+)', tds[2].text).group(1))
+                        p_val = int(re.search(r'(\d+)', tds[9].text).group(1))
                         pop_map[u_val] = p_val
-                except: pass
+                except:
+                    pass
+
     return pop_map
 
 def fetch_comprehensive_result(race_id):
