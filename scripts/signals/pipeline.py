@@ -1,6 +1,7 @@
 """
 pipeline.py — ◎●シグナル統合パイプライン
 """
+from collections import defaultdict
 from typing import Dict, List, Tuple
 
 from .models import Entry, DoubleCircleResult, BulletResult
@@ -35,9 +36,29 @@ def run_bullet_pipeline(entries: List[Entry]) -> Dict[Tuple, BulletResult]:
     return evaluate_all_bullet_groups(candidates)
 
 
+def apply_jockey_single_ride(
+    entries: List[Entry],
+    scope: str = "venue",
+) -> None:
+    """当日同一場でレースをで1回だけ乗権する騎手にフラグを立てる。
+
+    scope='venue'  → (date, venue) 内で騎手の出走数が1の場合にフラグ
+    scope='all'    → 当日全場を通じて騎手の出走数が1の場合にフラグ
+    """
+    # (date, venue, jockey) ごとの出走数をカウント
+    ride_count: dict = defaultdict(int)
+    for e in entries:
+        key = (e.date, e.venue, e.jockey) if scope == "venue" else (e.date, e.jockey)
+        ride_count[key] += 1
+
+    for e in entries:
+        key = (e.date, e.venue, e.jockey) if scope == "venue" else (e.date, e.jockey)
+        e.jockey_single_ride_flag = (ride_count[key] == 1)
+
+
 def run_special_signal_pipeline(entries: List[Entry]) -> List[Entry]:
     """◎●統合パイプライン。
-    処理順: ◎group → ●group → ◎判定 → ●判定 → annotate → marks → score
+    処理順: ◎group → ●group → ◎判定 → ●判定 → 1回騎乗 → annotate → marks → score
     """
     # 1. ◎用 group 作成 & 判定
     dc_groups = build_entity_daily_venue_groups(entries)
@@ -49,15 +70,18 @@ def run_special_signal_pipeline(entries: List[Entry]) -> List[Entry]:
     bt_candidates = filter_bullet_candidate_groups(bt_groups)
     bt_results = evaluate_all_bullet_groups(bt_candidates)
 
-    # 3. 各馬へ annotate
+    # 3. 当日同場でレース1回のみ騎乗または全場通じて1回のみ騎乗の騎手フラグ付け
+    apply_jockey_single_ride(entries, scope="venue")
+
+    # 4. 各馬へ annotate
     apply_jockey_double_circle_results(entries, dc_results)
     apply_trainer_double_circle_results(entries, dc_results)
     apply_trainer_bullet_results(entries, bt_results)
 
-    # 4. marks 更新
+    # 5. marks 更新
     refresh_special_marks(entries)
 
-    # 5. score 更新
+    # 6. score 更新
     refresh_scores(entries)
 
     return entries

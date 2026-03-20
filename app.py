@@ -1,4 +1,4 @@
-import sys, io
+﻿import sys, io
 sys.setrecursionlimit(10000) # Increased to handle Torch initialization
 import os
 import logging
@@ -4420,14 +4420,17 @@ if nav == "🤓 N氏の研究室":
         | **P4: 裏循環** | 大頭数側の裏番を小頭数で循環させた値が小頭数側の裏番と一致 |
 
         #### スコアリング (v2.0)
+        #### スコアリング (v2.0 統合判定版)
         | ボーナス | 条件 | 加点 |
         |---|---|---|
-        | Base | パターン1種類ごと | +1 |
-        | Overlap | 3種類以上同時検出 | +3 |
-        | Strategic Entry | 当日のEntity出走がちょうど2回 | +3 |
-        | Longshot | 7人気以上 or オッズ20倍以上 | +1 |
-        | Best Period | 開催日数3〜8日目 | +1 |
-        """)
+        | **Evidences** | 検出された配置証拠1件につき | +1 |
+        | **Overlap** | 証拠が2種類(P1~P4)以上のタイプに及ぶ | +2 |
+        | **Multi-Entry** | 同一レースに同一厩舎が2頭以上出走 | +2 |
+        | **Signal J◎** | 騎手の当日全出走が同一馬番等で統一 | +3 |
+        | **Signal T◎** | 厩舎の当日全出走が同一馬番等で統一 | +3 |
+        | **Signal T●** | 厩舎が異なる場・同一Rで好配置一致 | +2 |
+        | **Longshot** | 7人気以下 または 単勝20倍以上 | +1 |
+        | **J1R (Single Ride)** | 当該場での騎乗が当日1回のみ | (表示のみ) |
 
         st.divider()
 
@@ -4448,15 +4451,18 @@ if nav == "🤓 N氏の研究室":
             st.session_state.rpps_venue_list = res
 
         selected_race_urls = []
+        selected_race_urls = []
+        all_race_urls = []  # 全場まとめURL（●シグナルに必要）
+
         if 'rpps_venue_list' in st.session_state and st.session_state.rpps_venue_list:
             race_list = st.session_state.rpps_venue_list
-            # Group by venue
+            # 場別にグループ
             venues = {}
             for r in race_list:
-                v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
+                v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else 'Unknown'
                 if v_code not in venues: venues[v_code] = []
                 venues[v_code].append(r)
-        
+
             VENUE_NAMES = {
                 "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京","06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
                 "36":"大井","42":"船橋","43":"川崎","44":"浦和","65":"園田","62":"名古屋","54":"門別","50":"帯広","45":"盛岡","46":"水沢"
@@ -4464,10 +4470,33 @@ if nav == "🤓 N氏の研究室":
             v_options = list(venues.keys())
             def format_v(c):
                 return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
-        
-            selected_v = st.selectbox("スキャンする競馬場を選択", v_options, format_func=format_v, key="rpps_selected_venue")
+
+            # 全場URL（●シグナル対応のため）
+            for rr in race_list:
+                r_id = rr['race_id']
+                all_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+
+            # 競馬場選択 + スキャンモード
+            col_sv1, col_sv2 = st.columns([3, 1])
+            with col_sv1:
+                selected_v = st.selectbox(
+                    "スキャンする競馬場を選択…（単場内パターンのみ）",
+                    v_options, format_func=format_v, key='rpps_selected_venue'
+                )
+            with col_sv2:
+                st.write("")
+                scan_mode = st.radio(
+                    "スキャン範囲",
+                    options=['single', 'all'],
+                    format_func=lambda x: {
+                        "single": "🏠 選択場のみ",
+                        "all":    "🌍 全開催場 (●一括判定)"
+                    }.get(x, x),
+                    key='rpps_scan_mode',
+                    help='●シグナルは各場またぎなので、「全開催場」で実行することで正確に判定できます。'
+                )
+
             if selected_v:
-                # Generate URLs for all races in this venue
                 for r in venues[selected_v]:
                     r_id = r['race_id']
                     selected_race_urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
@@ -4478,33 +4507,44 @@ if nav == "🤓 N氏の研究室":
         with col_l:
             entity = st.radio("👤 比較対象", options=["jockey", "trainer", "both"], index=0,
                               format_func=lambda x: {"jockey": "🏇 騎手", "trainer": "🏋 厩舎", "both": "🔀 両方"}.get(x, x),
-                              key="rpps_entity", horizontal=True)
+                              key='rpps_entity', horizontal=True)
             min_patterns = st.number_input("🎯 最低パターン数", min_value=1, max_value=5, value=1, step=1, key="rpps_min_pat")
 
+        # スキャンモードに応じてURLリストを決定
+        scan_mode_val = st.session_state.get('rpps_scan_mode', 'single')
+        if scan_mode_val == 'all':
+            active_scan_urls = all_race_urls
+            scan_mode_label = f"全開催場 ({len(all_race_urls)}レース)"
+        else:
+            active_scan_urls = selected_race_urls
+            scan_mode_label = f"選択場 ({len(selected_race_urls)}レース)"
+
         with col_r:
-            st.info(f"""
-            **現在の設定**: {len(selected_race_urls)} レースをスキャン対象としています。
-        
+            st.info(f'''
+            **現在の設定**: **{scan_mode_label}** をスキャン対象としています。
+
+            ⚠️ **●シグナルは「全開催場」モードまたは複数場URLを渡した場合のみ機能**します。
+
             **スコア目安**:
             - 🔴 7以上: 超注目穴馬
             - 🟠 5〜6: 要警戒穴馬
             - 🟡 3〜4: 気になる馬
             - ⚪ 1〜2: 参考程度
-            """)
+            ''')
 
         st.divider()
 
         if 'rpps_result_df' not in st.session_state:
             st.session_state.rpps_result_df = None
 
-        scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not selected_race_urls, key="rpps_scan_btn")
+        scan_btn = st.button("🔍 スキャン開始", type="primary", disabled=not active_scan_urls, key="rpps_scan_btn")
 
-        if scan_btn and selected_race_urls:
+        if scan_btn and active_scan_urls:
             import scripts.race_position_scanner as rpps
             from scripts.race_position_scanner import run_scan_with_signals
-        
-            urls = selected_race_urls
-            st.info(f"🔍 {len(urls)} 件のレースをスキャンします...")
+
+            urls = active_scan_urls
+            st.info(f"🔍 {len(urls)} 件のレースをスキャンします... 「全開催場」モードは●シグナルが全場対応で機能します。")
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -4566,9 +4606,11 @@ if nav == "🤓 N氏の研究室":
                         styled_res = styled_res.applymap(color_best_period, subset=["is_best_period"])
 
                     # Display only readable columns
+                    # Display only readable columns
                     display_cols = [c for c in [
-                        "race_number", "horse_number", "horse_name",
-                        "jockey", "trainer", "score", "special_marks",
+                        "race_number", "horse_number", "horse_name", "special_marks",
+                        "jockey", "trainer", "score",
+                        "jockey_single_ride",
                         "patterns_detected", "match_details",
                         "odds", "odds_rank", "is_best_period", "warning"
                     ] if c in df_res.columns]
@@ -4584,7 +4626,8 @@ if nav == "🤓 N氏の研究室":
                             "jockey": st.column_config.TextColumn("騎手"),
                             "trainer": st.column_config.TextColumn("厩舎"),
                             "score": st.column_config.NumberColumn("🔥 スコア"),
-                            "special_marks": st.column_config.TextColumn("◎● シグナル"),
+                            "special_marks": st.column_config.TextColumn("◎●J1R シグナル"),
+                            "jockey_single_ride": st.column_config.CheckboxColumn("🎯 1回乗り騎手", help="この競馬場で当日1レースのみ騎乗する騎手"),
                             "patterns_detected": st.column_config.TextColumn("検出パターン"),
                             "match_details": st.column_config.TextColumn("マッチ詳細", width="large"),
                             "odds": st.column_config.NumberColumn("単勝オッズ", format="%.1f"),
@@ -4599,8 +4642,20 @@ if nav == "🤓 N氏の研究室":
                     st.warning(f"スタイルエラー: {e_disp}")
                     st.dataframe(df_res, width='stretch')
 
-                # CSV download
-                csv_bytes = df_res.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
+                # CSV download (special_marks を horse_name の右隣に列順を整えて出力)
+                # CSV download (special_marks を horse_name の右隣に列順を整えて出力)
+                _csv_col_order = [
+                    "race_number", "horse_number", "horse_name", "special_marks",
+                    "jockey", "trainer", "score",
+                    "jockey_single_ride",
+                    "patterns_detected", "match_details",
+                    "odds", "odds_rank", "is_best_period", "warning"
+                ]
+                # df_res に存在する列だけ先頭に並べ、残りを末尾に追加
+                _front = [c for c in _csv_col_order if c in df_res.columns]
+                _rest  = [c for c in df_res.columns if c not in _front]
+                _df_csv = df_res[_front + _rest]
+                csv_bytes = _df_csv.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
                 st.download_button(
                     label="💾 CSVダウンロード",
                     data=csv_bytes,

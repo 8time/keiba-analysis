@@ -469,10 +469,10 @@ class RacePositionScanner:
                 # パイプライン実行
                 run_special_signal_pipeline(all_entries)
 
-                # 結果をDFにマッピング (race_number + horse_number でキー)
+                # 結果をDFにマッピング (venue + race_number + horse_number でキー)
                 sig_map = {}
                 for e in all_entries:
-                    sig_map[(e.race_number, e.horse_number)] = e
+                    sig_map[(e.venue, e.race_number, e.horse_number)] = e
 
                 # DataFrame に列追加
                 df["special_marks"] = ""
@@ -482,9 +482,10 @@ class RacePositionScanner:
                 df["trainer_dc_rule"] = ""
                 df["trainer_bullet_flag"] = False
                 df["trainer_bullet_rules"] = ""
+                df["jockey_single_ride"] = False  # 当日同場で1回騎乗騎手フラグ
 
                 for idx, row in df.iterrows():
-                    key = (row["race_number"], row["horse_number"])
+                    key = (row["venue"], row["race_number"], row["horse_number"])
                     if key in sig_map:
                         e = sig_map[key]
                         df.at[idx, "special_marks"] = e.special_marks
@@ -494,6 +495,7 @@ class RacePositionScanner:
                         df.at[idx, "trainer_dc_rule"] = e.trainer_double_circle_rule_type or ""
                         df.at[idx, "trainer_bullet_flag"] = e.trainer_bullet_flag
                         df.at[idx, "trainer_bullet_rules"] = ",".join(e.trainer_bullet_rule_types)
+                        df.at[idx, "jockey_single_ride"] = e.jockey_single_ride_flag
                         # スコア加算
                         bonus = 0
                         if e.jockey_double_circle_flag: bonus += 3

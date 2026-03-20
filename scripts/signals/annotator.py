@@ -66,6 +66,8 @@ def build_special_marks(entry: Entry) -> str:
         marks.append("T◎")
     if entry.trainer_bullet_flag:
         marks.append("T●")
+    if entry.jockey_single_ride_flag:
+        marks.append("J1R")  # 当日この競馬場に1回だけ乗る騎手
     return "|".join(marks)
 
 

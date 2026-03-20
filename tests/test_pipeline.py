@@ -1,7 +1,14 @@
 """
 test_pipeline.py — ◎●統合パイプラインテスト
 """
-import sys, os
+import sys, os, io
+
+# ── Windows cp932 環境での UnicodeEncodeError 防止: 標準出力を UTF-8 に固定 ──
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.signals.models import Entry
