@@ -4382,7 +4382,16 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             return [bg + text_col for _ in r]
 
         df_display = df_test_res.drop(columns=['_BonusDetails', '_Style']) if '_BonusDetails' in df_test_res.columns else df_test_res
+        
+        # 行全体のハイライト（仕上がり・逆転候補）
         styled_test_df = df_display.style.apply(highlight_test_rows, axis=1)
+        
+        # 予測スコア列のみピンクにハイライト
+        def highlight_score_col(s):
+            return ["background-color: #fff0f6; color: #c01e5a; font-weight: bold;" for _ in s]
+        
+        if '予測スコア' in df_display.columns:
+            styled_test_df = styled_test_df.apply(highlight_score_col, axis=0, subset=['予測スコア'])
 
         # --- Column order persistence (user_prefs.json) ---
         _prefs_path_lt = os.path.join(os.getcwd(), "user_prefs.json")
