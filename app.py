@@ -4050,17 +4050,18 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         st.session_state['score_weights'] = sw
         norm_w = {k: v / (total_w if total_w > 0 else 1.0) for k, v in sw.items()}
 
-        # --- 影響率 保存ボタン ---
-        _save_col, _ = st.columns([1, 3])
-        with _save_col:
-            if st.button("💾 影響率を保存（全レースに適用）", key="btn_save_weights"):
-                import json as _json
-                try:
-                    with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf:
-                        _json.dump(sw, _wf, ensure_ascii=False, indent=2)
-                    st.success("✅ 影響率を保存しました。次回起動・全レースで自動適用されます。")
-                except Exception as _e:
-                    st.error(f"保存に失敗しました: {_e}")
+        # --- 影響率 操作パネル ---
+        st.session_state['score_weights_test'] = sw
+        c_b1, c_b2, _ = st.columns([1.2, 1.2, 2.6])
+        with c_b1:
+            if st.button("🔄 この影響率で再計算して反映", key="btn_recalc_test", type="primary", use_container_width=True):
+                st.rerun()
+        with c_b2:
+            if st.button("💾 この影響率を保存", key="btn_save_weights_test", use_container_width=True):
+                import json as _j2
+                with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _f2:
+                    _j2.dump(sw, _f2, ensure_ascii=False, indent=2)
+                st.success("✅ 保存完了！")
 
         # 2. Base Ranking (to calculate Diff later)
         df_test['BaseRank'] = df_test[score_col].rank(ascending=False, method='min')
@@ -4262,6 +4263,11 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             # Weighted Bonus Calculation
             total_bonus = 0.0
             horse_bonus_details = []
+            # For Styling
+            _style_note = []
+            if "究極仕上" in str(remarks): _style_note.append("BEST")
+            if "馬体増減" in str(remarks): _style_note.append("RISK")
+            
             label_map_short_test = {
                 'NIndex': 'N指', 'UIndex': 'U指', 'LaboIndex': 'オメガ', 'SpeedIndex': 'スピ',
                 'Popularity': '人気', 'Jockey': '騎手', 'Training': '調教', 'Weight': '馬体',
@@ -4282,7 +4288,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             
             test_scores.append({
                 "馬番": umaban,
-                "馬名": horse_name,
+                "馬名(ラベル付)": horse_name,
                 "騎手": j_name,
                 "人気": int(row.get('Popularity')) if pd.notnull(row.get('Popularity')) and row.get('Popularity') != 99 else "-",
                 "馬体": weight_str if weight_str and str(weight_str).strip() != "" else "-",
@@ -4294,7 +4300,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "予測スコア": round(final_test_score, 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
-                "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-"
+                "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-",
+                "_Style": "|".join(_style_note) if _style_note else ""
             })
             
         df_test_res = pd.DataFrame(test_scores)
@@ -4338,8 +4345,18 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 st.altair_chart(c, use_container_width=True)
 
         # Style and Display Table
-        df_display = df_test_res.drop(columns=['_BonusDetails']) if '_BonusDetails' in df_test_res.columns else df_test_res
-        
+        def highlight_test_rows(r):
+            bg = ''
+            style_tag = str(r.get('_Style', ''))
+            if 'BEST' in style_tag: bg = 'background-color: #004d00;' # Dark Green
+            elif 'RISK' in style_tag: bg = 'background-color: #4d0000;' # Dark Red
+            
+            text_col = 'color: white; font-weight: bold;' if bg else ''
+            return [bg + text_col for _ in r]
+
+        df_display = df_test_res.drop(columns=['_BonusDetails', '_Style']) if '_BonusDetails' in df_test_res.columns else df_test_res
+        styled_test_df = df_display.style.apply(highlight_test_rows, axis=1)
+
         # --- Column order persistence (user_prefs.json) ---
         _prefs_path_lt = os.path.join(os.getcwd(), "user_prefs.json")
         try:
@@ -4375,8 +4392,9 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         
         if _sel_cols_lt:
             df_display = df_display[[c for c in _sel_cols_lt if c in df_display.columns]]
+            styled_test_df = df_display.style.apply(highlight_test_rows, axis=1)
 
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(styled_test_df, use_container_width=True, hide_index=True)
 
         # 3連複スペシャル (2強軸ロジック)
         
