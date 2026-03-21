@@ -4306,6 +4306,11 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             base_w = sw.get('Base', 100.0) / 100.0
             final_test_score = (base_score * base_w) + total_bonus + score_diff # score_diff is frame/weight extra
             
+            # D. Scoring Logic (Unified Professional Spec)
+            # ユーザー要望: 戦闘力を100%とした上での上乗せボーナス方式
+            base_w = 1.0 # 固定 (100%)
+            final_test_score = (base_score * base_w) + total_bonus + score_diff
+            
             test_scores.append({
                 "馬番": umaban,
                 "馬名(ラベル付)": horse_name,
@@ -4332,7 +4337,21 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_test_res['新順位'] = df_test_res['予測スコア'].rank(ascending=False, method='min').astype(int)
         df_test_res['Diff'] = df_test_res['元の順位'] - df_test_res['新順位']
         
-        # Re-sort by New Score
+        # 順位変動ラベルと大金星(Giant Killing)の実装
+        def refine_marks(r):
+            name = str(r.get('馬名(ラベル付)', ''))
+            d = int(r.get('Diff', 0))
+            if d > 0: name += f" ↑({d}↑)"
+            elif d < 0: name += f" ↓({abs(d)}↓)"
+            
+            # 大金星 candidate: 戦闘力(元の順位)1位ではない馬が予測1位
+            if r['新順位'] == 1 and r['元の順位'] > 1:
+                name = "🔥『大金星候補』 " + name
+            return name
+            
+        df_test_res['馬名(ラベル付)'] = df_test_res.apply(refine_marks, axis=1)
+        
+        # Re-sort by Predicted Score
         df_test_res = df_test_res.sort_values(by="予測スコア", ascending=False).reset_index(drop=True)
         df_test_res.index = range(1, len(df_test_res) + 1)
 
@@ -4373,8 +4392,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             bg = ''
             style_tag = str(r.get('_Style', ''))
             diff_val = r.get('Diff', 0)
+            is_giant = "🔥『大金星候補』" in str(r.get('馬名(ラベル付)', ''))
             
-            if diff_val >= 3: bg = 'background-color: #006400;' # Bright Green (Darker forest)
+            if is_giant: bg = 'background-color: #ff4500;' # OrangeRed (Giant Killing)
+            elif diff_val >= 3: bg = 'background-color: #006400;' # Bright Green
             elif 'BEST' in style_tag: bg = 'background-color: #004d00;' # Dark Green
             elif 'RISK' in style_tag: bg = 'background-color: #4d0000;' # Dark Red
             
@@ -4452,10 +4473,29 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             }
         )
 
-        # 3連複スペシャル (2強軸ロジック)
-        
-        # --- 3連複スペシャル (2強軸ロジック) ---
+        # --- 比較用：旧ロジック（FEW+マクリ以前）テーブル ---
         st.divider()
+        st.subheader("🔙 【比較用】旧ロジック算出結果（FEW+マクリ）")
+        with st.expander("表示する（今回の拡張指示前の状態）", expanded=False):
+            old_scores = []
+            for _, row in df_test.iterrows():
+                # 旧ロジック: BattleScore + N% + U% + DIY%...
+                # 当時は正規化なしの生加算も多かったが、ここでは当時のスライダー形式から再現
+                b_score = float(row.get('BattleScore', 0.0))
+                o_n = float(row.get('NIndex', 0)) * (sw.get('NIndex', 0.0)/100.0)
+                o_u = float(row.get('UIndex', 0)) * (sw.get('UIndex', 0.0)/100.0)
+                o_d = float(row.get('DIY_Index', 0)) * (sw.get('SpeedIndex', 0.0)/100.0)
+                
+                total_o = b_score + o_n + o_u + o_d
+                old_scores.append({
+                    "馬番": row.get('Umaban'),
+                    "馬名": row.get('Name'),
+                    "旧予測スコア": round(total_o, 1),
+                    "元の順位": int(row.get('BaseRank', 99))
+                })
+            df_old = pd.DataFrame(old_scores)
+            df_old['旧順位'] = df_old['旧予測スコア'].rank(ascending=False, method='min').astype(int)
+            st.dataframe(df_old.sort_values("旧順位"), use_container_width=True, hide_index=True)
         _test_chaos_r = calculator.evaluate_race_chaos_v3(df_test).get('rank', 'B') if hasattr(calculator, 'evaluate_race_chaos_v3') else calculator.evaluate_race_chaos_v2(df_test).get('rank', 'B')
         if _test_chaos_r in ['S', 'A']:
             st.subheader("🔥 3連複スペシャル（波乱狙い）")
