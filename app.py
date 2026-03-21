@@ -4319,6 +4319,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
                 "予測スコア": round(final_test_score, 1),
+                "スピード指数": round(s_idx_raw, 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
                 "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-",
@@ -4370,7 +4371,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         def highlight_test_rows(r):
             bg = ''
             style_tag = str(r.get('_Style', ''))
-            if 'BEST' in style_tag: bg = 'background-color: #004d00;' # Dark Green
+            diff_val = r.get('Diff', 0)
+            
+            if diff_val >= 3: bg = 'background-color: #006400;' # Bright Green (Darker forest)
+            elif 'BEST' in style_tag: bg = 'background-color: #004d00;' # Dark Green
             elif 'RISK' in style_tag: bg = 'background-color: #4d0000;' # Dark Red
             
             text_col = 'color: white; font-weight: bold;' if bg else ''
@@ -4424,6 +4428,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             column_config={
                 "元のスコア": st.column_config.NumberColumn(format="%.1f"),
                 "予測スコア": st.column_config.NumberColumn(format="%.1f"),
+                "スピード指数": st.column_config.NumberColumn(format="%.1f"),
                 "U指数": st.column_config.NumberColumn(format="%.1f"),
                 "DIY指数": st.column_config.NumberColumn(format="%.1f"),
                 "DIY2": st.column_config.NumberColumn(format="%.1f"),
