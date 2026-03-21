@@ -1293,11 +1293,19 @@ if nav == "🏠 Single Race Analysis":
                     
                     def calc_derived_cols(target_df):
                         res = target_df.copy()
-                        # Sort by Popularity for Odds Gap
+                        # 重複マージ防止: 過去の OddsGap カラム(x/yサフィックス等含む)を全削除
+                        # また、以前に生成した可能性のある中間/派生カラムを一旦クリアする
+                        to_clean = [c for c in res.columns if c.startswith('OddsGap') or c in ['RiskFlags', 'PrevCorners', 'WeightHistory', 'PrevAgari', 'JockeyChange', 'Odds_num']]
+                        if to_clean:
+                            res = res.drop(columns=to_clean)
+
                         if 'Popularity' in res.columns and 'Odds' in res.columns:
+                            import pandas as _pd_conv
                             gap_df = res.sort_values('Popularity').copy()
-                            gap_df['PrevOdds'] = gap_df['Odds'].shift(1)
-                            gap_df['OddsGap'] = gap_df.apply(lambda r: "⚠断層" if r['PrevOdds'] > 0 and r['Odds']/r['PrevOdds'] >= 1.5 else "-", axis=1)
+                            gap_df['Odds_num'] = _pd_conv.to_numeric(gap_df['Odds'], errors='coerce')
+                            gap_df['PrevOdds'] = gap_df['Odds_num'].shift(1)
+                            gap_df['OddsGap'] = gap_df.apply(lambda r: "⚠断層" if (r['PrevOdds'] or 0) > 0 and (r['Odds_num'] or 0)/(r['PrevOdds'] or 1) >= 1.5 else "-", axis=1)
+                            # ここでマージ
                             res = res.merge(gap_df[['Umaban', 'OddsGap']], on='Umaban', how='left')
                         else:
                             res['OddsGap'] = "-"
