@@ -3958,7 +3958,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
             render_session_status(key_prefix="test_")
         
-        _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_test.json")
+        _W_FILE_T = os.path.join(os.path.dirname(__file__), ".score_weights_test.json")
         _weight_defaults = {
             "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
             "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightCarried": 0.0,
@@ -3966,10 +3966,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             "Base": 100.0
         }
         if 'score_weights_test' not in st.session_state:
-            if os.path.exists(_WEIGHTS_FILE):
+            if os.path.exists(_W_FILE_T):
                 try:
                     import json as _json
-                    with open(_WEIGHTS_FILE, 'r', encoding='utf-8') as _wf:
+                    with open(_W_FILE_T, 'r', encoding='utf-8') as _wf:
                         st.session_state['score_weights_test'] = _json.load(_wf)
                 except Exception:
                     st.session_state['score_weights_test'] = _weight_defaults.copy()
@@ -4059,9 +4059,9 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         with c_b2:
             if st.button("💾 この影響率を保存", key="btn_save_weights_test", use_container_width=True):
                 import json as _j2
-                with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _f2:
+                with open(_W_FILE_T, 'w', encoding='utf-8') as _f2:
                     _j2.dump(sw, _f2, ensure_ascii=False, indent=2)
-                st.success("✅ 保存完了！")
+                st.success("✅ このタブ専用の設定（.score_weights_test.json）として保存完了！")
 
         # 2. Base Ranking (to calculate Diff later)
         df_test['BaseRank'] = df_test[score_col].rank(ascending=False, method='min')
@@ -4332,16 +4332,17 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             
             active_chart_cols = [f"Chart_{t}" for t in all_b_types]
             if active_chart_cols:
-                chart_data = b_df.melt(id_vars=['馬名'], value_vars=active_chart_cols,
+                h_name_col = "馬名(ラベル付)"
+                chart_data = b_df.melt(id_vars=[h_name_col], value_vars=active_chart_cols,
                                        var_name='BonusType', value_name='Points')
                 chart_data['BonusType'] = chart_data['BonusType'].str.replace('Chart_', '')
                 
                 import altair as alt
                 c = alt.Chart(chart_data).mark_bar().encode(
                     x=alt.X('Points:Q', title="加算ポイント"),
-                    y=alt.Y('馬名:N', sort='-x', title="馬名"),
+                    y=alt.Y(f'{h_name_col}:N', sort='-x', title="馬名"),
                     color=alt.Color('BonusType:N', legend=alt.Legend(title="指標")),
-                    tooltip=['馬名', 'BonusType', 'Points']
+                    tooltip=[h_name_col, 'BonusType', 'Points']
                 ).properties(height=250)
                 st.altair_chart(c, use_container_width=True)
 
@@ -4368,6 +4369,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if _saved_lt:
                 _ordered_lt = [c for c in _saved_lt if c in df_display.columns]
                 _rest_lt = [c for c in df_display.columns if c not in _ordered_lt]
+                # 新しい重要カラム（U指数など）がキャッシュ漏れしていたら末尾に追加
                 df_display = df_display[_ordered_lt + _rest_lt]
         except: pass
 
