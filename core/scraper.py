@@ -157,35 +157,43 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     """
     headers = _get_headers(referer=referer)
 
-    # Check if Scrapling is available (it might fail to import on Streamlit Cloud)
+    # Check if Scrapling is available
     if not SCRAPLING_AVAILABLE:
-        logger.warning(f"Scrapling not available, falling back to pure requests for {url}")
-        return fetch_regular_requests(url, headers)
+        logger.warning(f"Scrapling not available, testing pure requests...")
+        html = fetch_regular_requests(url, headers)
+        if html: return html
+        # Let it fall through to cloudscraper below
     
-    # Option 1: scrapling (Robust standard) (impersonate='chrome120') ---
-    try:
-        fetcher = ScraplingFetcher(impersonate='chrome120')
-        response = fetcher.get(url, headers=headers, timeout=15)
-        if response and response.body:
-            html = _decode_content(response.body)
-            if html and not _is_blocked(html):
-                logger.info(f"[Scrapling-Fetcher] OK: {url}")
-                return html
-    except Exception as e:
-        logger.debug(f"[Scrapling-Fetcher] failed: {e}")
-
-    # --- Tier 2: StealthyFetcher (v0.4.2 推奨) ---
-    if StealthyFetcher:
+    if SCRAPLING_AVAILABLE:
+        # Option 1: scrapling (Robust standard) (impersonate='chrome120') ---
         try:
-            # v0.4.2: StealthyFetcher.fetch()
-            page = StealthyFetcher.fetch(url, headless=True, timeout=15000)
-            if page and page.body:
-                html = _decode_content(page.body)
+            fetcher = ScraplingFetcher(impersonate='chrome120')
+            response = fetcher.get(url, headers=headers, timeout=15)
+            if response and response.body:
+                html = _decode_content(response.body)
                 if html and not _is_blocked(html):
-                    logger.info(f"[Scrapling-Stealthy] OK: {url}")
+                    logger.info(f"[Scrapling-Fetcher] OK: {url}")
                     return html
         except Exception as e:
-            logger.debug(f"[Scrapling-Stealthy] failed: {e}")
+            logger.debug(f"[Scrapling-Fetcher] failed: {e}")
+
+        # --- Tier 2: StealthyFetcher (v0.4.2 推奨) ---
+        if StealthyFetcher:
+            try:
+                # v0.4.2: StealthyFetcher.fetch()
+                page = StealthyFetcher.fetch(url, headless=True, timeout=15000)
+                if page and page.body:
+                    html = _decode_content(page.body)
+                    if html and not _is_blocked(html):
+                        logger.info(f"[Scrapling-Stealthy] OK: {url}")
+                        return html
+            except Exception as e:
+                logger.debug(f"[Scrapling-Stealthy] failed: {e}")
+
+    # --- Tier 3: Fetch using standard requests if not done already ---
+    if SCRAPLING_AVAILABLE:
+        html = fetch_regular_requests(url, headers)
+        if html: return html
 
     # --- Tier 4: cloudscraper / Standard Requests ---
     try:
