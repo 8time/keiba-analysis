@@ -4319,6 +4319,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
                 "予測スコア": round(final_test_score, 1),
+                "斤量": row.get('WeightCarried', "-"),
                 "スピード指数": round(s_idx_raw, 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
@@ -4428,6 +4429,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             column_config={
                 "元のスコア": st.column_config.NumberColumn(format="%.1f"),
                 "予測スコア": st.column_config.NumberColumn(format="%.1f"),
+                "斤量": st.column_config.NumberColumn(format="%.1f"),
                 "スピード指数": st.column_config.NumberColumn(format="%.1f"),
                 "U指数": st.column_config.NumberColumn(format="%.1f"),
                 "DIY指数": st.column_config.NumberColumn(format="%.1f"),
