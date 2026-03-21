@@ -19,6 +19,7 @@ import re
 from datetime import datetime
 import random
 import asyncio
+from core import utils_type
 try:
     from scrapling import Fetcher as ScraplingFetcher, StealthyFetcher, DynamicFetcher
     SCRAPLING_AVAILABLE = True
@@ -1559,10 +1560,22 @@ def get_race_data(race_id, use_storage=True):
         if missing_odds:
             logger.info("Using result.html fallback for Odds and Popularity")
             res_odds, res_pop = fetch_result_odds_pop(race_id)
-            if res_odds:
-                df['Odds'] = df['Umaban'].map(lambda u: res_odds.get(u, 0.0) if pd.notna(u) else 0.0)
-            if res_pop:
-                df['Popularity'] = df['Umaban'].map(lambda u: res_pop.get(u, 99) if pd.notna(u) else 99)
+            
+            # --- [Phase E: Logging the type of res_odds] ---
+            logger.info(f"res_odds runtime type: {utils_type.describe_runtime_type(res_odds)}")
+            try: logger.info(f"res_odds repr prefix: {repr(res_odds)[:50]}")
+            except: pass
+            
+            # --- [Phase B/D: Safe checking] ---
+            # If it is a dictionary containing mapping from umaban to odds, checking len is safe
+            if utils_type.is_non_empty_collection(res_odds) or utils_type.is_non_empty_pandas(res_odds):
+                # If it's somehow a Series, converting to dict ensures .get() works
+                _ro = dict(res_odds) if utils_type.is_non_empty_pandas(res_odds) else res_odds
+                df['Odds'] = df['Umaban'].map(lambda u: _ro.get(u, 0.0) if pd.notna(u) else 0.0)
+                
+            if utils_type.is_non_empty_collection(res_pop) or utils_type.is_non_empty_pandas(res_pop):
+                _rp = dict(res_pop) if utils_type.is_non_empty_pandas(res_pop) else res_pop
+                df['Popularity'] = df['Umaban'].map(lambda u: _rp.get(u, 99) if pd.notna(u) else 99)
 
     # --- [NEW] Extract Metadata for Dashboard ---
     metadata = {
