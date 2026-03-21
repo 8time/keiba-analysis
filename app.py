@@ -1418,7 +1418,7 @@ if nav == "🏠 Single Race Analysis":
                     _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
                                    ("🚀 上がり3F%",   "AvgAgari",     "agi"),
                                    ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
-                                   ("🦁 展開(AvgPos)%","AvgPosition",  "pos"),
+                                   ("🦁 平均位置取り%", "AvgPosition",  "pos"),
                                    ("基礎戦闘力%",     "Base",         "base")]
 
                     def _render_weight_group_sm(items, sw, prefix):
@@ -1560,7 +1560,7 @@ if nav == "🏠 Single Race Analysis":
                     label_map_short = {
                         'NIndex': 'N指', 'UIndex': 'U指', 'LaboIndex': 'オメガ', 'SpeedIndex': 'スピ',
                         'Popularity': '人気', 'Training': '調教', 'Weight': '馬体', 'WeightCarried': '斤量',
-                        'Suitability': '適性', 'AvgAgari': '末脚', 'Umaban': '枠', 'AvgPosition': '展開'
+                        'Suitability': '適性', 'AvgAgari': '末脚', 'Umaban': '枠', 'AvgPosition': '位置'
                     }
                     
                     # 適用
