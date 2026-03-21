@@ -4203,6 +4203,19 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 remarks.append(f"騎手({j_name}:{j_bonus:+})")
             
             # D. Scoring Logic (Unified Professional Spec)
+            u_val = pw_data.get('UIndex', 0.0)
+            l_val = pw_data.get('LaboIndex', 0.0)
+            
+            # Weight/Blood scores for normalization
+            w_score = 50.0  # Default
+            match_w = re.search(r'\(([-+]\d+)\)', weight_str)
+            if match_w:
+                diff_w = abs(int(match_w.group(1)))
+                if diff_w <= 2: w_score = 100.0
+                elif diff_w >= 10: w_score = 25.0
+            
+            blood_score = 100.0 if blood_flag else 0.0
+            
             # Normalize factors 0-100
             norm_stats = {}
             # Capability / Index
