@@ -4282,6 +4282,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
                 "予測スコア": round(final_test_score, 1),
+                "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
+                "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
                 "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-"
             })
             
@@ -4366,71 +4368,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-        def highlight_flags(r):
-            bg = ''
-            note = str(r.get('加点内訳(備考)', '')) if '加点内訳(備考)' in r.index else ''
-            if '究極仕上' in note: bg = 'background-color: #004d00;'
-            elif '馬体増減' in note: bg = 'background-color: #4d0000;'
-            elif '調教A' in note: bg = 'background-color: #4d3d00;'
-            text_col = 'color: #ffffff;' if bg else ''
-            return [bg + text_col for _ in r]
-
-        # Display Warning if missing data horses exist
-        if '加点内訳(備考)' not in df_test_res.columns:
-            df_test_res['加点内訳(備考)'] = ''
-        _n_col = df_test_res['N指数'] if 'N指数' in df_test_res.columns else pd.Series([1])
-        _ts_col = df_test_res['Test_Score'] if 'Test_Score' in df_test_res.columns else pd.Series([1])
-        if (_n_col == 0).any() and (_ts_col == 0).any():
-             st.warning("⚠️ **データ不足の馬がいます**: 新馬戦やデータ取得失敗により、N指数・戦闘力が0の馬には⚠️マークを表示しています。")
-
-        with st.expander("📖 DIY指数・DIY2(末脚指数)の説明", expanded=True):
-            st.markdown("""
-**DIY指数（タイム偏差指数）**
-> 馬が過去走で記録したタイムを、同距離・同馬場の**標準タイム**と比較してスコア化した独自指数。
-> - 基準値は **50**（標準タイムちょうど）
-> - 標準より速いほど高スコア（上限なし）、遅いほど低スコア
-> - 距離が異なる過去走も、距離別標準タイムで正規化して比較
-> - 計算式：`(標準タイム - 実タイム) × スケール + 50`
-
-| スコア目安 | 意味 |
-|---|---|
-| 60以上 | 非常に速い（上位クラス水準） |
-| 52〜59 | 標準より速い |
-| 48〜51 | ほぼ標準 |
-| 47以下 | 標準より遅い |
-
----
-
-**DIY2（末脚偏差指数）**
-> 馬の**上がり3F**を、同レース出走馬の平均と標準偏差で偏差値化した指数。末脚の相対的な強さを示す。
-> - 基準値は **50**（フィールド平均）
-> - 上がりが速いほど高スコア（[10, 90]にクリップ）
-> - 計算式：`(フィールド平均上がり - 当該馬上がり) / フィールド標準偏差 × 10 + 50`
-
-| スコア目安 | 意味 |
-|---|---|
-| 60以上 | 末脚が非常に強い（差し・追込向き） |
-| 52〜59 | 末脚が平均より強い |
-| 48〜51 | ほぼ平均的な末脚 |
-| 47以下 | 末脚が弱い（先行・逃げ向き） |
-""")
-
-        st.dataframe(
-            df_test_res.style.apply(highlight_flags, axis=1), 
-            width='stretch',
-            column_config={
-                "元の順位": st.column_config.NumberColumn("元の順位", help="ベーススコアでの順位"),
-                "元のスコア": st.column_config.NumberColumn("元のスコア", format="%.1f"),
-                "N指数": st.column_config.NumberColumn("N指数", format="%.1f"),
-                "DIY2": st.column_config.NumberColumn("DIY2(末脚)", format="%.1f"),
-                "DIY指数": st.column_config.NumberColumn("DIY指数", format="%.1f"),
-                "Test_Score": st.column_config.NumberColumn("Test_Score (現在の合算)", format="%.1f"),
-                "U指数": st.column_config.NumberColumn("U指数", format="%.1f"),
-                "オメガ指数": st.column_config.NumberColumn("オメガ指数", format="%.1f"),
-                "Diff": st.column_config.TextColumn("順位変動(Diff)", help="元の順位からのアップダウン"),
-                "新順位": st.column_config.NumberColumn("現在の順位"),
-            }
-        )
+        # 3連複スペシャル (2強軸ロジック)
         
         # --- 3連複スペシャル (2強軸ロジック) ---
         st.divider()
