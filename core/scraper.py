@@ -19,7 +19,17 @@ import re
 from datetime import datetime
 import random
 import asyncio
-from scrapling import Fetcher as ScraplingFetcher, StealthyFetcher, DynamicFetcher
+try:
+    from scrapling import Fetcher as ScraplingFetcher, StealthyFetcher, DynamicFetcher
+    SCRAPLING_AVAILABLE = True
+except ImportError as e:
+    import logging
+    logging.getLogger(__name__).error(f"Failed to import scrapling: {e}")
+    SCRAPLING_AVAILABLE = False
+    ScraplingFetcher = None
+    StealthyFetcher = None
+    DynamicFetcher = None
+
 import logging
 logger = logging.getLogger(__name__)
 # Scrapling / browserforge / curl-cffi の冗長ログを抑制
@@ -126,13 +136,33 @@ def _is_blocked(html):
         if b in html: return True
     return False
 
+def fetch_regular_requests(url, headers):
+    """
+    Fallback to standard requests for fetching HTML.
+    """
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        html = _decode_content(response.content)
+        if html and not _is_blocked(html):
+            logger.info(f"[Requests] OK: {url}")
+            return html
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"[Requests] failed: {e}")
+    return None
+
 def fetch_robust_html(url, referer=None, wait_time=4000):
     """
     [Scrapling v0.4.2 準拠] HTML取得の多段フォールバック。
     """
     headers = _get_headers(referer=referer)
 
-    # --- Tier 1: Scrapling Fetcher (impersonate='chrome120') ---
+    # Check if Scrapling is available (it might fail to import on Streamlit Cloud)
+    if not SCRAPLING_AVAILABLE:
+        logger.warning(f"Scrapling not available, falling back to pure requests for {url}")
+        return fetch_regular_requests(url, headers)
+    
+    # Option 1: scrapling (Robust standard) (impersonate='chrome120') ---
     try:
         fetcher = ScraplingFetcher(impersonate='chrome120')
         response = fetcher.get(url, headers=headers, timeout=15)
