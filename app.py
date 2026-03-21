@@ -1794,6 +1794,10 @@ if nav == "🏠 Single Race Analysis":
                             # Subtle blue for specialized indices
                             return ["background-color: #f1f3f5; color: #495057;" for _ in s]
 
+                        def color_projected_score(s):
+                            # Light pink for Predicted Score
+                            return ["background-color: #fff0f6; color: #c01e5a; font-weight: bold;" for _ in s]
+
                         def color_alert(s):
                             colors = []
                             for val in s:
@@ -1810,7 +1814,10 @@ if nav == "🏠 Single Race Analysis":
                         if 'Rank' in view_df.columns:
                             styled_df = styled_df.apply(color_rank, axis=0, subset=['Rank'])
                         
-                        advanced_cols = [c for c in ['Projected Score', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'SpeedIndex'] if c in view_df.columns]
+                        if 'Projected Score' in view_df.columns:
+                            styled_df = styled_df.apply(color_projected_score, axis=0, subset=['Projected Score'])
+
+                        advanced_cols = [c for c in ['NIndex', 'Strength (X)', 'Suitability (Y)', 'SpeedIndex'] if c in view_df.columns]
                         if advanced_cols:
                             styled_df = styled_df.apply(color_advanced_metrics, axis=0, subset=advanced_cols)
                         
@@ -3946,26 +3953,24 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
             render_session_status(key_prefix="test_")
         
-        # 1. 影響率ウェイトの初期化
-        _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights.json")
+        _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_test.json")
         _weight_defaults = {
-            "Base": 0.0, "Popularity": 0.0, "DIY1": 0.0, "DIY2": 0.0,
-            "UIndex": 0.0, "Jockey": 0.0, "Training": 0.0,
-            "Weight": 0.0, "LaboIndex": 0.0, "Bloodline": 0.0
+            "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
+            "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightCarried": 0.0,
+            "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Bloodline": 0.0,
+            "Base": 100.0
         }
-        # JSONファイルがあれば起動時に読み込む（全レース共通の設定として永続適用）
-        if 'score_weights' not in st.session_state:
+        if 'score_weights_test' not in st.session_state:
             if os.path.exists(_WEIGHTS_FILE):
                 try:
                     import json as _json
                     with open(_WEIGHTS_FILE, 'r', encoding='utf-8') as _wf:
-                        _loaded = _json.load(_wf)
-                    st.session_state['score_weights'] = {**_weight_defaults, **_loaded}
+                        st.session_state['score_weights_test'] = _json.load(_wf)
                 except Exception:
-                    st.session_state['score_weights'] = _weight_defaults.copy()
+                    st.session_state['score_weights_test'] = _weight_defaults.copy()
             else:
-                st.session_state['score_weights'] = _weight_defaults.copy()
-        sw = st.session_state['score_weights']
+                st.session_state['score_weights_test'] = _weight_defaults.copy()
+        sw = st.session_state['score_weights_test']
         for k, v in _weight_defaults.items():
             if k not in sw: sw[k] = v
 
@@ -3978,16 +3983,20 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             return _cb
 
         # --- 各ウェイトのキー定義 (label, sw_key, ui_key_suffix) ---
-        _W_LEFT   = [("騎手%",    "Jockey",     "jockey"),
-                     ("馬体%",    "Weight",     "weight"),
-                     ("調教%",    "Training",   "train")]
-        _W_CENTER = [("人気%",    "Popularity", "pop"),
-                     ("U指数%",   "UIndex",     "uindex"),
-                     ("オメガ指数%", "LaboIndex", "labo"),
-                     ("血統%",    "Bloodline",  "blood")]
-        _W_RIGHT  = [("基本%",    "Base",       "base"),
-                     ("末脚%(Test)", "DIY1",    "diy1"),
-                     ("DIY2%",   "DIY2",       "diy2")]
+        _W_GROUP1   = [("📊 N指数%",      "NIndex",      "nidx"),
+                       ("📊 U指数%",      "UIndex",      "uidx"),
+                       ("⚡ ｵﾒｶﾞ指数%",   "LaboIndex",   "labo"),
+                       ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
+                       ("🔥 人気%",       "Popularity",  "pop")]
+        _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
+                       ("⏱️ 調教%",       "Training",    "trn"),
+                       ("⚖️ 馬体重%",     "Weight",      "wgt"),
+                       ("🏋️ 斤量%",       "WeightCarried","wgtc")]
+        _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
+                       ("🚀 上がり3F%",   "AvgAgari",     "agi"),
+                       ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
+                       ("🧬 血統%",       "Bloodline",    "bld"),
+                       ("基礎戦闘力%",     "Base",         "base")]
 
         def _render_weight_group(items, sw, prefix):
             """1グループ分のスライダー+数値入力ボックスを描画"""
@@ -4015,14 +4024,14 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         with st.container(border=True):
             col_l, col_c, col_r = st.columns(3)
             with col_l:
-                st.markdown("#### 🏇 重要：馬体・騎手")
-                _render_weight_group(_W_LEFT, sw, "l")
+                st.markdown("#### 【能力・指数】")
+                _render_weight_group(_W_GROUP1, sw, "t1")
             with col_c:
-                st.markdown("#### 📈 能力・血統指数")
-                _render_weight_group(_W_CENTER, sw, "c")
+                st.markdown("#### 【人間・状態】")
+                _render_weight_group(_W_GROUP2, sw, "t2")
             with col_r:
-                st.markdown("#### ⚙️ その他・備考")
-                _render_weight_group(_W_RIGHT, sw, "r")
+                st.markdown("#### 【適性・血統】")
+                _render_weight_group(_W_GROUP3, sw, "t3")
 
             # 合計インジケーター
             total_w = sum(sw.values())
@@ -4193,92 +4202,119 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if j_bonus > 0:
                 remarks.append(f"騎手({j_name}:{j_bonus:+})")
             
-            # D. 追加指数 (Extra Indices - Automated Weighted Sum WITH DYNAMIC WEIGHTS)
-            diy1_val = float(row.get('DIY_Index', 0.0))
-            diy2_val = float(row.get('DIY2_Index', 0.0))
-            u_val = pw_data.get('UIndex', 0.0)
-            l_val = pw_data.get('LaboIndex', 0.0)
-            b_flag = pw_data.get('BloodlineFlag', '')
-            
-            # 1. Popularity Score
+            # D. Scoring Logic (Unified Professional Spec)
+            # Normalize factors 0-100
+            norm_stats = {}
+            # Capability / Index
+            norm_stats['NIndex'] = min(max(float(row.get('NIndex', 0)) / 1.0, 0), 100)
+            norm_stats['UIndex'] = min(max(u_val / 1.0, 0), 100)
+            norm_stats['LaboIndex'] = min(max(l_val / 1.0, 0), 100)
+            norm_stats['SpeedIndex'] = min(max(float(row.get('SpeedIndex', 0)) / 1.0, 0), 100)
+            # Popularity (1st=100, 18th=0)
             try:
-                raw_pop = row.get('Popularity', 20)
-                if raw_pop == 99 or pd.isna(raw_pop): raw_pop = 20
-                pop_score = 100.0 - (int(raw_pop) - 1) * 5.0
-            except:
-                pop_score = 0.0
-            pop_score = max(0, pop_score)
+                pop_int = int(row.get('Popularity', 18))
+                if pop_int == 99: pop_int = 18
+                norm_stats['Popularity'] = max(0, 100 - (pop_int - 1) * 6)
+            except: norm_stats['Popularity'] = 0
             
-            # 2. Weight Condition Score
-            w_score = 50.0 # Standard
-            if "究極仕上" in str(remarks): w_score = 100.0
-            elif "馬体増減" in str(remarks): w_score = 25.0
+            # Human / Condition
+            norm_stats['Jockey'] = min(max(j_bonus * 20, 0), 100) # +5=100
+            norm_stats['Training'] = min(max(training_score * 10, 0), 100) # +10=100
+            norm_stats['Weight'] = w_score # 100/50/25
+            norm_stats['WeightCarried'] = 50.0 # Placeholder or calculate if available
             
-            # 3. Bloodline Score
-            blood_score = 100.0 if b_flag else 0.0
+            # Suitability / Others
+            norm_stats['Suitability'] = min(max(float(row.get('Suitability (Y)', 0)) / 1.0, 0), 100)
+            # AvgAgari (Rank based if possible, or speed)
+            agari_val = 0.0
+            if isinstance(past_runs, list) and len(past_runs) > 0:
+                try:
+                    ar = int(past_runs[0].get('AgariRank', 10))
+                    agari_val = max(0, 100 - (ar - 1) * 10)
+                except: pass
+            norm_stats['AvgAgari'] = agari_val
+            norm_stats['Umaban'] = 50.0 + (3.0 if umaban <= 4 else (-2.0 if umaban >= 13 else 0)) * 10
+            norm_stats['Bloodline'] = blood_score
             
-            # Dynamic Weight Redistribution (Robust Scoring)
-            # Identify active factors (non-zero raw value) for THIS horse
-            factor_map = {
-                "Base": base_score, "DIY1": diy1_val, "DIY2": diy2_val, 
-                "UIndex": u_val, "Jockey": j_bonus, "Popularity": pop_score,
-                "Training": training_score, "Weight": w_score, 
-                "LaboIndex": l_val, "Bloodline": blood_score
+            # Weighted Bonus Calculation
+            total_bonus = 0.0
+            horse_bonus_details = []
+            label_map_short_test = {
+                'NIndex': 'N指', 'UIndex': 'U指', 'LaboIndex': 'オメガ', 'SpeedIndex': 'スピ',
+                'Popularity': '人気', 'Jockey': '騎手', 'Training': '調教', 'Weight': '馬体',
+                'Suitability': '適性', 'AvgAgari': '末脚', 'Umaban': '枠', 'Bloodline': '血統'
             }
             
-            non_zero_factors = {k: v for k, v in factor_map.items() if v != 0.0}
-            total_active_weight = sum([sw.get(k, 0.0) for k in non_zero_factors.keys()])
-            
-            if total_active_weight > 0:
-                # Redistribute weight proportionally
-                weighted_score = 0.0
-                for k, val in non_zero_factors.items():
-                    # adjusted_w = original_w / sum(active_ws)
-                    adj_w = sw.get(k, 0.0) / total_active_weight
-                    weighted_score += val * adj_w
-            else:
-                # Fallback if no active weights or all values are zero
-                weighted_score = sum(factor_map.values()) / len(factor_map) if any(factor_map.values()) else 0.0
-            
-            if diy1_val > 0 and sw.get("DIY1", 0) > 0: remarks.append(f"DIY1({diy1_val})")
-            if diy2_val > 0 and sw.get("DIY2", 0) > 0: remarks.append(f"末脚({diy2_val})")
-            if u_val > 0 and sw.get("UIndex", 0) > 0: remarks.append(f"U指({u_val})")
-            if pop_score > 0 and sw.get("Popularity", 0) > 0: remarks.append(f"人({int(row.get('Popularity'))})")
-            if training_score != 0 and sw.get("Training", 0) > 0: remarks.append(f"調({training_score})")
-            if j_bonus > 0 and sw.get("Jockey", 0) > 0: remarks.append(f"騎({j_bonus})")
-            if l_val > 0 and sw.get("LaboIndex", 0) > 0: remarks.append(f"オメガ({l_val})")
-            if blood_score > 0 and sw.get("Bloodline", 0) > 0: remarks.append("血(有)")
-            
-            # Final Test Score = Weighted Core + Raw Diff (Only remaining minor additive bonuses)
-            final_test_score = weighted_score + score_diff
+            for k, s_val in norm_stats.items():
+                w_percent = sw.get(k, 0.0) / 100.0
+                b_pts = s_val * w_percent
+                total_bonus += b_pts
+                if b_pts != 0:
+                    short_n = label_map_short_test.get(k, k)
+                    horse_bonus_details.append(f"{short_n}:{b_pts:+.1f}")
+
+            # Base Score impact
+            base_w = sw.get('Base', 100.0) / 100.0
+            final_test_score = (base_score * base_w) + total_bonus + score_diff # score_diff is frame/weight extra
             
             test_scores.append({
                 "馬番": umaban,
-                "馬名(ラベル付)": horse_name,
+                "馬名": horse_name,
+                "騎手": j_name,
                 "人気": int(row.get('Popularity')) if pd.notnull(row.get('Popularity')) and row.get('Popularity') != 99 else "-",
-                "馬体重": weight_str if weight_str and str(weight_str).strip() != "" else "-",
-                "調教": training_eval if training_eval and str(training_eval).strip() != "" else "-",
-                "U指数": pw_data.get('UIndex', "-"),
-                "オメガ指数": pw_data.get('LaboIndex', "-"),
-                "血統": blood_flag if blood_flag else "-",
+                "馬体": weight_str if weight_str and str(weight_str).strip() != "" else "-",
+                "オメガ": pw_data.get('LaboIndex', "-"),
+                "適性": round(float(row.get('Suitability (Y)', 0.0)), 1),
+                "上り3F": past_runs[0].get('AgariRank', "-") if isinstance(past_runs, list) and len(past_runs) > 0 else "-",
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
-                "N指数": round(float(row.get('NIndex', 0.0)), 1),
-                "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
-                "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
-                "Test_Score": round(final_test_score, 1),
-                "加点内訳(備考)": ", ".join(remarks) if remarks else "-"
+                "予測スコア": round(final_test_score, 1),
+                "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-"
             })
             
         df_test_res = pd.DataFrame(test_scores)
         # Calculate New Rank and Diff
-        df_test_res['新順位'] = df_test_res['Test_Score'].rank(ascending=False, method='min').astype(int)
+        df_test_res['新順位'] = df_test_res['予測スコア'].rank(ascending=False, method='min').astype(int)
         df_test_res['Diff'] = df_test_res['元の順位'] - df_test_res['新順位']
         
         # Re-sort by New Score
-        df_test_res = df_test_res.sort_values(by="Test_Score", ascending=False).reset_index(drop=True)
+        df_test_res = df_test_res.sort_values(by="予測スコア", ascending=False).reset_index(drop=True)
         df_test_res.index = range(1, len(df_test_res) + 1)
 
+        # UI: Table with column config
+        st.markdown("### 📋 検証結果ランキング")
+        
+        # Display Bonus Chart (Top 5)
+        with st.expander("📈 上位5頭のボーナス加算内訳（加点ウェイト反映）", expanded=True):
+            b_df = df_test_res.head(5).copy()
+            # Parse _BonusDetails into separate columns for chart
+            all_b_types = set()
+            for idx, row in b_df.iterrows():
+                details = row['_BonusDetails'].split(', ')
+                for d in details:
+                    if ':' in d:
+                        b_type, b_val = d.split(':')
+                        b_df.at[idx, f"Chart_{b_type}"] = float(b_val)
+                        all_b_types.add(b_type)
+            
+            active_chart_cols = [f"Chart_{t}" for t in all_b_types]
+            if active_chart_cols:
+                chart_data = b_df.melt(id_vars=['馬名'], value_vars=active_chart_cols,
+                                       var_name='BonusType', value_name='Points')
+                chart_data['BonusType'] = chart_data['BonusType'].str.replace('Chart_', '')
+                
+                import altair as alt
+                c = alt.Chart(chart_data).mark_bar().encode(
+                    x=alt.X('Points:Q', title="加算ポイント"),
+                    y=alt.Y('馬名:N', sort='-x', title="馬名"),
+                    color=alt.Color('BonusType:N', legend=alt.Legend(title="指標")),
+                    tooltip=['馬名', 'BonusType', 'Points']
+                ).properties(height=250)
+                st.altair_chart(c, use_container_width=True)
+
+        # Style and Display Table
+        df_display = df_test_res.drop(columns=['_BonusDetails']) if '_BonusDetails' in df_test_res.columns else df_test_res
+        
         # --- Column order persistence (user_prefs.json) ---
         _prefs_path_lt = os.path.join(os.getcwd(), "user_prefs.json")
         try:
@@ -4287,16 +4323,15 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 _prefs_lt = _json_lt.load(_f)
             _saved_lt = _prefs_lt.get('logic_test_col_order', [])
             if _saved_lt:
-                _ordered_lt = [c for c in _saved_lt if c in df_test_res.columns]
-                _rest_lt = [c for c in df_test_res.columns if c not in _ordered_lt]
-                df_test_res = df_test_res[_ordered_lt + _rest_lt]
+                _ordered_lt = [c for c in _saved_lt if c in df_display.columns]
+                _rest_lt = [c for c in df_display.columns if c not in _ordered_lt]
+                df_display = df_display[_ordered_lt + _rest_lt]
         except: pass
 
         with st.expander("📋 列の表示順序を設定（選択順が左から右の順になります）", expanded=False):
-            _cur_cols_lt = list(df_test_res.columns)
+            _cur_cols_lt = list(df_display.columns)
             _sel_cols_lt = st.multiselect(
-                "表示する列・順序（上から選んだ順に左から表示）",
-                options=_cur_cols_lt, default=_cur_cols_lt,
+                "表示する列・順序", options=_cur_cols_lt, default=_cur_cols_lt,
                 key="logic_test_col_order_sel"
             )
             if st.button("💾 この列順を保存", key="btn_save_logic_col_order"):
@@ -4309,11 +4344,14 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                     _prefs_lt2['logic_test_col_order'] = _sel_cols_lt
                     with open(_prefs_path_lt, 'w', encoding='utf-8') as _f:
                         _json_lt2.dump(_prefs_lt2, _f, ensure_ascii=False, indent=2)
-                    st.success("✅ 列順を保存しました（次回から自動反映）")
+                    st.success("✅ 列順を保存しました")
                 except Exception as _e:
                     st.error(f"保存失敗: {_e}")
-            if _sel_cols_lt:
-                df_test_res = df_test_res[[c for c in _sel_cols_lt if c in df_test_res.columns]]
+        
+        if _sel_cols_lt:
+            df_display = df_display[[c for c in _sel_cols_lt if c in df_display.columns]]
+
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         def highlight_flags(r):
             bg = ''
