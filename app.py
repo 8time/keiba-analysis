@@ -1178,7 +1178,7 @@ if nav == "🏠 Single Race Analysis":
 
                     # --- オッズ・人気未取得 警告バナー (指示忠実: 手入力機能追加) ---
                     _pop_missing = 'Popularity' in df.columns and (pd.to_numeric(df['Popularity'], errors='coerce') >= 99).any()
-                    _odds_missing = 'Odds' in df.columns and (pd.to_numeric(df['Odds'], errors='coerce') <= 0 or pd.to_numeric(df['Odds'], errors='coerce') >= 9999.0).any()
+                    _odds_missing = 'Odds' in df.columns and ((pd.to_numeric(df['Odds'], errors='coerce') <= 0) | (pd.to_numeric(df['Odds'], errors='coerce') >= 9999.0)).any()
                     
                     if _pop_missing or _odds_missing:
                         st.error("🚨 取得エラー：再試行中（またはデータ未発表）")
