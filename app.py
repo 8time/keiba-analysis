@@ -4394,7 +4394,22 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             df_display = df_display[[c for c in _sel_cols_lt if c in df_display.columns]]
             styled_test_df = df_display.style.apply(highlight_test_rows, axis=1)
 
-        st.dataframe(styled_test_df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            styled_test_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "元のスコア": st.column_config.NumberColumn(format="%.1f"),
+                "予測スコア": st.column_config.NumberColumn(format="%.1f"),
+                "DIY指数": st.column_config.NumberColumn(format="%.1f"),
+                "DIY2": st.column_config.NumberColumn(format="%.1f"),
+                "適性": st.column_config.NumberColumn(format="%.1f"),
+                "オメガ": st.column_config.NumberColumn(format="%.1f"),
+                "元の順位": st.column_config.NumberColumn(format="%d"),
+                "新順位": st.column_config.NumberColumn(format="%d"),
+                "Diff": st.column_config.NumberColumn(format="%+d"),
+            }
+        )
 
         # 3連複スペシャル (2強軸ロジック)
         
