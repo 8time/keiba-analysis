@@ -10,6 +10,7 @@ except:
 
 # sys.stdout.reconfigure(encoding='utf-8')
 import io
+import json
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -33,6 +34,17 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
+VENUE_NAMES = {
+    # JRA (01-10)
+    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
+    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
+    # NAR (Track IDs from user prompt)
+    "30": "門別", "35": "盛岡", "36": "水沢", "42": "大井", "43": "川崎",
+    "44": "船橋", "45": "浦和", "46": "船橋", "47": "高知", "48": "金沢",
+    "50": "笠松", "51": "名古屋", "54": "園田", "55": "佐賀", "58": "佐賀",
+    "65": "帯広"
+}
+
 def _is_nar(race_id):
     """Checks if race_id belongs to NAR (local horse racing)."""
     try:
@@ -40,6 +52,24 @@ def _is_nar(race_id):
         return pid_code > 10
     except:
         return False
+
+# --- Added by request (Strict mapping) ---
+def sync_odds_to_df(df, api_odds):
+    """
+    df: 抽出済みの出馬表DataFrame
+    api_odds: {'01': {'Odds': 4.1, 'Ninki': 3}, ...} という形式の辞書
+    """
+    for idx, row in df.iterrows():
+        # 重要：馬番をAPIのキー形式（2桁ゼロ埋め文字列）に強制変換
+        uma_key = str(int(row['Umaban'])).zfill(2)
+        
+        if uma_key in api_odds:
+            # .loc を使って「コピー」ではなく「本物」を書き換える
+            df.loc[idx, 'Odds'] = float(api_odds[uma_key].get('Odds', 0.0))
+            # Ninki と Popularity の両方を許容し、整数型に変換
+            pop = api_odds[uma_key].get('Ninki', api_odds[uma_key].get('Popularity', 99))
+            df.loc[idx, 'Popularity'] = int(pop)
+    return df
 
 def _get_headers(referer=None, ajax=False):
     """Returns standardized headers for Netkeiba scraping."""
@@ -98,91 +128,44 @@ def _is_blocked(html):
 
 def fetch_robust_html(url, referer=None, wait_time=4000):
     """
-    HTML取得の多段フォールバック。静的ページ用。
-
-    Tier 1: Scrapling Fetcher (curl_cffi ベースの高速・TLS偽装 HTTP)
-    Tier 2: cloudscraper (WAF/Cloudflare向け)
-    Tier 3: curl_cffi 直接 (複数ブラウザプロファイル切替)
-    Tier 4: Scrapling DynamicFetcher (Playwright フォールバック)
+    [Scrapling v0.4.2 準拠] HTML取得の多段フォールバック。
     """
-    headers_extra = {}
-    if referer:
-        headers_extra["Referer"] = referer
+    headers = _get_headers(referer=referer)
 
-    # --- Tier 1: Scrapling Fetcher (高速HTTP / curl_cffi + TLS偽装) ---
+    # --- Tier 1: Scrapling Fetcher (impersonate='chrome120') ---
     try:
-        page = ScraplingFetcher.get(
-            url,
-            headers=headers_extra if headers_extra else None,
-            timeout=12,  # seconds
-        )
-        if page and hasattr(page, 'body'):
-            html = _decode_content(page.body)
+        fetcher = ScraplingFetcher(impersonate='chrome120')
+        response = fetcher.get(url, headers=headers, timeout=15)
+        if response and response.body:
+            html = _decode_content(response.body)
             if html and not _is_blocked(html):
+                logger.info(f"[Scrapling-Fetcher] OK: {url}")
                 return html
     except Exception as e:
-        pass
+        logger.debug(f"[Scrapling-Fetcher] failed: {e}")
 
-    # --- Tier 2: cloudscraper (WAF / Cloudflare 対策) ---
+    # --- Tier 2: StealthyFetcher (v0.4.2 推奨) ---
+    if StealthyFetcher:
+        try:
+            # v0.4.2: StealthyFetcher.fetch()
+            page = StealthyFetcher.fetch(url, headless=True, timeout=15000)
+            if page and page.body:
+                html = _decode_content(page.body)
+                if html and not _is_blocked(html):
+                    logger.info(f"[Scrapling-Stealthy] OK: {url}")
+                    return html
+        except Exception as e:
+            logger.debug(f"[Scrapling-Stealthy] failed: {e}")
+
+    # --- Tier 4: cloudscraper / Standard Requests ---
     try:
         import cloudscraper
         cs = cloudscraper.create_scraper(browser='chrome')
         resp = cs.get(url, timeout=12)
         if resp.status_code == 200:
             html = _decode_content(resp.content)
-            if not _is_blocked(html):
-                logger.debug(f"[cloudscraper] OK: {url}")
-                return html
-    except Exception:
-        pass
-
-    # --- Tier 3: curl_cffi (複数プロファイルで強力偽装) ---
-    try:
-        from curl_cffi import requests as curl_requests
-        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
-        if referer:
-            hdrs["Referer"] = referer
-        for profile in ["chrome120", "edge101", "safari15"]:
-            try:
-                resp2 = curl_requests.get(url, headers=hdrs, impersonate=profile, timeout=15)
-                if resp2.status_code == 200:
-                    html = _decode_content(resp2.content)
-                    if html and not _is_blocked(html):
-                        logger.debug(f"[curl_cffi-{profile}] OK: {url}")
-                        return html
-            except:
-                continue
-    except Exception:
-        pass
-
-    # Skip browser tiers (hang protection for current env)
-    """
-    # --- Tier 4: Scrapling DynamicFetcher (Playwright / JS実行) ---
-    try:
-        fetcher_dyn = DynamicFetcher()
-        fetcher_dyn.configure()
-        page = fetcher_dyn.fetch(url, timeout=40000, headless=True)
-        if page and hasattr(page, 'body'):
-            html = _decode_content(page.body)
-            if html and not _is_blocked(html):
-                logger.debug(f"[scrapling-dyn] OK: {url}")
-                return html
-    except Exception as e:
-        logger.debug(f"[scrapling-dyn] failed: {e}")
-
-    # --- Tier 5: StealthyFetcher (Patchright / 強力偽装) ---
-    if StealthyFetcher:
-        try:
-            # v0.4.1: .fetch() はクラスメソッド。timeout はミリ秒単位
-            page = StealthyFetcher.fetch(url, headless=True, timeout=35000)
-            if page and hasattr(page, 'body'):
-                html = _decode_content(page.body)
-                if html and not _is_blocked(html):
-                    logger.debug(f"[scrapling-stealthy] OK: {url}")
-                    return html
-        except Exception as e:
-            logger.debug(f"[scrapling-stealth] failed: {e}")
-    """
+            if not _is_blocked(html): return html
+    except: pass
 
     logger.error(f"[FATAL] All fetch methods failed: {url}")
     return None
@@ -371,6 +354,7 @@ def get_race_list_for_date(date_str=None):
                 "race_id": race_id,
                 "race_name": race_name or race_num or f"Race {race_id[-2:]}",
                 "race_num": race_num,
+                "venue": VENUE_NAMES.get(race_id[4:6], "Unknown")
             })
             seen_ids.add(race_id)
             found_on_this_page += 1
@@ -446,23 +430,23 @@ def fetch_sanrenpuku_odds(race_id):
         "compress": "1",
     }
     api_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         "Accept": "*/*",
-        "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-        "Referer": f"https://{domain}/odds/index.html?type=b7&race_id={race_id}&housiki=c99",
+        "Referer": f"https://{domain}/odds/index.html?type=b1&race_id={race_id}",
     }
 
     try:
-        _resp = _req.get(api_url, params=params, headers=api_headers, timeout=15)
-        _resp.raise_for_status()
-
-        # Strip JSONP wrapper: callback_name({...})
-        text = _resp.text
-        jsonp_match = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
-        if jsonp_match:
-            data = json.loads(jsonp_match.group(1))
+        fetcher = ScraplingFetcher(impersonate='chrome120')
+        _resp = fetcher.get(api_url, params=params, headers=api_headers, timeout=15)
+        if _resp and _resp.body:
+            text = _resp.body
+            jsonp_match = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
+            if jsonp_match:
+                data = json.loads(jsonp_match.group(1))
+            else:
+                data = json.loads(text)
         else:
-            data = json.loads(text)
+            return []
 
         api_status = data.get('status', '')
         raw = data.get('data', '')
@@ -549,27 +533,39 @@ def fetch_win_odds(race_id):
     headers = _get_headers(referer=f"https://{domain}/odds/index.html?type=b1&race_id={race_id}", ajax=True)
 
     try:
-        res = requests.get(api_url, params=params, headers=headers, timeout=10)
-        data = res.json()
-        raw = data.get('data', '')
-        if raw and isinstance(raw, str) and len(raw) > 10:
-            decoded = base64.b64decode(raw)
-            try: decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
-            except: decompressed = zlib.decompress(decoded)
-            odds_data = json.loads(decompressed.decode('utf-8'))
-            results = {int(k): (float(v) if v and v not in ['---.-', '0'] else 0.0) for k, v in odds_data.items() if k.isdigit()}
+        # API 方式にフォールバック（指示 A）
+        api_data = fetch_realtime_odds_api(race_id)
+        if api_data:
+            results = {u: d['Odds'] for u, d in api_data.items() if d['Odds'] > 0}
             if results:
+                logger.info(f"[WinOdds] API 方式で {len(results)} 頭のオッズを取得")
                 return pd.Series(results)
+                
+        # Scrapling Fetcher による API 取得 (旧 API 形式)
+        res = ScraplingFetcher.get(api_url, params=params, headers=headers, impersonate='chrome120', timeout=12)
+        if res and res.body:
+            data = json.loads(res.body)
+            raw = data.get('data', '')
+            if raw and isinstance(raw, str) and len(raw) > 10:
+                decoded = base64.b64decode(raw)
+                try: decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
+                except: decompressed = zlib.decompress(decoded)
+                odds_data = json.loads(decompressed.decode('utf-8'))
+                results = {int(k): (float(v) if v and v not in ['---.-', '0'] else 0.0) for k, v in odds_data.items() if k.isdigit()}
+                if results:
+                    return pd.Series(results)
     except Exception as e:
-        logger.warning(f"Win API failed for {race_id}: {e}")
+        logger.warning(f"Win API failed via Scrapling for {race_id}: {e}")
 
     # --- Fallback: db.netkeiba.com (静的HTML・確定済みレース対応) ---
     # result.html はJS動的レンダリングのため使用不可
     logger.info("[WinOdds] Falling back to db.netkeiba.com for historic data")
     db_url = f"https://db.netkeiba.com/race/{race_id}/"
     try:
-        db_res = requests.get(db_url, headers=_get_headers(), timeout=10)
-        db_soup = BeautifulSoup(db_res.content, 'html.parser', from_encoding='euc-jp')
+        # Scrapling Fetcher による DB スクレイピング
+        db_res = ScraplingFetcher.get(db_url, headers=_get_headers(), impersonate='chrome120', timeout=12)
+        if db_res and db_res.body:
+            db_soup = BeautifulSoup(db_res.body, 'html.parser', from_encoding='euc-jp')
         db_odds = {}
         # race_table_01: tds[2]=馬番, tds[12]=単勝オッズ, tds[13]=人気
         for row in db_soup.select('table.race_table_01 tr'):
@@ -591,23 +587,152 @@ def fetch_win_odds(race_id):
 
     return pd.Series({})
 
+def fetch_realtime_odds_api(race_id):
+    """
+    Netkeiba の JSON API から最新のオッズと人気を直接取得する。
+    Scrapling.Fetcher (curl_cffi) を使用し、UA偽装/Referer設定により確実に取得する。
+    戻り値: {umaban(int): {'Odds': float, 'Popularity': int}}
+    """
+    import json, base64, zlib
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    prefix = "nar" if is_nar else "jra"
+    
+    # 複数タイプ (1=単複, b1=単複) を試行
+    types = ["1", "b1"]
+    odds_map = {}
+
+    def _decode_and_parse(body):
+        _res = {}
+        try:
+            if isinstance(body, bytes):
+                body = body.decode('utf-8', errors='ignore')
+            d = json.loads(body)
+            
+            # --- Parsing odds dict ---
+            # 優先度A: ary_odds (User recommended pattern for compress=0)
+            ary = d.get('ary_odds', {})
+            
+            # 優先度B: 'data' フィールド (以前のロジック: compress=1用)
+            if not ary:
+                raw_data = d.get('data', '')
+                inner = {}
+                if isinstance(raw_data, str) and len(raw_data) > 10:
+                    try:
+                        _decoded = base64.b64decode(raw_data)
+                        try: _decomp = zlib.decompress(_decoded, -zlib.MAX_WBITS)
+                        except: _decomp = zlib.decompress(_decoded)
+                        inner = json.loads(_decomp.decode('utf-8'))
+                    except:
+                        if raw_data.strip().startswith('{'):
+                             inner = json.loads(raw_data)
+                elif isinstance(raw_data, dict):
+                    inner = raw_data
+                else:
+                    inner = d 
+
+                # ary_odds in inner
+                ary = inner.get('ary_odds', {})
+                if not ary and 'odds' in inner:
+                    o_root = inner['odds']
+                    if '1' in o_root: ary = o_root['1']
+                    else: ary = o_root
+                if not ary:
+                    ary = {k: v for k, v in inner.items() if k.isdigit()}
+
+            for u_str, val in ary.items():
+                if not u_str.isdigit(): continue
+                umaban = int(u_str)
+                o_val = 0.0
+                p_val = 99
+                
+                if isinstance(val, dict):
+                    # "Odds" vs "odds", "Ninki" vs "ninki" or "popularity"
+                    o_val = float(val.get('Odds', val.get('odds', 0.0)))
+                    p_val = int(val.get('Ninki', val.get('popularity', 99)))
+                elif isinstance(val, list) and len(val) >= 1:
+                    o_val = float(str(val[0]).replace(',', '')) if val[0] not in ('', '---.-', '0') else 0.0
+                    if len(val) >= 3:
+                        p_val = int(val[2])
+                elif isinstance(val, (int, float, str)):
+                     o_val = float(str(val).replace(',', '')) if val not in ('', '---.-', '0') else 0.0
+
+                if umaban > 0:
+                    # Umaban key is unified to 2-digit string (e.g. '01', '02') to match API format
+                    _res[str(umaban).zfill(2)] = {'Odds': o_val, 'Popularity': p_val}
+        except Exception as _e:
+            logger.debug(f"[API-Odds] Parse error: {_e}")
+        return _res
+
+    # Try both compress=0 (User recommended) and compress=1 (Legacy)
+    # type=1 (User recommended) and type=b1 (Alternative)
+    for c_flag in ["0", "1"]:
+        for t in ["1", "b1"]:
+            api_url = f"https://{domain}/api/api_get_{prefix}_odds.html?pid=api_get_{prefix}_odds&race_id={race_id}&type={t}&action=init&compress={c_flag}&output=json"
+            headers = {
+                "Referer": f"https://{domain}/odds/index.html?race_id={race_id}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+
+            try:
+                logger.info(f"[API-Odds] Fetching compress={c_flag} type={t} via Fetcher ({api_url})")
+                fetcher = ScraplingFetcher(impersonate='chrome120')
+                resp = fetcher.get(api_url, headers=headers, timeout=12)
+                if resp and resp.body:
+                    temp_map = _decode_and_parse(resp.body)
+                    if temp_map:
+                        odds_map.update(temp_map)
+                        logger.info(f"[API-Odds] Success: {len(temp_map)} horses")
+                        return odds_map 
+            except Exception as e:
+                logger.debug(f"[API-Odds] Fetch failed (type={t}): {e}")
+    
+    return odds_map
+
 def fetch_popularity(race_id):
     """
     リアルタイム人気を取得。
-
-    Priority:
-      1. StealthyFetcher (Surgical Extraction) ← JS実行後の動的オッズを正確に抽出
-      2. fetch_robust_html + BeautifulSoup    ← 静的フォールバック
-      3. result.html                          ← 確定済みレース用
+    1. 公式 API (JSON) を最優先
+    2. StealthyFetcher (Dynamic)
+    3. 静的HTML / result.htm フォールバック
     """
     pop_map = {}
+    
+    # --- Priority 1: Official JSON API (Scrapling.Fetcher 使用) ---
+    api_data = fetch_realtime_odds_api(race_id)
+    if api_data:
+        for u, d in api_data.items():
+            if 'Popularity' in d and d['Popularity'] < 99:
+                pop_map[u] = d['Popularity']
+        if pop_map:
+            logger.info(f"[Popularity] API 経由で {len(pop_map)} 頭の人気を取得。")
+            return pop_map
 
-    # --- Priority 1: Scrapling StealthyFetcher (DISABLED - slow/hang in this env) ---
-    """
-    stealthy_data = _fetch_odds_page_via_stealthy(race_id)
-    if stealthy_data:
-        # ...
-    """
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+
+    # --- Priority 2: Scrapling StealthyFetcher (network_idle=False) ---
+    if StealthyFetcher:
+        try:
+            url_odds = f"https://{domain}/odds/index.html?race_id={race_id}"
+            # indication: Playwright may fail, so timeout/network_idle adjustment
+            page = StealthyFetcher.fetch(url_odds, headless=True, timeout=15000, network_idle=False)
+            if page and hasattr(page, 'body'):
+                # 抽出したHTMLから BeautifulSoup でパース
+                s = BeautifulSoup(page.body, 'html.parser')
+                for row in s.find_all('tr'):
+                    u_td = row.find('td', class_=re.compile(r'Umaban|umaban', re.I))
+                    p_td = row.find('td', class_=re.compile(r'Popular|Rank|Ninki', re.I))
+                    if u_td and p_td:
+                        m_u = re.search(r'(\d+)', u_td.text.strip())
+                        m_p = re.search(r'(\d+)', p_td.text.strip())
+                        if m_u and m_p:
+                            pop_map[int(m_u.group(1))] = int(m_p.group(1))
+                if pop_map:
+                    logger.info(f"[Popularity] Stealthy (Dynamic) で {len(pop_map)} 頭の人気を取得")
+                    return pop_map
+        except:
+            pass
 
     # --- Priority 2: 静的HTML + BeautifulSoup (JS未実行フォールバック) ---
     logger.info("[Popularity] Stealthy が空: 静的HTMLフォールバックへ")
@@ -924,6 +1049,49 @@ def fetch_advanced_data_playwright(race_id, top_horse_ids=None):
         
     return {}
 
+def normalize_trainer_name(name):
+    if not name or name in ['-', '不明', '']: return None
+    name = name.strip()
+    import re
+    # remove East/West e.g. [東], (栗東) etc
+    name = re.sub(r'\[.*?\]', '', name)
+    name = re.sub(r'\(.*?\)', '', name)
+    name = name.strip()
+    return name if name else None
+
+def extract_trainer_strict(row):
+    import re
+    t_td = row.find('td', class_=re.compile(r'^Trainer$'))
+    if t_td:
+        a_tag = t_td.find('a')
+        if a_tag: return normalize_trainer_name(a_tag.get_text(strip=True))
+        return normalize_trainer_name(t_td.get_text(strip=True))
+    return None
+
+def extract_trainer_fallback(row):
+    import re
+    # 1. Normal td with class Trainer
+    t_td = row.find('td', class_=re.compile(r'Trainer|trainer|厩舎', re.I))
+    if t_td:
+        a_tag = t_td.find('a')
+        if a_tag: return normalize_trainer_name(a_tag.get_text(strip=True))
+        return normalize_trainer_name(t_td.get_text(strip=True))
+    
+    # 2. Inside shutuba_past.html, trainer is under <div class="Horse05"> or in an <a> tag with /trainer/ href
+    trainer_a = row.find('a', href=re.compile(r'/trainer/'))
+    if trainer_a:
+        return normalize_trainer_name(trainer_a.get_text(strip=True))
+        
+    return None
+
+def extract_trainer(row):
+    trainer = extract_trainer_strict(row)
+    if not trainer:
+        trainer = extract_trainer_fallback(row)
+    if not trainer:
+        logger.warning(f"[Trainer] Extraction failed for row block.")
+    return trainer
+
 def get_race_data(race_id, use_storage=True):
     """Main function to scrape race card data with ROBUST EXTRACTION.
 
@@ -1010,8 +1178,18 @@ def get_race_data(race_id, use_storage=True):
     race_dist = 1600
     race_surf = '芝'
     race_date = datetime.now().strftime("%Y/%m/%d")
-    
-    # Title
+    race_date_val = datetime.now().strftime("%Y%m%d")
+
+    # Robust Date extraction
+    try:
+        text_all = soup.get_text()
+        m_date = re.search(r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})', text_all)
+        if m_date:
+            race_date_val = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
+            race_date = f"{m_date.group(1)}/{m_date.group(2).zfill(2)}/{m_date.group(3).zfill(2)}"
+    except: pass
+
+    # Title & Dist
     name_box = soup.find('div', class_='RaceList_NameBox')
     if name_box:
         title_div = name_box.find('div', class_='RaceName')
@@ -1021,21 +1199,11 @@ def get_race_data(race_id, use_storage=True):
         if data01:
             text01 = data01.text.strip()
             # Distance (e.g. 芝1200m or 1200m)
-            # Find digits followed by 'm'
             match_dist = re.search(r'([芝ダ障])?(\d+)m', text01)
             if match_dist:
                 race_dist = int(match_dist.group(2))
-                race_surf = match_dist.group(1) if match_dist.group(1) else '芝' # Default to 芝 if not specified
+                race_surf = match_dist.group(1) if match_dist.group(1) else '芝'
             
-            logger.debug(f"Debug: Extracted Distance={race_dist}, Surface={race_surf}")
-    
-    # Fallback to RaceData02 if 01 failed? 
-    # Usually 01 has it: "15:00 芝1200m (右) 天候:晴 馬場:良"
-    if race_dist == 0:
-        # Try finding anywhere in text01
-        m2 = re.search(r'(\d{3,4})', text01)
-        if m2: race_dist = int(m2.group(1))
-    
     # --- Fetch Supplemental Data ---
     win_odds_map = fetch_win_odds(race_id) 
     popularity_map = fetch_popularity(race_id) 
@@ -1059,10 +1227,10 @@ def get_race_data(race_id, use_storage=True):
         return pd.DataFrame()
     
     # In some pages, rows might be in tbody, but find_all finds them all.
-    rows = table.find_all('tr', class_=re.compile(r'HorseList|Entry'))
+    rows = table.find_all('tr', class_=re.compile(r'HorseList|Entry|Horse_?List'))
     if not rows:
         # Emergency fallback: find ANY tr with Jockey/HorseInfo inside
-        rows = [tr for tr in table.find_all('tr') if tr.find('td', class_=re.compile(r'Jockey|Horse|Umaban'))]
+        rows = [tr for tr in table.find_all('tr') if tr.find('td', class_=re.compile(r'Jockey|Horse|Umaban|umaban', re.I))]
     
     if not rows:
         # Last resort: just take all TRs in the first tbody if it exists, or just all TRs (skipping headers)
@@ -1070,7 +1238,7 @@ def get_race_data(race_id, use_storage=True):
         if tbody:
              rows = tbody.find_all('tr')
         else:
-             rows = table.find_all('tr')[2:] # Assume first 2 are headers
+             rows = table.find_all('tr')[1:] # Assume first row is header
         
     horses = []
     
@@ -1079,7 +1247,7 @@ def get_race_data(race_id, use_storage=True):
             'RaceID': race_id,
             'RaceName': race_title,
             'RaceDate': race_date,
-            'Venue': 'Unknown',
+            'Venue': VENUE_NAMES.get(str(race_id)[4:6], 'Unknown'),
             'CurrentDistance': race_dist,
             'CurrentSurface': race_surf
         }
@@ -1134,8 +1302,8 @@ def get_race_data(race_id, use_storage=True):
         h_data['Jockey'] = j_td.find('a').text.strip() if j_td and j_td.find('a') else ""
         
         # Trainer (厩舎)
-        t_td = row.find('td', class_=re.compile(r'Trainer|trainer|厩舎', re.I))
-        h_data['Trainer'] = t_td.text.strip() if t_td else (t_td.get_text(strip=True) if t_td else "-")
+        # modified to return None instead of '-' on fail
+        h_data['Trainer'] = extract_trainer(row)
 
         # sex-age and weight
         weight_tds = row.find_all('td', class_=re.compile(r'Weight', re.I))
@@ -1181,11 +1349,11 @@ def get_race_data(race_id, use_storage=True):
         # Bloodline placeholder
         h_data['Bloodline'] = "-"
         
-        # 1. Real-time odds from API or Playwright
-        h_data['Odds'] = win_odds_map.get(h_data['Umaban'], 0.0)
+        # 1. Real-time odds from API or Playwright (Using string key for Umaban matching)
+        h_data['Odds'] = win_odds_map.get(str(h_data['Umaban']).zfill(2), 0.0)
         
-        # 2. Real-time popularity
-        h_data['Popularity'] = popularity_map.get(h_data['Umaban'], 99)
+        # 2. Real-time popularity (Using string key for Umaban matching)
+        h_data['Popularity'] = popularity_map.get(str(h_data['Umaban']).zfill(2), 99)
         
         # Fallback for Odds/Popularity if real-time fetching failed
         if h_data['Popularity'] == 99 or h_data['Odds'] == 0.0:
@@ -1330,15 +1498,33 @@ def get_race_data(race_id, use_storage=True):
         horses.append(h_data)
         
     df = pd.DataFrame(horses)
+    missing_odds = False  # Initialize here for absolute safety
     
-    # --- Check for missing odds/popularity globally and apply result fallback ---
-    if not df.empty and ('Odds' not in df.columns or (df['Odds'] == 0.0).all() or (df['Popularity'] == 99).all()):
-        logger.info("Using result.html fallback for Odds and Popularity")
-        res_odds, res_pop = fetch_result_odds_pop(race_id)
-        if not res_odds.empty:
-            df['Odds'] = df['Umaban'].map(lambda u: res_odds.get(u, 0.0) if pd.notna(u) else 0.0)
-        if not res_pop.empty:
-            df['Popularity'] = df['Umaban'].map(lambda u: res_pop.get(u, 99) if pd.notna(u) else 99)
+    # --- Check for missing odds/popularity globally ---
+    if not df.empty:
+        # Condition: some horses are missing data (0.0 or 99)
+        has_missing = (df['Odds'] == 0.0).any() or (df['Popularity'] == 99).any() or ('Odds' not in df.columns)
+        
+        if has_missing:
+            missing_odds = True
+            # 1. Try Official Realtime API (Best for live races)
+            logger.info(f"Attempting to fetch/fill realtime odds/pop via API for {race_id}")
+            api_data = fetch_realtime_odds_api(race_id)
+            if api_data:
+                # Use robust mapping function
+                df = sync_odds_to_df(df, api_data)
+                
+                missing_odds = (df['Odds'] == 0.0).any()
+                logger.info(f"Successfully merged realtime odds/popularity from API using sync_odds_to_df")
+        
+        # 2. Try result.html fallback (Best for past races)
+        if missing_odds:
+            logger.info("Using result.html fallback for Odds and Popularity")
+            res_odds, res_pop = fetch_result_odds_pop(race_id)
+            if res_odds:
+                df['Odds'] = df['Umaban'].map(lambda u: res_odds.get(u, 0.0) if pd.notna(u) else 0.0)
+            if res_pop:
+                df['Popularity'] = df['Umaban'].map(lambda u: res_pop.get(u, 99) if pd.notna(u) else 99)
 
     # --- [NEW] Extract Metadata for Dashboard ---
     metadata = {
@@ -1347,7 +1533,8 @@ def get_race_data(race_id, use_storage=True):
         'holding_days': '-',
         'weather': '-',
         'condition': '-',
-        'is_handicap': False
+        'is_handicap': False,
+        'date_val': race_date_val
     }
     
     try:
@@ -1392,6 +1579,10 @@ def get_race_data(race_id, use_storage=True):
     if df.empty:
         logger.warning("Debug: Compiled DataFrame is empty.")
     else:
+        # Instruction point 3: Verification print
+        print("\n--- [Final Debug Verification] ---")
+        print(df[['Umaban', 'Odds', 'Popularity']].head())
+        print("----------------------------------\n")
         logger.info(f"Debug: Compiled DataFrame with {len(df)} horses.")
         
     return df

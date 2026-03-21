@@ -57,9 +57,24 @@ from core.scraper import fetch_comprehensive_result
 from core.odds_tracker import OddsTracker
 from core.odds_analyzer import OddsAnalyzer
 from core.kaggle_client import KaggleChatClient
+from core import lab_fetcher
 
 
 st.set_page_config(page_title="Keiba Analysis - Modified Ogura Index", layout="wide")
+
+# --- Shared Constants & Helpers ---
+
+from core.scraper import VENUE_NAMES
+
+def get_netkeiba_domain(race_id):
+    """Detects the appropriate netkeiba domain based on race_id."""
+    try:
+        pid = int(str(race_id)[4:6])
+        if pid > 10:
+            return "nar.netkeiba.com"
+    except:
+        pass
+    return "race.netkeiba.com"
 
 def render_session_status(key_prefix=""):
     """Renders session status and login buttons for Umanity and KeibaLab."""
@@ -182,14 +197,14 @@ with st.sidebar:
     nav = st.radio(
         "機能を選択してください",
         [
+            "💰 BetSync（資金管理）",
             "🏠 Single Race Analysis",
             "🔍 Race Scanner (Batch)",
-            "💰 BetSync（資金管理）",
             "📊 History & Review",
-            "📦 データ保管庫",
             "🧪 新ロジックテスト(FEW+マクリ)",
-            "💾 ロジック置き場",
             "🤓 N氏の研究室",
+            "💾 ロジック置き場",
+            "📦 データ保管庫",
         ],
         label_visibility="collapsed"
     )
@@ -777,7 +792,7 @@ if nav == "💰 BetSync（資金管理）":
         st.subheader("📊 Kaggleデータ分析チャット (2010-2025)")
         st.caption("Geminiを使用して過去15年分のデータを抽出・分析します。質問を入力してください。")
 
-        # 1. 保存済み一覧 (ロジック置き場風スタイル)
+        # 1. 保存済み一覧 (💾 ロジック置き場風スタイル)
         with st.expander("📌 保存済み分析一覧", expanded=False):
             saved_items = kaggle_chat.get_saved_interactions()
             if not saved_items:
@@ -792,7 +807,7 @@ if nav == "💰 BetSync（資金管理）":
                 with shc2: st.caption("保存日時")
                 st.divider()
                 
-                # CSS for alternating rows (mimicking ロジック置き場)
+                # CSS for alternating rows (mimicking 💾 ロジック置き場)
                 chat_css = ["<style>"]
                 for i, item in enumerate(sorted_saved):
                     bg = "#ffffff" if i % 2 == 0 else "#f5f5f5"
@@ -1098,6 +1113,33 @@ if nav == "🏠 Single Race Analysis":
                 except Exception as ex_shutuba:
                     st.warning(f"出馬表データの詳細取得に一部失敗しました: {ex_shutuba}")
 
+                # --- [NEW] Fetch Weight from KeibaLab ---
+                try:
+                    # 競馬ラボ用IDの組み立て (YYYYMMDD + VenueCode + RaceNum)
+                    # netkeibaのIDとは形式が異なるため、スクレイパーが抽出した日付を使用
+                    meta = df.attrs.get('metadata', {})
+                    r_date = meta.get('date_val', datetime.now().strftime("%Y%m%d"))
+                    r_venue = str(race_id_input)[4:6]
+                    r_num = str(race_id_input)[-2:]
+                    lab_race_id = f"{r_date}{r_venue}{r_num}"
+                    
+                    logger.info(f"[LabFetcher] Converted Netkeiba ID {race_id_input} to KeibaLab ID {lab_race_id}")
+                    lab_weights = lab_fetcher.fetch_horse_weights(lab_race_id)
+                    if lab_weights and df is not None and not df.empty:
+                        if '馬体重' not in df.columns:
+                            df['馬体重'] = "-"
+                        for umaban, weight_text in lab_weights.items():
+                            # 馬番をAPIのキー形式（2桁ゼロ埋め文字列）に強制変換して照合
+                            mask = df['Umaban'].astype(str).str.zfill(2) == umaban
+                            if mask.any():
+                                df.loc[mask, '馬体重'] = weight_text
+                                # 指示に基づいたログ形式での成功証明
+                                row = df[mask].iloc[0]
+                                print(f"[SUCCESS] Umaban {umaban}: Odds={row.get('Odds', 0.0)}, Popularity={row.get('Popularity', 99)}, Weight={weight_text}")
+                        logger.info(f"Integrated {len(lab_weights)} weights from KeibaLab as '馬体重' column")
+                except Exception as ex_lab:
+                    st.warning(f"競馬ラボからの馬体重取得に失敗しました: {ex_lab}")
+
                 st.session_state['tab1_analyzed_id'] = race_id_input
         else:
             df = st.session_state.get('df')
@@ -1134,11 +1176,55 @@ if nav == "🏠 Single Race Analysis":
                         st.session_state['vision_data_applied'] = True
                         st.session_state['last_race_id'] = race_id_input
 
-                    # --- オッズ・人気未取得 警告バナー ---
+                    # --- オッズ・人気未取得 警告バナー (指示忠実: 手入力機能追加) ---
                     _pop_missing = 'Popularity' in df.columns and (pd.to_numeric(df['Popularity'], errors='coerce') >= 99).any()
-                    _odds_missing = 'Odds' in df.columns and (pd.to_numeric(df['Odds'], errors='coerce') >= 9999.0).any()
+                    _odds_missing = 'Odds' in df.columns and (pd.to_numeric(df['Odds'], errors='coerce') <= 0 or pd.to_numeric(df['Odds'], errors='coerce') >= 9999.0).any()
+                    
                     if _pop_missing or _odds_missing:
-                        st.warning("⚠️ オッズ・人気データ未取得（発売前または取得エラー）")
+                        st.error("🚨 取得エラー：再試行中（またはデータ未発表）")
+                        col_ret1, col_ret2 = st.columns([1, 1])
+                        with col_ret1:
+                            if st.button("🔄 直ちに再試行 (Force Retry)", key="btn_force_retry_odds"):
+                                st.session_state['df'] = None # Clear cache
+                                st.rerun()
+                        with col_ret2:
+                            manual_mode = st.toggle("🛠️ 手入力モードを有効化", key="toggle_manual_input")
+                        
+                        if manual_mode:
+                            with st.expander("📝 人気・単勝オッズを手入力する", expanded=True):
+                                st.info("下のテーブルで人気・単勝オッズを編集し、「再計算して反映」ボタンを押送してください。")
+                                # 編集用データフレーム作成
+                                edit_cols = ['Umaban', 'Name', 'Popularity', 'Odds']
+                                edit_df = df[edit_cols].copy()
+                                edit_df['Popularity'] = pd.to_numeric(edit_df['Popularity'], errors='coerce').fillna(99).astype(int)
+                                edit_df['Odds'] = pd.to_numeric(edit_df['Odds'], errors='coerce').fillna(9999.0).astype(float)
+                                
+                                edited_data = st.data_editor(
+                                    edit_df,
+                                    key=f"editor_manual_{race_id_input}",
+                                    column_config={
+                                        "Umaban": st.column_config.NumberColumn("馬番", disabled=True),
+                                        "Name": st.column_config.TextColumn("馬名", disabled=True),
+                                        "Popularity": st.column_config.NumberColumn("人気", min_value=1, max_value=99),
+                                        "Odds": st.column_config.NumberColumn("単勝オッズ", min_value=1.0, max_value=999.0, format="%.1f"),
+                                    },
+                                    hide_index=True,
+                                    use_container_width=True
+                                )
+                                
+                                if st.button("🎯 入力値を反映して再計算", type="primary", use_container_width=True):
+                                    for _, row in edited_data.iterrows():
+                                        idx = df[df['Umaban'] == row['Umaban']].index
+                                        if not idx.empty:
+                                            df.at[idx[0], 'Popularity'] = row['Popularity']
+                                            df.at[idx[0], 'Odds'] = row['Odds']
+                                    
+                                    # 関連する計算を再実行
+                                    df = calculator.calculate_battle_score(df)
+                                    df = calculator.calculate_n_index(df)
+                                    st.session_state['df'] = df
+                                    st.success("✅ データを反映し、全ての指数を再計算しました。")
+                                    st.rerun()
 
                     # --- [NEW] RACE SUMMARY BLOCK (TOP PRIORITY) ---
                     st.markdown("""
@@ -3501,7 +3587,7 @@ if nav == "📊 History & Review":
         st.info("No history yet. Analyze races to build your database!")
 
 # ──────────────────────────────────────────────
-# 🧪 新ロジックテスト(FEW+マクリ) タブ
+# 🧪 🧪 新ロジックテスト(FEW+マクリ) タブ
 # ──────────────────────────────────────────────
 if nav == "🧪 新ロジックテスト(FEW+マクリ)":
     st.header("🧪 新ロジックテスト (FEW+マクリ)")
@@ -3574,6 +3660,42 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _odds_missing_t = 'Odds' in df_test.columns and (pd.to_numeric(df_test['Odds'], errors='coerce') >= 9999.0).any()
         if _pop_missing_t or _odds_missing_t:
             st.warning("⚠️ オッズ・人気データ未取得（発売前または取得エラー）")
+            with st.expander("🛠️ 人気・オッズを手入力する", expanded=False):
+                st.info("下のテーブルで人気・単勝オッズを編集し、「再計算して反映」ボタンを押してください。")
+                # df_test を編集用に使用
+                edit_df_t = df_test[['Umaban', 'Name', 'Popularity', 'Odds']].copy()
+                edit_df_t['Popularity'] = pd.to_numeric(edit_df_t['Popularity'], errors='coerce').fillna(99).astype(int)
+                edit_df_t['Odds'] = pd.to_numeric(edit_df_t['Odds'], errors='coerce').fillna(9999.0).astype(float)
+                
+                edited_t = st.data_editor(
+                    edit_df_t,
+                    key=f"editor_manual_test_{test_race_id}",
+                    column_config={
+                        "Umaban": st.column_config.NumberColumn("馬番", disabled=True),
+                        "Name": st.column_config.TextColumn("馬名", disabled=True),
+                        "Popularity": st.column_config.NumberColumn("人気", min_value=1, max_value=99),
+                        "Odds": st.column_config.NumberColumn("単勝オッズ", min_value=1.0, max_value=999.0, format="%.1f"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                if st.button("🎯 入力値を反映して再計算", key="btn_apply_manual_test", type="primary", use_container_width=True):
+                    # オリジナルの session_state['df'] を更新
+                    df_orig = st.session_state.get('df')
+                    if df_orig is not None:
+                        for _, row in edited_t.iterrows():
+                            idx_o = df_orig[df_orig['Umaban'] == row['Umaban']].index
+                            if not idx_o.empty:
+                                df_orig.at[idx_o[0], 'Popularity'] = row['Popularity']
+                                df_orig.at[idx_o[0], 'Odds'] = row['Odds']
+                        
+                        # 関連する計算を再実行
+                        df_orig = calculator.calculate_battle_score(df_orig)
+                        df_orig = calculator.calculate_n_index(df_orig)
+                        st.session_state['df'] = df_orig
+                        st.success("✅ データを反映し、全ての指数を再計算しました。")
+                        st.rerun()
 
         # 0. Session Status
         with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
@@ -4171,7 +4293,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         st.info("「Single Race Analysis」タブに戻り、**🚀 Analyze Race** ボタンを押して最新のデータを取得してください。")
 
 # ──────────────────────────────────────────────
-# 🤓 N氏の研究室 — 統合ページ（4タブ）
+# 🤓 🤓 N氏の研究室 — 統合ページ（4タブ）
 # ──────────────────────────────────────────────
 if nav == "🤓 N氏の研究室":
     st.header("🤓 N氏の研究室")
@@ -4327,18 +4449,14 @@ if nav == "🤓 N氏の研究室":
                 for r in race_list:
                     # e.g., 202406050811 -> '06'
                     v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else "Unknown"
+                    if not (v_code.isdigit() and 1 <= int(v_code) <= 10): continue  # Phase 2: JRA Only Restrict
                     if v_code not in venues:
                         venues[v_code] = []
                     venues[v_code].append(r)
             
-                VENUE_NAMES = {
-                    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
-                    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
-                    "36": "大井", "42": "船橋", "43": "川崎", "44": "浦和", "65": "園田", 
-                    "62": "名古屋", "54": "門別", "50": "帯広", "45": "盛岡", "46": "水沢"
-                }
+                # VENUE_NAMES is now imported globally from core.scraper
             
-                v_options = list(venues.keys())
+                v_options = sorted(list(venues.keys()), key=lambda x: int(x))
                 def format_venue(code):
                     name = VENUE_NAMES.get(code, f"コード {code}")
                     count = len(venues.get(code, []))
@@ -4413,7 +4531,7 @@ if nav == "🤓 N氏の研究室":
                     st.info("該当する馬は見つかりませんでした。")
 
     # ──────────────────────────────────────────────
-    # 💾 ロジック置き場
+    # 💾 💾 ロジック置き場
     # ──────────────────────────────────────────────
 
     with nlab_tab3:
@@ -4472,28 +4590,19 @@ if nav == "🤓 N氏の研究室":
             venues = {}
             for r in race_list:
                 v_code = r['race_id'][4:6] if len(r['race_id']) == 12 else 'Unknown'
+                if not (v_code.isdigit() and 1 <= int(v_code) <= 10): continue  # Phase 2: JRA Only Restrict
                 if v_code not in venues: venues[v_code] = []
                 venues[v_code].append(r)
 
-            VENUE_NAMES = {
-                "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京","06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
-                "36":"大井","42":"船橋","43":"川崎","44":"浦和","65":"園田","62":"名古屋","54":"門別","50":"帯広","45":"盛岡","46":"水沢"
-            }
-            v_options = list(venues.keys())
+            # JRA priority sorting
+            v_options = sorted(list(venues.keys()), key=lambda x: int(x))
             def format_v(c):
                 return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
 
             # 全場URL（●シグナル対応のため）
             for rr in race_list:
                 r_id = rr['race_id']
-                # Determine JRA vs NAR for URL
-                is_nar_id = False
-                try:
-                    pid_code = int(str(r_id)[4:6])
-                    if pid_code > 10: is_nar_id = True
-                except: pass
-                
-                domain = "nar.netkeiba.com" if is_nar_id else "race.netkeiba.com"
+                domain = get_netkeiba_domain(r_id)
                 all_race_urls.append(f"https://{domain}/race/shutuba.html?race_id={r_id}")
 
             # 競馬場選択 + スキャンモード
@@ -4519,12 +4628,8 @@ if nav == "🤓 N氏の研究室":
             if selected_v:
                 for r in venues[selected_v]:
                     r_id = r['race_id']
-                    _is_nar_v = False
-                    try:
-                        if int(str(r_id)[4:6]) > 10: _is_nar_v = True
-                    except: pass
-                    _domain = "nar.netkeiba.com" if _is_nar_v else "race.netkeiba.com"
-                    selected_race_urls.append(f"https://{_domain}/race/shutuba.html?race_id={r_id}")
+                    domain = get_netkeiba_domain(r_id)
+                    selected_race_urls.append(f"https://{domain}/race/shutuba.html?race_id={r_id}")
 
         st.divider()
 
@@ -4803,7 +4908,7 @@ if nav == "🤓 N氏の研究室":
                         st.rerun()
 
     # ──────────────────────────────────────────────
-    # 📦 データ保管庫 (Storage Hub) タブ
+    # 📦 📦 データ保管庫 (Storage Hub) タブ
     # ──────────────────────────────────────────────
 
     with nlab_tab4:
@@ -5004,7 +5109,7 @@ if nav == "🤓 N氏の研究室":
 
 
 # ──────────────────────────────────────────────
-# 💾 ロジック置き場
+# 💾 💾 ロジック置き場
 # ──────────────────────────────────────────────
 if nav == "💾 ロジック置き場":
     st.header("💾 ロジック置き場")
@@ -5178,14 +5283,14 @@ if nav == "💾 ロジック置き場":
 
 
 # ──────────────────────────────────────────────
-# 📦 データ保管庫 (Storage Hub) タブ
+# 📦 📦 データ保管庫 (Storage Hub) タブ
 # ──────────────────────────────────────────────
 if nav == "📦 データ保管庫":
     from core import history_manager
     from calendar import monthcalendar, month_name
     from datetime import date
 
-    st.header("📦 データ保管庫 (Storage Hub)")
+    st.header("📦 📦 データ保管庫 (Storage Hub)")
     st.caption("ローカルで取得したデータ（U指数・オメガ指数含む）をクラウドに同期し、いつでも活用できます。")
 
     st.markdown("""

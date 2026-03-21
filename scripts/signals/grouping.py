@@ -7,6 +7,15 @@ from typing import Dict, List, Tuple
 from .models import Entry, EntityDailyVenueGroup, TrainerCrossVenueRaceGroup
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+def has_valid_trainer(trainer: str) -> bool:
+    if not trainer or trainer in ('-', '不明', ''):
+        return False
+    return True
+
 def build_entity_daily_venue_groups(entries: List[Entry]) -> Dict[Tuple, EntityDailyVenueGroup]:
     """◎判定用: (date, venue, entity_type, entity_name) でグループ化する。"""
     groups = {}
@@ -24,7 +33,10 @@ def build_entity_daily_venue_groups(entries: List[Entry]) -> Dict[Tuple, EntityD
     # trainer 用
     trainer_map = defaultdict(list)
     for e in entries:
-        trainer_map[(e.date, e.venue, "trainer", e.trainer)].append(e)
+        if has_valid_trainer(e.trainer):
+            trainer_map[(e.date, e.venue, "trainer", e.trainer)].append(e)
+        else:
+            logger.warning(f"[Validation] Skipping trainer group for Invalid Trainer: Entry {e.horse_name} at {e.venue} {e.race_number}R")
     for key, ents in trainer_map.items():
         groups[key] = EntityDailyVenueGroup(
             date=key[0], venue=key[1], entity_type="trainer",
@@ -47,7 +59,8 @@ def build_trainer_cross_venue_race_groups(
     """●判定用: (date, trainer, race_number) でグループ化する。"""
     tmp = defaultdict(list)
     for e in entries:
-        tmp[(e.date, e.trainer, e.race_number)].append(e)
+        if has_valid_trainer(e.trainer):
+            tmp[(e.date, e.trainer, e.race_number)].append(e)
 
     groups = {}
     for key, ents in tmp.items():

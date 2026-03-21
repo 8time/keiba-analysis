@@ -6,383 +6,201 @@ import json
 import asyncio
 import logging
 from datetime import datetime
-from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
+from scrapling import DynamicFetcher, Fetcher as ScraplingFetcher
 
 # Configure logging
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("adv_fetch_helper")
 
-async def fetch_horse_bloodline(page_context, h_id):
-    """Fetch bloodline flags for a single horse in a new page."""
-    if not h_id: return ""
-    try:
-        page = await page_context.new_page()
-        ped_url = f"https://db.netkeiba.com/horse/ped/{h_id}/"
-        await page.goto(ped_url, wait_until='commit', timeout=8000)
-        if "horse/ped" not in page.url:
-            await page.close()
-            return ""
-        
-        txt_loc = page.locator('.blood_table')
-        if await txt_loc.count() > 0:
-            txt = await txt_loc.first.text_content(timeout=3000)
-            await page.close()
-            if txt:
-                flags = []
-                if any(x in txt for x in ['Nijinsky', 'ニジンスキー']): flags.append('Nijinsky')
-                if any(x in txt for x in ['Sunday Silence', 'サンデーサイレンス']): flags.append('SS')
-                if any(x in txt for x in ['Roberto', 'ロベルト']): flags.append('Roberto')
-                return ",".join(flags)
-        else:
-            await page.close()
-    except:
-        try: await page.close()
-        except: pass
-    return ""
-
-async def fetch_advanced_data(race_id, top_horse_ids=None):
+def fetch_advanced_data_dynamic(race_id, top_horse_ids=None):
+    """
+    Refactored to use Scrapling DynamicFetcher (Playwright).
+    Ensures dynamic metrics like U-Index/Omega are rendered before extraction.
+    """
     if top_horse_ids is None:
         top_horse_ids = []
-        
+    
     advanced_data = {}
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        # Session files are in the parent directory (project root)
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        session_path = os.path.join(base_dir, "auth_session.json")
-        labo_session_path = os.path.join(base_dir, "labo_session.json")
-        ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        context_kwargs = {"user_agent": ua}
-        if os.path.exists(session_path):
-            context_kwargs["storage_state"] = session_path
-            sys.stderr.write(f"DEBUG: Loaded auth_session.json for Umanity\n")
-
-        context = await browser.new_context(**context_kwargs)
-
-        # Separate context for KeibaLab (labo_session.json)
-        labo_context_kwargs = {"user_agent": ua}
-        if os.path.exists(labo_session_path):
-            labo_context_kwargs["storage_state"] = labo_session_path
-            sys.stderr.write(f"DEBUG: Loaded labo_session.json for KeibaLab\n")
-        labo_context = await browser.new_context(**labo_context_kwargs)
-
-        page = await context.new_page()
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Session files
+    session_path = os.path.join(base_dir, "auth_session.json")
+    labo_session_path = os.path.join(base_dir, "labo_session.json")
+    
+    # 1. --- Netkeiba Shutuba (Real-time Odds & Weight) ---
+    fetcher = DynamicFetcher()
+    fetcher.configure()
+    
+    try:
+        url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+        # network_idle=True (指示A) + タイムアウト延長
+        page = fetcher.fetch(url, timeout=35000, network_idle=True)
+        soup = BeautifulSoup(page.body, 'html.parser')
         
-        # --- 1. Shutuba Page ---
-        shutuba_url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
-        try:
-            await page.goto(shutuba_url, timeout=20000, wait_until='commit')
-            await page.wait_for_selector('tr.HorseList, tr.Entry', timeout=8000)
-        except: pass
-            
-        # --- 0. Extract Race Date (CRITICAL for Umanity) ---
-        date_str = ""
-        try:
-            title = await page.title()
-            m_date = re.search(r'(\d{4})年(\d+)月(\d+)日', title)
-            if m_date:
-                # Format to YYYYMMDD
-                date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
-            
-            if not date_str:
-                # Try finding date in specific meta tags or text
-                date_loc = page.locator('.RaceData01')
-                if await date_loc.count() > 0:
-                    dt_txt = await date_loc.first.text_content()
-                    m_date = re.search(r'(\d{4})[年/](\d+)[月/](\d+)', dt_txt or "")
-                    if m_date:
-                        date_str = f"{m_date.group(1)}{m_date.group(2).zfill(2)}{m_date.group(3).zfill(2)}"
-            
-            if not date_str and race_id and len(str(race_id)) >= 4:
-                # Last resort fallback: Year from ID + current month/day
-                date_str = f"{str(race_id)[:4]}{datetime.now().strftime('%m%d')}"
-                
-            sys.stderr.write(f"DEBUG: Date extracted: {date_str} for {race_id}\n")
-        except Exception as e:
-            sys.stderr.write(f"DEBUG: Date extraction failed: {e}\n")
-
-        # Row extraction from Shutuba
-        rows = await page.locator('tr.HorseList, tr.Entry, tr[class*="Horse"]').all()
-        logger.debug(f"Found {len(rows)} horse rows on Shutuba page for {race_id}")
-        for row in rows:
+        for row in soup.find_all('tr', class_=re.compile(r'HorseList|Entry|Horse')):
             try:
-                # Better Umaban selector
-                um_loc = row.locator('td.Umaban, td[class*="Umaban"], td.Waku')
-                if await um_loc.count() > 0:
-                    txt = (await um_loc.first.text_content(timeout=1000)).strip()
-                    m = re.search(r'(\d+)', txt)
-                    if not m: 
-                        txt = await um_loc.first.inner_text()
-                        m = re.search(r'(\d+)', txt)
-                    
-                    if m:
-                        umaban = int(m.group(1))
-                        if umaban not in advanced_data:
-                            advanced_data[umaban] = {
-                                'WeightStr': "", 'Popularity': 99, 'Odds': 0.0,
-                                'TrainingScore': 0.0, 'BloodlineFlag': "",
-                                'TrainingEval': "", 'HorseID': "", 'UIndex': 0.0, 'LaboIndex': 0.0
-                            }
-
-                        # Weight
-                        w_loc = row.locator('td.Weight')
-                        if await w_loc.count() > 0:
-                            advanced_data[umaban]['WeightStr'] = (await w_loc.first.text_content(timeout=1000)).strip().replace(' ', '')
-                        
-                        # Popularity
-                        pop_loc = row.locator('td.Popular_Ninki, td[class*="Popular_Ninki"]')
-                        if await pop_loc.count() > 0:
-                            p_txt = (await pop_loc.first.text_content(timeout=1000)).strip()
-                            m_p = re.search(r'(\d+)', p_txt)
-                            if m_p: advanced_data[umaban]['Popularity'] = int(m_p.group(1))
-
-                        # Odds
-                        odds_loc = row.locator('span[id^="odds-"]')
-                        if await odds_loc.count() > 0:
-                            o_txt = (await odds_loc.first.text_content(timeout=1000)).strip()
-                            m_o = re.search(r'(\d+\.\d+)', o_txt)
-                            if m_o: advanced_data[umaban]['Odds'] = float(m_o.group(1))
-
-                        # HorseID
-                        h_loc = row.locator('td.HorseInfo a, td[class*="Horse"] a')
-                        if await h_loc.count() > 0:
-                            href = await h_loc.first.get_attribute('href', timeout=1000)
-                            if href:
-                                m_id = re.search(r'horse/(\d+)', href)
-                                if m_id: advanced_data[umaban]['HorseID'] = m_id.group(1)
-            except: pass
-        
-        # Ensure top_horse_ids exist in advanced_data even if shutuba parse failed
-        if top_horse_ids:
-            for u in top_horse_ids:
-                if u not in advanced_data:
-                    advanced_data[u] = {
+                u_td = row.find('td', class_=re.compile(r'Umaban|HorseNum|Waku', re.I))
+                if not u_td: continue
+                m = re.search(r'(\d+)', u_td.text.strip())
+                if not m: continue
+                umaban = int(m.group(1))
+                
+                if umaban not in advanced_data:
+                    advanced_data[umaban] = {
                         'WeightStr': "", 'Popularity': 99, 'Odds': 0.0,
                         'TrainingScore': 0.0, 'BloodlineFlag': "",
                         'TrainingEval': "", 'HorseID': "", 'UIndex': 0.0, 'LaboIndex': 0.0
                     }
-
-        # --- 2. Oikiri (Training Tab) ---
-        # Page is div-based (OikiriAllWrapper), NO tables. Wait for wrapper then allow JS to render.
-        try:
-            o_url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
-            await page.goto(o_url, wait_until='domcontentloaded', timeout=15000)
-            try:
-                await page.wait_for_selector('.OikiriAllWrapper', timeout=8000)
-            except: pass
-            # Extra wait for JS-rendered horse rows
-            await page.wait_for_timeout(3000)
-
-            o_html = await page.content()
-            o_soup = BeautifulSoup(o_html, 'html.parser')
-            sys.stderr.write(f"DEBUG Oikiri: got HTML len={len(o_html)}\n")
-
-            # Check for no-data indicator (past races / data not yet available)
-            info_box = o_soup.find(class_=re.compile(r'Race_Infomation_Box|RaceInfomation', re.I))
-            if info_box:
-                msg = info_box.get_text(strip=True)[:80]
-                sys.stderr.write(f"DEBUG Oikiri: No data available - {msg}\n")
-                # Skip parsing — no training data for this race
-            else:
-                score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
-
-                # Detect "評価" header column index from any table
-                eval_col_idx = -1
-                for tbl in o_soup.find_all('table'):
-                    header_row = tbl.find('tr')
-                    if not header_row: continue
-                    ths = header_row.find_all(['th', 'td'])
-                    for idx, th in enumerate(ths):
-                        if '評価' in th.get_text(strip=True):
-                            eval_col_idx = idx
-                            break
-                    if eval_col_idx >= 0:
-                        break
-                sys.stderr.write(f"DEBUG Oikiri: eval_col_idx={eval_col_idx}\n")
-
-                def _extract_oikiri_row(tr_el):
-                    """Extract (umaban, eval_grade) from a <tr> or horse-div row element."""
-                    tds = tr_el.find_all(['td', 'div'], recursive=False) if tr_el.name == 'tr' else tr_el.find_all(['td', 'div'])
-                    all_cells = tr_el.find_all(['td', 'th'])
-                    if not all_cells:
-                        all_cells = tr_el.find_all('div', class_=True)
-
-                    # Find umaban
-                    umaban = None
-                    u_el = tr_el.find(class_=re.compile(r'Umaban|HorseNum|umaban', re.I))
-                    if u_el:
-                        m_u = re.search(r'(\d+)', u_el.get_text())
-                        if m_u: umaban = int(m_u.group(1))
-                    if umaban is None:
-                        for cell in all_cells[:3]:
-                            ct = cell.get_text(strip=True)
-                            if ct.isdigit() and 1 <= int(ct) <= 18:
-                                umaban = int(ct)
-                                break
-
-                    # Find grade
-                    eval_grade = ""
-                    # a) Class-based
-                    for el in tr_el.find_all(class_=re.compile(r'Hyoka|Hyouka|Rank_|OikiriRank|TrainRank', re.I)):
-                        cls_str = ' '.join(el.get('class', [])).upper()
-                        m_c = re.search(r'(?:HYOKA|HYOUKA|RANK)[_-]?([A-D])\b', cls_str)
-                        if m_c:
-                            eval_grade = m_c.group(1)
-                            break
-                        txt = el.get_text(strip=True).upper()
-                        if txt in ('A', 'B', 'C', 'D'):
-                            eval_grade = txt
-                            break
-                    # b) Header column index (tables only)
-                    if not eval_grade and eval_col_idx >= 0:
-                        tds_only = tr_el.find_all('td')
-                        if len(tds_only) > eval_col_idx:
-                            ct = tds_only[eval_col_idx].get_text(strip=True).upper()
-                            if ct in ('A', 'B', 'C', 'D'):
-                                eval_grade = ct
-                    # c) Scan all cells for isolated A/B/C/D
-                    if not eval_grade:
-                        for cell in tr_el.find_all(['td', 'span', 'div']):
-                            ct = cell.get_text(strip=True).upper()
-                            if ct in ('A', 'B', 'C', 'D'):
-                                eval_grade = ct
-                                break
-
-                    return umaban, eval_grade
-
-                # Strategy 1: table rows
-                parsed_any = False
-                for tr in o_soup.find_all('tr'):
-                    if len(tr.find_all('td')) < 2: continue
-                    umaban, eval_grade = _extract_oikiri_row(tr)
-                    if umaban and umaban in advanced_data and eval_grade:
-                        advanced_data[umaban]['TrainingEval'] = eval_grade
-                        advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
-                        sys.stderr.write(f"DEBUG Oikiri: horse {umaban} → {eval_grade}\n")
-                        parsed_any = True
-
-                # Strategy 2: div-based horse rows (OikiriHorse / HorseList divs)
-                if not parsed_any:
-                    for horse_div in o_soup.find_all(class_=re.compile(r'OikiriHorse|HorseList|oikiri_horse', re.I)):
-                        umaban, eval_grade = _extract_oikiri_row(horse_div)
-                        if umaban and umaban in advanced_data and eval_grade:
-                            advanced_data[umaban]['TrainingEval'] = eval_grade
-                            advanced_data[umaban]['TrainingScore'] = score_map.get(eval_grade, 0.0)
-                            sys.stderr.write(f"DEBUG Oikiri div: horse {umaban} → {eval_grade}\n")
-
-        except Exception as e:
-            sys.stderr.write(f"ERROR: Oikiri fetch failed: {e}\n")
-
-        # --- 3. Bloodline (Concurrency Limited) ---
-        target_umaban = top_horse_ids if top_horse_ids else list(advanced_data.keys())[:10]
-        target_h = [(u, advanced_data[u]['HorseID']) for u in target_umaban if u in advanced_data and advanced_data[u]['HorseID']]
-        if target_h:
-            sem = asyncio.Semaphore(5) # Max 5 concurrent bloodline pages
-            async def limited_bloodline(u, h_id):
-                async with sem:
-                    res = await fetch_horse_bloodline(context, h_id)
-                    advanced_data[u]['BloodlineFlag'] = res
+                
+                # Weight (Dynamic)
+                w_td = row.find('td', class_='Weight')
+                if w_td: advanced_data[umaban]['WeightStr'] = w_td.text.strip().replace(' ', '')
+                
+                # Ninki/Odds (JS rendered)
+                p_td = row.find('td', class_=re.compile(r'Popular', re.I))
+                if p_td:
+                    p_txt = p_td.text.strip()
+                    m_p = re.search(r'(\d+)', p_txt)
+                    if m_p: advanced_data[umaban]['Popularity'] = int(m_p.group(1))
+                
+                o_sp = row.find('span', id=re.compile(r'odds-'))
+                if o_sp:
+                    o_txt = o_sp.text.strip()
+                    m_o = re.search(r'(\d+\.\d+)', o_txt)
+                    if m_o: advanced_data[umaban]['Odds'] = float(m_o.group(1))
+                
+                # HorseID
+                h_a = row.find('a', href=re.compile(r'horse/(\d+)'))
+                if h_a:
+                    m_id = re.search(r'horse/(\d+)', h_a['href'])
+                    if m_id: advanced_data[umaban]['HorseID'] = m_id.group(1)
+            except: continue
             
-            await asyncio.gather(*[limited_bloodline(u, h_id) for u, h_id in target_h])
-
-        # --- 4. Umanity (U-Index) ---
-        if date_str and len(str(race_id)) == 12:
+        # 1.5 --- Merge Realtime Odds from API (JS rendered elements are often empty in DOM) ---
+        try:
+            # Determine domain (JRA/NAR)
             rid_str = str(race_id)
-            # JRA 16-digit code: YYYYMMDD + Venue(2) + Meeting(2) + Day(2) + Race(2)
-            u_id = f"{date_str}{rid_str[4:]}"
-            u_url = f"https://umanity.jp/racedata/race_8.php?code={u_id}"
-            sys.stderr.write(f"DEBUG: Umanity URL: {u_url}\n")
-            try:
-                upage = await context.new_page()
-                await upage.goto(u_url, timeout=20000, wait_until='domcontentloaded')
-                
-                u_title = await upage.title()
-                if "ログイン" in u_title or "Login" in u_title:
-                    sys.stderr.write("WARNING: Umanity redirected to login. Session might be invalid.\n")
-                
-                u_col = -1
-                rows_u = await upage.locator('.race_table_01 tr, table.shutuba_table tr, table#shutubatable tr, tr.odd, tr.even').all()
-                for i, row_u in enumerate(rows_u):
-                    cells = await row_u.locator('td, th').all()
-                    if not cells: continue
-                    
-                    # 1. Detect Header
-                    if u_col == -1:
-                        row_txt = await row_u.inner_text()
-                        if 'U指数' in row_txt or '指数' in row_txt:
-                            for c_idx, cell in enumerate(cells):
-                                c_txt = await cell.text_content()
-                                if 'U指数' in (c_txt or ''):
-                                    u_col = c_idx
-                                    break
-                        continue # Skip header row or look for header
-                    
-                    # 2. Extract Data using dynamic column
-                    if len(cells) >= max(2, u_col + 1):
-                        try:
-                            n_txt = await cells[1].text_content()
-                            m_n = re.search(r'(\d+)', n_txt or '')
-                            if m_n:
-                                u_num = int(m_n.group(1))
-                                if u_num in advanced_data:
-                                    target_col = u_col if u_col != -1 else 3
-                                    i_txt = (await cells[target_col].text_content()).strip()
-                                    if '**' in i_txt: continue
-                                    m_i = re.search(r'(\d+\.\d+|\d+)', i_txt)
-                                    if m_i:
-                                        import math
-                                        advanced_data[u_num]['UIndex'] = math.floor(float(m_i.group(1)) * 10) / 10.0
-                        except: pass
-                await upage.close()
-            except Exception as e:
-                sys.stderr.write(f"ERROR: Umanity fetch failed: {e}\n")
-
-        # --- 5. KeibaLab (Omega Index) ---
-        labo_url = f"https://www.keibalab.jp/db/race/{race_id}/syutsuba.html"
-        sys.stderr.write(f"DEBUG: KeibaLab URL: {labo_url}\n")
-        try:
-            lpage = await labo_context.new_page()  # Use labo_context with labo_session.json
-            await lpage.goto(labo_url, timeout=20000, wait_until='domcontentloaded')
-            
-            l_col = -1
-            rows_l = await lpage.locator('table.dbTable tr, .shutubaTable tr, table tr').all()
-            for row_l in rows_l:
-                cells = await row_l.locator('td, th').all()
-                if not cells: continue
-                
-                # 1. Detect Header
-                if l_col == -1:
-                    row_txt = await row_l.inner_text()
-                    if '指数' in row_txt or 'オメガ' in row_txt:
-                        for c_idx, cell in enumerate(cells):
-                            c_txt = await cell.text_content()
-                            if '指数' in (c_txt or '') or 'オメガ' in (c_txt or ''):
-                                l_col = c_idx
-                                break
-                    continue
-                
-                # 2. Data extraction
-                try:
-                    if len(cells) >= max(2, l_col + 1):
-                        u_txt = await cells[1].text_content()
-                        m_u = re.search(r'(\d+)', u_txt or "")
-                        if m_u:
-                            u_num = int(m_u.group(1))
-                            if u_num in advanced_data:
-                                target_col = l_col if l_col != -1 else 7
-                                o_txt = await cells[target_col].text_content()
-                                m_o = re.search(r'(\d+\.\d+|\d+)', o_txt or "")
-                                if m_o:
-                                    advanced_data[u_num]['LaboIndex'] = float(m_o.group(1))
-                except: pass
-            await lpage.close()
+            is_nar = len(rid_str) >= 12 and rid_str[4:6] in ('40','41','42','43','44','45','46','47')
+            dom = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+            api_url = f"https://{dom}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html?pid=api_get_{'nar' if is_nar else 'jra'}_odds&race_id={race_id}&type=1&action=init&compress=0&output=json"
+            api_resp = ScraplingFetcher.get(api_url, impersonate='chrome120', timeout=10)
+            if api_resp and api_resp.body:
+                api_data = json.loads(api_resp.body)
+                ary = api_data.get('ary_odds', {})
+                for u_str, v in ary.items():
+                    u_int = int(u_str)
+                    if u_int in advanced_data:
+                        if v.get('Odds'): advanced_data[u_int]['Odds'] = float(v['Odds'])
+                        if v.get('Ninki'): advanced_data[u_int]['Popularity'] = int(v['Ninki'])
         except Exception as e:
-            sys.stderr.write(f"ERROR: KeibaLab fetch failed: {e}\n")
+            sys.stderr.write(f"API Odds fetch failed: {e}\n")
 
-        await labo_context.close()
-        await browser.close()
+        # 2. --- Netkeiba Oikiri ---
+        o_url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
+        page_o = fetcher.fetch(o_url, timeout=15000)
+        o_soup = BeautifulSoup(page_o.body, 'html.parser')
+        score_map = {'A': 100.0, 'B': 70.0, 'C': 40.0, 'D': 10.0}
+        for tr in o_soup.find_all('tr'):
+            u_td = tr.find(class_=re.compile(r'Umaban|HorseNum|umaban', re.I))
+            if u_td:
+                m_u = re.search(r'(\d+)', u_td.text.strip())
+                if m_u:
+                    um = int(m_u.group(1))
+                    if um in advanced_data:
+                        eval_grade = ""
+                        for el in tr.find_all(class_=re.compile(r'Hyoka|Rank_|TrainRank', re.I)):
+                            if el.text.strip().upper() in ('A', 'B', 'C', 'D'):
+                                eval_grade = el.text.strip().upper(); break
+                        if eval_grade:
+                            advanced_data[um]['TrainingEval'] = eval_grade
+                            advanced_data[um]['TrainingScore'] = score_map.get(eval_grade, 0.0)
+    except Exception as e:
+        sys.stderr.write(f"ERROR during Netkeiba Dynamic fetch: {e}\n")
+
+    # 3. --- Bloodline (Fetch Top 10) ---
+    target_umaban = top_horse_ids if top_horse_ids else sorted(advanced_data.keys())[:10]
+    for u in target_umaban:
+        if u in advanced_data and advanced_data[u]['HorseID'] and not advanced_data[u]['BloodlineFlag']:
+            h_id = advanced_data[u]['HorseID']
+            try:
+                db_url = f"https://db.netkeiba.com/horse/ped/{h_id}/"
+                # Bloodline is mostly static, Fetcher.get is OK
+                p_static = ScraplingFetcher.get(db_url)
+                if 'blood_table' in p_static.body:
+                    txt = p_static.body
+                    flags = []
+                    if 'Nijinsky' in txt or 'ニジンスキー' in txt: flags.append('Nijinsky')
+                    if 'Sunday Silence' in txt or 'サンデーサイレンス' in txt: flags.append('SS')
+                    if 'Roberto' in txt or 'ロベルト' in txt: flags.append('Roberto')
+                    advanced_data[u]['BloodlineFlag'] = ",".join(flags)
+            except: pass
+
+    # 4. --- Umanity (U-Index) & KeibaLab ---
+    # User confirmed environment is safe for Playwright, so we use DynamicFetcher for these too
+    try:
+        u_id = f"{datetime.now().strftime('%Y')}{str(race_id)[4:12]}"
+        u_url = f"https://umanity.jp/racedata/race_8.php?code={u_id}"
+        # For Umanity, we might need to handle cookies if redirected.
+        # But we try dynamic fetch first.
+        # network_idle=True で JS レンダリング待ち
+        p_u = fetcher.fetch(u_url, timeout=25000, network_idle=True)
+        u_soup = BeautifulSoup(p_u.body, 'html.parser')
+        table = u_soup.find('table', class_=re.compile(r'race_table|shutuba_table', re.I))
+        if table:
+            rows = table.find_all('tr')
+            u_col = -1
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if not cells: continue
+                if u_col == -1:
+                    if 'U指数' in row.text:
+                        for idx, c in enumerate(cells):
+                            if 'U指数' in c.text: u_col = idx; break
+                    continue
+                if u_col != -1 and len(cells) >= max(2, u_col + 1):
+                    try:
+                        m_n = re.search(r'(\d+)', cells[1].text.strip())
+                        if m_n:
+                            um = int(m_n.group(1))
+                            if um in advanced_data:
+                                i_txt = cells[u_col].text.strip()
+                                m_i = re.search(r'(\d+\.\d+|\d+)', i_txt)
+                                if m_i: advanced_data[um]['UIndex'] = float(m_i.group(1))
+                    except: pass
+    except Exception as e:
+        sys.stderr.write(f"ERROR during Umanity fetch: {e}\n")
+
+    try:
+        l_url = f"https://www.keibalab.jp/db/race/{race_id}/syutsuba.html"
+        # network_idle=True で JS レンダリング待ち
+        p_l = fetcher.fetch(l_url, timeout=25000, network_idle=True)
+        l_soup = BeautifulSoup(p_l.body, 'html.parser')
+        table = l_soup.find('table', class_=re.compile(r'dbTable|shutubaTable', re.I))
+        if table:
+            rows = table.find_all('tr')
+            l_col = -1
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if not cells: continue
+                if l_col == -1:
+                    if '指数' in row.text or 'オメガ' in row.text:
+                        for idx, c in enumerate(cells):
+                            if '指数' in c.text or 'オメガ' in c.text: l_col = idx; break
+                    continue
+                if len(cells) >= max(2, l_col + 1):
+                    try:
+                        m_u = re.search(r'(\d+)', cells[1].text.strip())
+                        if m_u:
+                            um = int(m_u.group(1))
+                            if um in advanced_data:
+                                o_txt = cells[l_col].text.strip()
+                                m_o = re.search(r'(\d+\.\d+|\d+)', o_txt)
+                                if m_o: advanced_data[um]['LaboIndex'] = float(m_o.group(1))
+                    except: pass
+    except Exception as e:
+        sys.stderr.write(f"ERROR during KeibaLab fetch: {e}\n")
+
     return advanced_data
 
 if __name__ == "__main__":
@@ -392,7 +210,8 @@ if __name__ == "__main__":
     try:
         rid = sys.argv[1]
         top = [int(x) for x in sys.argv[2].split(",") if x.isdigit()] if len(sys.argv) > 2 else []
-        res = asyncio.run(fetch_advanced_data(rid, top))
+        # Synchronous execution is fine for this helper
+        res = fetch_advanced_data_dynamic(rid, top)
         print(json.dumps(res, ensure_ascii=False))
     except Exception as e:
         sys.stderr.write(f"ERROR: {e}\n")

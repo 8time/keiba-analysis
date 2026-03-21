@@ -56,10 +56,46 @@ def apply_jockey_single_ride(
         e.jockey_single_ride_flag = (ride_count[key] == 1)
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+def validate_entries(entries: List[Entry], threshold: float = 0.3) -> bool:
+    """Entryの必須項目を検証し、異常率が高い場合はFalseを返す"""
+    if not entries: return False
+    
+    invalid_count = 0
+    trainer_missing = 0
+    
+    for e in entries:
+        is_invalid = False
+        if not e.horse_name or not e.jockey or not e.race_id:
+            is_invalid = True
+        if e.field_size <= 0 or e.horse_number <= 0:
+            is_invalid = True
+            
+        if not e.trainer or e.trainer in ('-', '不明', ''):
+            trainer_missing += 1
+            # Trainer missing alone is just a warning, handled in grouping
+            # but we record it for statistics
+            
+        if is_invalid:
+            invalid_count += 1
+            
+    invalid_ratio = invalid_count / len(entries)
+    if invalid_ratio > threshold:
+        logger.error(f"[Fail-Fast] Entry invalid ratio ({invalid_ratio:.1%}) exceeds threshold ({threshold:.1%}). Suspending signal evaluation.")
+        return False
+        
+    return True
+
 def run_special_signal_pipeline(entries: List[Entry]) -> List[Entry]:
     """◎●統合パイプライン。
-    処理順: ◎group → ●group → ◎判定 → ●判定 → 1回騎乗 → annotate → marks → score
+    処理順: Entry検証 → ◎group → ●group → ◎判定 → ●判定 → 1回騎乗 → annotate → marks → score
     """
+    if not validate_entries(entries):
+        return entries
+    
     # 1. ◎用 group 作成 & 判定
     dc_groups = build_entity_daily_venue_groups(entries)
     dc_candidates = filter_double_circle_candidate_groups(dc_groups)
