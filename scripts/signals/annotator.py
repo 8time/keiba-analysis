@@ -49,12 +49,34 @@ def apply_trainer_bullet_results(
         if not res.flag:
             continue
         date, trainer, race_number = key
+        
+        # ●専用の説明文を生成
+        bullet_details = []
+        for pair in res.matched_pairs:
+            # 自分以外の相手を探す（通常2頭ペア）
+            # ここではペア情報を詳細文字列にする
+            for rule in pair.matched_rule_types:
+                rule_name = {
+                    "ones_digit": "一の位一致",
+                    "reverse": "正逆一致",
+                    "ura_match": "裏同士一致",
+                    "cycle": "サイクル一致"
+                }.get(rule, rule)
+                
+                detail = f"{pair.venue_a}{pair.race_number}R({pair.horse_number_a}番) と {pair.venue_b}{pair.race_number}R({pair.horse_number_b}番) が{rule_name}"
+                if detail not in bullet_details:
+                    bullet_details.append(detail)
+
         for e in entries:
             if e.date == date and e.trainer == trainer and e.race_number == race_number:
                 e.trainer_bullet_flag = True
                 e.trainer_bullet_rule_types = list(
                     set(e.trainer_bullet_rule_types) | set(res.matched_rule_types)
                 )
+                # Phase B: ●専用の説明表示を分離
+                for d in bullet_details:
+                    if d not in e.trainer_bullet_match_details:
+                        e.trainer_bullet_match_details.append(d)
 
 
 def build_special_marks(entry: Entry) -> str:
@@ -65,7 +87,7 @@ def build_special_marks(entry: Entry) -> str:
     if entry.trainer_double_circle_flag:
         marks.append("T◎")
     if entry.trainer_bullet_flag:
-        marks.append("●")
+        marks.append("T●") # Strict Bullet
     if entry.jockey_single_ride_flag:
         marks.append("[1鞍限定]")
     return " ".join(marks)

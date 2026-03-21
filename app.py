@@ -197,8 +197,8 @@ with st.sidebar:
     nav = st.radio(
         "機能を選択してください",
         [
-            "💰 BetSync（資金管理）",
             "🏠 Single Race Analysis",
+            "💰 BetSync（資金管理）",
             "🔍 Race Scanner (Batch)",
             "📊 History & Review",
             "🧪 新ロジックテスト(FEW+マクリ)",
@@ -1375,6 +1375,204 @@ if nav == "🏠 Single Race Analysis":
 
                     st.divider()
 
+                    # --- [NEW] 影響率（ウェイト）設定パネル ---
+                    _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_main.json")
+                    _weight_defaults = {
+                        "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
+                        "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightCarried": 0.0,
+                        "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0,
+                        "Base": 100.0
+                    }
+                    if 'score_weights_main' not in st.session_state:
+                        if os.path.exists(_WEIGHTS_FILE):
+                            try:
+                                import json as _json
+                                with open(_WEIGHTS_FILE, 'r', encoding='utf-8') as _wf:
+                                    _loaded = _json.load(_wf)
+                                st.session_state['score_weights_main'] = {**_weight_defaults, **_loaded}
+                            except Exception:
+                                st.session_state['score_weights_main'] = _weight_defaults.copy()
+                        else:
+                            st.session_state['score_weights_main'] = _weight_defaults.copy()
+                    
+                    sw = st.session_state['score_weights_main']
+                    for k, v in _weight_defaults.items():
+                        if k not in sw: sw[k] = v
+
+                    def _make_sync_slider_sm(key_num, key_sld):
+                        def _cb(): st.session_state[key_sld] = st.session_state[key_num]
+                        return _cb
+                    def _make_sync_num_sm(key_sld, key_num):
+                        def _cb(): st.session_state[key_num] = st.session_state[key_sld]
+                        return _cb
+
+                    _W_GROUP1   = [("📈 N指数%",      "NIndex",      "nidx"),
+                                   ("📊 U指数%",      "UIndex",      "uidx"),
+                                   ("⚡ ｵﾒｶﾞ指数%",   "LaboIndex",   "labo"),
+                                   ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
+                                   ("🔥 人気%",       "Popularity",  "pop")]
+                    _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
+                                   ("⏱️ 調教%",       "Training",    "trn"),
+                                   ("⚖️ 馬体重%",     "Weight",      "wgt"),
+                                   ("🏋️ 斤量%",       "WeightCarried","wgtc")]
+                    _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
+                                   ("🚀 上がり3F%",   "AvgAgari",     "agi"),
+                                   ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
+                                   ("🦁 展開(AvgPos)%","AvgPosition",  "pos"),
+                                   ("基礎戦闘力%",     "Base",         "base")]
+
+                    def _render_weight_group_sm(items, sw, prefix):
+                        for label, sw_key, suffix in items:
+                            sld_key = f"wsld_{prefix}{suffix}"
+                            num_key = f"wnum_{prefix}{suffix}"
+                            cur_val = float(sw.get(sw_key, 0.0))
+                            c1, c2 = st.columns([2, 1])
+                            with c1:
+                                st.slider(label, 0.0, 100.0, cur_val, 0.01, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
+                            with c2:
+                                st.number_input(" ", 0.0, 100.0, cur_val, 0.01, key=num_key, label_visibility="hidden", on_change=_make_sync_slider_sm(num_key, sld_key))
+                            sw[sw_key] = float(st.session_state.get(num_key, cur_val))
+
+                    with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
+                        with st.container(border=True):
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown("#### 📈 能力・指数")
+                                _render_weight_group_sm(_W_GROUP1, sw, "sm_g1")
+                            with col2:
+                                st.markdown("#### 👤 人間・状態")
+                                _render_weight_group_sm(_W_GROUP2, sw, "sm_g2")
+                            with col3:
+                                st.markdown("#### 🎯 適性・展開")
+                                _render_weight_group_sm(_W_GROUP3, sw, "sm_g3")
+
+                            total_w = sum(sw.values())
+                            if total_w > 0:
+                                st.info(f"💡 合計: **{total_w:.2f}%**")
+                            else:
+                                st.success(f"✅ 全て 0%（戦闘力のみのプレーン状態です）")
+                                
+                        st.caption("📝 **[予測スコア計算式]** ＝ BattleScore(基礎戦闘力) × 基本% ＋ Σ(各ボーナス素点[0-100] × 各影響率%)")
+
+                        st.session_state['score_weights_main'] = sw
+                        _sc1, _sc2 = st.columns([1, 1])
+                        with _sc1:
+                            if st.button("💾 影響率を保存（全レースに適用）", key="btn_save_weights_main_sp"):
+                                import json as _json
+                                try:
+                                    with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf:
+                                        _json.dump(sw, _wf, ensure_ascii=False, indent=2)
+                                    st.success("✅ 保存しました。次回以降自動適用されます。")
+                                except Exception as _e:
+                                    st.error(f"保存に失敗しました: {_e}")
+                        with _sc2:
+                            if st.button("🔄 この影響率で再計算して反映", type="primary", key="btn_recalc_weights_main_sp"):
+                                # Recalculate everything up to Projected Score
+                                df = calculator.calculate_battle_score(df)
+                                df = calculator.calculate_n_index(df)
+                                df = calculator.calculate_strength_suitability(df, course_profile_main)
+                                st.session_state['df'] = df
+                                st.rerun()
+
+                    # === プロフェッショナル・スコアリングロジック ===
+                    # 1. 事前に全指標の最小値/最大値を計算（正規化用）
+                    _norm_stats = {}
+                    _metric_keys = {
+                        'NIndex': True, 'UIndex': True, 'LaboIndex': True, 'SpeedIndex': True, 
+                        'Popularity': False, # 小さいほど良い
+                        'TrainingScore': True,
+                        'WeightDiff': True,
+                        'WeightCarried': False, # 小さいほど良い（一般的に）
+                        'Suitability (Y)': True,
+                        'AvgAgari': False, # 小さいほど良い
+                        'Umaban': True,
+                        'AvgPosition': False # 小さいほど良い
+                    }
+                    
+                    # 特殊抽出
+                    df['WeightDiff'] = df['WeightHistory'].str.extract(r'([+-]?\d+)').astype(float).fillna(0)
+
+                    for m_key, higher_is_better in _metric_keys.items():
+                        col = m_key if m_key in df.columns else None
+                        if col:
+                            v_series = pd.to_numeric(df[col], errors='coerce').dropna()
+                            if not v_series.empty:
+                                _norm_stats[m_key] = {'min': v_series.min(), 'max': v_series.max(), 'higher': higher_is_better}
+
+                    def _calc_pro_scores(row):
+                        bonuses = {}
+                        bonus_details = []
+                        
+                        # 基礎点
+                        base_pts = float(row.get('BattleScore', 0) or 0)
+                        
+                        # 各項目のスコア化と重み付け
+                        for m_key, sw_key in [
+                            ('NIndex', 'NIndex'), ('UIndex', 'UIndex'), ('LaboIndex', 'LaboIndex'), 
+                            ('SpeedIndex', 'SpeedIndex'), ('Popularity', 'Popularity'),
+                            ('TrainingScore', 'Training'), ('WeightDiff', 'Weight'),
+                            ('WeightCarried', 'WeightCarried'), ('Suitability (Y)', 'Suitability'),
+                            ('AvgAgari', 'AvgAgari'), ('Umaban', 'Umaban'), ('AvgPosition', 'AvgPosition')
+                        ]:
+                            col_name = m_key if m_key in row else None
+                            raw_val = float(row.get(col_name, 0) or 0) if col_name else 0
+                            
+                            score = 50.0 # デフォルト
+                            if m_key in _norm_stats:
+                                s = _norm_stats[m_key]
+                                if s['max'] > s['min']:
+                                    if s['higher']:
+                                        score = 100.0 * (raw_val - s['min']) / (s['max'] - s['min'])
+                                    else:
+                                        score = 100.0 * (s['max'] - raw_val) / (s['max'] - s['min'])
+                                else:
+                                    score = 100.0 if raw_val > 0 else 0.0
+                            
+                            bonus_val = score * (sw.get(sw_key, 0.0) / 100.0)
+                            bonuses[sw_key] = bonus_val
+                            if bonus_val != 0:
+                                bonus_details.append(f"{label_map_short.get(sw_key, sw_key)}:+{bonus_val:.1f}")
+
+                        # 騎手(特例)
+                        j_pts = 0
+                        past = row.get('PastRuns', [])
+                        for r in past[:10]:
+                            rnk = r.get('Rank', 99)
+                            if rnk == 1: j_pts += 10
+                            elif rnk == 2: j_pts += 7
+                            elif rnk == 3: j_pts += 5
+                            elif rnk in (4, 5): j_pts += 2
+                        j_score = min(100.0, float(j_pts)) if past else 50.0
+                        j_bonus = j_score * (sw.get('Jockey', 0.0) / 100.0)
+                        bonuses['Jockey'] = j_bonus
+                        if j_bonus != 0:
+                            bonus_details.append(f"騎手:+{j_bonus:.1f}")
+
+                        total_bonus = sum(bonuses.values())
+                        final_score = (base_pts * (sw.get('Base', 100.0) / 100.0)) + total_bonus
+                        
+                        return pd.Series({
+                            **{f"{k}_Bonus": v for k, v in bonuses.items()},
+                            'Projected Score': round(final_score, 1),
+                            'ボーナス詳細': ", ".join(bonus_details) if bonus_details else "-"
+                        })
+
+                    label_map_short = {
+                        'NIndex': 'N指', 'UIndex': 'U指', 'LaboIndex': 'オメガ', 'SpeedIndex': 'スピ',
+                        'Popularity': '人気', 'Training': '調教', 'Weight': '馬体', 'WeightCarried': '斤量',
+                        'Suitability': '適性', 'AvgAgari': '末脚', 'Umaban': '枠', 'AvgPosition': '展開'
+                    }
+                    
+                    # 適用
+                    res_df = df.apply(_calc_pro_scores, axis=1)
+                    for c in res_df.columns:
+                        df[c] = res_df[c]
+                    
+                    # チャート用データ
+                    st.session_state['current_bonus_df'] = df.copy()
+                            
+                    st.divider()
+
                     # --- 強適 Ranking Table ---
                     st.subheader("📊 強適 Ranking Table")
                     display_icon_legend()
@@ -1456,7 +1654,7 @@ if nav == "🏠 Single Race Analysis":
 
                     # Merge previous screenshot columns with latest advanced columns
                     cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'Jockey', 'JockeyChange', 'Name', 
-                            'Projected Score', 'NIndex', 'BattleScore', 'Strength (X)', 'Suitability (Y)', 
+                            'Projected Score', 'ボーナス詳細', 'NIndex', 'BattleScore', 'Strength (X)', 'Suitability (Y)', 
                             'SpeedIndex', 'AvgAgari', 'AvgPosition', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
@@ -1478,7 +1676,7 @@ if nav == "🏠 Single Race Analysis":
                         "WeightCarried": "斤量", "Trainer": "厩舎",
                         "Bloodline": "血統(父/母父)", "Jockey": "騎手",
                         "JockeyChange": "乗替", "Name": "馬名",
-                        "Projected Score": "⭐予測スコア", "NIndex": "N指数",
+                        "Projected Score": "⭐予測スコア", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
                         "SpeedIndex": "スピード指数", "AvgAgari": "上がり3F(順位)",
@@ -1498,13 +1696,24 @@ if nav == "🏠 Single Race Analysis":
                     _all_display = [_col_to_display[c] for c in _all_cols]
                     _default_display = [_col_to_display[c] for c in _default_cols]
 
-                    with st.popover("⚙ 列順設定"):
-                        st.caption("選択順が左→右の表示順になります")
-                        _disp_sel = st.multiselect(
-                            "表示する列を選択",
-                            options=_all_display,
-                            default=_default_display,
-                            key="sra_col_order_sel",
+                    _tl_col1, _tl_col2 = st.columns([1, 4])
+                    with _tl_col1:
+                        with st.popover("⚙ 列順設定"):
+                            st.caption("選択順が左→右の表示順になります")
+                            _disp_sel = st.multiselect(
+                                "表示する列を選択",
+                                options=_all_display,
+                                default=_default_display,
+                                key="sra_col_order_sel",
+                            )
+                    with _tl_col2:
+                        csv = view_df.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button(
+                            label="📥 CSV出力",
+                            data=csv,
+                            file_name=f"ranking_table_{race_id_input}.csv",
+                            mime="text/csv",
+                            key="btn_download_ranking_csv"
                         )
 
                     _col_sel = [_display_to_col[d] for d in _disp_sel if d in _display_to_col]
@@ -1535,7 +1744,8 @@ if nav == "🏠 Single Race Analysis":
                         "Jockey": st.column_config.TextColumn("騎手"),
                         "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
-                        "Projected Score": st.column_config.NumberColumn("⭐ 予測スコア", format="%.1f"),
+                        "Projected Score": st.column_config.NumberColumn("⭐予測スコア", format="%.1f"),
+                        "ボーナス詳細": st.column_config.TextColumn("ボーナス内訳"),
                         "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
                         "BattleScore": st.column_config.NumberColumn("🔥 総合戦闘力", format="%.1f"),
                         "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f"),
@@ -1605,6 +1815,33 @@ if nav == "🏠 Single Race Analysis":
                             styled_df = styled_df.apply(color_oddsgap, axis=0, subset=['OddsGap'])
                         
                         st.dataframe(styled_df, column_config=column_config, width='stretch', hide_index=True)
+                        
+                        # --- [NEW] ボーナス内訳の可視化 (Top 5) ---
+                        if 'current_bonus_df' in st.session_state:
+                            b_df = st.session_state['current_bonus_df'].sort_values('Projected Score', ascending=False).head(5)
+                            bonus_cols = [f"{k}_Bonus" for k in label_map_short.keys()] + ['Jockey_Bonus']
+                            # 有効な（0でない）ボーナスカラムのみ抽出
+                            active_cols = [c for c in bonus_cols if c in b_df.columns and b_df[c].sum() != 0]
+                            
+                            if active_cols:
+                                with st.expander("📈 上位5頭のボーナス加算内訳チャート", expanded=False):
+                                    st.markdown("戦闘力(Base)以外に加算された各種ボーナス要素の比重を可視化しています。")
+                                    chart_df = b_df.melt(id_vars=['Name'], value_vars=active_cols,
+                                                         var_name='BonusType', value_name='Points')
+                                    # 日本語ラベルに変換
+                                    inv_map = {f"{k}_Bonus": v for k, v in label_map_short.items()}
+                                    inv_map['Jockey_Bonus'] = '騎手(直近)'
+                                    chart_df['Indicator'] = chart_df['BonusType'].map(inv_map)
+                                    
+                                    import altair as alt
+                                    chart = alt.Chart(chart_df).mark_bar().encode(
+                                        x=alt.X('Points:Q', title="加算ポイント"),
+                                        y=alt.Y('Name:N', sort='-x', title="馬名"),
+                                        color=alt.Color('Indicator:N', legend=alt.Legend(title="指標")),
+                                        tooltip=['Name', 'Indicator', 'Points']
+                                    ).properties(height=300)
+                                    st.altair_chart(chart, use_container_width=True)
+                                    
                     except Exception as e:
                         st.warning(f"Display Error: {e}")
                         st.dataframe(view_df, hide_index=True)
@@ -3701,107 +3938,126 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         with st.expander("🔑 認証・セッション管理 (Advanced Data - Login Status)"):
             render_session_status(key_prefix="test_")
         
-        # 1. Influence Weights Initialization (Updated defaults for Robustness)
+        # 1. 影響率ウェイトの初期化
+        _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights.json")
+        _weight_defaults = {
+            "Base": 0.0, "Popularity": 0.0, "DIY1": 0.0, "DIY2": 0.0,
+            "UIndex": 0.0, "Jockey": 0.0, "Training": 0.0,
+            "Weight": 0.0, "LaboIndex": 0.0, "Bloodline": 0.0
+        }
+        # JSONファイルがあれば起動時に読み込む（全レース共通の設定として永続適用）
         if 'score_weights' not in st.session_state:
-            st.session_state['score_weights'] = {
-                "Base": 0.0,
-                "Popularity": 0.0,
-                "DIY1": 0.0, 
-                "DIY2": 0.0, 
-                "UIndex": 0.0, 
-                "Jockey": 0.0, 
-                "Training": 0.0,
-                "Weight": 0.0, 
-                "LaboIndex": 0.0, # Omega Index
-                "Bloodline": 0.0
-            }
-        
+            if os.path.exists(_WEIGHTS_FILE):
+                try:
+                    import json as _json
+                    with open(_WEIGHTS_FILE, 'r', encoding='utf-8') as _wf:
+                        _loaded = _json.load(_wf)
+                    st.session_state['score_weights'] = {**_weight_defaults, **_loaded}
+                except Exception:
+                    st.session_state['score_weights'] = _weight_defaults.copy()
+            else:
+                st.session_state['score_weights'] = _weight_defaults.copy()
         sw = st.session_state['score_weights']
-        # Safety check for new keys
-        for k in ["Weight", "LaboIndex", "Bloodline", "Training"]:
-            if k not in sw: sw[k] = 0.0
-        
-        # UI Styling to align with table headers
-        st.markdown("""
-            <style>
-            .weight-header {
-                font-size: 0.75rem;
-                color: #aaa;
-                margin-top: -5px;
-                text-align: center;
-                line-height: 1.0;
-            }
-            .stNumberInput {
-                margin-bottom: -15px !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
+        for k, v in _weight_defaults.items():
+            if k not in sw: sw[k] = v
 
-        st.write("### 📊 影響率（ウェイト）設定")
-        # 15列: 結果テーブルと列順を合わせる
-        # 馬番 | 馬名(騎手%) | 人気% | 馬体% | 調教% | U指% | オメガ% | 血統% | 元順 | 元スコ(基本%) | N指 | DIY2% | DIY指(DIY1%) | Test | 備考
-        wcols = st.columns([0.5, 1.5, 0.7, 0.9, 0.8, 0.8, 1.0, 0.7, 0.7, 1.0, 0.7, 0.7, 0.8, 0.8, 1.5])
-        with wcols[0]: st.markdown("**馬番**")
-        with wcols[1]:
-            sw["Jockey"] = st.number_input("騎手%", value=sw["Jockey"], min_value=0.0, max_value=100.0, step=1.0, key="w_jockey")
-        with wcols[2]:
-            sw["Popularity"] = st.number_input("人気%", value=sw["Popularity"], min_value=0.0, max_value=100.0, step=1.0, key="w_pop")
-        with wcols[3]:
-            sw["Weight"] = st.number_input("馬体%", value=sw["Weight"], min_value=0.0, max_value=100.0, step=1.0, key="w_weight")
-        with wcols[4]:
-            sw["Training"] = st.number_input("調教%", value=sw["Training"], min_value=0.0, max_value=100.0, step=1.0, key="w_train")
-        with wcols[5]:
-            sw["UIndex"] = st.number_input("U指%", value=sw["UIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_uindex")
-        with wcols[6]:
-            sw["LaboIndex"] = st.number_input("オメガ%", value=sw["LaboIndex"], min_value=0.0, max_value=100.0, step=1.0, key="w_labo")
-        with wcols[7]:
-            sw["Bloodline"] = st.number_input("血統%", value=sw["Bloodline"], min_value=0.0, max_value=100.0, step=1.0, key="w_blood")
-        with wcols[8]: st.markdown("**元順**")
-        with wcols[9]:
-            sw["Base"] = st.number_input("基本%", value=sw.get("Base", 0.0), min_value=0.0, max_value=100.0, step=1.0, key="w_base")
-        with wcols[10]: st.markdown("**N指**")
-        with wcols[11]:
-            sw["DIY2"] = st.number_input("末脚%", value=sw["DIY2"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy2")
-        with wcols[12]:
-            sw["DIY1"] = st.number_input("DIY1%", value=sw["DIY1"], min_value=0.0, max_value=100.0, step=1.0, key="w_diy1")
-        with wcols[13]: st.markdown("**Test**")
-        with wcols[14]: st.markdown("**備考**")
-        
-        # Add a summary row for total
-        total_w = sum(sw.values())
-        if abs(total_w - 100.0) > 0.01 and total_w > 0:
-            st.info(f"💡 合計が {total_w:.1f}% です（100%基準で自動正規化して計算中）")
-        elif total_w == 0:
-            st.warning("⚠️ 全てのウェイトが 0% です。各項目の生値の合計が表示されます。")
-        
-        # Update session state
+        # --- リアルタイム同期用コールバック ---
+        def _make_sync_slider(key_num, key_sld):
+            def _cb(): st.session_state[key_sld] = st.session_state[key_num]
+            return _cb
+        def _make_sync_num(key_sld, key_num):
+            def _cb(): st.session_state[key_num] = st.session_state[key_sld]
+            return _cb
+
+        # --- 各ウェイトのキー定義 (label, sw_key, ui_key_suffix) ---
+        _W_LEFT   = [("騎手%",    "Jockey",     "jockey"),
+                     ("馬体%",    "Weight",     "weight"),
+                     ("調教%",    "Training",   "train")]
+        _W_CENTER = [("人気%",    "Popularity", "pop"),
+                     ("U指数%",   "UIndex",     "uindex"),
+                     ("オメガ指数%", "LaboIndex", "labo"),
+                     ("血統%",    "Bloodline",  "blood")]
+        _W_RIGHT  = [("基本%",    "Base",       "base"),
+                     ("末脚%(Test)", "DIY1",    "diy1"),
+                     ("DIY2%",   "DIY2",       "diy2")]
+
+        def _render_weight_group(items, sw, prefix):
+            """1グループ分のスライダー+数値入力ボックスを描画"""
+            for label, sw_key, suffix in items:
+                sld_key = f"wsld_{prefix}{suffix}"
+                num_key = f"wnum_{prefix}{suffix}"
+                cur_val = float(sw.get(sw_key, 0.0))
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    st.slider(
+                        label, min_value=0.0, max_value=100.0, step=0.01,
+                        value=cur_val, key=sld_key,
+                        on_change=_make_sync_num(sld_key, num_key)
+                    )
+                with c2:
+                    st.number_input(
+                        " ", min_value=0.0, max_value=100.0, step=0.01,
+                        value=cur_val, key=num_key, label_visibility="hidden",
+                        on_change=_make_sync_slider(num_key, sld_key)
+                    )
+                # session_state から最新値を取得（スライダーと数値が同期した後）
+                sw[sw_key] = float(st.session_state.get(num_key, cur_val))
+
+        st.markdown("### 📊 影響率（ウェイト）設定")
+        with st.container(border=True):
+            col_l, col_c, col_r = st.columns(3)
+            with col_l:
+                st.markdown("#### 🏇 重要：馬体・騎手")
+                _render_weight_group(_W_LEFT, sw, "l")
+            with col_c:
+                st.markdown("#### 📈 能力・血統指数")
+                _render_weight_group(_W_CENTER, sw, "c")
+            with col_r:
+                st.markdown("#### ⚙️ その他・備考")
+                _render_weight_group(_W_RIGHT, sw, "r")
+
+            # 合計インジケーター
+            total_w = sum(sw.values())
+            if abs(total_w - 100.0) > 0.01 and total_w > 0:
+                st.info(f"💡 合計: **{total_w:.2f}%**（100% 基準で自動正規化して計算されます）")
+            elif total_w == 0:
+                st.warning("⚠️ 全ウェイトが 0% です。各指数の生値合計が表示されます。")
+            else:
+                st.success(f"✅ 合計: **{total_w:.2f}%**")
+
         st.session_state['score_weights'] = sw
-        
-        # Normalization helper
         norm_w = {k: v / (total_w if total_w > 0 else 1.0) for k, v in sw.items()}
-        
-        # (Radio buttons removed for automation)
-        
+
+        # --- 影響率 保存ボタン ---
+        _save_col, _ = st.columns([1, 3])
+        with _save_col:
+            if st.button("💾 影響率を保存（全レースに適用）", key="btn_save_weights"):
+                import json as _json
+                try:
+                    with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf:
+                        _json.dump(sw, _wf, ensure_ascii=False, indent=2)
+                    st.success("✅ 影響率を保存しました。次回起動・全レースで自動適用されます。")
+                except Exception as _e:
+                    st.error(f"保存に失敗しました: {_e}")
+
         # 2. Base Ranking (to calculate Diff later)
         df_test['BaseRank'] = df_test[score_col].rank(ascending=False, method='min')
-        
-        # 3. Playwright Action Button (Full Automation)
-        if st.button("🚀 Playwrightで全てのデータ取得・計算を一括実行", key="btn_pw_test", type="primary"):
+
+        # 3. Playwright Action Button (Full Automation)  ← コンテナ直下、幅広
+        if st.button("🚀 Playwrightで全てのデータ取得・計算を一括実行",
+                     key="btn_pw_test", type="primary", use_container_width=True):
             race_id = st.session_state.get('tab1_analyzed_id', st.session_state.get('main_race_id_input', ''))
             with st.status("📊 統合データ処理中...", expanded=True) as status:
                 st.write("1. Playwrightブラウザ起動... [馬体重/調教/血統/U指数/オメガ] をスキャンしています")
                 top10_umaban = df_test.head(10)['Umaban'].tolist()
                 adv_data = scraper.fetch_advanced_data_playwright(race_id, top_horse_ids=top10_umaban)
                 st.session_state['test_adv_data'] = adv_data
-                
                 st.write("2. 独自指数 (DIY1/DIY2) を計算中...")
-                # Calculate on the ORIGINAL dataframe to ensure persistence
                 df_main = st.session_state.get('df')
                 if df_main is not None:
                     df_main = calculator.calculate_diy_index(df_main)
                     df_main = calculator.calculate_diy2_index(df_main)
                     st.session_state['df'] = df_main
-                
                 status.update(label="✅ 全データの取得と計算が完了しました！", state="complete", expanded=False)
             st.rerun()
 

@@ -416,7 +416,7 @@ class RacePositionScanner:
                 dc_results = evaluate_all_double_circle_groups(dc_cands)
                 bt_groups = build_trainer_cross_venue_race_groups(all_entries)
                 bt_cands = filter_bullet_candidate_groups(bt_groups)
-                bt_results = evaluate_all_bullet_groups(bt_cands)
+                bt_results = evaluate_all_bullet_groups(bt_cands, all_entries)
 
                 self._dc_summary = build_double_circle_summary(dc_groups, dc_results)
                 self._bt_summary = build_bullet_summary(bt_groups, bt_results)

@@ -32,6 +32,7 @@ class Entry:
     # ●シグナル
     trainer_bullet_flag: bool = False
     trainer_bullet_rule_types: List[str] = field(default_factory=list)
+    trainer_bullet_match_details: List[str] = field(default_factory=list)
     # 当日1回騎乗シグナル
     jockey_single_ride_flag: bool = False
     # 表示用

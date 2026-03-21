@@ -1,0 +1,26 @@
+{
+  "single_race_col_order": [
+    "Rank",
+    "Umaban",
+    "Popularity",
+    "Odds",
+    "SexAge",
+    "WeightHistory",
+    "WeightCarried",
+    "Trainer",
+    "Bloodline",
+    "Jockey",
+    "JockeyChange",
+    "Name",
+    "Projected Score",
+    "NIndex",
+    "BattleScore",
+    "Strength (X)",
+    "Suitability (Y)",
+    "SpeedIndex",
+    "AvgAgari",
+    "AvgPosition",
+    "Alert",
+    "RiskFlags"
+  ]
+}

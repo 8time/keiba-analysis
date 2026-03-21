@@ -33,7 +33,7 @@ def run_bullet_pipeline(entries: List[Entry]) -> Dict[Tuple, BulletResult]:
     """●パイプライン: group化 → candidate抽出 → 判定。"""
     groups = build_trainer_cross_venue_race_groups(entries)
     candidates = filter_bullet_candidate_groups(groups)
-    return evaluate_all_bullet_groups(candidates)
+    return evaluate_all_bullet_groups(candidates, entries)
 
 
 def apply_jockey_single_ride(
@@ -104,7 +104,7 @@ def run_special_signal_pipeline(entries: List[Entry]) -> List[Entry]:
     # 2. ●用 group 作成 & 判定
     bt_groups = build_trainer_cross_venue_race_groups(entries)
     bt_candidates = filter_bullet_candidate_groups(bt_groups)
-    bt_results = evaluate_all_bullet_groups(bt_candidates)
+    bt_results = evaluate_all_bullet_groups(bt_candidates, entries)
 
     # 3. 全場通じて1回のみ騎乗の騎手フラグ付け (追加要件2)
     apply_jockey_single_ride(entries, scope="all")

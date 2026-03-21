@@ -33,6 +33,7 @@ def entry_to_output_dict(entry: Entry) -> dict:
         "trainer_double_circle_rule_type": entry.trainer_double_circle_rule_type or "",
         "trainer_bullet_flag": entry.trainer_bullet_flag,
         "trainer_bullet_rule_types": ",".join(entry.trainer_bullet_rule_types),
+        "trainer_bullet_match_details": " | ".join(entry.trainer_bullet_match_details),
         "special_marks": entry.special_marks,
         "total_score": entry.total_score,
     }
