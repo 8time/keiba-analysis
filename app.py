@@ -3887,6 +3887,11 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 if new_df is not None and not new_df.empty:
                     new_df = calculator.calculate_battle_score(new_df)
                     new_df = calculator.calculate_n_index(new_df)
+                    # 適性/スピード指数の初期計算も追加して連携を深める
+                    if 'meta' in locals() or 'meta' in globals():
+                        _c_profile = meta.get('course_profile', '')
+                        new_df = calculator.calculate_strength_suitability(new_df, _c_profile)
+                    new_df = calculator.calculate_speed_index(new_df)
                     st.session_state['df'] = new_df
                 else:
                     st.error("データが取得できませんでした。")
@@ -4222,7 +4227,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             norm_stats['NIndex'] = min(max(float(row.get('NIndex', 0)) / 1.0, 0), 100)
             norm_stats['UIndex'] = min(max(u_val / 1.0, 0), 100)
             norm_stats['LaboIndex'] = min(max(l_val / 1.0, 0), 100)
-            norm_stats['SpeedIndex'] = min(max(float(row.get('SpeedIndex', 0)) / 1.0, 0), 100)
+            # スピード指数があれば優先、なければ 0
+            s_idx_val = float(row.get('SpeedIndex', row.get('DIY_Index', 0)))
+            norm_stats['SpeedIndex'] = min(max(s_idx_val, 0), 100)
+
             # Popularity (1st=100, 18th=0)
             try:
                 pop_int = int(row.get('Popularity', 18))
@@ -4234,12 +4242,14 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             norm_stats['Jockey'] = min(max(j_bonus * 20, 0), 100) # +5=100
             norm_stats['Training'] = min(max(training_score * 10, 0), 100) # +10=100
             norm_stats['Weight'] = w_score # 100/50/25
-            norm_stats['WeightCarried'] = 50.0 # Placeholder or calculate if available
+            norm_stats['WeightCarried'] = 50.0 # Placeholder
             
             # Suitability / Others
-            norm_stats['Suitability'] = min(max(float(row.get('Suitability (Y)', 0)) / 1.0, 0), 100)
-            # AvgAgari (Rank based if possible, or speed)
-            agari_val = 0.0
+            # 適性(Y)があれば優先
+            y_val = float(row.get('Suitability (Y)', 0))
+            norm_stats['Suitability'] = min(max(y_val, 0), 100)
+            # AvgAgari (Rank based if possible, or DIY2)
+            agari_val = float(row.get('DIY2_Index', 50))
             if isinstance(past_runs, list) and len(past_runs) > 0:
                 try:
                     ar = int(past_runs[0].get('AgariRank', 10))
