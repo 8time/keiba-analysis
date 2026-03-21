@@ -1767,16 +1767,15 @@ if nav == "🏠 Single Race Analysis":
 
                     try:
                         def color_battlescore(s):
-                            # Segmented colors based on rank position as in the vivid version
+                            # 絶対値に基づいた色分けに変更 (ユーザー要望: 戦闘力別に色を変える)
                             colors = []
-                            n = len(s)
-                            for i in range(n):
-                                if i < 5: # Top 5
-                                    colors.append("background-color: #d9480f; color: white; font-weight: bold") 
-                                elif i >= n - 5: # Bottom 5
-                                    colors.append("background-color: #1864ab; color: white; font-weight: bold") 
-                                else: # Middle
-                                    colors.append("background-color: #ebfbee; color: #2b8a3e; font-weight: bold") 
+                            for v in s:
+                                try:
+                                    val = float(v)
+                                    if val >= 80: colors.append("background-color: #d9480f; color: white; font-weight: bold") # 高能力(赤)
+                                    elif val >= 65: colors.append("background-color: #ebfbee; color: #2b8a3e; font-weight: bold") # 標準(緑)
+                                    else: colors.append("background-color: #1864ab; color: white; font-weight: bold") # 低め(青)
+                                except: colors.append("")
                             return colors
 
                         def color_rank(s):
@@ -1963,9 +1962,11 @@ if nav == "🏠 Single Race Analysis":
                             x=alt.X('_sx:Q', scale=alt.Scale(domain=[-5, 105]), title='強い →'),
                             y=alt.Y('_sy:Q', scale=alt.Scale(domain=[-5, 105]), title='合う ↑')
                         )
-                        pts_m = base_m.mark_circle(size=3500, opacity=0.75).encode(
-                            color=alt.Color('Trend:N', scale=alt.Scale(domain=domain_m, range=range_m), legend=alt.Legend(title="Rank Shift")),
-                            tooltip=['Umaban', 'Name', 'Strength (X)', 'Suitability (Y)', 'Projected Score', 'BattleScore']
+                        pts_m = base_m.mark_circle(size=3500, opacity=0.9).encode(
+                            color=alt.Color('BattleScore:Q', 
+                                          scale=alt.Scale(scheme='viridis', domain=[50, 100]), 
+                                          legend=alt.Legend(title="戦闘力")),
+                            tooltip=['Umaban', 'Name', 'Strength (X)', 'Suitability (Y)', 'Projected Score', 'BattleScore', 'Trend']
                         )
                         num_m  = base_m.mark_text(align='center', baseline='middle', dy=-5, color='white', fontWeight='bold', fontSize=14).encode(text='Umaban:N')
                         name_m = base_m.mark_text(align='center', baseline='top', dy=30, color='#222', fontWeight='bold', fontSize=11).encode(text='Name:N')
@@ -4324,6 +4325,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "元の順位": int(row.get('BaseRank', 99)),
                 "元のスコア": round(base_score, 1),
                 "予測スコア": round(final_test_score, 1),
+                "調教": pw_data.get('TrainingScore', "-"),
                 "斤量": row.get('WeightCarried', "-"),
                 "スピード指数": round(s_idx_raw, 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
@@ -4420,18 +4422,29 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             import json as _json_lt
             with open(_prefs_path_lt, 'r', encoding='utf-8') as _f:
                 _prefs_lt = _json_lt.load(_f)
-            _saved_lt = _prefs_lt.get('logic_test_col_order', [])
+            _saved_lt = list(_prefs_lt.get('logic_test_col_order', []))
+            
+            _all_lt = list(df_display.columns)
+            # 既に保存された順序があればそれを使いつつ、新しく増えた列（調教やU指数など）を末尾ではなく目立つように補完
             if _saved_lt:
-                _ordered_lt = [c for c in _saved_lt if c in df_display.columns]
-                _rest_lt = [c for c in df_display.columns if c not in _ordered_lt]
-                # 新しい重要カラム（U指数など）がキャッシュ漏れしていたら末尾に追加
-                df_display = df_display[_ordered_lt + _rest_lt]
+                _ordered_valid = [c for c in _saved_lt if c in _all_lt]
+                _missing_new = [c for c in _all_lt if c not in _ordered_valid]
+                # 重要カラム（指数・スコア系）は先頭、その他は末尾に
+                _important = [c for c in _missing_new if any(tok in c for tok in ["指数", "スコア", "適性", "U指数", "オメガ"])]
+                _the_rest = [c for c in _missing_new if c not in _important]
+                df_display = df_display[_important + _ordered_valid + _the_rest]
         except: pass
 
         with st.expander("📋 列の表示順序を設定（選択順が左から右の順になります）", expanded=False):
             _cur_cols_lt = list(df_display.columns)
+            # multiselect の初期値がキャッシュに引きずられるため、新設カラムを優先的にマージ
+            _default_lt = st.session_state.get('logic_test_col_order_sel', _cur_cols_lt)
+            for c in ["調教", "U指数", "スピード指数", "斤量", "予測スコア"]:
+                if c in _cur_cols_lt and c not in _default_lt:
+                    _default_lt = [c] + _default_lt
+            
             _sel_cols_lt = st.multiselect(
-                "表示する列・順序", options=_cur_cols_lt, default=_cur_cols_lt,
+                "表示する列・順序", options=_cur_cols_lt, default=_default_lt,
                 key="logic_test_col_order_sel"
             )
             if st.button("💾 この列順を保存", key="btn_save_logic_col_order"):
@@ -4459,6 +4472,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             column_config={
                 "元のスコア": st.column_config.NumberColumn(format="%.1f"),
                 "予測スコア": st.column_config.NumberColumn(format="%.1f"),
+                "調教": st.column_config.NumberColumn(format="%.1f"),
                 "斤量": st.column_config.NumberColumn(format="%.1f"),
                 "スピード指数": st.column_config.NumberColumn(format="%.1f"),
                 "U指数": st.column_config.NumberColumn(format="%.1f"),
@@ -4476,26 +4490,30 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         # --- 比較用：旧ロジック（FEW+マクリ以前）テーブル ---
         st.divider()
         st.subheader("🔙 【比較用】旧ロジック算出結果（FEW+マクリ）")
-        with st.expander("表示する（今回の拡張指示前の状態）", expanded=False):
-            old_scores = []
-            for _, row in df_test.iterrows():
-                # 旧ロジック: BattleScore + N% + U% + DIY%...
-                # 当時は正規化なしの生加算も多かったが、ここでは当時のスライダー形式から再現
-                b_score = float(row.get('BattleScore', 0.0))
-                o_n = float(row.get('NIndex', 0)) * (sw.get('NIndex', 0.0)/100.0)
-                o_u = float(row.get('UIndex', 0)) * (sw.get('UIndex', 0.0)/100.0)
-                o_d = float(row.get('DIY_Index', 0)) * (sw.get('SpeedIndex', 0.0)/100.0)
-                
-                total_o = b_score + o_n + o_u + o_d
-                old_scores.append({
-                    "馬番": row.get('Umaban'),
-                    "馬名": row.get('Name'),
-                    "旧予測スコア": round(total_o, 1),
-                    "元の順位": int(row.get('BaseRank', 99))
-                })
-            df_old = pd.DataFrame(old_scores)
-            df_old['旧順位'] = df_old['旧予測スコア'].rank(ascending=False, method='min').astype(int)
-            st.dataframe(df_old.sort_values("旧順位"), use_container_width=True, hide_index=True)
+        with st.expander("表示する（今回の拡張指示前の状態）", expanded=True):
+            if not df_test.empty:
+                old_scores = []
+                for _, row in df_test.iterrows():
+                    b_score = float(row.get('BattleScore', 0.0))
+                    o_n = float(row.get('NIndex', 0)) * (sw.get('NIndex', 0.0)/100.0)
+                    o_u = float(row.get('UIndex', 0)) * (sw.get('UIndex', 0.0)/100.0)
+                    o_d = float(row.get('DIY_Index', 0)) * (sw.get('SpeedIndex', 0.0)/100.0)
+                    
+                    total_o = b_score + o_n + o_u + o_d
+                    old_scores.append({
+                        "馬番": row.get('Umaban'),
+                        "馬名": row.get('Name'),
+                        "「旧」予測スコア": round(total_o, 1),
+                        "元の順位": int(row.get('BaseRank', 99))
+                    })
+                df_old = pd.DataFrame(old_scores)
+                df_old['旧順位'] = df_old['「旧」予測スコア'].rank(ascending=False, method='min').astype(int)
+                st.dataframe(df_old.sort_values("旧順位"), use_container_width=True, hide_index=True)
+            else:
+                st.warning("データが読み込まれていないため、比較結果を表示できません。")
+
+        # --- 3連複スペシャル (2強軸ロジック) は独立したコンテナとして後に続く ---
+        st.divider()
         _test_chaos_r = calculator.evaluate_race_chaos_v3(df_test).get('rank', 'B') if hasattr(calculator, 'evaluate_race_chaos_v3') else calculator.evaluate_race_chaos_v2(df_test).get('rank', 'B')
         if _test_chaos_r in ['S', 'A']:
             st.subheader("🔥 3連複スペシャル（波乱狙い）")
