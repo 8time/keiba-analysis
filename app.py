@@ -4009,16 +4009,20 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 sld_key = f"wsld_{prefix}{suffix}"
                 num_key = f"wnum_{prefix}{suffix}"
                 cur_val = float(sw.get(sw_key, 0.0))
+                
+                # 人気%のみマイナス（逆転ロジック）を許容
+                min_v = -100.0 if sw_key == "Popularity" else 0.0
+                
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     st.slider(
-                        label, min_value=0.0, max_value=100.0, step=0.01,
+                        label, min_value=min_v, max_value=100.0, step=0.01,
                         value=cur_val, key=sld_key,
                         on_change=_make_sync_num(sld_key, num_key)
                     )
                 with c2:
                     st.number_input(
-                        " ", min_value=0.0, max_value=100.0, step=0.01,
+                        " ", min_value=min_v, max_value=100.0, step=0.01,
                         value=cur_val, key=num_key, label_visibility="hidden",
                         on_change=_make_sync_slider(num_key, sld_key)
                     )
@@ -4202,12 +4206,28 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             
             score_diff += makuri_bonus
             
-            # C-2. 騎手ボーナス (Jockey - Weighted Core Item, no longer additive here)
+            # C-2. 騎手ボーナス
             j_name = str(row.get('Jockey', ''))
             j_bonus = get_jockey_bonus(j_name)
             if j_bonus > 0:
                 remarks.append(f"騎手({j_name}:{j_bonus:+})")
+
+            # C-3. 逆転ロジック・特殊検知
+            y_val_raw = float(row.get('Suitability (Y)', 0))
+            s_idx_raw = float(row.get('SpeedIndex', row.get('DIY_Index', 0)))
             
+            # 適性不足ペナルティ (-30点)
+            if y_val_raw <= 30:
+                score_diff -= 30.0
+                remarks.append("適性不足(-30)")
+
+            # 激走候補 (Hidden Gem) 判定
+            # 条件: 戦闘力がトップ層(上位3位以内)ではないが、指数と適性が共に80点以上
+            base_rank_val = row.get('BaseRank', 99)
+            if base_rank_val > 3 and s_idx_raw >= 80 and y_val_raw >= 80:
+                horse_name = f"💎 {horse_name}"
+                remarks.append("激走候補(HiddenGem)")
+
             # D. Scoring Logic (Unified Professional Spec)
             u_val = pw_data.get('UIndex', 0.0)
             l_val = pw_data.get('LaboIndex', 0.0)
