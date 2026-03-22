@@ -1462,7 +1462,8 @@ if nav == "🏠 Single Race Analysis":
                             
                             display_label = label
                             if cur_val < 0:
-                                display_label += " :red[[逆相関/減点]]"
+                                color_tag = "blue" if sw_key == "WeightPenalty" else "red"
+                                display_label += f" :{color_tag}[[逆相関/減点]]"
 
                             max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
                             min_val = -100.0
@@ -4060,7 +4061,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 # UIラベルの装飾（負の値の場合は「逆相関」を表示）
                 display_label = label
                 if cur_val < 0:
-                    display_label += " :red[[逆相関/減点]]"
+                    color_tag = "blue" if sw_key == "WeightPenalty" else "red"
+                    display_label += f" :{color_tag}[[逆相関/減点]]"
                 
                 max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
                 min_val = -100.0
