@@ -4182,6 +4182,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if pop_val != 99:
                 row['Popularity'] = pop_val
             
+            odds_val = pw_data.get('Odds', 0.0)
             if odds_val > 0.0:
                 row['Odds'] = odds_val
             
