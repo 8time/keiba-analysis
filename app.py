@@ -1387,9 +1387,9 @@ if nav == "🏠 Single Race Analysis":
                     _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_main.json")
                     _weight_defaults = {
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
-                        "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -10.0, "WeightCarried": 0.0,
+                        "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
                         "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0,
-                        "Base": 100.0
+                        "Base": 1.0
                     }
                     if 'score_weights_main' not in st.session_state:
                         if os.path.exists(_WEIGHTS_FILE):
@@ -1408,10 +1408,10 @@ if nav == "🏠 Single Race Analysis":
                         if k not in sw: sw[k] = v
 
                     def _make_sync_slider_sm(key_num, key_sld):
-                        def _cb(): st.session_state[key_sld] = st.session_state[key_num] * 100.0
+                        def _cb(): st.session_state[key_sld] = st.session_state[key_num]
                         return _cb
                     def _make_sync_num_sm(key_sld, key_num):
-                        def _cb(): st.session_state[key_num] = st.session_state[key_sld] / 100.0
+                        def _cb(): st.session_state[key_num] = st.session_state[key_sld]
                         return _cb
 
                     _W_GROUP1   = [("📈 N指数%",      "NIndex",      "nidx"),
@@ -1443,8 +1443,8 @@ if nav == "🏠 Single Race Analysis":
                                 pass
                         default_presets = {
                             "Standard": {
-                                "NIndex": 60, "UIndex": 60, "Base": 100, "Suitability": 80,
-                                "SpeedIndex": 80, "Popularity": 30, "Jockey": 40
+                                "NIndex": 0.6, "UIndex": 0.6, "Base": 1.0, "Suitability": 0.8,
+                                "SpeedIndex": 0.8, "Popularity": 0.3, "Jockey": 0.4
                             }
                         }
                         try:
@@ -1465,23 +1465,25 @@ if nav == "🏠 Single Race Analysis":
                                 color_tag = "blue" if sw_key == "WeightPenalty" else "red"
                                 display_label += f" :{color_tag}[[逆相関/減点]]"
 
-                            max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
-                            min_val = -100.0
+                            max_val = 1.0
+                            min_val = -1.0
+                            if sw_key == "WeightPenalty": max_val = 0.0
+                            if sw_key == "Base": min_val, max_val = 0.0, 2.0
 
                             # Initialize if missing
                             if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
                             
-                            val_num = max(min_val/100.0, min(max_val/100.0, cur_val / 100.0))
+                            val_num = max(min_val, min(max_val, cur_val))
                             if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
 
                             c1, c2 = st.columns([2, 1])
                             with c1:
-                                st.slider(display_label, min_val, max_val, step=1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
+                                st.slider(display_label, min_val, max_val, step=0.01, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
                             with c2:
-                                st.number_input("", min_val/100.0, max_val/100.0, step=0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key), label_visibility="collapsed")
+                                st.number_input("", min_val, max_val, step=0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key), label_visibility="collapsed")
                             
                             # Keep sw updated
-                            sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
+                            sw[sw_key] = float(st.session_state.get(num_key, cur_val))
 
                     with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
                         with st.container(border=True):
@@ -1580,7 +1582,7 @@ if nav == "🏠 Single Race Analysis":
                                 else:
                                     score = 100.0 if raw_val > 0 else 0.0
                             
-                            bonus_val = score * (sw.get(sw_key, 0.0) / 100.0)
+                            bonus_val = score * sw.get(sw_key, 0.0)
                             bonuses[sw_key] = bonus_val
                             if bonus_val != 0:
                                 label_txt = label_map_short.get(sw_key, sw_key)
@@ -1596,7 +1598,7 @@ if nav == "🏠 Single Race Analysis":
                             elif rnk == 3: j_pts += 5
                             elif rnk in (4, 5): j_pts += 2
                         j_score = min(100.0, float(j_pts)) if past else 50.0
-                        j_bonus = j_score * (sw.get('Jockey', 0.0) / 100.0)
+                        j_bonus = j_score * sw.get('Jockey', 0.0)
                         bonuses['Jockey'] = j_bonus
                         if j_bonus != 0:
                             bonus_details.append(f"騎手:+{j_bonus:.1f}")
@@ -1605,12 +1607,12 @@ if nav == "🏠 Single Race Analysis":
                         
                         # --- Horse Weight Change Penalty ---
                         w_diff = abs(float(row.get('WeightDiff', 0) or 0))
-                        w_penalty_w = sw.get('WeightPenalty', 0.0) / 100.0 # e.g. -0.10
+                        w_penalty_w = sw.get('WeightPenalty', 0.0)
                         w_penalty_score = w_diff * w_penalty_w
                         if w_penalty_score != 0:
                             total_bonus += w_penalty_score
                             bonus_details.append(f"馬体:{w_penalty_score:+.1f}")
-                        final_score = (base_pts * (sw.get('Base', 100.0) / 100.0)) + total_bonus
+                        final_score = (base_pts * sw.get('Base', 1.0)) + total_bonus
                         
                         return pd.Series({
                             **{f"{k}_Bonus": v for k, v in bonuses.items()},
@@ -4015,9 +4017,9 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _W_FILE_T = os.path.join(os.path.dirname(__file__), ".score_weights_test.json")
         _weight_defaults = {
             "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
-            "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -10.0, "WeightCarried": 0.0,
+            "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
             "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Bloodline": 0.0,
-            "Base": 100.0
+            "Base": 1.0
         }
         if 'score_weights_test' not in st.session_state:
             if os.path.exists(_W_FILE_T):
@@ -4035,10 +4037,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
 
         # --- リアルタイム同期用コールバック ---
         def _make_sync_slider(key_num, key_sld):
-            def _cb(): st.session_state[key_sld] = st.session_state[key_num] * 100.0
+            def _cb(): st.session_state[key_sld] = st.session_state[key_num]
             return _cb
         def _make_sync_num(key_sld, key_num):
-            def _cb(): st.session_state[key_num] = st.session_state[key_sld] / 100.0
+            def _cb(): st.session_state[key_num] = st.session_state[key_sld]
             return _cb
 
         # --- 各ウェイトのキー定義 (label, sw_key, ui_key_suffix) ---
@@ -4072,30 +4074,32 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                     color_tag = "blue" if sw_key == "WeightPenalty" else "red"
                     display_label += f" :{color_tag}[[逆相関/減点]]"
                 
-                max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
-                min_val = -100.0
+                max_val = 1.0
+                min_val = -1.0
+                if sw_key == "WeightPenalty": max_val = 0.0
+                if sw_key == "Base": min_val, max_val = 0.0, 2.0
                 
                 # Initialize if missing
                 if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
                 
-                val_num = max(min_val/100.0, min(max_val/100.0, cur_val / 100.0))
+                val_num = max(min_val, min(max_val, cur_val))
                 if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
                 
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     st.slider(
-                        display_label, min_value=min_val, max_value=max_val, step=1.0, 
+                        display_label, min_value=min_val, max_value=max_val, step=0.01, 
                         key=sld_key,
                         on_change=_make_sync_num(sld_key, num_key)
                     )
                 with c2:
                     st.number_input(
-                        "", min_value=min_val/100.0, max_value=max_val/100.0, step=0.01,
+                        "", min_value=min_val, max_value=max_val, step=0.01,
                         key=num_key,
                         on_change=_make_sync_slider(num_key, sld_key),
                         label_visibility="collapsed"
                     )
-                sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
+                sw[sw_key] = float(st.session_state.get(num_key, cur_val))
 
         st.markdown("### 📊 影響率（ウェイト）設定")
         with st.container(border=True):
