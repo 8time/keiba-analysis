@@ -1470,11 +1470,10 @@ if nav == "🏠 Single Race Analysis":
                             if sw_key == "WeightPenalty": max_val = 0.0
                             if sw_key == "Base": min_val, max_val = 0.0, 2.0
 
-                            # Initialize if missing
-                            if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
-                            
-                            val_num = max(min_val, min(max_val, cur_val))
-                            if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
+                            # Initialize if missing with clamping safety
+                            safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
+                            if sld_key not in st.session_state: st.session_state[sld_key] = safe_val
+                            if num_key not in st.session_state: st.session_state[num_key] = safe_val
 
                             c1, c2 = st.columns([2, 1])
                             with c1:
@@ -4079,11 +4078,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 if sw_key == "WeightPenalty": max_val = 0.0
                 if sw_key == "Base": min_val, max_val = 0.0, 2.0
                 
-                # Initialize if missing
-                if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
-                
-                val_num = max(min_val, min(max_val, cur_val))
-                if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
+                # Initialize if missing with clamping safety
+                safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
+                if sld_key not in st.session_state: st.session_state[sld_key] = safe_val
+                if num_key not in st.session_state: st.session_state[num_key] = safe_val
                 
                 c1, c2 = st.columns([2, 1])
                 with c1:
