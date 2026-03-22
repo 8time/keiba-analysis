@@ -37,6 +37,7 @@ if not GEMINI_API_KEY:
 
 import importlib
 import pandas as pd
+import requests
 import numpy as np
 import time
 import math
@@ -202,6 +203,7 @@ with st.sidebar:
             "🔍 Race Scanner (Batch)",
             "📊 History & Review",
             "🧪 新ロジックテスト(FEW+マクリ)",
+            "🧪 テスト",
             "🤓 N氏の研究室",
             "💾 ロジック置き場",
             "📦 データ保管庫",
@@ -3892,6 +3894,72 @@ if nav == "📊 History & Review":
             
     else:
         st.info("No history yet. Analyze races to build your database!")
+
+# ──────────────────────────────────────────────
+# 🧪 テスト タブ (血統加点テストツール)
+# ──────────────────────────────────────────────
+if nav == "🧪 テスト":
+    st.header("🧪 血統加点 テストツール")
+    st.markdown("血統データを取得し、独自の計算ロジックに基づいた加点をシミュレーションします。")
+
+    # 入力エリア
+    with st.container(border=True):
+        col_in1, col_in2 = st.columns([2, 1])
+        with col_in1:
+            test_race_id_input = st.text_input("レースIDを入力 (例: 202406010101)", placeholder="202406010101", key="bloodline_test_race_id")
+        with col_in2:
+            st.write(" ") # スペース調整
+            fetch_btn = st.button("血統データを取得して計算", type="primary", use_container_width=True)
+
+    # 実行と結果表示
+    if fetch_btn:
+        if not test_race_id_input:
+            st.warning("レースIDを入力してください。")
+        else:
+            with st.spinner("FastAPI サーバーからデータを取得中..."):
+                try:
+                    # ローカルの FastAPI サーバー (main.py) にリクエスト
+                    api_url = f"http://127.0.0.1:8000/api/bloodline/{test_race_id_input}"
+                    response = requests.get(api_url, timeout=15)
+                    
+                    if response.status_code == 200:
+                        json_data = response.json()
+                        results = json_data.get("data", [])
+                        
+                        if not results:
+                            st.warning("データが見つかりませんでした。")
+                        else:
+                            df_res = pd.DataFrame(results)
+                            
+                            # スタイル適用デコレータ
+                            def style_bonus_val(val):
+                                if val > 0: return 'color: #dc2626; font-weight: bold;' # text-red-600
+                                elif val < 0: return 'color: #2563eb; font-weight: bold;' # text-blue-600
+                                return 'color: #4b5563;' # text-gray-600
+
+                            # 表示
+                            st.subheader(f"分析結果: {test_race_id_input}")
+                            st.dataframe(
+                                df_res.style.map(style_bonus_val, subset=['bonus']),
+                                column_config={
+                                    "number": st.column_config.NumberColumn("馬番", format="%d"),
+                                    "name": "馬名",
+                                    "sire": "父 (Sire)",
+                                    "broodmareSire": "母父 (BMS)",
+                                    "bonus": st.column_config.NumberColumn("血統加点 (Bonus)", format="%.1f")
+                                },
+                                hide_index=True,
+                                use_container_width=True
+                            )
+                            st.success(f"連携解析が完了しました。")
+                    else:
+                        st.error(f"APIサーバーエラー (Status: {response.status_code})")
+                        
+                except requests.exceptions.ConnectionError:
+                    st.error("APIサーバーに接続できません。`main.py` が起動しているか確認してください。")
+                    st.info("起動コマンド: `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; uvicorn main:app --reload`")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
 
 # ──────────────────────────────────────────────
 # 🧪 🧪 新ロジックテスト(FEW+マクリ) タブ
