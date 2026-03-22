@@ -1408,10 +1408,10 @@ if nav == "🏠 Single Race Analysis":
                         if k not in sw: sw[k] = v
 
                     def _make_sync_slider_sm(key_num, key_sld):
-                        def _cb(): st.session_state[key_sld] = st.session_state[key_num]
+                        def _cb(): st.session_state[key_sld] = st.session_state[key_num] * 100.0
                         return _cb
                     def _make_sync_num_sm(key_sld, key_num):
-                        def _cb(): st.session_state[key_num] = st.session_state[key_sld]
+                        def _cb(): st.session_state[key_num] = st.session_state[key_sld] / 100.0
                         return _cb
 
                     _W_GROUP1   = [("📈 N指数%",      "NIndex",      "nidx"),
@@ -1468,11 +1468,19 @@ if nav == "🏠 Single Race Analysis":
                             max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
                             min_val = -100.0
 
+                            # Initialize if missing
+                            if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
+                            
+                            val_num = max(min_val/100.0, min(max_val/100.0, cur_val / 100.0))
+                            if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
+
                             c1, c2 = st.columns([2, 1])
                             with c1:
-                                st.slider(display_label, min_val, max_val, cur_val, 1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
+                                st.slider(display_label, min_val, max_val, step=1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
                             with c2:
-                                st.number_input("w", min_val/100.0, max_val/100.0, cur_val/100.0, 0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key))
+                                st.number_input("", min_val/100.0, max_val/100.0, step=0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key), label_visibility="collapsed")
+                            
+                            # Keep sw updated
                             sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
 
                     with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
@@ -4027,10 +4035,10 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
 
         # --- リアルタイム同期用コールバック ---
         def _make_sync_slider(key_num, key_sld):
-            def _cb(): st.session_state[key_sld] = st.session_state[key_num]
+            def _cb(): st.session_state[key_sld] = st.session_state[key_num] * 100.0
             return _cb
         def _make_sync_num(key_sld, key_num):
-            def _cb(): st.session_state[key_num] = st.session_state[key_sld]
+            def _cb(): st.session_state[key_num] = st.session_state[key_sld] / 100.0
             return _cb
 
         # --- 各ウェイトのキー定義 (label, sw_key, ui_key_suffix) ---
@@ -4067,18 +4075,25 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
                 min_val = -100.0
                 
+                # Initialize if missing
+                if sld_key not in st.session_state: st.session_state[sld_key] = float(cur_val)
+                
+                val_num = max(min_val/100.0, min(max_val/100.0, cur_val / 100.0))
+                if num_key not in st.session_state: st.session_state[num_key] = float(val_num)
+                
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     st.slider(
                         display_label, min_value=min_val, max_value=max_val, step=1.0, 
-                        value=cur_val, key=sld_key,
+                        key=sld_key,
                         on_change=_make_sync_num(sld_key, num_key)
                     )
                 with c2:
                     st.number_input(
-                        "倍率", min_value=min_val/100.0, max_value=max_val/100.0, step=0.01,
-                        value=cur_val/100.0, key=num_key,
-                        on_change=_make_sync_slider(num_key, sld_key)
+                        "", min_value=min_val/100.0, max_value=max_val/100.0, step=0.01,
+                        key=num_key,
+                        on_change=_make_sync_slider(num_key, sld_key),
+                        label_visibility="collapsed"
                     )
                 sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
 
