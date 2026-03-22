@@ -1429,17 +1429,45 @@ if nav == "🏠 Single Race Analysis":
                                    ("🦁 平均位置取り%", "AvgPosition",  "pos"),
                                    ("基礎戦闘力%",     "Base",         "base")]
 
+                    # --- Preset Management ---
+                    PRESETS_FILE = "influence_presets.json"
+                    
+                    def load_influence_presets():
+                        if os.path.exists(PRESETS_FILE):
+                            try:
+                                with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+                                    return json.load(f)
+                            except:
+                                pass
+                        default_presets = {
+                            "Standard": {
+                                "NIndex": 60, "UIndex": 60, "Base": 100, "Suitability": 80,
+                                "SpeedIndex": 80, "Popularity": 30, "Jockey": 40
+                            }
+                        }
+                        try:
+                            with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+                                import json as _json2
+                                _json2.dump(default_presets, f, indent=2, ensure_ascii=False)
+                        except: pass
+                        return default_presets
+                        
                     def _render_weight_group_sm(items, sw, prefix):
                         for label, sw_key, suffix in items:
                             sld_key = f"wsld_{prefix}{suffix}"
                             num_key = f"wnum_{prefix}{suffix}"
                             cur_val = float(sw.get(sw_key, 0.0))
+                            
+                            display_label = label
+                            if cur_val < 0:
+                                display_label += " :red[[逆相関/減点]]"
+
                             c1, c2 = st.columns([2, 1])
                             with c1:
-                                st.slider(label, 0.0, 100.0, cur_val, 0.01, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
+                                st.slider(display_label, -100.0, 100.0, cur_val, 1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
                             with c2:
-                                st.number_input(" ", 0.0, 100.0, cur_val, 0.01, key=num_key, label_visibility="hidden", on_change=_make_sync_slider_sm(num_key, sld_key))
-                            sw[sw_key] = float(st.session_state.get(num_key, cur_val))
+                                st.number_input("倍率", -1.0, 1.0, cur_val/100.0, 0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key))
+                            sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
 
                     with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
                         with st.container(border=True):
@@ -1539,7 +1567,8 @@ if nav == "🏠 Single Race Analysis":
                             bonus_val = score * (sw.get(sw_key, 0.0) / 100.0)
                             bonuses[sw_key] = bonus_val
                             if bonus_val != 0:
-                                bonus_details.append(f"{label_map_short.get(sw_key, sw_key)}:+{bonus_val:.1f}")
+                                label_txt = label_map_short.get(sw_key, sw_key)
+                                bonus_details.append(f"{label_txt}:{bonus_val:+.1f}")
 
                         # 騎手(特例)
                         j_pts = 0
@@ -4011,24 +4040,25 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 num_key = f"wnum_{prefix}{suffix}"
                 cur_val = float(sw.get(sw_key, 0.0))
                 
-                # 人気%のみマイナス（逆転ロジック）を許容
-                min_v = -100.0 if sw_key == "Popularity" else 0.0
+                # UIラベルの装飾（負の値の場合は「逆相関」を表示）
+                display_label = label
+                if cur_val < 0:
+                    display_label += " :red[[逆相関/減点]]"
                 
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     st.slider(
-                        label, min_value=min_v, max_value=100.0, step=0.01,
+                        display_label, min_value=-100.0, max_value=100.0, step=1.0, 
                         value=cur_val, key=sld_key,
                         on_change=_make_sync_num(sld_key, num_key)
                     )
                 with c2:
                     st.number_input(
-                        " ", min_value=min_v, max_value=100.0, step=0.01,
-                        value=cur_val, key=num_key, label_visibility="hidden",
+                        "倍率", min_value=-1.0, max_value=1.0, step=0.01,
+                        value=cur_val/100.0, key=num_key,
                         on_change=_make_sync_slider(num_key, sld_key)
                     )
-                # session_state から最新値を取得（スライダーと数値が同期した後）
-                sw[sw_key] = float(st.session_state.get(num_key, cur_val))
+                sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
 
         st.markdown("### 📊 影響率（ウェイト）設定")
         with st.container(border=True):
