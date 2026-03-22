@@ -1,3 +1,4 @@
+import requests
 from scrapling import Fetcher
 from bs4 import BeautifulSoup
 import re
@@ -8,19 +9,38 @@ logger = logging.getLogger(__name__)
 def fetch_horse_weights(race_id):
     """
     [Scrapling v0.4.2 準拠]
-    競馬ラボから馬体重と増減を抽出する
+    競馬ラボから馬体重と増減を抽出する (スピード優先: requests)
     """
     url = f"https://www.keibalab.jp/db/race/{race_id}/syutsuba.html"
     weights = {}
-    fetcher = Fetcher(impersonate="chrome120")
     
     try:
         logger.info(f"[LabFetcher] fetching weights: {url}")
-        response = fetcher.get(url)
-        if not response or not response.body:
+        html = None
+        
+        # 1. Try requests first (Fast)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.keibalab.jp/"
+        }
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                html = r.text
+        except:
+            pass
+            
+        # 2. Fallback to Scrapling
+        if not html:
+            fetcher = Fetcher(impersonate="chrome120")
+            response = fetcher.get(url, timeout=12)
+            if response and response.body:
+                html = response.body.decode('utf-8', errors='ignore') if isinstance(response.body, bytes) else response.body
+
+        if not html:
             return {}
             
-        soup = BeautifulSoup(response.body, 'html.parser')
+        soup = BeautifulSoup(html, 'html.parser')
         
         # 1. テーブルを探す (table_sh は今日のレースなどで使われる)
         table = soup.select_one('table.table_sh') or soup.select_one('table.db_table') or soup.find('table')

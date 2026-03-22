@@ -64,6 +64,19 @@ def _is_nar(race_id):
     except:
         return False
 
+# --- SHARED FETCHERS (Singleton-like) ---
+_SHARED_FETCHER = None
+
+def get_shared_fetcher():
+    global _SHARED_FETCHER
+    if _SHARED_FETCHER is None:
+        try:
+            from scrapling import Fetcher as ScraplingFetcher
+            _SHARED_FETCHER = ScraplingFetcher(impersonate='chrome120')
+        except:
+            pass
+    return _SHARED_FETCHER
+
 # --- Added by request (Strict mapping) ---
 def sync_odds_to_df(df, api_odds):
     """
@@ -158,25 +171,23 @@ def fetch_robust_html(url, referer=None, wait_time=4000):
     """
     headers = _get_headers(referer=referer)
 
-    # Check if Scrapling is available
-    if not SCRAPLING_AVAILABLE:
-        logger.warning(f"Scrapling not available, testing pure requests...")
-        html = fetch_regular_requests(url, headers)
-        if html: return html
-        # Let it fall through to cloudscraper below
-    
+    # 1. Try regular requests FIRST (Fastest)
+    html = fetch_regular_requests(url, headers)
+    if html and not _is_blocked(html):
+        return html
+
+    # 2. Try Scrapling (Shared Fetcher)
     if SCRAPLING_AVAILABLE:
-        # Option 1: scrapling (Robust standard) (impersonate='chrome120') ---
         try:
-            fetcher = ScraplingFetcher(impersonate='chrome120')
-            response = fetcher.get(url, headers=headers, timeout=15)
-            if response and response.body:
-                html = _decode_content(response.body)
-                if html and not _is_blocked(html):
-                    logger.info(f"[Scrapling-Fetcher] OK: {url}")
-                    return html
+            fetcher = get_shared_fetcher()
+            if fetcher:
+                response = fetcher.get(url, headers=headers, timeout=12)
+                if response and response.body:
+                    html = _decode_content(response.body)
+                    if html and not _is_blocked(html):
+                        return html
         except Exception as e:
-            logger.debug(f"[Scrapling-Fetcher] failed: {e}")
+            logger.debug(f"[Scrapling-Shared] failed: {e}")
 
         # --- Tier 2: StealthyFetcher (v0.4.2 推奨) ---
         if StealthyFetcher:
@@ -714,9 +725,16 @@ def fetch_realtime_odds_api(race_id):
             }
 
             try:
-                logger.info(f"[API-Odds] Fetching compress={c_flag} type={t} via Fetcher ({api_url})")
-                fetcher = ScraplingFetcher(impersonate='chrome120')
-                resp = fetcher.get(api_url, headers=headers, timeout=12)
+                logger.debug(f"[API-Odds] Fetching compress={c_flag} type={t} via Shared Fetcher ({api_url})")
+                fetcher = get_shared_fetcher()
+                if fetcher:
+                    resp = fetcher.get(api_url, headers=headers, timeout=12)
+                else:
+                    import requests as _req
+                    resp = _req.get(api_url, headers=headers, timeout=12)
+                    # body attribute for compatibility
+                    resp.body = resp.content
+                
                 if resp and resp.body:
                     temp_map = _decode_and_parse(resp.body)
                     if temp_map:

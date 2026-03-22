@@ -1417,6 +1417,7 @@ if nav == "🏠 Single Race Analysis":
                     _W_GROUP1   = [("📈 N指数%",      "NIndex",      "nidx"),
                                    ("📊 U指数%",      "UIndex",      "uidx"),
                                    ("⚡ ｵﾒｶﾞ指数%",   "LaboIndex",   "labo"),
+                                   ("💪 強さ(X)%",  "Strength (X)", "strx"),
                                    ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
                                    ("🔥 人気%",       "Popularity",  "pop")]
                     _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
@@ -1515,6 +1516,7 @@ if nav == "🏠 Single Race Analysis":
                     _norm_stats = {}
                     _metric_keys = {
                         'NIndex': True, 'UIndex': True, 'LaboIndex': True, 'SpeedIndex': True, 
+                        'Strength (X)': True,
                         'Popularity': False, # 小さいほど良い
                         'TrainingScore': True,
                         'WeightDiff': True,
@@ -1545,7 +1547,7 @@ if nav == "🏠 Single Race Analysis":
                         # 各項目のスコア化と重み付け
                         for m_key, sw_key in [
                             ('NIndex', 'NIndex'), ('UIndex', 'UIndex'), ('LaboIndex', 'LaboIndex'), 
-                            ('SpeedIndex', 'SpeedIndex'), ('Popularity', 'Popularity'),
+                            ('SpeedIndex', 'SpeedIndex'), ('Strength (X)', 'Strength (X)'), ('Popularity', 'Popularity'),
                             ('TrainingScore', 'Training'), ('WeightDiff', 'Weight'),
                             ('WeightCarried', 'WeightCarried'), ('Suitability (Y)', 'Suitability'),
                             ('AvgAgari', 'AvgAgari'), ('Umaban', 'Umaban'), ('AvgPosition', 'AvgPosition')
@@ -4021,6 +4023,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _W_GROUP1   = [("📊 N指数%",      "NIndex",      "nidx"),
                        ("📊 U指数%",      "UIndex",      "uidx"),
                        ("⚡ ｵﾒｶﾞ指数%",   "LaboIndex",   "labo"),
+                       ("💪 強さ(X)%",  "Strength (X)", "strx"),
                        ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
                        ("🔥 人気%",       "Popularity",  "pop")]
         _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
@@ -4185,6 +4188,11 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             odds_val = pw_data.get('Odds', 0.0)
             if odds_val > 0.0:
                 row['Odds'] = odds_val
+            
+            # --- Strength (X) Sync ---
+            s_val = float(row.get('Strength (X)', 0))
+            # If TimeIndex was merged but recalculation not yet done, we can trust the current row['Strength (X)'] 
+            # as it was recalculated in btn_pw_test or Analyze button.
             
             # --- Netkeiba Time Index Merge ---
             t_idx = pw_data.get('TimeIndex', 0.0)
@@ -4372,6 +4380,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "調教": pw_data.get('TrainingScore', "-"),
                 "斤量": row.get('WeightCarried', "-"),
                 "スピード指数": round(s_idx_raw, 1),
+                "強さ(X)": round(float(row.get('Strength (X)', 0.0)), 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
                 "タイム指数": pw_data.get('TimeIndex', "-"),
