@@ -1387,7 +1387,7 @@ if nav == "🏠 Single Race Analysis":
                     _WEIGHTS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_main.json")
                     _weight_defaults = {
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
-                        "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightCarried": 0.0,
+                        "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -10.0, "WeightCarried": 0.0,
                         "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0,
                         "Base": 100.0
                     }
@@ -1423,6 +1423,7 @@ if nav == "🏠 Single Race Analysis":
                     _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
                                    ("⏱️ 調教%",       "Training",    "trn"),
                                    ("⚖️ 馬体重%",     "Weight",      "wgt"),
+                                   ("⚖️ 馬体増減ペナルティ", "WeightPenalty", "wgtp"),
                                    ("🏋️ 斤量%",       "WeightCarried","wgtc")]
                     _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
                                    ("🚀 上がり3F%",   "AvgAgari",     "agi"),
@@ -1463,11 +1464,14 @@ if nav == "🏠 Single Race Analysis":
                             if cur_val < 0:
                                 display_label += " :red[[逆相関/減点]]"
 
+                            max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
+                            min_val = -100.0
+
                             c1, c2 = st.columns([2, 1])
                             with c1:
-                                st.slider(display_label, -100.0, 100.0, cur_val, 1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
+                                st.slider(display_label, min_val, max_val, cur_val, 1.0, key=sld_key, on_change=_make_sync_num_sm(sld_key, num_key))
                             with c2:
-                                st.number_input("倍率", -1.0, 1.0, cur_val/100.0, 0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key))
+                                st.number_input("w", min_val/100.0, max_val/100.0, cur_val/100.0, 0.01, key=num_key, on_change=_make_sync_slider_sm(num_key, sld_key))
                             sw[sw_key] = float(st.session_state.get(num_key, cur_val/100.0)) * 100.0
 
                     with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
@@ -1528,7 +1532,8 @@ if nav == "🏠 Single Race Analysis":
                     }
                     
                     # 特殊抽出
-                    df['WeightDiff'] = df['WeightHistory'].str.extract(r'([+-]?\d+)').astype(float).fillna(0)
+                    df['WeightDiff'] = df['WeightHistory'].str.extract(r'\(([+-]?\d+)\)').iloc[:,0].astype(float).fillna(0)
+                    # カッコ内の増減値（+20 や -12）のみを抽出。ない場合は 0。
 
                     for m_key, higher_is_better in _metric_keys.items():
                         col = m_key if m_key in df.columns else None
@@ -1588,6 +1593,14 @@ if nav == "🏠 Single Race Analysis":
                             bonus_details.append(f"騎手:+{j_bonus:.1f}")
 
                         total_bonus = sum(bonuses.values())
+                        
+                        # --- Horse Weight Change Penalty ---
+                        w_diff = abs(float(row.get('WeightDiff', 0) or 0))
+                        w_penalty_w = sw.get('WeightPenalty', 0.0) / 100.0 # e.g. -0.10
+                        w_penalty_score = w_diff * w_penalty_w
+                        if w_penalty_score != 0:
+                            total_bonus += w_penalty_score
+                            bonus_details.append(f"馬体:{w_penalty_score:+.1f}")
                         final_score = (base_pts * (sw.get('Base', 100.0) / 100.0)) + total_bonus
                         
                         return pd.Series({
@@ -3993,7 +4006,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _W_FILE_T = os.path.join(os.path.dirname(__file__), ".score_weights_test.json")
         _weight_defaults = {
             "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
-            "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightCarried": 0.0,
+            "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -10.0, "WeightCarried": 0.0,
             "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Bloodline": 0.0,
             "Base": 100.0
         }
@@ -4029,6 +4042,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
                        ("⏱️ 調教%",       "Training",    "trn"),
                        ("⚖️ 馬体重%",     "Weight",      "wgt"),
+                       ("⚖️ 馬体増減ペナルティ", "WeightPenalty", "wgtp"),
                        ("🏋️ 斤量%",       "WeightCarried","wgtc")]
         _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
                        ("🚀 上がり3F%",   "AvgAgari",     "agi"),
@@ -4048,16 +4062,19 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 if cur_val < 0:
                     display_label += " :red[[逆相関/減点]]"
                 
+                max_val = 0.0 if sw_key == "WeightPenalty" else 100.0
+                min_val = -100.0
+                
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     st.slider(
-                        display_label, min_value=-100.0, max_value=100.0, step=1.0, 
+                        display_label, min_value=min_val, max_value=max_val, step=1.0, 
                         value=cur_val, key=sld_key,
                         on_change=_make_sync_num(sld_key, num_key)
                     )
                 with c2:
                     st.number_input(
-                        "倍率", min_value=-1.0, max_value=1.0, step=0.01,
+                        "倍率", min_value=min_val/100.0, max_value=max_val/100.0, step=0.01,
                         value=cur_val/100.0, key=num_key,
                         on_change=_make_sync_slider(num_key, sld_key)
                     )
