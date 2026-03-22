@@ -242,6 +242,47 @@ def fetch_advanced_data_dynamic(race_id, top_horse_ids=None):
     except Exception as e:
         sys.stderr.write(f"ERROR during KeibaLab (omega) fetch: {e}\n")
 
+    # 6. --- Netkeiba Time Index (タイム指数 type=9) ---
+    try:
+        t_url = f"https://race.netkeiba.com/race/index.html?race_id={race_id}&type=9"
+        html_t = _dynamic_get(t_url, timeout=25000)
+        t_soup = BeautifulSoup(html_t, 'html.parser')
+        # タイム指数のテーブルを探索
+        t_table = t_soup.find('table', class_=re.compile(r'RaceTable|shutubaTable', re.I))
+        if t_table:
+            ti_col = -1
+            for row in t_table.find_all('tr'):
+                cells = row.find_all(['td', 'th'])
+                if not cells: continue
+                # ヘッダー行で「タイム指数」の列を探す
+                if ti_col == -1:
+                    header_text = row.get_text()
+                    if '指数' in header_text:
+                        for idx, c in enumerate(cells):
+                            if '指数' in c.get_text():
+                                ti_col = idx
+                                break
+                    continue
+                
+                # データ行の処理
+                if ti_col != -1 and len(cells) >= max(2, ti_col + 1):
+                    try:
+                        # 馬番を取得
+                        m_u = re.search(r'(\d+)', cells[1].get_text(strip=True))
+                        if m_u:
+                            um = int(m_u.group(1))
+                            if um in advanced_data:
+                                # 指数値を取得（--- 等は 0.0 とする）
+                                val_text = cells[ti_col].get_text(strip=True)
+                                m_ti = re.search(r'(\d+\.\d+|\d+)', val_text)
+                                if m_ti:
+                                    advanced_data[um]['TimeIndex'] = float(m_ti.group(1))
+                                else:
+                                    advanced_data[um]['TimeIndex'] = 0.0
+                    except: pass
+    except Exception as e:
+        sys.stderr.write(f"ERROR during Netkeiba TimeIndex (type=9) fetch: {e}\n")
+
     return advanced_data
 
 

@@ -1388,42 +1388,26 @@ def calculate_strength_suitability(df, course_profile):
     is_long     = '直線が長い' in course_profile
     
     # ─── STRENGTH (X-axis): Pure base ability ──────────
-    def calc_strength_raw(row):
-        past = row.get('PastRuns', [])
+    # ─── STRENGTH (X-axis): Netkeiba Time Index base (Min-Max Scaling) ───
+    if 'TimeIndex' in df.columns and df['TimeIndex'].max() > 0:
+        ti_max = df['TimeIndex'].max()
+        ti_min = df['TimeIndex'][df['TimeIndex'] > 0].min() if (df['TimeIndex'] > 0).any() else 0
+        ti_range = ti_max - ti_min
         
-        # (A) BattleScore — composite ability score already computed (weight 50%)
-        bs = float(row.get('BattleScore', 0) or 0)
-        a_score = bs * 0.50
+        def _norm_ti(row):
+            val = float(row.get('TimeIndex', 0))
+            if val <= 0: return 20.0
+            if ti_range <= 0: return 85.0
+            res_norm = (val - ti_min) / ti_range
+            return round(max(5, min(95, res_norm * 90 + 5)), 1)
         
-        # (B) Inverse Popularity: lower odds/popular = stronger perceived (weight 30%)
-        pop = int(row.get('Popularity', 9) or 9)
-        total_horses = max(len(df), 1)
-        b_score = max(0, 30 * (1 - (pop - 1) / (total_horses - 1)))
+        df['Strength (X)'] = df.apply(_norm_ti, axis=1)
+    else:
+        df['Strength (X)'] = df.apply(lambda r: round(min(95, max(5, float(r.get('BattleScore', 50)) / 1.1)), 1), axis=1)
+        
         
         # (C) Grade class bonus — proven against top opponents (weight 20%)
-        class_pts = 0
-        for r in past[:12]:
-            grade = str(r.get('Grade', '')).upper()
-            rnk = r.get('Rank', 99)
-            if 'G1' in grade or grade == 'GI':
-                class_pts += 6 if rnk <= 3 else 2
-            elif 'G2' in grade or grade == 'GII':
-                class_pts += 4 if rnk <= 3 else 1
-            elif 'G3' in grade or grade == 'GIII':
-                class_pts += 2 if rnk <= 3 else 0
-        c_score = min(20, class_pts)
-        
-        return a_score + b_score + c_score
     
-    df['_strength_raw'] = df.apply(calc_strength_raw, axis=1)
-    
-    # Normalize with stronger spread using percentile anchoring
-    s_vals = df['_strength_raw'].values
-    s_p10, s_p90 = np.percentile(s_vals, 10), np.percentile(s_vals, 90)
-    def _norm_s(v):
-        if s_p90 == s_p10: return 50
-        return max(5, min(98, (v - s_p10) / (s_p90 - s_p10) * 88 + 10))
-    df['Strength (X)'] = df['_strength_raw'].apply(_norm_s)
     
     # ─── SUITABILITY (Y-axis): Condition fit ───────────
     def calc_suitability_raw(row):

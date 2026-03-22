@@ -1785,7 +1785,7 @@ if nav == "🏠 Single Race Analysis":
                         "ボーナス詳細": st.column_config.TextColumn("ボーナス内訳"),
                         "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
                         "BattleScore": st.column_config.NumberColumn("🔥 総合戦闘力", format="%.1f"),
-                        "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f"),
+                        "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f", help="netkeiba タイム指数ベースの偏差能力 (最高100)"),
                         "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.0f"),
                         "SpeedIndex": st.column_config.NumberColumn("スピード指数 (旧)", format="%.1f"),
                         "AvgAgari": st.column_config.TextColumn("上がり3F (順位)"),
@@ -4113,8 +4113,17 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 st.write("2. 独自指数 (DIY1/DIY2) を計算中...")
                 df_main = st.session_state.get('df')
                 if df_main is not None:
+                    # --- TimeIndex Merge and Strength Recalculation ---
+                    for u, d in adv_data.items():
+                        ti = d.get('TimeIndex', 0.0)
+                        if ti > 0:
+                            df_main.loc[df_main['Umaban'] == u, 'TimeIndex'] = ti
+                    
                     df_main = calculator.calculate_diy_index(df_main)
                     df_main = calculator.calculate_diy2_index(df_main)
+                    # Recalculate Strength basis (X) with new Netkeiba Time Index
+                    meta_prof = st.session_state.get('race_metadata', {}).get('course_profile', '')
+                    df_main = calculator.calculate_strength_suitability(df_main, meta_prof)
                     st.session_state['df'] = df_main
                 status.update(label="✅ 全データの取得と計算が完了しました！", state="complete", expanded=False)
             st.rerun()
@@ -4173,9 +4182,13 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if pop_val != 99:
                 row['Popularity'] = pop_val
             
-            odds_val = pw_data.get('Odds', 0.0)
             if odds_val > 0.0:
                 row['Odds'] = odds_val
+            
+            # --- Netkeiba Time Index Merge ---
+            t_idx = pw_data.get('TimeIndex', 0.0)
+            if t_idx > 0:
+                row['TimeIndex'] = t_idx
 
             # A. 枠順バイアス (Frame bias)
             if total_horses > 0 and umaban > 0:
@@ -4360,6 +4373,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 "スピード指数": round(s_idx_raw, 1),
                 "DIY指数": round(float(row.get('DIY_Index', 0.0)), 1),
                 "DIY2": round(float(row.get('DIY2_Index', 0.0)), 1),
+                "タイム指数": pw_data.get('TimeIndex', "-"),
                 "_BonusDetails": ", ".join(horse_bonus_details) if horse_bonus_details else "-",
                 "_Style": "|".join(_style_note) if _style_note else ""
             })
