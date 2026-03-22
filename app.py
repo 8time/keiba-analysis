@@ -4443,7 +4443,12 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             
         df_test_res['馬名(ラベル付)'] = df_test_res.apply(refine_marks, axis=1)
         
-        # Re-sort by Predicted Score
+        # --- Re-order and Finalize ---
+        # ユーザー要望: 新順位を一番左に
+        cols = ['新順位'] + [c for c in df_test_res.columns if c not in ['新順位', 'Diff']] + ['Diff']
+        df_test_res = df_test_res[cols]
+        
+        # Sort by Predicted Score
         df_test_res = df_test_res.sort_values(by="予測スコア", ascending=False).reset_index(drop=True)
         df_test_res.index = range(1, len(df_test_res) + 1)
 
@@ -4485,16 +4490,27 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             style_tag = str(r.get('_Style', ''))
             diff_val = r.get('Diff', 0)
             is_giant = "🔥『大金星候補』" in str(r.get('馬名(ラベル付)', ''))
+            new_rank = r.get('新順位', 99)
             
-            if is_giant: bg = 'background-color: #ff4500;' # OrangeRed (Giant Killing)
-            elif diff_val >= 3: bg = 'background-color: #006400;' # Bright Green
-            elif 'BEST' in style_tag: bg = 'background-color: #004d00;' # Dark Green
-            elif 'RISK' in style_tag: bg = 'background-color: #4d0000;' # Dark Red
+            if is_giant: 
+                bg = 'background-color: #ff4500;' # OrangeRed (Giant Killing)
+            elif diff_val >= 3: 
+                bg = 'background-color: #006400;' # Bright Green
+            elif 'BEST' in style_tag: 
+                bg = 'background-color: #004d00;' # Dark Green
+            elif 'RISK' in style_tag: 
+                bg = 'background-color: #4d0000;' # Dark Red
+            elif new_rank <= 5:
+                bg = 'background-color: #1e3d59;' # Dark Blue (Top 5 Highlight)
             
             text_col = 'color: white; font-weight: bold;' if bg else ''
             return [bg + text_col for _ in r]
 
         df_display = df_test_res.drop(columns=['_BonusDetails', '_Style']) if '_BonusDetails' in df_test_res.columns else df_test_res
+        # カラム順の最終保証（新順位を左端に）
+        if '新順位' in df_display.columns:
+            cols = ['新順位'] + [c for c in df_display.columns if c != '新順位']
+            df_display = df_display[cols]
         
         # 行全体のハイライト（仕上がり・逆転候補）
         styled_test_df = df_display.style.apply(highlight_test_rows, axis=1)
