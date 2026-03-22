@@ -4438,7 +4438,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             
             # 大金星 candidate: 戦闘力(元の順位)1位ではない馬が予測1位
             if r['新順位'] == 1 and r['元の順位'] > 1:
-                name = "🔥『大金星候補』 " + name
+                name = "🔥『金星』 " + name
             return name
             
         df_test_res['馬名(ラベル付)'] = df_test_res.apply(refine_marks, axis=1)
@@ -4489,7 +4489,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             bg = ''
             style_tag = str(r.get('_Style', ''))
             diff_val = r.get('Diff', 0)
-            is_giant = "🔥『大金星候補』" in str(r.get('馬名(ラベル付)', ''))
+            is_giant = "🔥『金星』" in str(r.get('馬名(ラベル付)', ''))
             new_rank = r.get('新順位', 99)
             
             if is_giant: 
