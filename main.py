@@ -6,16 +6,12 @@ import json
 import os
 import re
 import concurrent.futures
+try:
+    from core.scraper import get_shared_fetcher
+except ImportError:
+    get_shared_fetcher = lambda: None
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ⚠️ 文字化け回避ルール準拠
 def load_json_file(filename, default_val):
@@ -100,31 +96,53 @@ def calculate_sire_bonus(name, race_track, race_dist):
     return score
 
 @app.get("/api/bloodline/{race_id}")
-def get_bloodline_data(race_id: str):
+def get_bloodline_data(race_id: str, track_override: str = None, dist_override: int = None):
     domain = "race.netkeiba.com"
     if str(race_id)[4:6] > "10": domain = "nar.netkeiba.com"
         
     url = f"https://{domain}/race/shutuba.html?race_id={race_id}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
+    html = ""
+    fetcher = get_shared_fetcher()
+    if fetcher:
+        try:
+            resp = fetcher.get(url)
+            html = resp.text
+        except: pass
+    
+    if not html:
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            html = decode_content(response.content)
+        except: pass
+
+    if not html:
+        return {"race_id": race_id, "condition": "error_fetch", "data": [], "error": "HTML Fetch Failed"}
+
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        html = decode_content(response.content)
         soup = BeautifulSoup(html, "html.parser")
         
         # 1. レース条件（芝/ダート、距離）の自動取得
-        race_data_div = soup.select_one(".RaceData01")
-        track_type = "不明"
-        distance_val = 0
-        condition_key = "不明_不明"
+        # --- Override or Scrape ---
+        track_type = track_override
+        distance_val = dist_override
         
-        if race_data_div:
-            match = re.search(r'(芝|ダ)(\d+)m', race_data_div.text)
-            if match:
-                track_char = match.group(1)
-                track_type = "芝" if track_char == "芝" else "ダート"
-                distance_val = int(match.group(2))
-                condition_key = f"{track_type}_{distance_val}"
+        if not track_type or not distance_val:
+            race_data_div = soup.select_one(".RaceData01")
+            scr_track = "不明"
+            scr_dist = 0
+            if race_data_div:
+                match = re.search(r'(芝|ダ)(\d+)m', race_data_div.text)
+                if match:
+                    track_char = match.group(1)
+                    scr_track = "芝" if track_char == "芝" else "ダート"
+                    scr_dist = int(match.group(2))
+            
+            if not track_type: track_type = scr_track
+            if not distance_val: distance_val = scr_dist
+
+        condition_key = f"{track_type}_{distance_val}" if track_type != "不明" else "不明"
         
         # 2. 出馬表から各馬のID取得
         horse_list = []

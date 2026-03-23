@@ -38,7 +38,8 @@ if not GEMINI_API_KEY:
 
 import importlib
 import pandas as pd
-import requests
+import concurrent.futures
+import main
 import numpy as np
 import time
 import math
@@ -1097,10 +1098,12 @@ if nav == "🏠 Single Race Analysis":
                 
                 # --- [NEW] Fetch Bloodline and Condition Bonus ---
                 try:
-                    bloodline_api_url = f"http://127.0.0.1:8000/api/bloodline/{race_id_input}"
-                    blood_resp = requests.get(bloodline_api_url, timeout=10)
-                    if blood_resp.status_code == 200:
-                        blood_json = blood_resp.json()
+                    # Streamlit Cloud では 127.0.0.1 へのHTTP呼び出しができないため、直接関数を呼ぶ
+                    t_type = df['CurrentSurface'].iloc[0] if 'CurrentSurface' in df.columns else None
+                    d_val = df['CurrentDistance'].iloc[0] if 'CurrentDistance' in df.columns else None
+                    
+                    blood_json = main.get_bloodline_data(str(race_id_input), track_override=t_type, dist_override=d_val)
+                    if blood_json and "data" in blood_json:
                         blood_data_list = blood_json.get("data", [])
                         if blood_data_list and df is not None and not df.empty:
                             df_blood = pd.DataFrame(blood_data_list)
@@ -1307,7 +1310,7 @@ if nav == "🏠 Single Race Analysis":
                     st.markdown(f"""
                         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {rank_color}; margin-bottom: 20px;">
                             <div style="display: flex; align-items: baseline; gap: 15px;">
-                                <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: {chaos_data['rank']}</h1>
+                                <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: {chaos_data['rank']} | {df['RaceName'].iloc[0] if not df.empty else ''}</h1>
                                 <span style="font-size: 24px; color: {rank_color}; font-weight: bold;">(Score: {chaos_data.get('chaos_score', 0):.1f})</span>
                                 <span style="margin-left: auto; font-size: 20px; font-weight: bold; background: #eee; padding: 4px 12px; border-radius: 20px;">📍 {display_cond}</span>
                             </div>
@@ -1730,6 +1733,8 @@ if nav == "🏠 Single Race Analysis":
                             **{f"{k}_Bonus": v for k, v in bonuses.items()},
                             'Projected Score': round(final_score, 1),
                             'Stress': -round(weighted_loss, 1),
+                            'sire': row.get('sire', '-'),
+                            'broodmareSire': row.get('broodmareSire', '-'),
                             'ボーナス詳細': ", ".join(bonus_details) if bonus_details else "-"
                         })
 
@@ -1814,12 +1819,20 @@ if nav == "🏠 Single Race Analysis":
                     view_df['AvgAgari'] = view_df.apply(fmt_agari, axis=1)
 
                     # Format Position (2.5 🦁)
+                    # Show Lion icon ONLY for Top 5 horses with lowest AvgPosition
+                    top_5_pos_threshold = 99.9
+                    if 'AvgPosition' in view_df.columns:
+                        try:
+                            valid_pos = pd.to_numeric(view_df['AvgPosition'], errors='coerce').dropna()
+                            valid_pos = valid_pos[valid_pos > 0]
+                            if not valid_pos.empty:
+                                top_5_pos_threshold = valid_pos.nsmallest(5).max()
+                        except: pass
+
                     def fmt_pos(row):
                         p = row.get('AvgPosition', 99.9)
-                        trusted = row.get('PosTrust', False)
-                    
-                        if p >= 99.0: return "-"
-                        icon = " 🦁" if p <= 5.0 else ""
+                        if pd.isna(p) or p >= 99.0 or p <= 0: return "-"
+                        icon = " 🦁" if p <= top_5_pos_threshold else ""
                         return f"{p:.1f}{icon}"
                     
                     view_df['AvgPosition'] = view_df.apply(fmt_pos, axis=1)
