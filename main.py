@@ -1,17 +1,33 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+try:
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+
 import requests
 from bs4 import BeautifulSoup
 import json
 import os
 import re
 import concurrent.futures
+
 try:
     from core.scraper import get_shared_fetcher
 except ImportError:
     get_shared_fetcher = lambda: None
 
-app = FastAPI()
+if HAS_FASTAPI:
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"], 
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app = None
 
 # ⚠️ 文字化け回避ルール準拠
 def load_json_file(filename, default_val):
@@ -95,7 +111,6 @@ def calculate_sire_bonus(name, race_track, race_dist):
         
     return score
 
-@app.get("/api/bloodline/{race_id}")
 def get_bloodline_data(race_id: str, track_override: str = None, dist_override: int = None):
     domain = "race.netkeiba.com"
     if str(race_id)[4:6] > "10": domain = "nar.netkeiba.com"
@@ -209,6 +224,14 @@ def get_bloodline_data(race_id: str, track_override: str = None, dist_override: 
     except Exception as e:
         return {"race_id": race_id, "condition": "error", "data": [], "error": str(e)}
 
+if HAS_FASTAPI and app:
+    @app.get("/api/bloodline/{race_id}")
+    def get_bloodline_api(race_id: str, track_override: str = None, dist_override: int = None):
+        return get_bloodline_data(race_id, track_override, dist_override)
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    if HAS_FASTAPI:
+        import uvicorn
+        uvicorn.run(app, host="127.0.0.1", port=8000)
+    else:
+        print("FastAPI is not installed. API server cannot be started, but functions are available for import.")
