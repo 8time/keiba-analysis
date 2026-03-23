@@ -19,3 +19,5 @@ msgspec
 kagglehub
 cloudscraper
 patchright
+fastapi
+uvicorn
