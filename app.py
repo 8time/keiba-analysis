@@ -1,6 +1,7 @@
 import sys, io
 sys.setrecursionlimit(10000) # Increased to handle Torch initialization
 import os
+import re
 import logging
 
 # Configure logging to handle Streamlit and sub-module output safely
@@ -1424,7 +1425,7 @@ if nav == "🏠 Single Race Analysis":
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
                         "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
                         "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
-                        "Base": 1.0
+                        "Base": 1.0, "Stress": 1.0
                     }
                     if 'score_weights_main' not in st.session_state:
                         if os.path.exists(_WEIGHTS_FILE):
@@ -1437,6 +1438,22 @@ if nav == "🏠 Single Race Analysis":
                                 st.session_state['score_weights_main'] = _weight_defaults.copy()
                         else:
                             st.session_state['score_weights_main'] = _weight_defaults.copy()
+                    
+                    # --- Global Style Injection for Sidebar (To match screenshots) ---
+                    st.markdown("""
+                        <style>
+                        [data-testid="stSidebar"] {
+                            background-color: #111111;
+                            color: white;
+                        }
+                        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+                            color: #ddd;
+                        }
+                        [data-testid="stSidebarNav"] span {
+                            color: white !important;
+                        }
+                        </style>
+                    """, unsafe_allow_html=True)
                     
                     sw = st.session_state['score_weights_main']
                     for k, v in _weight_defaults.items():
@@ -1465,7 +1482,8 @@ if nav == "🏠 Single Race Analysis":
                                    ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
                                    ("🦁 平均位置取り%", "AvgPosition",  "pos"),
                                    ("🧬 血統%",       "Bloodline",    "bld"),
-                                   ("基礎戦闘力%",     "Base",         "base")]
+                                   ("基礎戦闘力%",     "Base",         "base"),
+                                   ("🛡️ ストレス特性%", "Stress",       "strss")]
 
                     # --- Preset Management ---
                     PRESETS_FILE = "influence_presets.json"
@@ -1506,6 +1524,9 @@ if nav == "🏠 Single Race Analysis":
                             if sw_key == "WeightPenalty": max_val = 0.0
                             if sw_key == "Base": min_val, max_val = 0.0, 2.0
                             if sw_key == "Bloodline": max_val = 10.0
+                            if sw_key == "Stress": max_val = 15.0
+                            if sw_key == "Popularity": max_val = 10.0
+                            if sw_key == "Stress": max_val = 15.0
 
                             # Initialize if missing with clamping safety
                             safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
@@ -1521,7 +1542,7 @@ if nav == "🏠 Single Race Analysis":
                             # Keep sw updated
                             sw[sw_key] = float(st.session_state.get(num_key, cur_val))
 
-                    with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=True):
+                    with st.expander("📊 プロ設定：総合影響率（ウェイト）設定", expanded=False):
                         with st.container(border=True):
                             col1, col2, col3 = st.columns(3)
                             with col1:
@@ -1649,18 +1670,66 @@ if nav == "🏠 Single Race Analysis":
 
                         total_bonus = sum(bonuses.values())
                         
-                        # --- Horse Weight Change Penalty ---
-                        w_diff = abs(float(row.get('WeightDiff', 0) or 0))
+                        # --- Stress Multiplier (乗算デバフ: リミッター論理) ---
+                        multiplier = 1.0
+                        reasons = []
+                        
+                        # 共通データの準備
+                        w_text = str(row.get('WeightHistory', ''))
+                        match_w = re.search(r'(\d+)\(([-+]?\d+)\)', w_text)
+                        curr_w = int(match_w.group(1)) if match_w else 0 # 当日馬体重
+                        w_diff_val = int(match_w.group(2)) if match_w else 0 # 増減値
+                        
+                        umaban = int(row.get('Umaban', 0))
+                        waku = int(row.get('Waku', 1)) 
+                        avg_pos = float(row.get('AvgPosition', 9.9))
+                        surface = str(row.get('CurrentSurface', ''))
+                        dist = float(row.get('CurrentDistance', 1600) or 1600)
+
+                        # 条件A：キックバック・ストレス (ダート内枠+後方脚質)
+                        if "ダ" in surface and waku <= 3 and avg_pos >= 8.0:
+                            multiplier -= 0.08
+                            reasons.append("ダート内枠の砂かぶり(精神ストレス)")
+                        
+                        # 条件D：ダート長距離の内枠 (1800m以上のダート1〜3枠)
+                        if "ダ" in surface and dist >= 1800 and waku <= 3:
+                            multiplier -= 0.10
+                            reasons.append("長距離ダートの内枠(距離ストレス)")
+
+                        # 条件B：待機・出遅れストレス (奇数枠+逃げ脚質)
+                        if umaban % 2 != 0 and avg_pos <= 2.5:
+                            multiplier -= 0.05
+                            reasons.append("奇数枠の逃げ馬(待機ストレス)")
+
+                        # 条件C：過剰消耗ストレス (小柄馬+大幅馬体減)
+                        if curr_w > 0 and curr_w < 440 and w_diff_val <= -6:
+                            multiplier -= 0.15
+                            reasons.append("小柄馬の大幅馬体減(肉体ストレス)")
+                        
+                        multiplier = max(multiplier, 0.70)
+                        
+                        # 重み付き減衰量の計算 (指示書: 基礎評価に対する割合カット)
+                        stress_w = sw.get('Stress', 1.0)
+                        raw_potential = (base_pts * sw.get('Base', 1.0)) + total_bonus
+                        weighted_loss = raw_potential * (1.0 - multiplier) * stress_w
+                        
+                        if weighted_loss > 0:
+                            bonus_details.append(f"ストレス:({'+'.join(reasons)})")
+
+                        # --- Horse Weight Change Penalty (Legacy Support) ---
                         w_penalty_w = sw.get('WeightPenalty', 0.0)
-                        w_penalty_score = w_diff * w_penalty_w
+                        w_penalty_score = abs(float(w_diff_val)) * w_penalty_w
                         if w_penalty_score != 0:
                             total_bonus += w_penalty_score
                             bonus_details.append(f"馬体:{w_penalty_score:+.1f}")
-                        final_score = (base_pts * sw.get('Base', 1.0)) + total_bonus
+
+                        # 最終スコア = (基礎点 + 全ボーナス) - 加重デバフ
+                        final_score = raw_potential - weighted_loss
                         
                         return pd.Series({
                             **{f"{k}_Bonus": v for k, v in bonuses.items()},
                             'Projected Score': round(final_score, 1),
+                            'Stress': -round(weighted_loss, 1),
                             'ボーナス詳細': ", ".join(bonus_details) if bonus_details else "-"
                         })
 
@@ -1685,6 +1754,14 @@ if nav == "🏠 Single Race Analysis":
                     display_icon_legend()
 
                     view_df = df.copy()
+                    
+                    # ────────── Numerical Rounding (1 decimal) ──────────
+                    # Ensure all numeric metrics are rounded to 1 decimal place before display
+                    num_cols_to_round = ['Projected Score', 'BattleScore', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'SpeedIndex', 'LaboIndex', 'UIndex', 'Stress']
+                    for col in num_cols_to_round:
+                        if col in view_df.columns:
+                            view_df[col] = pd.to_numeric(view_df[col], errors='coerce').round(1)
+                    # ───────────────────────────────────────────────────
 
                     if 'Popularity' in df.columns:
                         def fmt_pop_name(row):
@@ -1769,18 +1846,23 @@ if nav == "🏠 Single Race Analysis":
 
                     # Mask sentinel values for display (99=未取得人気, 9999.0=未取得オッズ)
                     if 'Popularity' in view_df.columns:
-                        view_df['Popularity'] = view_df['Popularity'].apply(
-                            lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 99)) else str(int(x))
-                        )
+                        def _fmt_pop_emerald(x):
+                            if pd.isna(x) or (isinstance(x, (int, float)) and x >= 99): return '-'
+                            p_int = int(x)
+                            if p_int == 6: return "6 💎"
+                            return str(p_int)
+                        view_df['Popularity'] = view_df['Popularity'].apply(_fmt_pop_emerald)
                     if 'Odds' in view_df.columns:
                         view_df['Odds'] = view_df['Odds'].apply(
                             lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and x >= 9999.0)) else f'{x:.1f}'
                         )
 
                     # Merge previous screenshot columns with latest advanced columns
-                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'OddsGap', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'Jockey', 'JockeyChange', 'Name', 
-                            'Projected Score', 'ボーナス詳細', 'NIndex', 'BattleScore', 'Strength (X)', 'Suitability (Y)', 
-                            'SpeedIndex', 'AvgAgari', 'AvgPosition', 'Alert', 'RiskFlags']
+                    # --- NEW DEFAULT ORDER BASED ON USER REQUEST ---
+                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'Name', 'Jockey', 'Projected Score', 'BattleScore', 'AvgPosition', 
+                            'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'JockeyChange', 
+                            'ボーナス詳細', 'NIndex', 'Strength (X)', 'Suitability (Y)', 
+                            'SpeedIndex', 'AvgAgari', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
                     # --- Column order persistence (user_prefs.json) ---
@@ -1791,6 +1873,13 @@ if nav == "🏠 Single Race Analysis":
                         with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
                             _saved_sra = _json_sra.load(_f).get('single_race_col_order', [])
                     except: pass
+                    
+                    if _saved_sra and 'Stress' not in _saved_sra:
+                        if 'OddsGap' in _saved_sra:
+                            _idx = _saved_sra.index('OddsGap') + 1
+                            _saved_sra.insert(_idx, 'Stress')
+                        else:
+                            _saved_sra.append('Stress')
 
                     _all_cols = list(view_df.columns)
 
@@ -1802,6 +1891,7 @@ if nav == "🏠 Single Race Analysis":
                         "Bloodline": "血統(父/母父)", "Jockey": "騎手",
                         "JockeyChange": "乗替", "Name": "馬名",
                         "Projected Score": "⭐予測スコア", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
+                        "Stress": "ストレス",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
                         "SpeedIndex": "スピード指数", "AvgAgari": "上がり3F(順位)",
@@ -1870,11 +1960,12 @@ if nav == "🏠 Single Race Analysis":
                         "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
                         "Projected Score": st.column_config.NumberColumn("⭐予測スコア", format="%.1f"),
+                        "Stress": st.column_config.NumberColumn("ストレス", format="%.1f", help="外的・内的要因による能力減衰量。内訳ボタン（ボーナス詳細）で理由を確認できます"),
                         "ボーナス詳細": st.column_config.TextColumn("ボーナス内訳"),
                         "NIndex": st.column_config.NumberColumn("N指数", format="%.1f"),
                         "BattleScore": st.column_config.NumberColumn("🔥 総合戦闘力", format="%.1f"),
-                        "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.0f", help="netkeiba タイム指数ベースの偏差能力 (最高100)"),
-                        "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.0f"),
+                        "Strength (X)": st.column_config.NumberColumn("💪 強さ(X)", format="%.1f", help="netkeiba タイム指数ベースの偏差能力 (最高100)"),
+                        "Suitability (Y)": st.column_config.NumberColumn("🎯 適性(Y)", format="%.1f"),
                         "SpeedIndex": st.column_config.NumberColumn("スピード指数 (旧)", format="%.1f"),
                         "AvgAgari": st.column_config.TextColumn("上がり3F (順位)"),
                         "AvgPosition": st.column_config.TextColumn("平均位置取り"),
@@ -1889,9 +1980,11 @@ if nav == "🏠 Single Race Analysis":
                             for v in s:
                                 try:
                                     val = float(v)
-                                    if val >= 80: colors.append("background-color: #d9480f; color: white; font-weight: bold") # 高能力(赤)
-                                    elif val >= 65: colors.append("background-color: #ebfbee; color: #2b8a3e; font-weight: bold") # 標準(緑)
-                                    else: colors.append("background-color: #1864ab; color: white; font-weight: bold") # 低め(青)
+                                    if val >= 85: colors.append("background-color: #d9480f; color: white; font-weight: bold") 
+                                    elif val >= 75: colors.append("background-color: #f76707; color: white; font-weight: bold") 
+                                    elif val >= 65: colors.append("background-color: #2b8a3e; color: white; font-weight: bold") 
+                                    elif val >= 50: colors.append("background-color: #1864ab; color: white; font-weight: bold") 
+                                    else: colors.append("background-color: #ebfbee; color: #2b8a3e;") 
                                 except: colors.append("")
                             return colors
 
@@ -1924,7 +2017,20 @@ if nav == "🏠 Single Race Analysis":
                                 else: colors.append("")
                             return colors
 
+                        def color_popularity(s):
+                            # Special highlight for 6th Favorite (The "Emerald" horse)
+                            colors = []
+                            for val in s:
+                                if "6 💎" in str(val):
+                                    colors.append("background-color: #2b8a3e; color: #fab005; font-weight: bold")
+                                else:
+                                    colors.append("")
+                            return colors
+
                         styled_df = view_df.style
+                        if 'Popularity' in view_df.columns:
+                            styled_df = styled_df.apply(color_popularity, axis=0, subset=['Popularity'])
+                        
                         if 'BattleScore' in view_df.columns:
                             styled_df = styled_df.apply(color_battlescore, axis=0, subset=['BattleScore'])
                         if 'Rank' in view_df.columns:
@@ -3957,72 +4063,132 @@ if nav == "📊 History & Review":
         st.info("No history yet. Analyze races to build your database!")
 
 # ──────────────────────────────────────────────
-# 🧪 テスト タブ (血統加点テストツール)
+# 🧪 テスト タブ (🐎 Stress Analyst - 乗算デバフ検証)
 # ──────────────────────────────────────────────
 if nav == "🧪 テスト":
-    st.header("🧪 血統加点 テストツール")
-    st.markdown("血統データを取得し、独自の計算ロジックに基づいた加点をシミュレーションします。")
+    st.header("🐎 Stress Analyst (乗算デバフ検証)")
+    st.markdown("""
+    **「能力が低いのではなく、リミッターが掛かっている状態」を数値化します。**
+    基礎能力（スピード指数＋血統）に対し、当日の環境ストレスを「掛け算（％カット）」で適用し、危険な人気馬をあぶり出します。
+    """)
 
     # 入力エリア
     with st.container(border=True):
         col_in1, col_in2 = st.columns([2, 1])
         with col_in1:
-            test_race_id_input = st.text_input("レースIDを入力 (例: 202406010101)", placeholder="202406010101", key="bloodline_test_race_id")
+            test_race_id_input = st.text_input("レースIDを入力", placeholder="202406010101", key="stress_test_race_id")
         with col_in2:
-            st.write(" ") # スペース調整
-            fetch_btn = st.button("血統データを取得して計算", type="primary", use_container_width=True)
+            st.write(" ")
+            fetch_btn = st.button("ストレス要因を解析", type="primary", use_container_width=True)
 
-    # 実行と結果表示
     if fetch_btn:
         if not test_race_id_input:
             st.warning("レースIDを入力してください。")
         else:
-            with st.spinner("FastAPI サーバーからデータを取得中..."):
-                try:
-                    # ローカルの FastAPI サーバー (main.py) にリクエスト
-                    api_url = f"http://127.0.0.1:8000/api/bloodline/{test_race_id_input}"
-                    response = requests.get(api_url, timeout=15)
-                    
-                    if response.status_code == 200:
-                        json_data = response.json()
-                        results = json_data.get("data", [])
-                        
-                        if not results:
-                            st.warning("データが見つかりませんでした。")
-                        else:
-                            df_res = pd.DataFrame(results)
-                            
-                            # スタイル適用デコレータ
-                            def style_bonus_val(val):
-                                if val > 0: return 'color: #dc2626; font-weight: bold;' # text-red-600
-                                elif val < 0: return 'color: #2563eb; font-weight: bold;' # text-blue-600
-                                return 'color: #4b5563;' # text-gray-600
+            # メインタブのデータを流用するか、新規取得するか
+            # ここでは検証用に最新の df を使用
+            df = st.session_state.get('df')
+            if df is None or st.session_state.get('tab1_analyzed_id') != test_race_id_input:
+                with st.spinner("データを取得中..."):
+                    df = scraper.get_race_data(test_race_id_input)
+                    if df is not None:
+                        df = calculator.calculate_battle_score(df)
+                        # 血統も取得
+                        try:
+                            api_url = f"http://127.0.0.1:8000/api/bloodline/{test_race_id_input}"
+                            resp = requests.get(api_url, timeout=5)
+                            if resp.status_code == 200:
+                                b_data = pd.DataFrame(resp.json().get('data', []))
+                                if not b_data.empty:
+                                    df = df.merge(b_data[['number', 'bonus']], left_on=df['Umaban'].astype(int), right_on=b_data['number'].astype(int), how='left')
+                        except: pass
 
-                            # 表示
-                            st.subheader(f"分析結果: {test_race_id_input}")
-                            st.info(f"📍 判定条件: **{json_data.get('condition', '不明')}**")
-                            
-                            st.dataframe(
-                                df_res.style.map(style_bonus_val, subset=['bonus']),
-                                column_config={
-                                    "number": st.column_config.NumberColumn("馬番", format="%d"),
-                                    "name": "馬名",
-                                    "sire": "父 (Sire)",
-                                    "broodmareSire": "母父 (BMS)",
-                                    "bonus": st.column_config.NumberColumn("加点(点)", format="%.1f")
-                                },
-                                hide_index=True,
-                                use_container_width=True
-                            )
-                            st.success(f"連携解析が完了しました。")
-                    else:
-                        st.error(f"APIサーバーエラー (Status: {response.status_code})")
-                        
-                except requests.exceptions.ConnectionError:
-                    st.error("APIサーバーに接続できません。`main.py` が起動しているか確認してください。")
-                    st.info("起動コマンド: `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; uvicorn main:app --reload`")
-                except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
+            if df is not None and not df.empty:
+                results = []
+                for _, row in df.iterrows():
+                    m = 1.0
+                    reasons = []
+                    
+                    # 共通データの準備
+                    w_text = str(row.get('WeightHistory', ''))
+                    match_w = re.search(r'(\d+)\(([-+]?\d+)\)', w_text)
+                    curr_w = int(match_w.group(1)) if match_w else 0
+                    w_diff_val = int(match_w.group(2)) if match_w else 0
+                    
+                    umaban = int(row.get('Umaban', 0))
+                    waku = int(row.get('Waku', 1))
+                    avg_pos = float(row.get('AvgPosition', 9.9))
+                    surface = str(row.get('CurrentSurface', ''))
+                    dist = float(row.get('CurrentDistance', 1600) or 1600)
+                    
+                    # 条件A：キックバック・ストレス (ダート内枠+後方脚質)
+                    if "ダ" in surface and waku <= 3 and avg_pos >= 8.0:
+                        m -= 0.08
+                        reasons.append("ダート内枠の砂かぶり(精神ストレス)")
+
+                    # 条件D：ダート長距離の内枠 (1800m以上のダート1〜3枠)
+                    if "ダ" in surface and dist >= 1800 and waku <= 3:
+                        m -= 0.10
+                        reasons.append("長距離ダートの内枠(距離ストレス)")
+
+                    # 条件B：待機・出遅れストレス (奇数枠+逃げ脚質)
+                    if umaban % 2 != 0 and avg_pos <= 2.5:
+                        m -= 0.05
+                        reasons.append("奇数枠の逃げ馬(待機ストレス)")
+
+                    # 条件C：過剰消耗ストレス (小柄馬+大幅馬体減)
+                    if curr_w > 0 and curr_w < 440 and w_diff_val <= -6:
+                        m -= 0.15
+                        reasons.append("小柄馬の大幅馬体減(肉体ストレス)")
+
+                    multiplier = max(m, 0.70)
+                    
+                    # 仮の基礎スコア計算 (BattleScore + Bloodline)
+                    base = float(row.get('BattleScore', 0))
+                    blood = float(row.get('bonus', 0))
+                    pre_score = base + blood
+                    final_score = pre_score * multiplier
+                    
+                    results.append({
+                        "枠番": waku,
+                        "馬番": umaban,
+                        "馬名": row.get('Name', ''),
+                        "基礎評価": round(pre_score, 1),
+                        "ストレス係数": f"{multiplier:.1f}",
+                        "ストレス要因": " / ".join(reasons) if reasons else "良好 ✅",
+                        "最終予測": round(final_score, 1),
+                        "減衰量": round(final_score - pre_score, 1)
+                    })
+                
+                res_df = pd.DataFrame(results).sort_values("最終予測", ascending=False)
+                
+                st.subheader(f"🛡️ ストレス解析結果: {test_race_id_input}")
+                
+                # スタイル適用
+                def style_stress(val):
+                    f_val = float(val)
+                    if f_val < 0.85: return 'background-color: #ffebee; color: #c62828; font-weight: bold;'
+                    if f_val < 1.0: return 'background-color: #fff8e1; color: #f57f17;'
+                    return 'color: #2e7d32;'
+
+                st.dataframe(
+                    res_df.style.map(style_stress, subset=['ストレス係数']),
+                    column_config={
+                        "基礎評価": st.column_config.NumberColumn(format="%.1f"),
+                        "最終予測": st.column_config.NumberColumn(format="%.1f"),
+                        "減衰量": st.column_config.NumberColumn(format="%.1f"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                # エピッククイーン・トラップ警報
+                trap_horses = res_df[res_df['ストレス係数'].astype(float) <= 0.85]
+                if not trap_horses.empty:
+                    st.error(f"⚠️ **過剰評価トラップ警告**: 以下の馬はストレスにより能力リミッターが強く掛かっています！\n\n" + 
+                             "\n".join([f"- {h['馬名']} (係数: {h['ストレス係数']})" for _, h in trap_horses.iterrows()]))
+            else:
+                st.error("データの取得に失敗しました。")
 
 # ──────────────────────────────────────────────
 # 🧪 🧪 新ロジックテスト(FEW+マクリ) タブ

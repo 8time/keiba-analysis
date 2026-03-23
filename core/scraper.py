@@ -1331,18 +1331,23 @@ def get_race_data(race_id, use_storage=True):
             h_data['Umaban'] = 0
         
         # Waku (Bracket Number)
-        # Often class starts with Waku (Waku1, Waku2...). Try to get the numbered one first.
-        waku_td = row.find('td', class_=re.compile(r'^(?:Waku\d+|waku\d+)$'))
-        if not waku_td:
-            waku_td = row.find('td', class_=re.compile(r'Waku|waku'))
-            
+        # On many pages, the cell text is empty, but the class is 'Waku1', 'Waku2', etc.
+        waku_val = 1
+        waku_td = row.find('td', class_=re.compile(r'Waku|waku', re.I))
         if waku_td:
-            # If we used Waku for Umaban, we might need to find another one for Bracket
-            # Usually the bracket is the FIRST cell
-            m_waku = re.search(r'(\d+)', waku_td.text.strip())
-            h_data['Waku'] = int(m_waku.group(1)) if m_waku else 1
-        else:
-            h_data['Waku'] = 1
+            # 1. Try text first
+            m_text = re.search(r'(\d+)', waku_td.get_text(strip=True))
+            if m_text:
+                waku_val = int(m_text.group(1))
+            else:
+                # 2. Try class name (Waku1, Waku2, ...)
+                cls_list = waku_td.get('class', [])
+                for c in cls_list:
+                    m_cls = re.search(r'Waku(\d+)', c, re.I)
+                    if m_cls:
+                        waku_val = int(m_cls.group(1))
+                        break
+        h_data['Waku'] = waku_val
         
         # Name
         # We need to be careful NOT to match 'Horse_Select' or 'Horse_Info_ItemWrap'
