@@ -1094,6 +1094,30 @@ if nav == "🏠 Single Race Analysis":
             with st.spinner("Fetching data from web..."):
                 df = scraper.get_race_data(race_id_input)
                 
+                # --- [NEW] Fetch Bloodline and Condition Bonus ---
+                try:
+                    bloodline_api_url = f"http://127.0.0.1:8000/api/bloodline/{race_id_input}"
+                    blood_resp = requests.get(bloodline_api_url, timeout=10)
+                    if blood_resp.status_code == 200:
+                        blood_json = blood_resp.json()
+                        blood_data_list = blood_json.get("data", [])
+                        if blood_data_list and df is not None and not df.empty:
+                            df_blood = pd.DataFrame(blood_data_list)
+                            # 馬番をキーにしてマージ (Umaban: main_df, number: blood_df)
+                            df['Umaban_int'] = pd.to_numeric(df['Umaban'], errors='coerce')
+                            df_blood['number_int'] = pd.to_numeric(df_blood['number'], errors='coerce')
+                            
+                            df = df.merge(
+                                df_blood[['number_int', 'sire', 'broodmareSire', 'bonus']], 
+                                left_on='Umaban_int', right_on='number_int', how='left'
+                            ).drop(columns=['number_int', 'Umaban_int'])
+                            
+                            # APIが返した判定条件（芝_1800等）を記録
+                            if hasattr(df, 'attrs'):
+                                df.attrs['bloodline_condition'] = blood_json.get("condition", "不明")
+                except Exception as ex_blood:
+                    logger.warning(f"血統データの取得に失敗しました: {ex_blood}")
+                
                 # --- [NEW] Fetch detailed shutuba data (Barei, Futan, Weight, etc.) ---
                 try:
                     shutuba_extra = scraper.fetch_shutuba_data(race_id_input)
@@ -1251,7 +1275,12 @@ if nav == "🏠 Single Race Analysis":
                     chaos_data = calculator.evaluate_race_chaos_v3(df)
                     rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(chaos_data['rank'], "#333")
                     
+                    # 血統判定用の条件取得
+                    blood_cond = df.attrs.get('bloodline_condition', '-')
+                    display_cond = blood_cond.replace('_', ' ') + "m" if blood_cond != '-' else "不明"
+
                     evidence_list = [
+                        {"項目": "コース条件", "値": display_cond, "ステータス": "✅ 血統カタログ連動"},
                         {"項目": "クラス", "値": meta.get('class', '-'), "ステータス": "-"},
                         {"項目": "斤量ルール", "値": meta.get('weight_rule', '-'), "ステータス": "⚠️ ハンデ戦: 波乱リスク高" if meta.get('is_handicap') else "✅ 定量/馬齢"},
                     ]
@@ -1276,8 +1305,12 @@ if nav == "🏠 Single Race Analysis":
 
                     st.markdown(f"""
                         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {rank_color}; margin-bottom: 20px;">
-                            <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: 💣 {chaos_data['rank']} (Score: {chaos_data.get('chaos_score', 0):.1f})</h1>
-                            <p style="font-size: 18px; color: #555; margin-top: 5px;">判定理由: {chaos_data['reason']}</p>
+                            <div style="display: flex; align-items: baseline; gap: 15px;">
+                                <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: {chaos_data['rank']}</h1>
+                                <span style="font-size: 24px; color: {rank_color}; font-weight: bold;">(Score: {chaos_data.get('chaos_score', 0):.1f})</span>
+                                <span style="margin-left: auto; font-size: 20px; font-weight: bold; background: #eee; padding: 4px 12px; border-radius: 20px;">📍 {display_cond}</span>
+                            </div>
+                            <p style="font-size: 18px; color: #555; margin-top: 10px; line-height: 1.6;"><b>判定理由:</b> {chaos_data['reason']}</p>
                         </div>
                     """, unsafe_allow_html=True)
                     
@@ -1390,7 +1423,7 @@ if nav == "🏠 Single Race Analysis":
                     _weight_defaults = {
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
                         "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
-                        "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0,
+                        "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
                         "Base": 1.0
                     }
                     if 'score_weights_main' not in st.session_state:
@@ -1431,6 +1464,7 @@ if nav == "🏠 Single Race Analysis":
                                    ("🚀 上がり3F%",   "AvgAgari",     "agi"),
                                    ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
                                    ("🦁 平均位置取り%", "AvgPosition",  "pos"),
+                                   ("🧬 血統%",       "Bloodline",    "bld"),
                                    ("基礎戦闘力%",     "Base",         "base")]
 
                     # --- Preset Management ---
@@ -1471,6 +1505,7 @@ if nav == "🏠 Single Race Analysis":
                             min_val = -1.0
                             if sw_key == "WeightPenalty": max_val = 0.0
                             if sw_key == "Base": min_val, max_val = 0.0, 2.0
+                            if sw_key == "Bloodline": max_val = 10.0
 
                             # Initialize if missing with clamping safety
                             safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
@@ -1604,6 +1639,14 @@ if nav == "🏠 Single Race Analysis":
                         if j_bonus != 0:
                             bonus_details.append(f"騎手:+{j_bonus:.1f}")
 
+                        # --- Bloodline Influence ---
+                        blood_raw = float(row.get('bonus', 0.0) or 0)
+                        blood_w = sw.get('Bloodline', 0.0)
+                        blood_impact = blood_raw * blood_w
+                        bonuses['Bloodline'] = blood_impact
+                        if blood_impact != 0:
+                            bonus_details.append(f"血統:{blood_impact:+.1f}")
+
                         total_bonus = sum(bonuses.values())
                         
                         # --- Horse Weight Change Penalty ---
@@ -1703,6 +1746,24 @@ if nav == "🏠 Single Race Analysis":
                         return f"{p:.1f}{icon}"
                     
                     view_df['AvgPosition'] = view_df.apply(fmt_pos, axis=1)
+
+                    # Format Bloodline (Sire / BMS + Impact)
+                    def fmt_blood(row):
+                        sire = str(row.get('sire', '-'))
+                        bms = str(row.get('broodmareSire', '-'))
+                        impact = float(row.get('Bloodline_Bonus', 0.0))
+                        
+                        if sire in ["-", "None", "不明"] and bms in ["-", "None", "不明"]:
+                            return "-"
+                        
+                        res = f"{sire} / {bms}"
+                        if impact > 0:
+                            res += f" (+{impact:.1f}pt) 🔥"
+                        elif impact < 0:
+                            res += f" ({impact:.1f}pt) ❄️"
+                        return res
+                    
+                    view_df['Bloodline'] = view_df.apply(fmt_blood, axis=1)
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
@@ -3939,6 +4000,8 @@ if nav == "🧪 テスト":
 
                             # 表示
                             st.subheader(f"分析結果: {test_race_id_input}")
+                            st.info(f"📍 判定条件: **{json_data.get('condition', '不明')}**")
+                            
                             st.dataframe(
                                 df_res.style.map(style_bonus_val, subset=['bonus']),
                                 column_config={
@@ -3946,7 +4009,7 @@ if nav == "🧪 テスト":
                                     "name": "馬名",
                                     "sire": "父 (Sire)",
                                     "broodmareSire": "母父 (BMS)",
-                                    "bonus": st.column_config.NumberColumn("血統加点 (Bonus)", format="%.1f")
+                                    "bonus": st.column_config.NumberColumn("加点(点)", format="%.1f")
                                 },
                                 hide_index=True,
                                 use_container_width=True
@@ -4085,7 +4148,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         _weight_defaults = {
             "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
             "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
-            "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Bloodline": 0.0,
+            "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Bloodline": 1.0,
             "Base": 1.0
         }
         if 'score_weights_test' not in st.session_state:
@@ -4145,6 +4208,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 min_val = -1.0
                 if sw_key == "WeightPenalty": max_val = 0.0
                 if sw_key == "Base": min_val, max_val = 0.0, 2.0
+                if sw_key == "Bloodline": max_val = 10.0
                 
                 # Initialize if missing with clamping safety
                 safe_val = max(float(min_val), min(float(max_val), float(cur_val)))

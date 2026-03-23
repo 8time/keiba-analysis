@@ -1,0 +1,11 @@
+{
+  "ロードカナロア": { "track": "芝", "dist_min": 1200, "dist_max": 1600 },
+  "ダイワメジャー": { "track": "芝", "dist_min": 1200, "dist_max": 1600 },
+  "アドマイヤマーズ": { "track": "芝", "dist_min": 1400, "dist_max": 1600 },
+  "サートゥルナーリア": { "track": "芝", "dist_min": 1600, "dist_max": 2000 },
+  "エピファネイア": { "track": "芝", "dist_min": 1800, "dist_max": 2400 },
+  "キズナ": { "track": "万能", "dist_min": 1800, "dist_max": 2400 },
+  "リオンディーズ": { "track": "万能", "dist_min": 1800, "dist_max": 2000 },
+  "アルアイン": { "track": "芝", "dist_min": 1800, "dist_max": 2200 },
+  "キタサンブラック": { "track": "芝", "dist_min": 1800, "dist_max": 3200 }
+}

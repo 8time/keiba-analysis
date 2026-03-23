@@ -4,99 +4,192 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
+import re
+import concurrent.futures
 
 app = FastAPI()
 
-# Reactフロントエンド（例: localhost:3000 等）からのアクセスを許可
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開発環境用。本番では特定のドメインに絞ります
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ダミーの種牡馬データベース
-def load_sire_db():
-    db_path = "sire_db.json"
-    if os.path.exists(db_path):
+# ⚠️ 文字化け回避ルール準拠
+def load_json_file(filename, default_val):
+    if os.path.exists(filename):
         try:
-            with open(db_path, "r", encoding="utf-8") as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
             pass
-    return {
-        "キズナ": {"bonus": 15.5},
-        "ロードカナロア": {"bonus": -5.0},
-        "エピファネイア": {"bonus": 8.2}
-    }
+    return default_val
 
-sire_db = load_sire_db()
+# 1. 個別調整用（既存）
+sire_db = load_json_file("sire_db.json", {})
+# 2. 主要種牡馬カタログ（新機能）
+sire_specs = load_json_file("sire_specs.json", {})
+
+def decode_content(content):
+    if not content: return ""
+    for enc in ['euc-jp', 'cp51932', 'cp932', 'utf-8', 'shift_jis']:
+        try: return content.decode(enc)
+        except: continue
+    return content.decode('utf-8', errors='replace')
+
+def get_single_horse_ped(horse_id):
+    """個別馬の血統ページから父と母父を正確に取得"""
+    url = f"https://db.netkeiba.com/horse/ped/{horse_id}/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        html = decode_content(resp.content)
+        soup = BeautifulSoup(html, "html.parser")
+        
+        rows = soup.select("table.blood_table tr")
+        if len(rows) >= 17:
+            sire_td = rows[0].select_one("td")
+            sire = sire_td.select_one("a").get_text(strip=True) if sire_td and sire_td.select_one("a") else "不明"
+            
+            bms_row = rows[16].select("td")
+            if len(bms_row) >= 2:
+                bms = bms_row[1].select_one("a").get_text(strip=True) if bms_row[1].select_one("a") else "不明"
+            else:
+                bms = "不明"
+            return sire, bms
+    except:
+        pass
+    return "不明", "不明"
+
+def calculate_sire_bonus(name, race_track, race_dist):
+    """
+    静的カタログスペックに基づき、今日のレース条件に対するボーナス/デバフを論理計算する
+    """
+    if name not in sire_specs:
+        return 0.0
+    
+    spec = sire_specs[name]
+    score = 0.0
+    
+    # 1. 馬場（トラック）判定
+    catalogue_track = spec.get("track", "不明")
+    if catalogue_track == "万能":
+        score += 5.0
+    elif catalogue_track == race_track: # 芝 == 芝 or ダート == ダート
+        score += 5.0
+    else:
+        # 不一致（芝専用馬がダートに出る、など）
+        score -= 5.0
+        
+    # 2. 距離判定
+    try:
+        dist_min = spec.get("dist_min", 0)
+        dist_max = spec.get("dist_max", 9999)
+        d_val = int(race_dist)
+        
+        if dist_min <= d_val <= dist_max:
+            score += 5.0
+        else:
+            # 距離適性外
+            score -= 3.0
+    except:
+        pass
+        
+    return score
 
 @app.get("/api/bloodline/{race_id}")
 def get_bloodline_data(race_id: str):
-    """
-    指定されたレースIDの出馬表をスクレイピングし、血統データを返すAPI
-    """
-    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+    domain = "race.netkeiba.com"
+    if str(race_id)[4:6] > "10": domain = "nar.netkeiba.com"
+        
+    url = f"https://{domain}/race/shutuba.html?race_id={race_id}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'euc-jp'
+        response = requests.get(url, headers=headers, timeout=15)
+        html = decode_content(response.content)
+        soup = BeautifulSoup(html, "html.parser")
         
-        soup = BeautifulSoup(response.text, "lxml")
-        results = []
-
-        # 出馬表のテーブル行を取得
-        rows = soup.select(".Shutuba_Table tbody tr")
+        # 1. レース条件（芝/ダート、距離）の自動取得
+        race_data_div = soup.select_one(".RaceData01")
+        track_type = "不明"
+        distance_val = 0
+        condition_key = "不明_不明"
         
-        if not rows:
-            return {"race_id": race_id, "data": [], "error": "No data found on netkeiba"}
+        if race_data_div:
+            match = re.search(r'(芝|ダ)(\d+)m', race_data_div.text)
+            if match:
+                track_char = match.group(1)
+                track_type = "芝" if track_char == "芝" else "ダート"
+                distance_val = int(match.group(2))
+                condition_key = f"{track_type}_{distance_val}"
+        
+        # 2. 出馬表から各馬のID取得
+        horse_list = []
+        rows = soup.select(".Shutuba_Table tr.HorseList, .ShutubaTable tr.HorseList")
+        if not rows: rows = soup.select("table tr")
 
         for row in rows:
             try:
-                # 馬番
-                number_td = row.select_one("td.Umaban")
-                if not number_td:
-                    continue
-                num_text = number_td.text.strip()
-                if not num_text.isdigit():
-                    continue
-                number = int(num_text)
+                num_td = row.select_one("td[class*='Umaban'], td.Umaban, .txt_c")
+                if not num_td: continue
+                m_num = re.search(r'(\d+)', num_td.get_text(strip=True))
+                if not m_num: continue
                 
-                # 馬名
-                name_td = row.select_one("td.HorseInfo a")
-                name = name_td.text.strip() if name_td else "不明"
+                name_a = row.select_one(".HorseName a, .Horse_Name a, .HorseInfo a")
+                if not name_a or 'href' not in name_a.attrs: continue
                 
-                # 血統（父・母父） - netkeibaの実際の構造に合わせた微調整が必要
-                # デフォルトでは a[title] などに入っていることが多い
-                blood_links = row.select(".HorseInfo a")
-                # 通常： [0]=馬名, [1]=父, [2]=母父 ... (サイト構造による)
-                # ユーザーの想定に合わせて「不明」で埋める
-                sire = "不明"
-                bms = "不明"
+                h_url = name_a['href']
+                m_id = re.search(r'horse/(\d+)', h_url)
+                if not m_id: continue
                 
-                # 加点の計算
-                bonus = sire_db.get(sire, {}).get("bonus", 0.0)
-                
-                results.append({
-                    "number": number,
-                    "name": name,
-                    "sire": sire,
-                    "broodmareSire": bms,
-                    "bonus": bonus
-                })
-            except Exception as e:
-                print(f"解析エラー (row): {e}")
-                continue
+                horse_list.append({"number": int(m_num.group(1)), "name": name_a.get_text(strip=True), "id": m_id.group(1)})
+            except: continue
 
-        return {"race_id": race_id, "data": results}
+        if not horse_list:
+            return {"race_id": race_id, "condition": condition_key, "data": [], "error": "No horses found"}
+
+        # 3. 各馬の血統を並列取得 & 論理計算
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_horse = {executor.submit(get_single_horse_ped, h['id']): h for h in horse_list}
+            
+            for future in concurrent.futures.as_completed(future_to_horse):
+                h = future_to_horse[future]
+                try:
+                    sire, bms = future.result()
+                    
+                    # カタログスペックに基づく計算
+                    sire_score = calculate_sire_bonus(sire, track_type, distance_val)
+                    bms_score = calculate_sire_bonus(bms, track_type, distance_val)
+                    
+                    # sire_db (既存の特定条件用DB) にエントリーがあれば上書き/加算も可能だが、
+                    # 今回はユーザー様提案の「カタログ計算」をメインにする。
+                    # 特定条件DBがあればそれを優先、なければカタログ計算とする。
+                    db_sire_bonus = sire_db.get(sire, {}).get(condition_key, None)
+                    db_bms_bonus = sire_db.get(bms, {}).get(condition_key, None)
+                    
+                    final_sire = db_sire_bonus if db_sire_bonus is not None else sire_score
+                    final_bms = db_bms_bonus if db_bms_bonus is not None else bms_score
+                    
+                    total_bonus = round(final_sire + (final_bms * 0.5), 1)
+                    
+                    results.append({
+                        "number": h['number'],
+                        "name": h['name'],
+                        "sire": sire,
+                        "broodmareSire": bms,
+                        "bonus": total_bonus
+                    })
+                except: continue
+
+        results.sort(key=lambda x: x['number'])
+        return {"race_id": race_id, "condition": condition_key, "data": results}
+
     except Exception as e:
-        return {"race_id": race_id, "data": [], "error": str(e)}
+        return {"race_id": race_id, "condition": "error", "data": [], "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
