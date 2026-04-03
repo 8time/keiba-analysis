@@ -111,16 +111,33 @@ def _get_headers(referer=None, ajax=False):
 
 def _decode_content(content):
     """Decodes bytes content using multiple common encodings, ensuring Japanese text is preserved.
-    UTF-8 strict を最優先: EUC-JP バイトは UTF-8 strict で必ず失敗するので安全にフォールバックする。
-    逆に EUC-JP は UTF-8 バイトを誤って受け入れるケースがあり、文字化けの原因になる。
+    HTMLの<meta charset>宣言を最優先し、宣言通りのエンコーディングで処理する。
+    混合エンコードページ対策として、strict失敗時はerrors='replace'で再試行。
     """
     if not content: return ""
-    for enc in ['utf-8', 'euc-jp', 'cp51932', 'cp932', 'shift_jis']:
+    # Step 1: HTML meta charset 宣言を検出
+    import re as _re
+    head = content[:4096]
+    m = _re.search(rb'charset[="\s]+([a-zA-Z0-9_-]+)', head, _re.IGNORECASE)
+    declared = None
+    if m:
+        declared = m.group(1).decode('ascii').lower().replace('_', '-')
+        try:
+            return content.decode(declared)
+        except:
+            # 混合エンコードページ: 宣言エンコードで errors='replace'
+            try:
+                return content.decode(declared, errors='replace')
+            except:
+                pass
+    # Step 2: 宣言なし or 失敗時のフォールバック（strict → replace の2段階）
+    for enc in ['euc-jp', 'utf-8', 'cp932', 'shift_jis']:
         try:
             return content.decode(enc)
         except:
             continue
-    return content.decode('utf-8', errors='replace')
+    # 最終手段: EUC-JP replace（netkeibaはほぼEUC-JP）
+    return content.decode('euc-jp', errors='replace')
 
 import time
 from functools import wraps

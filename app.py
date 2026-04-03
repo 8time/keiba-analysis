@@ -48,6 +48,10 @@ from datetime import datetime, timedelta
 
 # Core functionality imports
 from core import scraper
+try:
+    importlib.reload(scraper)
+except:
+    pass
 from core import calculator
 try:
     importlib.reload(calculator)
@@ -5418,9 +5422,12 @@ if nav == "🤓 N氏の研究室":
             def format_v(c):
                 return f"{VENUE_NAMES.get(c, c)} ({len(venues[c])}R)"
 
-            # 全場URL（●シグナル対応のため）
+            # 全場URL（●シグナル対応のため）- JRA中央競馬のみ
             for rr in race_list:
                 r_id = rr['race_id']
+                v_code = r_id[4:6] if len(r_id) == 12 else '99'
+                if not (v_code.isdigit() and 1 <= int(v_code) <= 10):
+                    continue  # NAR（地方競馬）を除外
                 domain = get_netkeiba_domain(r_id)
                 all_race_urls.append(f"https://{domain}/race/shutuba.html?race_id={r_id}")
 
