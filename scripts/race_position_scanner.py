@@ -110,7 +110,7 @@ def _fetch_html(url: str) -> Optional[BeautifulSoup]:
             # Netkeiba fix: apparent_encoding doesn't always work for EUC-JP bytes
             content = resp.content
             html_text = ""
-            for enc in ['euc-jp', 'cp51932', 'utf-8', 'cp932']:
+            for enc in ['utf-8', 'euc-jp', 'cp51932', 'cp932']:
                 try: 
                     html_text = content.decode(enc)
                     break
@@ -126,7 +126,7 @@ def _fetch_html(url: str) -> Optional[BeautifulSoup]:
         if resp2.status_code == 200:
             content = resp2.content
             html_text = ""
-            for enc in ['euc-jp', 'cp51932', 'utf-8', 'cp932']:
+            for enc in ['utf-8', 'euc-jp', 'cp51932', 'cp932']:
                 try:
                     html_text = content.decode(enc)
                     break

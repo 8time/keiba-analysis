@@ -110,18 +110,12 @@ def _get_headers(referer=None, ajax=False):
     return headers
 
 def _decode_content(content):
-    """Decodes bytes content using multiple common encodings, ensuring Japanese text is preserved."""
+    """Decodes bytes content using multiple common encodings, ensuring Japanese text is preserved.
+    UTF-8 strict を最優先: EUC-JP バイトは UTF-8 strict で必ず失敗するので安全にフォールバックする。
+    逆に EUC-JP は UTF-8 バイトを誤って受け入れるケースがあり、文字化けの原因になる。
+    """
     if not content: return ""
-    # HTML の meta charset を先に確認して正しいエンコードを優先する
-    # (バイト列中の ASCII 互換部分で charset 宣言を検出)
-    head_bytes = content[:2048].lower()
-    if b'charset=utf-8' in head_bytes or b'charset="utf-8"' in head_bytes:
-        # UTF-8 宣言があればUTF-8を最優先
-        enc_order = ['utf-8', 'euc-jp', 'cp51932', 'cp932', 'shift_jis']
-    else:
-        # Netkeiba JRA は主に EUC-JP
-        enc_order = ['euc-jp', 'cp51932', 'cp932', 'utf-8', 'shift_jis']
-    for enc in enc_order:
+    for enc in ['utf-8', 'euc-jp', 'cp51932', 'cp932', 'shift_jis']:
         try:
             return content.decode(enc)
         except:
