@@ -10,12 +10,14 @@ from .utils_pattern import is_ones_digit_match, is_reverse_match, is_ura_match, 
 
 
 def match_patterns_for_cross_venue(entry_a: Entry, entry_b: Entry) -> List[str]:
-    """場跨ぎペアのパターン判定。返す候補: ones_digit, reverse, ura_match, cycle"""
+    """場跨ぎペアのパターン判定。返す候補: same_number, ones_digit, reverse, ura_match, cycle"""
     matched = []
     hn_a, fs_a = entry_a.horse_number, entry_a.field_size
     hn_b, fs_b = entry_b.horse_number, entry_b.field_size
 
-    if is_ones_digit_match(hn_a, hn_b) and hn_a != hn_b:
+    if hn_a == hn_b:
+        matched.append("same_number")  # 同番配置（最強シグナル）
+    elif is_ones_digit_match(hn_a, hn_b):
         matched.append("ones_digit")
     if is_reverse_match(hn_a, fs_a, hn_b, fs_b):
         matched.append("reverse")
