@@ -1,0 +1,10 @@
+{
+  "melchior_flow_bonus_weight": 2.0,
+  "melchior_battle_weight": 0.6,
+  "melchior_front_runner_limit": 4.0,
+  "balthasar_ev_bonus": 0.3,
+  "casper_bs_weight": 0.6,
+  "casper_pop_bonus_weight": 1.5,
+  "casper_odds_bonus_low": 5.0,
+  "casper_dark_pop_min": 3
+}

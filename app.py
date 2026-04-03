@@ -201,6 +201,8 @@ with st.sidebar:
         "機能を選択してください",
         [
             "🏠 Single Race Analysis",
+            "🧠 MAGIシステム",
+            "🎓 MAGI回顧学習",
             "💰 BetSync（資金管理）",
             "🔍 Race Scanner (Batch)",
             "📊 History & Review",
@@ -212,6 +214,7 @@ with st.sidebar:
         ],
         label_visibility="collapsed"
     )
+
 
 st.title("🐎 Keiba Analysis - Modified Ogura Index")
 st.markdown("""
@@ -1427,7 +1430,7 @@ if nav == "🏠 Single Race Analysis":
                     _weight_defaults = {
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
                         "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
-                        "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
+                        "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Waku": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
                         "Base": 1.0, "Stress": 1.0
                     }
                     if 'score_weights_main' not in st.session_state:
@@ -1483,6 +1486,7 @@ if nav == "🏠 Single Race Analysis":
                     _W_GROUP3   = [("🎯 ｺｰｽ適性(Y)%", "Suitability",   "suit"),
                                    ("🚀 上がり3F%",   "AvgAgari",     "agi"),
                                    ("🏁 枠順(馬番)%",  "Umaban",       "uma"),
+                                   ("🧧 枠番%",        "Waku",         "waku"),
                                    ("🦁 平均位置取り%", "AvgPosition",  "pos"),
                                    ("🧬 血統%",       "Bloodline",    "bld"),
                                    ("基礎戦闘力%",     "Base",         "base"),
@@ -1626,7 +1630,7 @@ if nav == "🏠 Single Race Analysis":
                             ('SpeedIndex', 'SpeedIndex'), ('Strength (X)', 'Strength (X)'), ('Popularity', 'Popularity'),
                             ('TrainingScore', 'Training'), ('WeightDiff', 'Weight'),
                             ('WeightCarried', 'WeightCarried'), ('Suitability (Y)', 'Suitability'),
-                            ('AvgAgari', 'AvgAgari'), ('Umaban', 'Umaban'), ('AvgPosition', 'AvgPosition')
+                            ('AvgAgari', 'AvgAgari'), ('Umaban', 'Umaban'), ('Waku', 'Waku'), ('AvgPosition', 'AvgPosition')
                         ]:
                             col_name = m_key if m_key in row else None
                             raw_val = float(row.get(col_name, 0) or 0) if col_name else 0
@@ -1872,7 +1876,7 @@ if nav == "🏠 Single Race Analysis":
 
                     # Merge previous screenshot columns with latest advanced columns
                     # --- NEW DEFAULT ORDER BASED ON USER REQUEST ---
-                    cols = ['Rank', 'Umaban', 'Popularity', 'Odds', 'Name', 'Jockey', 'Projected Score', 'BattleScore', 'AvgPosition', 
+                    cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'Jockey', 'Projected Score', 'BattleScore', 'AvgPosition', 
                             'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'JockeyChange', 
                             'ボーナス詳細', 'NIndex', 'Strength (X)', 'Suitability (Y)', 
                             'SpeedIndex', 'AvgAgari', 'Alert', 'RiskFlags']
@@ -4712,6 +4716,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             final_test_score = (base_score * base_w) + total_bonus + score_diff
             
             test_scores.append({
+                "枠": row.get('Waku', "-"),
                 "馬番": umaban,
                 "馬名(ラベル付)": horse_name,
                 "騎手": j_name,
@@ -4755,8 +4760,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_test_res['馬名(ラベル付)'] = df_test_res.apply(refine_marks, axis=1)
         
         # --- Re-order and Finalize ---
-        # ユーザー要望: 新順位を一番左に
-        cols = ['新順位'] + [c for c in df_test_res.columns if c not in ['新順位', 'Diff']] + ['Diff']
+        # ユーザー要望: 新順位を一番左に、枠順を追加
+        cols = ['新順位', '枠', '馬番'] + [c for c in df_test_res.columns if c not in ['新順位', '枠', '馬番', 'Diff']] + ['Diff']
         df_test_res = df_test_res[cols]
         
         # Sort by Predicted Score
@@ -4820,7 +4825,9 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
         df_display = df_test_res.drop(columns=['_BonusDetails', '_Style']) if '_BonusDetails' in df_test_res.columns else df_test_res
         # カラム順の最終保証（新順位を左端に）
         if '新順位' in df_display.columns:
-            cols = ['新順位'] + [c for c in df_display.columns if c != '新順位']
+            # 優先表示順: 新順位, 枠, 馬番, ...
+            _prio = ['新順位', '枠', '馬番']
+            cols = [c for c in _prio if c in df_display.columns] + [c for c in df_display.columns if c not in _prio]
             df_display = df_display[cols]
         
         # 行全体のハイライト（仕上がり・逆転候補）
@@ -4846,8 +4853,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             if _saved_lt:
                 _ordered_valid = [c for c in _saved_lt if c in _all_lt]
                 _missing_new = [c for c in _all_lt if c not in _ordered_valid]
-                # 重要カラム（指数・スコア系）は先頭、その他は末尾に
-                _important = [c for c in _missing_new if any(tok in c for tok in ["指数", "スコア", "適性", "U指数", "オメガ"])]
+                # 重要カラム（指数・スコア系・馬情報）は先頭、その他は末尾に
+                _important = [c for c in _missing_new if any(tok in c for tok in ["枠", "馬番", "指数", "スコア", "適性", "U指数", "オメガ"])]
                 _the_rest = [c for c in _missing_new if c not in _important]
                 df_display = df_display[_important + _ordered_valid + _the_rest]
         except: pass
@@ -4856,7 +4863,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
             _cur_cols_lt = list(df_display.columns)
             # multiselect の初期値がキャッシュに引きずられるため、新設カラムを優先的にマージ
             _default_lt = st.session_state.get('logic_test_col_order_sel', _cur_cols_lt)
-            for c in ["調教", "U指数", "スピード指数", "斤量", "予測スコア"]:
+            for c in ["枠", "馬番", "調教", "U指数", "スピード指数", "斤量", "予測スコア"]:
                 if c in _cur_cols_lt and c not in _default_lt:
                     _default_lt = [c] + _default_lt
             
@@ -5545,17 +5552,7 @@ if nav == "🤓 N氏の研究室":
                 def color_best_period(val):
                     return "background-color: #ccffcc; color: black" if val else ""
 
-                try:
-                    style_cols = {"score": color_score}
-                    if "is_best_period" in df_res.columns:
-                        style_cols["is_best_period"] = color_best_period
-                    styled_res = df_res.style.applymap(lambda v: color_score(v), subset=["score"])
-                    if "is_best_period" in df_res.columns:
-                        styled_res = styled_res.applymap(color_best_period, subset=["is_best_period"])
-
-                    # Display only readable columns
-                    # Display only readable columns
-                    display_cols = [c for c in [
+                display_cols = [c for c in [
                         "race_number", "horse_number", "horse_name", "special_marks",
                         "jockey", "trainer", "score",
                         "jockey_single_ride",
@@ -5563,10 +5560,15 @@ if nav == "🤓 N氏の研究室":
                         "odds", "odds_rank", "is_best_period", "warning"
                     ] if c in df_res.columns]
 
+                try:
+                    styled_df = df_res[display_cols].style.map(
+                        color_score, subset=["score"] if "score" in display_cols else []
+                    )
+                    if "is_best_period" in display_cols:
+                        styled_df = styled_df.map(color_best_period, subset=["is_best_period"])
+
                     st.dataframe(
-                        df_res[display_cols].style.applymap(
-                            color_score, subset=["score"] if "score" in display_cols else []
-                        ),
+                        styled_df,
                         column_config={
                             "race_number": st.column_config.NumberColumn("R", format="%dR"),
                             "horse_number": st.column_config.NumberColumn("馬番"),
@@ -5583,12 +5585,12 @@ if nav == "🤓 N氏の研究室":
                             "is_best_period": st.column_config.CheckboxColumn("✨ Best Period"),
                             "warning": st.column_config.TextColumn("⚠️ 警告"),
                         },
-                        width='stretch',
+                        use_container_width=True,
                         hide_index=True,
                     )
                 except Exception as e_disp:
                     st.warning(f"スタイルエラー: {e_disp}")
-                    st.dataframe(df_res, width='stretch')
+                    st.dataframe(df_res[display_cols], use_container_width=True, hide_index=True)
 
                 # CSV download (special_marks を horse_name の右隣に列順を整えて出力)
                 # CSV download (special_marks を horse_name の右隣に列順を整えて出力)
@@ -5603,7 +5605,7 @@ if nav == "🤓 N氏の研究室":
                 _front = [c for c in _csv_col_order if c in df_res.columns]
                 _rest  = [c for c in df_res.columns if c not in _front]
                 _df_csv = df_res[_front + _rest]
-                csv_bytes = _df_csv.to_csv(index=False, encoding='utf-8-sig').encode("utf-8-sig")
+                csv_bytes = _df_csv.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
                     label="💾 CSVダウンロード",
                     data=csv_bytes,
@@ -5928,7 +5930,9 @@ if nav == "💾 ロジック置き場":
     st.caption("AI(antigravity)への指示や各種設定メモを一か所に保存・参照するためのスペースです。")
     
     import json
-    LOGIC_FILE = "saved_logic_notes.json"
+    # Use absolute path relative to this script to ensure persistence regardless of CWD.
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGIC_FILE = os.path.join(BASE_DIR, "saved_logic_notes.json")
     
     def load_logics():
         if os.path.exists(LOGIC_FILE):
@@ -5978,8 +5982,39 @@ if nav == "💾 ロジック置き場":
     def cancel_action():
         st.session_state.action_confirm = None
 
+    # --- Persistence Warning (st.secrets = Cloud environment) ---
+    is_cloud = "st.secrets" in str(st.secrets) or os.environ.get("STREAMLIT_RUNTIME_HOST") is not None
+    if is_cloud:
+         st.warning("⚠️ **ご注意**: 現在 Streamlit Cloud 環境で実行されています。ここでの変更はサーバーの再起動（Git Push時など）でリセットされるため、保存後は必ず下の「📥 バックアップをダウンロード」を行ってください。")
+
     st.subheader("📁 保存済みロジック一覧")
     
+    # Manage Export/Import (JSON)
+    me1, me2 = st.columns(2)
+    with me1:
+        if logics:
+            logic_json = json.dumps(logics, ensure_ascii=False, indent=2)
+            st.download_button(
+                "📥 バックアップをダウンロード (JSON)",
+                data=logic_json.encode('utf-8'),
+                file_name=f"logic_backup_{datetime.now().strftime('%Y%m%d')}.json",
+                mime="application/json",
+                help="現在のすべてのロジックをファイルとして保存します。Cloud環境でお使いの場合は必須です。"
+            )
+    with me2:
+        uploaded_logic = st.file_uploader("📤 バックアップから復元", type=["json"], key="logic_uploader")
+        if uploaded_logic:
+            try:
+                uploaded_data = json.load(uploaded_logic)
+                if st.button("🔄 復元を実行する (既存データにマージ)"):
+                    logics.update(uploaded_data)
+                    save_logics(logics)
+                    st.success("ロジックを復元・マージしました！")
+                    time.sleep(1)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"読み込みエラー: {e}")
+
     confirm_state = st.session_state.action_confirm
     if confirm_state:
         k = confirm_state["key"]
@@ -6075,6 +6110,8 @@ if nav == "💾 ロジック置き場":
     if st.button("💾 保存する", type="primary"):
         if not new_name.strip():
             st.error("ロジック名を入力してください。")
+        elif not new_memo.strip() and not new_ag.strip():
+             st.error("メモまたは指示が空です。上書きで内容が消える可能性があるため保存を中断しました。")
         else:
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             logics[new_name.strip()] = {
@@ -6086,6 +6123,7 @@ if nav == "💾 ロジック置き場":
             st.success(f"「{new_name}」を保存しました！({now_str})")
             time.sleep(1)
             st.rerun()
+
 
 
 
@@ -6270,6 +6308,1094 @@ if nav == "📦 データ保管庫":
         """)
     else:
         st.info("保管庫は現在空です。")
+
+# ──────────────────────────────────────────────
+# 🧠 MAGIシステム
+# ──────────────────────────────────────────────
+if nav == "🧠 MAGIシステム":
+    from core import magi_system
+    import importlib; importlib.reload(magi_system)
+
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+    /* ─── ベース背景 ─── */
+    .stApp { background: #000000 !important; }
+    section[data-testid="stSidebar"] { background: #050510 !important; }
+
+    /* ─── MAGIヘッダー ─── */
+    .magi-masthead {
+        background: linear-gradient(180deg, #000000 0%, #0a0a1a 100%);
+        border: 1px solid #00ffff44;
+        border-top: 3px solid #00ffff;
+        padding: 24px 20px 16px;
+        margin-bottom: 4px;
+        position: relative;
+        overflow: hidden;
+        font-family: 'Orbitron', monospace;
+    }
+    .magi-masthead::before {
+        content: '';
+        position: absolute; top:0; left:0; right:0; bottom:0;
+        background: repeating-linear-gradient(0deg, transparent, transparent 39px, #00ffff08 39px, #00ffff08 40px),
+                    repeating-linear-gradient(90deg, transparent, transparent 39px, #00ffff06 39px, #00ffff06 40px);
+        pointer-events: none;
+    }
+    .magi-masthead-title {
+        font-family: 'Orbitron', monospace;
+        font-size: 22px; font-weight: 900;
+        color: #00ffff;
+        letter-spacing: 4px;
+        text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff88;
+        margin: 0 0 4px 0;
+    }
+    .magi-masthead-sub {
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 12px; color: #ff6600;
+        letter-spacing: 3px;
+        text-shadow: 0 0 8px #ff6600;
+        margin: 0;
+    }
+    .magi-unit-badges {
+        display: flex; gap: 12px; margin-top: 12px;
+    }
+    .magi-badge-mel { background:#1a0000; border:1px solid #ff3333; color:#ff3333; padding:4px 12px; font-family:'Orbitron',monospace; font-size:10px; letter-spacing:2px; }
+    .magi-badge-bal { background:#001a00; border:1px solid #00ff44; color:#00ff44; padding:4px 12px; font-family:'Orbitron',monospace; font-size:10px; letter-spacing:2px; }
+    .magi-badge-cas { background:#00001a; border:1px solid #3399ff; color:#3399ff; padding:4px 12px; font-family:'Orbitron',monospace; font-size:10px; letter-spacing:2px; }
+
+    /* ─── ユニットカード ─── */
+    .melchior-card {
+        background: linear-gradient(135deg, #0d0000 0%, #1a0505 100%);
+        border: 1px solid #ff333344; border-top: 2px solid #ff3333;
+        border-radius: 0; padding: 16px; position: relative; overflow: hidden;
+        font-family: 'Share Tech Mono', monospace;
+    }
+    .balthasar-card {
+        background: linear-gradient(135deg, #000d00 0%, #051a05 100%);
+        border: 1px solid #00ff4444; border-top: 2px solid #00ff44;
+        border-radius: 0; padding: 16px; position: relative; overflow: hidden;
+        font-family: 'Share Tech Mono', monospace;
+    }
+    .casper-card {
+        background: linear-gradient(135deg, #00000d 0%, #05051a 100%);
+        border: 1px solid #3399ff44; border-top: 2px solid #3399ff;
+        border-radius: 0; padding: 16px; position: relative; overflow: hidden;
+        font-family: 'Share Tech Mono', monospace;
+    }
+    .unit-label-mel { color:#ff3333; font-family:'Orbitron',monospace; font-size:13px; font-weight:700; letter-spacing:3px; text-shadow:0 0 10px #ff333388; }
+    .unit-label-bal { color:#00ff44; font-family:'Orbitron',monospace; font-size:13px; font-weight:700; letter-spacing:3px; text-shadow:0 0 10px #00ff4488; }
+    .unit-label-cas { color:#3399ff; font-family:'Orbitron',monospace; font-size:13px; font-weight:700; letter-spacing:3px; text-shadow:0 0 10px #3399ff88; }
+    .unit-subtitle { color:#ff8844; font-size:10px; letter-spacing:2px; font-family:'Share Tech Mono',monospace; }
+
+    /* ─── 合議結果 ─── */
+    .magi-consensus {
+        background: linear-gradient(135deg, #0a0800 0%, #1a1200 100%);
+        border: 2px solid #ffaa00;
+        border-radius: 0; padding: 20px; margin-top: 8px;
+        font-family: 'Share Tech Mono', monospace;
+        position: relative; overflow: hidden;
+        box-shadow: 0 0 30px #ffaa0022, inset 0 0 30px #ffaa0008;
+    }
+    .consensus-title {
+        font-family: 'Orbitron', monospace; font-size: 14px; font-weight:700;
+        color: #ffaa00; letter-spacing: 4px;
+        text-shadow: 0 0 15px #ffaa00;
+        margin-bottom: 12px;
+    }
+    .consensus-ok {
+        color: #00ff44; font-family:'Orbitron',monospace;
+        font-size:13px; letter-spacing:3px;
+        text-shadow: 0 0 12px #00ff44;
+    }
+    .consensus-ng {
+        color: #ff6600; font-family:'Orbitron',monospace;
+        font-size:13px; letter-spacing:3px;
+        text-shadow: 0 0 12px #ff6600;
+    }
+
+    /* ─── 馬券推奨パネル ─── */
+    .bet-panel {
+        background: #000a00;
+        border: 1px solid #00ff44;
+        padding: 12px 16px; margin: 6px 0;
+        font-family: 'Orbitron', monospace;
+    }
+    .bet-panel-cas {
+        background: #00000a;
+        border: 1px solid #3399ff;
+        padding: 12px 16px; margin: 6px 0;
+        font-family: 'Orbitron', monospace;
+    }
+    .bet-label { color:#ff8844; font-size:9px; letter-spacing:3px; }
+    .bet-combo { color:#ffffff; font-size:22px; font-weight:700; letter-spacing:4px; text-shadow: 0 0 10px #ffffff88; }
+    .bet-combo-cas { color:#3399ff; font-size:22px; font-weight:700; letter-spacing:4px; text-shadow: 0 0 10px #3399ff88; }
+
+    /* ─── ランキング行 ─── */
+    .vote-row {
+        display:flex; align-items:center; gap:12px;
+        padding: 8px 12px; margin: 4px 0;
+        background: #050510; border-left: 3px solid #ffaa00;
+        font-family: 'Share Tech Mono', monospace;
+    }
+    .vote-rank { color:#ffaa00; font-size:18px; font-weight:700; min-width:32px; }
+    .vote-num { color:#ff8844; font-size:11px; min-width:40px; }
+    .vote-name { color:#ffffff; font-size:13px; flex:1; }
+    .vote-pts { color:#ffaa00; font-size:12px; }
+    .vote-supporters { font-size:10px; color:#ff6622; }
+
+    /* ─── ボタン上書き ─── */
+    div[data-testid="stButton"] > button[kind="primary"] {
+        background: transparent !important;
+        border: 2px solid #ff6600 !important;
+        color: #ff6600 !important;
+        font-family: 'Orbitron', monospace !important;
+        font-size: 13px !important; letter-spacing: 3px !important;
+        border-radius: 0 !important;
+        text-shadow: 0 0 8px #ff6600 !important;
+        box-shadow: 0 0 15px #ff660033 !important;
+        padding: 12px 24px !important;
+    }
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        background: #ff660022 !important;
+        box-shadow: 0 0 25px #ff660066 !important;
+    }
+
+    /* ─── expander 枠 ─── */
+    .streamlit-expanderHeader {
+        background: #050510 !important; color: #ff8844 !important;
+        font-family: 'Share Tech Mono', monospace !important;
+        border: 1px solid #222244 !important; border-radius: 0 !important;
+    }
+    .streamlit-expanderContent {
+        background: #020208 !important;
+        border: 1px solid #222244 !important; border-top: none !important;
+    }
+
+    /* ─── metric ─── */
+    div[data-testid="stMetric"] {
+        background: #050510; border: 1px solid #1a1a3a;
+        padding: 12px; border-radius: 0;
+    }
+    div[data-testid="stMetricLabel"] > div { color:#ff8844 !important; font-family:'Share Tech Mono',monospace !important; font-size:10px !important; letter-spacing:2px !important; }
+    div[data-testid="stMetricValue"] { color:#00ffff !important; font-family:'Orbitron',monospace !important; text-shadow: 0 0 8px #00ffff88 !important; }
+
+    /* ─── 警告/情報メッセージ ─── */
+    div[data-testid="stAlert"] { border-radius:0 !important; border-left-width:3px !important; background:#050510 !important; }
+
+    /* ─── 全体テキスト（p / li / 本文） ─── */
+    p, li, ul, ol, small { color:#ff8844 !important; }
+    .stMarkdown p, .stMarkdown li { color:#ff8844 !important; }
+
+    /* ─── メインタイトル・サブタイトル ─── */
+    h1 { color:#00ffff !important; font-family:'Orbitron',monospace !important;
+         text-shadow:0 0 16px #00ffff88 !important; letter-spacing:2px !important; }
+    h2, h3, h4 { color:#ff8844 !important; font-family:'Orbitron',monospace !important; }
+
+    /* ─── ラジオボタン ─── */
+    div[data-testid="stRadio"] > label { color:#ff8844 !important; font-family:'Share Tech Mono',monospace !important; }
+    div[data-testid="stRadio"] label { color:#ff8844 !important; }
+    div[data-testid="stRadio"] p { color:#ff8844 !important; }
+    div[role="radiogroup"] label { color:#ff8844 !important; }
+    div[role="radiogroup"] span { color:#ff8844 !important; }
+
+    /* ─── スライダー・数値入力・selectbox ─── */
+    div[data-testid="stSlider"] label, div[data-testid="stSlider"] p { color:#ff8844 !important; }
+    div[data-testid="stNumberInput"] label, div[data-testid="stNumberInput"] p { color:#ff8844 !important; }
+    div[data-testid="stSelectbox"] label, div[data-testid="stSelectbox"] p { color:#ff8844 !important; }
+    div[data-testid="stSelectSlider"] label, div[data-testid="stSelectSlider"] p { color:#ff8844 !important; }
+
+    /* ─── テキスト入力 ─── */
+    div[data-testid="stTextInput"] label { color:#ff8844 !important; }
+
+    /* ─── チェックボックス ─── */
+    div[data-testid="stCheckbox"] label, div[data-testid="stCheckbox"] p { color:#ff8844 !important; }
+
+    /* ─── caption / help text ─── */
+    div[data-testid="stCaptionContainer"] p { color:#ff6622 !important; }
+    .stCaption, [data-testid="stCaptionContainer"] { color:#ff6622 !important; }
+
+    /* ─── expander内テキスト ─── */
+    details summary p { color:#ff8844 !important; }
+    details p, details li, details strong { color:#ff8844 !important; }
+    [data-testid="stExpanderDetails"] p { color:#ff8844 !important; }
+    [data-testid="stExpanderDetails"] label { color:#ff8844 !important; }
+
+    /* ─── bold / strong ─── */
+    strong, b { color:#ffaa44 !important; }
+
+    /* ─── info/warning/success メッセージ本文 ─── */
+    div[data-testid="stAlert"] p { color:#ff8844 !important; }
+
+    /* ─── dataframe テキスト ─── */
+    div[data-testid="stDataFrame"] { color:#ff8844; }
+
+    /* ─── sidebar ラベル ─── */
+    section[data-testid="stSidebar"] label { color:#ff8844 !important; }
+    section[data-testid="stSidebar"] p { color:#ff8844 !important; }
+    section[data-testid="stSidebar"] span { color:#ff8844 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ─── ヘッダー描画 ───
+    st.markdown("""
+    <div class='magi-masthead'>
+      <div class='magi-masthead-title'>🧠 MAGI SYSTEM — Joint Consensus AI</div>
+      <div class='magi-masthead-sub'>合議制予測AI ／ MELCHIOR-1 × BALTHASAR-2 × CASPER-3</div>
+      <div class='magi-unit-badges'>
+        <div class='magi-badge-mel'>⬡ MELCHIOR-1</div>
+        <div class='magi-badge-bal'>⬡ BALTHASAR-2</div>
+        <div class='magi-badge-cas'>⬡ CASPER-3</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+    st.info("**使い方:** 先に「🏠 Single Race Analysis」でレースを解析してから、このページでMAGI合議を実行してください。")
+
+    # データ確認
+    df_magi = st.session_state.get('df')
+    race_metadata = st.session_state.get('race_metadata', {})
+
+    if df_magi is None or df_magi.empty:
+        st.warning("⚠️ レースデータが未読み込みです。先に Single Race Analysis でレースを解析してください。")
+        st.stop()
+
+    # レース情報表示
+    meta_col1, meta_col2, meta_col3 = st.columns(3)
+    with meta_col1:
+        st.metric("クラス", race_metadata.get('class', '-'))
+    with meta_col2:
+        st.metric("馬場状態", race_metadata.get('condition', '-'))
+    with meta_col3:
+        st.metric("出走頭数", len(df_magi))
+
+    # コースプロファイル選択
+    race_id_for_magi = st.session_state.get('tab1_analyzed_id', '')
+    default_magi_profile = 2
+    if len(str(race_id_for_magi)) >= 6:
+        vc = str(race_id_for_magi)[4:6]
+        if vc in ['04', '05', '07']:
+            default_magi_profile = 0
+        elif vc in ['01', '02', '03', '06', '10']:
+            default_magi_profile = 1
+
+    magi_course = st.radio(
+        "コース特性（展開判定に使用）",
+        ["✨ 直線が長い・差し有利", "✨ 小回り・先行有利", "✨ 標準"],
+        index=default_magi_profile,
+        horizontal=True,
+    )
+
+    # 波乱度取得
+    chaos_data = calculator.evaluate_race_chaos_v3(df_magi)
+    chaos_rank = chaos_data.get('rank', 'B')
+    chaos_reasons = chaos_data.get('reason', '')
+
+    st.markdown(f"**波乱度: `{chaos_rank}` 判定** — {chaos_reasons[:100] if isinstance(chaos_reasons, str) else ''}")
+
+    # ── モード選択 ──────────────────────────────────────────────
+    st.markdown("---")
+    magi_mode = st.radio(
+        "🧠 MAGIモード選択",
+        ["⚡ ルールベースモード（高速）", "🤖 LLMマルチエージェントモード（本物の独立AI）"],
+        index=0,
+        horizontal=True,
+        help="LLMモードは各MAGIが独立したGemini APIコールを行います（計6回のAPIコール）。ルールベースは計算式による高速版です。",
+    )
+    use_llm_mode = "LLM" in magi_mode
+
+    if use_llm_mode:
+        st.info(
+            "**LLMマルチエージェントモード:** 3機のMAGIがそれぞれ独立したGemini APIインスタンスで思考します。\n"
+            "- 🔴 MELCHIOR: temperature=0.2（論理・分析）\n"
+            "- 🟢 BALTHASAR: temperature=0.35（慎重・保守）\n"
+            "- 🔵 CASPER: temperature=0.85（直感・創造）\n"
+            "ラウンド1（独立分析）→ ラウンド2（相互批判）→ 最終合議 の3段階で計6回のAPIコールを行います。"
+        )
+
+    # MAGI合議実行ボタン
+    btn_label = "⚡ MAGI合議システム 起動" if not use_llm_mode else "🤖 MAGI LLM合議 起動（Gemini API × 6コール）"
+    if st.button(btn_label, type="primary", use_container_width=True):
+        st.session_state['magi_result'] = None
+        st.session_state['magi_mode'] = 'llm' if use_llm_mode else 'rule'
+
+        if use_llm_mode:
+            with st.spinner("🤖 MAGI合議中... R1: MELCHIOR(2.5-flash)→BALTHASAR(3.1-flash-lite)→CASPER(2.5-flash-lite) → R2: 相互批判 ※約30秒"):
+                try:
+                    llm_result = magi_system.run_magi_llm_deliberation(
+                        df_magi.copy(),
+                        api_key=GEMINI_API_KEY,
+                        meta=race_metadata,
+                        course_profile=magi_course,
+                        chaos_rank=chaos_rank,
+                    )
+                    st.session_state['magi_result'] = llm_result
+                except Exception as e:
+                    st.error(f"LLMモードエラー: {e}")
+        else:
+            with st.spinner("🧠 三機のMAGIが合議中... (Round 1 → 2 → 3)"):
+                result = magi_system.run_magi_deliberation(
+                    df_magi.copy(),
+                    course_profile=magi_course,
+                    chaos_rank=chaos_rank
+                )
+                st.session_state['magi_result'] = result
+
+    magi_result = st.session_state.get('magi_result')
+    magi_mode_used = st.session_state.get('magi_mode', 'rule')
+
+    # ── LLMモード結果表示 ──────────────────────────────────────
+    if magi_result and magi_result.get('mode') == 'llm':
+        if 'error' in magi_result:
+            st.error(f"MAGIシステムエラー: {magi_result['error']}")
+        else:
+            st.markdown("---")
+            st.markdown("## 🤖 LLM MAGI合議結果（独立AIによる合議）")
+
+            # ── ラウンド1: 各MAGIの独立分析 ──
+            st.markdown("### ラウンド1: 独立分析（APIコール × 3）")
+            col_m, col_b, col_c = st.columns(3)
+
+            def _show_llm_unit(col, unit_key, color, icon, r1_data, r2_data):
+                with col:
+                    st.markdown(f"<div style='border-left:5px solid {color};padding:10px;background:#fafafa'>", unsafe_allow_html=True)
+                    model_used = r1_data.get('_model', '?')
+                    st.markdown(f"#### {icon} {unit_key}")
+                    st.caption(f"モデル: `{model_used}`")
+                    if '_error' in r1_data:
+                        st.error(f"エラー: {r1_data['_error']}")
+                        if '_raw' in r1_data:
+                            with st.expander("rawレスポンス（デバッグ用）"):
+                                st.code(r1_data['_raw'][:500], language=None)
+                    else:
+                        # R1出力
+                        with st.expander("ラウンド1 回答", expanded=True):
+                            st.code(r1_data.get('_raw', ''), language=None)
+                        # R2出力（批判・修正後）
+                        if r2_data and '_error' not in r2_data:
+                            with st.expander("ラウンド2 批判・修正後", expanded=False):
+                                st.code(r2_data.get('_raw', ''), language=None)
+                        elif r2_data and '_error' in r2_data:
+                            st.warning(f"R2失敗: {r2_data['_error']}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            r1 = magi_result['round1']
+            r2 = magi_result['round2']
+            _show_llm_unit(col_m, "MELCHIOR-1 (科学者)", "#e74c3c", "🔴", r1['melchior'], r2['melchior'])
+            _show_llm_unit(col_b, "BALTHASAR-2 (母)", "#2ecc71", "🟢", r1['balthasar'], r2['balthasar'])
+            _show_llm_unit(col_c, "CASPER-3 (直感)", "#3498db", "🔵", r1['casper'], r2['casper'])
+
+            # ── 最終合議結果 ──
+            st.markdown("---")
+            st.markdown("## ⚡ MAGI最終合議（LLMモード）")
+            final = magi_result['final_prediction']
+
+            if final.get('consensus_achieved'):
+                st.success("✅ **合議成立** — 2機以上のAIが合意した馬が確定されました")
+            else:
+                st.warning("⚠️ **合議分裂** — 3機の意見が分かれています")
+
+            # 得票テーブル
+            vote_data = []
+            for rank_i, (ub, data) in enumerate(magi_result['vote_tally'].items()):
+                if rank_i >= 8: break
+                vote_data.append({
+                    '順位': rank_i + 1,
+                    '馬番': int(ub),
+                    '馬名': data['name'],
+                    '得票': data['votes'],
+                    '推薦AI': ", ".join(data['supporters']),
+                    '合議': "✅" if len(data['supporters']) >= 2 else "－"
+                })
+            if vote_data:
+                st.dataframe(pd.DataFrame(vote_data), use_container_width=True, hide_index=True)
+
+            # 最終推奨馬券
+            consensus_h = final.get('consensus_horses', [])
+            if consensus_h:
+                st.markdown("**🎯 合議成立馬による推奨馬券:**")
+                ubs = [str(h['umaban']) for h in consensus_h[:3]]
+                if len(ubs) >= 3:
+                    st.info(f"3連複BOX: {' - '.join(ubs[:3])}")
+                if len(ubs) >= 2:
+                    st.info(f"馬連: {ubs[0]} - {ubs[1]}")
+
+                # CASPERのパターン
+                cas_final = magi_result['final']['casper']
+                if 'pattern_a' in cas_final:
+                    pa = " - ".join(map(str, cas_final['pattern_a']))
+                    pb = " - ".join(map(str, cas_final.get('pattern_b', [])))
+                    st.info(f"🔵 CASPER パターンA: {pa} / パターンB: {pb}")
+
+        # ルールベースモードの結果表示はここで終了
+        st.markdown("---")
+        st.markdown("*(ルールベース結果を見るには「⚡ ルールベースモード」で再実行してください)*")
+
+    elif magi_result and magi_result.get('mode') != 'llm':
+        if 'error' in magi_result:
+            st.error(f"MAGIシステムエラー: {magi_result['error']}")
+        else:
+            r1 = magi_result['round1']
+            r2 = magi_result['round2_critiques']
+            r3 = magi_result['round3']
+            final = magi_result['final_prediction']
+
+            # ─── ラウンド1: 初期提案 ───
+            st.markdown("---")
+            st.markdown("<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin-bottom:12px;'>▶ ROUND 1 — 各MAGIの独立分析</div>", unsafe_allow_html=True)
+
+            col_m, col_b, col_c = st.columns(3)
+
+            with col_m:
+                mel = r1['melchior']
+                horse_rows_m = "".join([
+                    f"<div style='padding:5px 0;border-bottom:1px solid #ff333322;'>"
+                    f"<span style='color:#ff3333;font-family:Orbitron,monospace;font-size:11px;'>[{'🥇🥈🥉'[i] if i<3 else str(i+1)}]</span> "
+                    f"<span style='color:#ffffff;'>{h['Umaban']}番 {h['Name']}</span> "
+                    f"<span style='color:#ff8844;font-size:11px;'>SCORE:{h['MelchiorScore']:.1f}</span></div>"
+                    for i, h in enumerate(mel['top_horses'][:3])
+                ])
+                st.markdown(f"""
+<div class='melchior-card'>
+  <div class='unit-label-mel'>🔴 MELCHIOR-1</div>
+  <div class='unit-subtitle'>SCIENTIST — {mel['title']}</div>
+  <hr style='border-color:#ff333333;margin:8px 0;'/>
+  <div style='color:#ff666688;font-size:10px;letter-spacing:2px;margin-bottom:4px;'>PACE ANALYSIS</div>
+  <div style='color:#ff9966;font-family:Orbitron,monospace;font-size:12px;'>{mel['pace_type']}</div>
+  <div style='color:#ff8844;font-size:11px;margin:4px 0 8px;'>{mel['pace_note'][:60]}...</div>
+  <div style='color:#ff666688;font-size:10px;letter-spacing:2px;margin-bottom:4px;'>FRONT RUNNERS: {mel['front_runner_count']} / FAVORED: {mel['favored_style']}</div>
+  <div style='color:#ff666688;font-size:10px;letter-spacing:2px;margin:8px 0 4px;'>TOP SELECTION</div>
+  {horse_rows_m}
+  <div style='margin-top:8px;color:#ff3333;font-size:10px;'>CONFIDENCE: {mel['confidence']}%</div>
+</div>""", unsafe_allow_html=True)
+
+            with col_b:
+                bal = r1['balthasar']
+                horse_rows_b = "".join([
+                    f"<div style='padding:5px 0;border-bottom:1px solid #00ff4422;'>"
+                    f"<span style='color:#00ff44;font-family:Orbitron,monospace;font-size:11px;'>[{['🥇','🥈','🥉'][i] if i<3 else str(i+1)}]</span> "
+                    f"<span style='color:#ffffff;'>{h['Umaban']}番 {h['Name']}</span> "
+                    f"<span style='color:#00aa33;font-size:11px;'>EV:{'+' if float(h['EV'])>=0 else ''}{float(h['EV']):.2f}</span></div>"
+                    for i, h in enumerate(bal['top_horses'][:3])
+                ])
+                rec_rows = "".join([
+                    f"<div style='padding:4px 0;color:#88ff88;font-size:11px;'>▶ {r['type']} {'-'.join(map(str,r['horses']))} ({r['est_odds']}倍)</div>"
+                    for r in bal['recommendations'][:3]
+                ])
+                st.markdown(f"""
+<div class='balthasar-card'>
+  <div class='unit-label-bal'>🟢 BALTHASAR-2</div>
+  <div class='unit-subtitle'>MOTHER — {bal['title']}</div>
+  <hr style='border-color:#00ff4433;margin:8px 0;'/>
+  <div style='color:#00ff4488;font-size:10px;letter-spacing:2px;margin-bottom:4px;'>CHAOS RANK: {bal['chaos_rank']} / POSITIVE EV: {bal['positive_ev_count']}頭</div>
+  <div style='color:#00ff4488;font-size:10px;letter-spacing:2px;margin:8px 0 4px;'>EV TOP SELECTION</div>
+  {horse_rows_b}
+  <div style='color:#00ff4488;font-size:10px;letter-spacing:2px;margin:10px 0 4px;'>RECOMMENDED BETS</div>
+  {rec_rows}
+  <div style='margin-top:8px;color:#00ff44;font-size:10px;'>MIN INVESTMENT: ¥{bal['min_investment']:,}</div>
+</div>""", unsafe_allow_html=True)
+
+            with col_c:
+                cas = r1['casper']
+                def _cas_pat_html(pat, color):
+                    rows = "".join([
+                        f"<span style='color:{color};font-family:Orbitron,monospace;font-size:18px;font-weight:700;'>{h['Umaban']}</span>"
+                        f"<span style='color:#ff8844;font-size:12px;'> {h['Name']} </span>"
+                        for h in pat['horses']
+                    ])
+                    return f"""<div style='padding:8px 0;border-bottom:1px solid {color}22;'>
+<div style='color:{color}88;font-size:9px;letter-spacing:3px;'>{pat['label']} — CONF:{pat['confidence']}%</div>
+<div style='margin-top:4px;'>{rows}</div></div>"""
+                st.markdown(f"""
+<div class='casper-card'>
+  <div class='unit-label-cas'>🔵 CASPER-3</div>
+  <div class='unit-subtitle'>WOMAN — {cas['title']}</div>
+  <hr style='border-color:#3399ff33;margin:8px 0;'/>
+  {_cas_pat_html(cas['pattern_a'], '#3399ff')}
+  {_cas_pat_html(cas['pattern_b'], '#aa44ff')}
+</div>""", unsafe_allow_html=True)
+
+            # ─── ラウンド2: 相互批判 ───
+            st.markdown("---")
+            st.markdown("<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin-bottom:12px;'>▶ ROUND 2 — 相互批判フェーズ</div>", unsafe_allow_html=True)
+
+            with st.expander("🔍 各MAGIへの批判ログ（クリックで展開）", expanded=True):
+                c2_m, c2_b, c2_c = st.columns(3)
+                with c2_m:
+                    st.markdown("**→ MELCHIOR-1 への批判**")
+                    for crit in r2['to_melchior']:
+                        st.warning(crit)
+                    if not r2['to_melchior']:
+                        st.success("批判なし。分析は堅固。")
+                with c2_b:
+                    st.markdown("**→ BALTHASAR-2 への批判**")
+                    for crit in r2['to_balthasar']:
+                        st.warning(crit)
+                    if not r2['to_balthasar']:
+                        st.success("批判なし。分析は堅固。")
+                with c2_c:
+                    st.markdown("**→ CASPER-3 への批判**")
+                    for crit in r2['to_casper']:
+                        st.warning(crit)
+                    if not r2['to_casper']:
+                        st.success("批判なし。分析は堅固。")
+
+            # ─── ラウンド3: 自己改善後の最終提案 ───
+            st.markdown("---")
+            st.markdown("<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin-bottom:12px;'>▶ ROUND 3 — 自己改善・再提案</div>", unsafe_allow_html=True)
+
+            with st.expander("🔄 改善ノート", expanded=False):
+                c3_m, c3_b, c3_c = st.columns(3)
+                with c3_m:
+                    st.markdown("**MELCHIOR-1 の改善メモ**")
+                    for note in r3['melchior'].get('refinement_notes', []):
+                        st.info(note)
+                with c3_b:
+                    st.markdown("**BALTHASAR-2 の改善メモ**")
+                    for note in r3['balthasar'].get('refinement_notes', []):
+                        st.info(note)
+                with c3_c:
+                    st.markdown("**CASPER-3 の改善メモ**")
+                    for note in r3['casper'].get('refinement_notes', []):
+                        st.info(note)
+
+            # ─── 最終合議結果 ───
+            st.markdown("---")
+            st.markdown("<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin-bottom:12px;'>⚡ 最終合議結果 — MAGI VERDICT</div>", unsafe_allow_html=True)
+
+            # ─── 合議結果パネル（サイバーパンク） ───
+            consensus_ok = final['consensus_achieved']
+            vote_tally = magi_result['vote_tally']
+            vote_items = sorted(vote_tally.items(), key=lambda x: x[1]['votes'], reverse=True)
+
+            # 得票HTMLテーブル
+            RANK_LABELS = ['01', '02', '03', '04', '05']
+            RANK_ICONS  = ['🥇', '🥈', '🥉', '', '']
+            vote_html_rows = ""
+            for ri, (ub, vd) in enumerate(vote_items[:5]):
+                supporters_str = " / ".join(vd['supporters']) if vd['supporters'] else "-"
+                is_consensus = len(vd['supporters']) >= 2
+                row_border = "border-left:3px solid #ffaa00;" if is_consensus else "border-left:3px solid #333;"
+                badge = "<span style='color:#00ff44;font-size:9px;margin-left:8px;'>✔ CONSENSUS</span>" if is_consensus else ""
+                vote_html_rows += f"""
+<div style='display:flex;align-items:center;gap:10px;padding:8px 12px;margin:3px 0;background:#050510;{row_border};font-family:Share Tech Mono,monospace;'>
+  <span style='color:#ffaa00;font-family:Orbitron,monospace;font-size:16px;font-weight:700;min-width:28px;'>{RANK_ICONS[ri] if ri<3 else str(ri+1)}</span>
+  <span style='color:#ff8844;font-size:11px;min-width:48px;'>【{str(int(ub)).zfill(2)}番】</span>
+  <span style='color:#ffffff;font-size:13px;flex:1;'>{vd['name']}</span>
+  <span style='color:#ffaa00;font-size:12px;min-width:50px;'>{vd['votes']:.1f}票</span>
+  <span style='color:#ff6622;font-size:10px;'>{supporters_str}</span>
+  {badge}
+</div>"""
+
+            # ── 動的馬券推奨（generate_bet_recommendations使用）──
+            # 先に信頼度を計算しておく
+            mel_conf_pre = r1['melchior'].get('confidence', 50)
+            cas_a_conf_pre = r1['casper']['pattern_a']['confidence']
+            cas_b_conf_pre = r1['casper']['pattern_b']['confidence']
+            overall_conf_pre = round((mel_conf_pre + cas_a_conf_pre + cas_b_conf_pre) / 3, 1)
+
+            bet_recs = magi_system.generate_bet_recommendations(
+                magi_result=magi_result,
+                chaos_rank=chaos_rank,
+                overall_conf=overall_conf_pre,
+            )
+
+            # リスク別のスタイル定義
+            _risk_colors = {'LOW': '#00ff44', 'MID': '#ffaa00', 'HIGH': '#ff3333'}
+            _risk_labels = {'LOW': 'LOW RISK', 'MID': 'MID RISK', 'HIGH': 'HIGH RISK'}
+
+            # 馬券カードHTML生成
+            bet_cards_html = ""
+            for rec in bet_recs:
+                risk_c = _risk_colors.get(rec['risk'], '#888888')
+                risk_lbl = _risk_labels.get(rec['risk'], rec['risk'])
+                note_html = f"<div style='color:#888;font-size:9px;margin-top:3px;'>※{rec.get('note','')}</div>" if rec.get('note') else ""
+                bet_cards_html += f"""
+<div style='background:#050510;border:1px solid {risk_c}44;border-top:2px solid {risk_c};
+            padding:12px 14px;min-width:140px;flex:1;'>
+  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'>
+    <span style='color:{risk_c};font-family:Orbitron,monospace;font-size:11px;font-weight:700;letter-spacing:2px;'>
+      {rec['emoji']} {rec['label']}
+    </span>
+    <span style='color:{risk_c}88;font-size:8px;letter-spacing:1px;'>{risk_lbl}</span>
+  </div>
+  <div style='color:#ffffff;font-family:Orbitron,monospace;font-size:16px;font-weight:700;
+              letter-spacing:3px;text-shadow:0 0 8px {risk_c}66;margin-bottom:6px;'>
+    {rec['horses']}
+  </div>
+  <div style='color:#ff8844;font-size:10px;line-height:1.4;'>{rec['reason']}</div>
+  {note_html}
+</div>"""
+
+            consensus_label = "<span class='consensus-ok'>⬡ CONSENSUS ACHIEVED — EXECUTE</span>" if consensus_ok else "<span class='consensus-ng'>⚠ CONSENSUS PENDING — REVIEW</span>"
+
+            st.markdown(f"""
+<div class='magi-consensus'>
+  <div class='consensus-title'>⬡ MAGI FINAL CONSENSUS (RULE MODE)</div>
+  {consensus_label}
+  <div style='margin:14px 0;'>{vote_html_rows}</div>
+  <div style='border-top:1px solid #ffaa0044;padding-top:14px;margin-top:4px;'>
+    <div style='color:#ffaa0088;font-size:9px;letter-spacing:3px;margin-bottom:10px;'>
+      RECOMMENDED BETTING TICKETS — 波乱度:{chaos_rank} / 信頼度:{overall_conf_pre:.0f}%
+    </div>
+    <div style='display:flex;gap:10px;flex-wrap:wrap;'>
+      {bet_cards_html}
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+            # 予測信頼度の総合評価
+            mel_conf = r1['melchior'].get('confidence', 50)
+            cas_a_conf = r1['casper']['pattern_a']['confidence']
+            cas_b_conf = r1['casper']['pattern_b']['confidence']
+            overall_conf = round((mel_conf + cas_a_conf + cas_b_conf) / 3, 1)
+
+            st.markdown(f"<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin-bottom:12px;'>📊 総合信頼度: {overall_conf}%</div>", unsafe_allow_html=True)
+            if overall_conf >= 75:
+                st.success(f"高信頼度 ({overall_conf}%) — 積極的な投資を推奨")
+            elif overall_conf >= 55:
+                st.info(f"中程度の信頼度 ({overall_conf}%) — 慎重な少額投資を推奨")
+            else:
+                st.warning(f"低信頼度 ({overall_conf}%) — 見送りまたは最小賭けを推奨")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # ─── 詳細スコアテーブル ───
+            with st.expander("📋 全馬MAGIスコア詳細", expanded=False):
+                mel_scores = {row['Umaban']: row['MelchiorScore'] for row in r1['melchior']['all_scores']}
+                bal_scores = {row['Umaban']: {'EV': row['EV'], 'Odds': row['Odds']} for row in r1['balthasar']['all_scores']}
+                cas_scores = {row['Umaban']: row['PlaceScore'] for row in r1['casper']['all_scores']}
+
+                detail_rows = []
+                for _, row in df_magi.iterrows():
+                    ub = row['Umaban']
+                    detail_rows.append({
+                        '馬番': int(ub),
+                        '馬名': row.get('Name', '?'),
+                        '単勝': float(row.get('Odds', 0)),
+                        '人気': int(row.get('Popularity', 99)),
+                        'MELCHIOR\n展開スコア': mel_scores.get(ub, 0),
+                        'BALTHASAR\nEV': round(float(bal_scores.get(ub, {}).get('EV', 0)), 3),
+                        'CASPER\n複勝スコア': cas_scores.get(ub, 0),
+                    })
+
+                detail_df = pd.DataFrame(detail_rows).sort_values('MELCHIOR\n展開スコア', ascending=False)
+                st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+    # ─────────────────────────────────────────────────────
+    # MAGIトレーニング（合議の下に配置）
+    # ─────────────────────────────────────────────────────
+
+    st.markdown("---")
+    st.markdown("<div style='font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:#00ff44;letter-spacing:3px;text-shadow:0 0 12px #00ff44,0 0 24px #00ff4466;padding:10px 0 6px;border-bottom:1px solid #00ff4433;margin:16px 0 12px;'>🎓 MAGIトレーニング — 過去データで自動学習</div>", unsafe_allow_html=True)
+    st.info(
+        "Kaggle過去データ（2010-2025年、約19.8万レース）を使ってMAGIパラメータを自動最適化します。\n"
+        "「予測→実績比較→改善」を繰り返し、的中率80%を目指します。"
+    )
+
+    from core import magi_trainer
+    importlib.reload(magi_trainer)
+
+    # 現在の重みを表示
+    with st.expander("⚙️ 現在のMAGIパラメータ", expanded=False):
+        current_w = magi_trainer.load_weights()
+        w_col1, w_col2 = st.columns(2)
+        param_items = list(current_w.items())
+        half = len(param_items) // 2
+        with w_col1:
+            for k, v in param_items[:half]:
+                st.metric(k, f"{v:.3f}" if isinstance(v, float) else v)
+        with w_col2:
+            for k, v in param_items[half:]:
+                st.metric(k, f"{v:.3f}" if isinstance(v, float) else v)
+
+    # トレーニング設定
+    tr_col1, tr_col2, tr_col3 = st.columns(3)
+    with tr_col1:
+        train_samples = st.selectbox("バックテストサンプル数", [50, 100, 200, 500], index=1,
+            help="多いほど精度が上がるが時間がかかる")
+    with tr_col2:
+        train_iterations = st.selectbox("最適化イテレーション数", [10, 20, 50, 100], index=1,
+            help="多いほど探索が深くなる")
+    with tr_col3:
+        train_year = st.selectbox("学習対象年", [None, 2024, 2023, 2022, 2021],
+            format_func=lambda x: "直近2年" if x is None else f"{x}年",
+            help="特定年のデータで学習")
+
+    if "magi_train_log" not in st.session_state:
+        st.session_state["magi_train_log"] = []
+    if "magi_train_result" not in st.session_state:
+        st.session_state["magi_train_result"] = None
+
+    if st.button("🚀 MAGIトレーニング開始", type="primary", use_container_width=True):
+        st.session_state["magi_train_log"] = []
+        st.session_state["magi_train_result"] = None
+
+        log_placeholder = st.empty()
+        progress_bar = st.progress(0)
+
+        logs = []
+
+        def log_cb(msg):
+            logs.append(msg)
+            log_placeholder.code("\n".join(logs[-30:]), language=None)
+
+        def prog_cb(it, total, score=None):
+            progress_bar.progress(int(it / total * 100))
+
+        with st.spinner("📦 Kaggleデータをロード中..."):
+            dfs = magi_trainer.load_kaggle_data()
+
+        if dfs is None:
+            st.error("❌ Kaggleデータのロードに失敗しました")
+        else:
+            st.success(f"✅ データロード完了: {len(dfs.get('results', pd.DataFrame()))}件の出走記録")
+
+            with st.spinner("🧠 MAGIトレーニング実行中..."):
+                try:
+                    train_result = magi_trainer.optimize_weights(
+                        dfs=dfs,
+                        n_samples=train_samples,
+                        n_iterations=train_iterations,
+                        year_filter=train_year,
+                        progress_callback=prog_cb,
+                        log_callback=log_cb,
+                    )
+                    st.session_state["magi_train_result"] = train_result
+                    progress_bar.progress(100)
+                except Exception as e:
+                    st.error(f"トレーニングエラー: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+    # トレーニング結果の表示
+    train_result = st.session_state.get("magi_train_result")
+    if train_result:
+        if "error" in train_result:
+            st.error(f"エラー: {train_result['error']}")
+        else:
+            st.markdown("### 📊 トレーニング結果")
+
+            res_col1, res_col2, res_col3, res_col4 = st.columns(4)
+            final_m = train_result.get("final_metrics", {})
+            baseline_score = train_result.get("baseline_score", 0)
+            best_score = train_result.get("best_score", 0)
+            improvement = train_result.get("improvement", 0)
+
+            with res_col1:
+                st.metric("最終的中率 (合議top3)", f"{best_score:.1f}%",
+                    delta=f"+{improvement:.1f}%" if improvement > 0 else f"{improvement:.1f}%")
+            with res_col2:
+                st.metric("CASPERパターン的中率", f"{final_m.get('casper_hit_rate', 0):.1f}%")
+            with res_col3:
+                st.metric("1着予測的中率", f"{final_m.get('winner_hit_rate', 0):.1f}%")
+            with res_col4:
+                st.metric("サンプル数", f"{final_m.get('total', 0)}レース")
+
+            # 目標達成チェック
+            if best_score >= 80:
+                st.success(f"🎯 目標達成！ 的中率 {best_score:.1f}% ≥ 80%")
+            elif best_score >= 65:
+                st.info(f"📈 良好。的中率 {best_score:.1f}% (目標: 80%)")
+            else:
+                st.warning(f"⚠️ 的中率 {best_score:.1f}%。サンプル数・イテレーション数を増やしてください。")
+
+            # 各MAGI的中率
+            st.markdown("**各MAGIユニットの的中率:**")
+            magi_acc_col1, magi_acc_col2, magi_acc_col3 = st.columns(3)
+            with magi_acc_col1:
+                st.metric("🔴 MELCHIOR", f"{final_m.get('mel_hit_rate', 0):.1f}%")
+            with magi_acc_col2:
+                st.metric("🟢 BALTHASAR", f"{final_m.get('bal_hit_rate', 0):.1f}%")
+            with magi_acc_col3:
+                st.metric("🔵 CASPER (A+B)", f"{final_m.get('casper_hit_rate', 0):.1f}%")
+
+            # 最適化履歴
+            history = train_result.get("history", [])
+            if len(history) > 1:
+                with st.expander("📈 最適化履歴", expanded=False):
+                    hist_df = pd.DataFrame([
+                        {"イテレーション": h["iteration"], "的中率": h["score"]}
+                        for h in history
+                    ])
+                    st.line_chart(hist_df.set_index("イテレーション")["的中率"])
+
+                    # 最適化されたパラメータ
+                    st.markdown("**最適化後のパラメータ:**")
+                    best_w = train_result.get("best_weights", {})
+                    default_w = magi_trainer.DEFAULT_WEIGHTS
+                    param_rows = []
+                    for k, v in best_w.items():
+                        default_v = default_w.get(k, v)
+                        diff = v - default_v if isinstance(v, (int, float)) else 0
+                        param_rows.append({
+                            "パラメータ": k,
+                            "最適値": round(v, 4) if isinstance(v, float) else v,
+                            "デフォルト": default_v,
+                            "差分": round(diff, 4) if isinstance(diff, float) else diff,
+                        })
+                    st.dataframe(pd.DataFrame(param_rows), hide_index=True, use_container_width=True)
+
+            st.success("💾 最適化されたパラメータは `magi_weights.json` に保存済みです。次回のMAGI合議から自動的に適用されます。")
+
+
+# ══════════════════════════════════════════════════════════════
+# 🎓 MAGI 回顧学習タブ
+# ══════════════════════════════════════════════════════════════
+
+if nav == "🎓 MAGI回顧学習":
+    st.header("🎓 MAGI 回顧学習 - 過去レース振り返りセッション")
+
+    st.markdown("""
+    **このタブでできること:**
+    - 過去のレースRaceIDを入力し、アプリの全スコア（Ranking Table相当）でMAGI予測を自動生成
+    - netkeibaから**実際の結果**を取得
+    - **3人格（MELCHIOR・BALTHASAR・CASPER）がLLMで回顧** → 「なぜ外れたか」「次回どうすべきか」を議論
+    - 学習結果はMAGIのシステムプロンプトに活かされます
+    """)
+
+    retro_cols1 = st.columns([2, 1, 1, 2])
+    with retro_cols1[0]:
+        retro_race_id = st.text_input(
+            "回顧対象 RaceID",
+            value="",
+            placeholder="例: 202406050811",
+            key="retro_race_id_input"
+        )
+    with retro_cols1[1]:
+        retro_date = st.text_input("日付 (保存用)", placeholder="例: 2024/12/22", key="retro_date_input")
+    with retro_cols1[2]:
+        retro_place = st.text_input("場所 (保存用)", placeholder="例: 中山", key="retro_place_input")
+    with retro_cols1[3]:
+        retro_name = st.text_input("レース名 (保存用)", placeholder="例: 有馬記念", key="retro_name_input")
+
+    retro_cols2 = st.columns(2)
+    with retro_cols2[0]:
+        retro_course_opts = ["標準", "小回り(中山・中京・福島)", "直線が長い(東京・京都外回り)", "洋芝(札幌・函館)"]
+        retro_course = st.selectbox("コース特性", retro_course_opts, key="retro_course")
+    with retro_cols2[1]:
+        retro_chaos_opts = ["C (堅い)", "B (標準)", "A (波乱)", "S (大波乱)"]
+        retro_chaos = st.select_slider("波乱度（事後評価）", options=retro_chaos_opts, value="B (標準)", key="retro_chaos")
+
+    retro_btn = st.button("🎓 回顧セッション開始", type="primary", use_container_width=False, key="retro_btn")
+
+    # ── Session State for Interactive Learning ──
+    if 'retro_session' not in st.session_state:
+        st.session_state.retro_session = None
+
+    if retro_btn and retro_race_id:
+        st.session_state.retro_session = {
+            'race_id': str(retro_race_id).strip(),
+            'date': str(retro_date).strip(),
+            'place': str(retro_place).strip(),
+            'name': str(retro_name).strip()
+        }
+        st.session_state.retro_chat_history = []
+        
+        retro_race_id_str = st.session_state.retro_session['race_id']
+        st.info(f"📡 レースID: {retro_race_id_str} のデータを取得中...")
+
+        # Step 1: レースカードデータ取得
+        with st.spinner("Step 1/4: レースカードデータ取得中..."):
+            try:
+                df_retro = scraper.get_race_data(retro_race_id_str, use_storage=False)
+            except Exception as e:
+                df_retro = pd.DataFrame()
+                st.warning(f"スクレイパーエラー: {e}")
+
+        if df_retro.empty:
+            st.error("❌ レースカードデータを取得できませんでした。RaceIDを確認してください。")
+            st.session_state.retro_session = None
+            st.stop()
+        
+        # Step 2: スコア計算
+        with st.spinner("Step 2/4: BattleScore・OguraIndex等の計算中..."):
+            try:
+                df_retro = calculator.calculate_all(df_retro)
+            except Exception as e:
+                st.warning(f"スコア計算エラー（部分): {e}")
+
+        # Step 3: MAGI合議
+        with st.spinner("Step 3/4: MAGI合議（ルールベース）実行中..."):
+            try:
+                from core.magi_system import run_magi_deliberation
+                chaos_char = retro_chaos[0]
+                magi_pred = run_magi_deliberation(df_retro, course_profile=retro_course, chaos_rank=chaos_char)
+            except Exception as e:
+                magi_pred = {}
+                st.warning(f"MAGI合議エラー: {e}")
+
+        # Step 4: 実際の結果取得
+        with st.spinner("Step 4/4: netkeibaから実際の結果を取得中..."):
+            try:
+                actual_result = scraper.fetch_comprehensive_result(retro_race_id_str)
+            except Exception as e:
+                actual_result = {}
+                st.warning(f"結果取得エラー: {e}")
+
+        if not actual_result or not actual_result.get('horses'):
+            st.error("❌ 実際の結果を取得できませんでした。確定済みレースか確認してください。")
+            st.session_state.retro_session = None
+            st.stop()
+
+        # Step 5: LLM回顧セッション
+        with st.spinner("🔴🟢🔵 3ユニットが回顧中... (約30〜40秒)"):
+            try:
+                from core.magi_retrospective import run_magi_retrospective
+                retro_result = run_magi_retrospective(
+                    df=df_retro,
+                    magi_prediction=magi_pred,
+                    actual_result=actual_result,
+                    api_key=GEMINI_API_KEY,
+                    meta={'course_profile': retro_course, 'chaos_rank': chaos_char}
+                )
+            except Exception as e:
+                st.error(f"回顧セッションエラー: {e}")
+                retro_result = None
+
+        # Store to session and RERUN to display cleanly
+        st.session_state.retro_session.update({
+            'df_retro': df_retro,
+            'magi_pred': magi_pred,
+            'actual_result': actual_result,
+            'retro_result': retro_result
+        })
+        st.rerun()
+
+    # ── Render Session Data ──
+    if st.session_state.retro_session and 'retro_result' in st.session_state.retro_session:
+        rs = st.session_state.retro_session
+        df_retro = rs['df_retro']
+        magi_pred = rs['magi_pred']
+        actual_result = rs['actual_result']
+        retro_result = rs['retro_result']
+
+        st.success(f"✅ レースデータ取得完了")
+        # 予測結果プレビュー
+        if magi_pred and 'final_prediction' in magi_pred:
+            pred_horses = magi_pred['final_prediction'].get('horses', [])
+            if pred_horses:
+                pred_str = ', '.join([f"馬番{h['umaban']}({h.get('name','?')})" for h in pred_horses[:3]])
+                st.info(f"🔮 MAGI事前予測TOP3: {pred_str}")
+
+        # 実際の結果プレビュー
+        from core.magi_retrospective import format_actual_result
+        actual_text = format_actual_result(actual_result)
+        with st.expander("📋 実際のレース結果（クリックで開く）", expanded=True):
+            st.text(actual_text)
+
+        st.divider()
+        st.subheader("🧠 MAGI 回顧セッション（3人格がLLMで分析）")
+
+        if retro_result:
+            summary = retro_result.get('summary', {})
+            pred_top3 = summary.get('predicted_top3', [])
+            actual_top3 = summary.get('actual_top3', [])
+            hits = summary.get('hits', [])
+            hit_count = summary.get('hit_count', 0)
+
+            hit_color = "🟢" if hit_count >= 2 else ("🟡" if hit_count == 1 else "🔴")
+            st.markdown(f"### {hit_color} 予測精度: {summary.get('hit_rate_label', '?')} 的中")
+            met1, met2, met3 = st.columns(3)
+            met1.metric("MAGI予測TOP3", ", ".join(pred_top3) or "-")
+            met2.metric("実際のTOP3", ", ".join(actual_top3) or "-")
+            met3.metric("一致した馬番", ", ".join(str(h) for h in hits) or "なし")
+            st.divider()
+
+            retro_cols = st.columns(3)
+            unit_configs = [
+                ('melchior', '🔴 MELCHIOR-1', '科学者・論理'),
+                ('balthasar', '🟢 BALTHASAR-2', '母・資金管理'),
+                ('casper', '�� CASPER-3', '女・直感'),
+            ]
+            for col, (key, label, subtitle) in zip(retro_cols, unit_configs):
+                with col:
+                    r = retro_result.get(key, {})
+                    if '_error' in r:
+                         st.error(f"{label}: エラー")
+                         continue
+                    acc = r.get('prediction_accuracy', '不明')
+                    acc_icon = "✅" if acc == "的中" else "❌"
+                    st.markdown(f"#### {label}")
+                    st.caption(subtitle)
+                    st.markdown(f"**{acc_icon} {acc}**")
+
+                    lesson = r.get('lesson_learned', '')
+                    if lesson:
+                        st.info(f"💡 **学習ポイント**: {lesson}")
+
+                    with st.expander(f"{label} 全回顧内容", expanded=False):
+                        display_map = {{
+                            'key_miss_factor': '🔍 最大の見落とし',
+                            'scientific_note': '🔬 科学的補足',
+                            'odds_analysis': '📊 オッズ評価',
+                            'bet_assessment': '💰 馬券評価',
+                            'risk_note': '⚠️ リスク見落とし',
+                            'intuition_review': '💭 直感の振り返り',
+                            'pattern_a_result': '📌 パターンA結果',
+                            'pattern_b_result': '📌 パターンB結果',
+                            'hidden_signal': '👁 見落としたサイン',
+                            'emotional_note': '💔 感情的振り返り',
+                            'revised_confidence': '📈 次回信頼度',
+                        }}
+                        for field, label_j in display_map.items():
+                            val = r.get(field)
+                            if val is not None and val != '':
+                                st.markdown(f"**{label_j}**: {val}")
+
+            st.divider()
+            with st.expander("📊 使用したRanking Table（解析データ）", expanded=False):
+                display_cols = [c for c in ['Umaban', 'Name', 'Popularity', 'Odds', 'BattleScore', 'OguraIndex', 'AvgPosition', 'AvgAgari', 'Rank'] if c in df_retro.columns]
+                if display_cols:
+                    st.dataframe(df_retro[display_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
+
+        # ── 人間とMAGIの対話（Interactive Learning） ──
+        st.divider()
+        st.subheader("🗣 人間とMAGIの反省討論（Interactive Session）")
+        st.markdown("レース結果を見た**あなたの直感やパドックの印象、気づいたサイン**を入力してください。AIと共に次へ繋がるロジックを探求します。")
+        
+        # 過去のチャットログを表示
+        for msg in st.session_state.retro_chat_history:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+                
+        user_insight = st.chat_input("なぜこの穴馬を当てられなかったのか？例：パドックで発汗がひどかったから切るべきだった")
+        if user_insight:
+            st.session_state.retro_chat_history.append({"role": "user", "content": user_insight})
+            with st.chat_message("user"):
+                st.write(user_insight)
+                
+            with st.chat_message("assistant"):
+                with st.spinner("MAGIマスターAIが考察中..."):
+                    from core.magi_retrospective import discuss_interactive_retrospective
+                    # API Key is defined globally in app.py as GEMINI_API_KEY
+                    response_text = discuss_interactive_retrospective(st.session_state.retro_session, user_insight, st.session_state.retro_chat_history[:-1], GEMINI_API_KEY)
+                    st.write(response_text)
+                    st.session_state.retro_chat_history.append({"role": "assistant", "content": response_text})
+                    
+            # 記録処理 (Log to diary)
+            import os
+            from datetime import datetime
+            diary_dir = os.path.join("sandbox", "hyperagents")
+            diary_file = os.path.join(diary_dir, "IMPROVEMENTS.md")
+            if os.path.exists(diary_file):
+                with open(diary_file, "a", encoding="utf-8") as f:
+                    # 追加情報のフォーマット生成
+                    date_str = rs.get('date', '')
+                    place_str = rs.get('place', '')
+                    name_str = rs.get('name', '')
+                    
+                    extra_parts = []
+                    if date_str: extra_parts.append(date_str)
+                    if place_str: extra_parts.append(place_str)
+                    if name_str: extra_parts.append(name_str)
+                    extra_text = f" ({' / '.join(extra_parts)})" if extra_parts else ""
+                    
+                    f.write(f"\n\n## [ HUMAN + AI Interactive Retro ] Race {rs['race_id']}{extra_text} [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                    f.write(f"**Human**: {user_insight}\n")
+                    f.write(f"**MAGI AI**: {response_text[:400]}...\n")
+
 
 # ──────────────────────────────────────────────
 # --- Footer ---
