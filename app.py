@@ -6749,24 +6749,28 @@ if nav == "📦 データ保管庫":
 if nav != "🧠 MAGIシステム":
     st.markdown("""
     <style>
-    .stApp { background: unset !important; }
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"], .block-container {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        color: #262730 !important;
+    }
     section[data-testid="stSidebar"] { background: #121212 !important; }
-    p, li, ul, ol, small { color: unset !important; }
-    .stMarkdown p, .stMarkdown li { color: unset !important; }
-    h1, h2, h3, h4 { color: unset !important; font-family: unset !important;
-                      text-shadow: none !important; letter-spacing: unset !important; }
-    div[data-testid="stMetricValue"] { color: unset !important; font-family: unset !important;
+    p, li, ul, ol, small { color: #262730 !important; font-family: inherit !important; }
+    .stMarkdown p, .stMarkdown li { color: #262730 !important; font-family: inherit !important; }
+    h1 { color: #262730 !important; font-family: inherit !important;
+         text-shadow: none !important; letter-spacing: inherit !important; }
+    h2, h3, h4 { color: #262730 !important; font-family: inherit !important; }
+    div[data-testid="stMetricValue"] { color: #262730 !important; font-family: inherit !important;
                                        text-shadow: none !important; }
-    div[data-testid="stMetricLabel"] > div { color: unset !important; font-family: unset !important;
-                                              font-size: unset !important; letter-spacing: unset !important; }
-    div[data-testid="stAlert"] { background: unset !important; border-radius: unset !important;
-                                  border-left-width: unset !important; }
-    div[data-testid="stRadio"] > label, div[data-testid="stRadio"] label,
-    div[data-testid="stRadio"] p, div[role="radiogroup"] label,
-    div[role="radiogroup"] span { color: unset !important; font-family: unset !important; }
+    div[data-testid="stMetricLabel"] > div { color: #262730 !important; font-family: inherit !important;
+                                              font-size: inherit !important; letter-spacing: inherit !important; }
+    div[data-testid="stAlert"] { background: #f0f2f6 !important; border-radius: 4px !important; }
+    div[data-testid="stRadio"] label, div[data-testid="stRadio"] p,
+    div[role="radiogroup"] label, div[role="radiogroup"] span { color: #262730 !important; font-family: inherit !important; }
     div[data-testid="stSlider"] label, div[data-testid="stSlider"] p,
     div[data-testid="stNumberInput"] label, div[data-testid="stNumberInput"] p,
-    div[data-testid="stSelectbox"] label, div[data-testid="stSelectbox"] p { color: unset !important; }
+    div[data-testid="stSelectbox"] label, div[data-testid="stSelectbox"] p { color: #262730 !important; }
     </style>
     """, unsafe_allow_html=True)
 
