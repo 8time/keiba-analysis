@@ -6745,6 +6745,31 @@ if nav == "📦 データ保管庫":
 # ──────────────────────────────────────────────
 # 🧠 MAGIシステム
 # ──────────────────────────────────────────────
+# MAGIページ以外では、MAGIのグローバルCSSをリセットして元のUIを復元する
+if nav != "🧠 MAGIシステム":
+    st.markdown("""
+    <style>
+    .stApp { background: unset !important; }
+    section[data-testid="stSidebar"] { background: #121212 !important; }
+    p, li, ul, ol, small { color: unset !important; }
+    .stMarkdown p, .stMarkdown li { color: unset !important; }
+    h1, h2, h3, h4 { color: unset !important; font-family: unset !important;
+                      text-shadow: none !important; letter-spacing: unset !important; }
+    div[data-testid="stMetricValue"] { color: unset !important; font-family: unset !important;
+                                       text-shadow: none !important; }
+    div[data-testid="stMetricLabel"] > div { color: unset !important; font-family: unset !important;
+                                              font-size: unset !important; letter-spacing: unset !important; }
+    div[data-testid="stAlert"] { background: unset !important; border-radius: unset !important;
+                                  border-left-width: unset !important; }
+    div[data-testid="stRadio"] > label, div[data-testid="stRadio"] label,
+    div[data-testid="stRadio"] p, div[role="radiogroup"] label,
+    div[role="radiogroup"] span { color: unset !important; font-family: unset !important; }
+    div[data-testid="stSlider"] label, div[data-testid="stSlider"] p,
+    div[data-testid="stNumberInput"] label, div[data-testid="stNumberInput"] p,
+    div[data-testid="stSelectbox"] label, div[data-testid="stSelectbox"] p { color: unset !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
 if nav == "🧠 MAGIシステム":
     from core import magi_system
     import importlib; importlib.reload(magi_system)
