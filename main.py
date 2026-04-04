@@ -55,22 +55,65 @@ def get_single_horse_ped(horse_id):
     """個別馬の血統ページから父と母父を正確に取得"""
     url = f"https://db.netkeiba.com/horse/ped/{horse_id}/"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
+    html = ""
+    # Scrapling優先（ボット検知回避）
+    fetcher = get_shared_fetcher()
+    if fetcher:
+        try:
+            resp = fetcher.get(url)
+            html = resp.text if hasattr(resp, 'text') else ""
+        except:
+            pass
+
+    # fallback: requests
+    if not html:
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            html = decode_content(resp.content)
+        except:
+            pass
+
+    if not html:
+        return "不明", "不明"
+
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        html = decode_content(resp.content)
         soup = BeautifulSoup(html, "html.parser")
-        
-        rows = soup.select("table.blood_table tr")
-        if len(rows) >= 17:
-            sire_td = rows[0].select_one("td")
-            sire = sire_td.select_one("a").get_text(strip=True) if sire_td and sire_td.select_one("a") else "不明"
-            
-            bms_row = rows[16].select("td")
-            if len(bms_row) >= 2:
-                bms = bms_row[1].select_one("a").get_text(strip=True) if bms_row[1].select_one("a") else "不明"
-            else:
-                bms = "不明"
-            return sire, bms
+
+        blood_tbl = soup.find("table", class_="blood_table")
+        if not blood_tbl:
+            return "不明", "不明"
+
+        rows = blood_tbl.find_all("tr")
+        if not rows:
+            return "不明", "不明"
+
+        # 父 (sire): テーブル最初の行の最初のtd > a
+        sire = "不明"
+        first_tds = rows[0].find_all("td")
+        if first_tds:
+            a_tag = first_tds[0].find("a")
+            if a_tag:
+                sire = a_tag.get_text(strip=True)
+
+        # 母父 (broodmareSire): テーブル行数に応じて位置を推定
+        # - 16行(葉ノードのみ): rows[8]の2番目td
+        # - 32行(全祖先): rows[16]の2番目td
+        bms = "不明"
+        bms_row_idx = 8 if len(rows) <= 20 else 16
+        if len(rows) > bms_row_idx:
+            bms_tds = rows[bms_row_idx].find_all("td")
+            if len(bms_tds) >= 2:
+                a_tag = bms_tds[1].find("a")
+                if a_tag:
+                    bms = a_tag.get_text(strip=True)
+            # フォールバック: 最初のtdがdam本体でなく母父の場合
+            if bms == "不明" and bms_tds:
+                a_tag = bms_tds[0].find("a")
+                if a_tag and sire != a_tag.get_text(strip=True):
+                    bms = a_tag.get_text(strip=True)
+
+        return sire, bms
     except:
         pass
     return "不明", "不明"
@@ -112,25 +155,41 @@ def calculate_sire_bonus(name, race_track, race_dist):
     return score
 
 def get_bloodline_data(race_id: str, track_override: str = None, dist_override: int = None):
-    domain = "race.netkeiba.com"
-    if str(race_id)[4:6] > "10": domain = "nar.netkeiba.com"
-        
-    url = f"https://{domain}/race/shutuba.html?race_id={race_id}"
+    is_nar = str(race_id)[4:6] > "10"
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    # JRAはshutuba_past.htmlを使用（馬IDリンクが含まれる）
+    page_name = "shutuba.html" if is_nar else "shutuba_past.html"
+    url = f"https://{domain}/race/{page_name}?race_id={race_id}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    
+
     html = ""
     fetcher = get_shared_fetcher()
     if fetcher:
         try:
             resp = fetcher.get(url)
-            html = resp.text
+            html = resp.text if hasattr(resp, 'text') else ""
         except: pass
-    
+
     if not html:
         try:
             response = requests.get(url, headers=headers, timeout=15)
             html = decode_content(response.content)
         except: pass
+
+    # JRAでshutuba_past.htmlが空なら通常shutuba.htmlにフォールバック
+    if html and not is_nar:
+        _tmp_soup = BeautifulSoup(html, "html.parser")
+        if not _tmp_soup.find('tr', class_=re.compile(r'HorseList')):
+            fb_url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+            try:
+                resp2 = fetcher.get(fb_url) if fetcher else None
+                html = resp2.text if (resp2 and hasattr(resp2, 'text')) else ""
+            except: html = ""
+            if not html:
+                try:
+                    response2 = requests.get(fb_url, headers=headers, timeout=15)
+                    html = decode_content(response2.content)
+                except: pass
 
     if not html:
         return {"race_id": race_id, "condition": "error_fetch", "data": [], "error": "HTML Fetch Failed"}
@@ -161,23 +220,31 @@ def get_bloodline_data(race_id: str, track_override: str = None, dist_override: 
         
         # 2. 出馬表から各馬のID取得
         horse_list = []
-        rows = soup.select(".Shutuba_Table tr.HorseList, .ShutubaTable tr.HorseList")
-        if not rows: rows = soup.select("table tr")
+        rows = soup.find_all('tr', class_=re.compile(r'HorseList|Entry|Horse_?List'))
+        if not rows:
+            # フォールバック: horse/ リンクを含む全tr
+            rows = [tr for tr in soup.find_all('tr') if tr.find('a', href=re.compile(r'/horse/\d+'))]
 
         for row in rows:
             try:
-                num_td = row.select_one("td[class*='Umaban'], td.Umaban, .txt_c")
-                if not num_td: continue
+                # 馬番取得: Umaban > Waku系 > 最初の数字td
+                uma_tds = row.find_all('td', class_=re.compile(r'Umaban|umaban', re.I))
+                if not uma_tds:
+                    uma_tds = row.find_all('td', class_=re.compile(r'Waku', re.I))
+                num_td = uma_tds[0] if uma_tds else None
+                if not num_td:
+                    continue
                 m_num = re.search(r'(\d+)', num_td.get_text(strip=True))
                 if not m_num: continue
-                
-                name_a = row.select_one(".HorseName a, .Horse_Name a, .HorseInfo a")
+
+                # 馬IDリンク取得
+                name_a = row.find('a', href=re.compile(r'/horse/\d+'))
                 if not name_a or 'href' not in name_a.attrs: continue
-                
+
                 h_url = name_a['href']
                 m_id = re.search(r'horse/(\d+)', h_url)
                 if not m_id: continue
-                
+
                 horse_list.append({"number": int(m_num.group(1)), "name": name_a.get_text(strip=True), "id": m_id.group(1)})
             except: continue
 
