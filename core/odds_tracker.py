@@ -63,94 +63,83 @@ class OddsTracker:
         conn.commit()
         conn.close()
 
-    @retry(tries=3, delay=1)
     def fetch_api_odds(self, race_id, odds_type="b1"):
-        """Fetches raw odds from netkeiba API with retry."""
+        """Fetches raw odds using scraper.fetch_realtime_odds_api (Scrapling/curl_cffi).
+        Returns {umaban_zfill2: {Odds, Popularity}} or None."""
         try:
-            from core import scraper
-            is_nar = scraper._is_nar(race_id)
-            domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
-            pid = f"api_get_{'nar' if is_nar else 'jra'}_odds"
-            url = f"https://{domain}/api/{pid}.html"
-            
-            params = {"pid": pid, "race_id": race_id, "type": odds_type, "compress": "1", "output": "json"}
-            headers = scraper._get_headers(referer=f"https://{domain}/odds/index.html?race_id={race_id}", ajax=True)
-
-            response = requests.get(url, params=params, headers=headers, timeout=15)
-            if response.status_code != 200:
-                return None
-            
-            data = response.json()
-            raw = data.get('data', '')
-            if not raw or not isinstance(raw, str) or len(raw) < 10:
-                return None
-            
-            decoded = base64.b64decode(raw)
-            try: decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
-            except: decompressed = zlib.decompress(decoded)
-            return json.loads(decompressed.decode('utf-8'))
+            from core.scraper import fetch_realtime_odds_api
+            data = fetch_realtime_odds_api(race_id)
+            if data:
+                return data
         except Exception as e:
-            logger.warning(f"Error fetching API odds for {race_id}: {e}")
-            return None
+            logger.warning(f"fetch_realtime_odds_api failed for {race_id}: {e}")
+        return None
 
     def get_win_show_odds(self, race_id):
-        """Parses Win and Show odds, falls back to robust HTML fetcher."""
+        """Parses Win/Show/Popularity odds via scraper, with HTML fallback."""
         results = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        odds_data = self.fetch_api_odds(race_id, "b1")
-        if odds_data:
-            for key, val in odds_data.items():
+
+        # ── Priority 1: fetch_realtime_odds_api (Scrapling) ──
+        api_data = self.fetch_api_odds(race_id)
+        if api_data:
+            sorted_by_odds = sorted(
+                [(int(u), d) for u, d in api_data.items() if d.get('Odds', 0) > 0],
+                key=lambda x: x[1]['Odds']
+            )
+            pop_rank = {uma: rank + 1 for rank, (uma, _) in enumerate(sorted_by_odds)}
+            for u_str, d in api_data.items():
                 try:
-                    if "_" in key:
-                        parts = key.split("_")
-                        umaban = int(parts[0]); sub_type = parts[1]
-                        o_type = "show_min" if sub_type == "1" else "show_max"
-                    else:
-                        if not key.isdigit(): continue
-                        umaban = int(key); o_type = "win"
-                    
-                    odds_val = float(val) if val and val not in ['---.-', '0'] else 0.0
-                    if odds_val > 0:
-                        results.append({"race_id": str(race_id), "umaban": umaban, "odds_type": o_type, "odds_value": odds_val, "timestamp": now})
-                except: continue
-        
+                    u = int(u_str)
+                    o_val = float(d.get('Odds', 0.0))
+                    if o_val > 0:
+                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "win", "odds_value": o_val, "timestamp": now})
+                    pop = int(d.get('Popularity', pop_rank.get(u, 99)))
+                    results.append({"race_id": str(race_id), "umaban": u, "odds_type": "pop", "odds_value": float(pop), "timestamp": now})
+                except:
+                    continue
+
+        # ── Priority 2: HTML fallback (fetch_robust_html + BeautifulSoup) ──
         if not results:
-            logger.info(f"API failed for {race_id}, trying HTML fallback...")
+            logger.info(f"API returned nothing for {race_id}, trying HTML fallback...")
             try:
                 from core import scraper
                 is_nar = scraper._is_nar(race_id)
-                # Ensure we use the right domain for HTML fallback
                 domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
                 url = f"https://{domain}/odds/index.html?type=b1&race_id={race_id}"
                 html = scraper.fetch_robust_html(url)
                 if html:
                     soup = BeautifulSoup(html, 'html.parser')
-                    # Search specifically for the HorseList rows
                     for row in soup.find_all('tr', class_='HorseList'):
                         cols = row.find_all('td')
-                        if len(cols) >= 6:
-                            try:
-                                # Umaban (cols[1]), Win (cols[5]), Place (cols[6])
-                                u_text = cols[1].get_text(strip=True)
-                                m_uma = re.search(r'(\d+)', u_text)
-                                if m_uma:
-                                    u = int(m_uma.group(1))
-                                    # Win Odds
-                                    o_win_text = cols[5].get_text(strip=True)
-                                    m_win = re.search(r'(\d+\.?\d*)', o_win_text)
-                                    if m_win:
-                                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "win", "odds_value": float(m_win.group(1)), "timestamp": now})
-                                    
-                                    # Place Odds (e.g., "1.1 - 1.2")
-                                    o_show_text = cols[6].get_text(strip=True)
-                                    p_show = re.findall(r'(\d+\.?\d*)', o_show_text)
-                                    if len(p_show) >= 2:
-                                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_min", "odds_value": float(p_show[0]), "timestamp": now})
-                                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_max", "odds_value": float(p_show[1]), "timestamp": now})
-                            except: continue
+                        if len(cols) < 6:
+                            continue
+                        try:
+                            u_text = cols[1].get_text(strip=True)
+                            m_uma = re.search(r'(\d+)', u_text)
+                            if not m_uma:
+                                continue
+                            u = int(m_uma.group(1))
+                            # Win odds
+                            m_win = re.search(r'(\d+\.?\d*)', cols[5].get_text(strip=True))
+                            if m_win:
+                                results.append({"race_id": str(race_id), "umaban": u, "odds_type": "win", "odds_value": float(m_win.group(1)), "timestamp": now})
+                            # Show odds
+                            if len(cols) >= 7:
+                                p_show = re.findall(r'(\d+\.?\d*)', cols[6].get_text(strip=True))
+                                if len(p_show) >= 1:
+                                    results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_min", "odds_value": float(p_show[0]), "timestamp": now})
+                                if len(p_show) >= 2:
+                                    results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_max", "odds_value": float(p_show[1]), "timestamp": now})
+                        except:
+                            continue
+                    # Derive popularity from win odds if HTML fallback
+                    win_recs = [r for r in results if r['odds_type'] == 'win']
+                    for rank, rec in enumerate(sorted(win_recs, key=lambda x: x['odds_value']), 1):
+                        results.append({"race_id": str(race_id), "umaban": rec['umaban'], "odds_type": "pop", "odds_value": float(rank), "timestamp": now})
             except Exception as e:
                 logger.error(f"HTML fallback failed for {race_id}: {e}")
+
         return results
 
     def track(self, race_id, ticket_types=None):
@@ -262,33 +251,54 @@ class OddsTracker:
     def get_latest_odds_df(self, race_id):
         """
         最新のオッズスナップショットを分析用 DataFrame 形式で取得する。
+        SQLで (umaban, odds_type) ごとの最新値を集約し、pandas pivot を一切使わない。
         """
-        df = self.get_history_df(race_id)
-        if df.empty:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            # GROUP BY で各(umaban, odds_type)の最新1件だけ取得
+            query = """
+                SELECT umaban, odds_type, odds_value
+                FROM odds_logs
+                WHERE race_id = ?
+                  AND id IN (
+                      SELECT MAX(id)
+                      FROM odds_logs
+                      WHERE race_id = ?
+                      GROUP BY umaban, odds_type
+                  )
+                ORDER BY umaban ASC
+            """
+            rows = conn.execute(query, (str(race_id), str(race_id))).fetchall()
+            conn.close()
+        except Exception as e:
+            logger.error(f"get_latest_odds_df SQL error: {e}")
             return pd.DataFrame()
-        
-        # 最新のタイムスタンプを取得
-        latest_ts = df['timestamp'].max()
-        latest_snapshot = df[df['timestamp'] == latest_ts]
-        
-        # 縦持ちから横持ちに変換
-        pivoted = latest_snapshot.pivot(index='umaban', columns='odds_type', values='odds_value').reset_index()
-        
-        # カラム名の正規化 (Analyzerが期待する形式に合わせる)
-        rename_map = {
-            'umaban': 'Umaban',
+
+        if not rows:
+            return pd.DataFrame()
+
+        col_rename = {
             'win': 'Win Odds',
             'pop': 'Popularity',
-            'show_min': 'Show Odds (Min)'
+            'show_min': 'Show Odds (Min)',
+            'show_max': 'Show Odds (Max)',
         }
-        pivoted = pivoted.rename(columns=rename_map)
-        
-        # 欠損カラムの補完
-        for col in rename_map.values():
-            if col not in pivoted.columns:
-                pivoted[col] = np.nan
-                
-        return pivoted
+        # 手動でwide形式に変換（pivot完全不使用）
+        records = {}
+        for umaban, odds_type, odds_value in rows:
+            u = int(umaban)
+            col = col_rename.get(str(odds_type), str(odds_type))
+            if u not in records:
+                records[u] = {'Umaban': u}
+            records[u][col] = float(odds_value) if odds_value is not None else float('nan')
+
+        result_df = pd.DataFrame(list(records.values())).sort_values('Umaban').reset_index(drop=True)
+
+        for col in ('Win Odds', 'Popularity', 'Show Odds (Min)', 'Show Odds (Max)'):
+            if col not in result_df.columns:
+                result_df[col] = float('nan')
+
+        return result_df
 
 if __name__ == "__main__":
     # Test execution

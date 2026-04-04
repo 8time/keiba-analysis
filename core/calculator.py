@@ -153,6 +153,300 @@ def evaluate_race_chaos_v2(df):
         'reason': " ".join(reasons)
     }
 
+def analyze_pace_profile(df) -> dict:
+    """
+    脚質分布・ペース予測・荒れ度補強の統合分析 v3.0。
+    返値:
+      front_count            - 本物先行馬頭数（threshold未満）
+      front_density          - シンプル密集率（head_count / total）
+      weighted_front_density - 重み付き密集率（本命先行馬ほど大きく寄与）
+      front_threshold        - 使用した閾値（距離調整済み）
+      pace_estimate          - 'super_high'|'high'|'mid'|'slow'
+      pace_label             - 表示用（超ハイ/ハイ/ミドル/スロー）
+      pace_intensity         - 4段階整数（1〜4）
+      pace_score             - 数値スコア
+      front_collapse_risk    - 前崩れリスク（0.0〜5.0）
+      closer_advantage       - 差し馬有利度（高/中/低）
+      makuri_count           - マクリ癖馬頭数
+      jockey_front_count     - 逃げ・先行積極騎手の頭数
+      ability_variance       - BattleScore標準偏差
+      odds_concentration     - 上位3頭オッズ合計
+      odds_top1              - 1番人気オッズ
+      upset_prob             - 波乱確率推定（0-100%）
+      upset_breakdown        - 各因子の寄与 dict {factor: value}
+      upset_factors          - 波乱要因テキストリスト
+      scenario               - 展開シナリオ文字列
+      positional_map         - 各馬の脚質ラベル dict {umaban: label}
+      position_score_map     - 各馬のposition_score dict {umaban: float}
+    """
+    import numpy as _np
+    import re as _re
+
+    result = {
+        'front_count': 0, 'front_density': 0.0, 'weighted_front_density': 0.0,
+        'front_threshold': 0.42,
+        'pace_estimate': 'mid', 'pace_label': 'ミドル', 'pace_intensity': 2,
+        'pace_score': 0.0, 'front_collapse_risk': 0.0, 'closer_advantage': '中',
+        'makuri_count': 0, 'jockey_front_count': 0, 'ability_variance': 0.0,
+        'odds_concentration': 0.0, 'odds_top1': 0.0,
+        'upset_prob': 50.0, 'upset_breakdown': {}, 'upset_factors': [],
+        'scenario': '', 'positional_map': {}, 'position_score_map': {}
+    }
+    if df.empty:
+        return result
+
+    total = len(df)
+
+    # ── 0. 距離ベースの閾値調整 ──
+    # 短距離（≤1400m）は前に行くハードルが低いので閾値を絞る
+    # 長距離（≥2000m）はペースが落ち着くので閾値を広げる
+    dist = 0
+    for col in ('CurrentDistance', 'Distance', 'distance'):
+        if col in df.columns:
+            try:
+                dist = int(str(df[col].iloc[0]).replace('m', '').strip())
+                break
+            except:
+                pass
+    if dist <= 1400:
+        front_threshold = 0.40
+    elif dist >= 2000:
+        front_threshold = 0.45
+    else:
+        front_threshold = 0.42
+    result['front_threshold'] = front_threshold
+
+    # ── 1. 各馬のposition_score計算 ──
+    def _corner_score_from_past(past_runs: list, ref_field: int):
+        all_pos = []
+        for run in (past_runs or [])[:5]:
+            ps = str(run.get('Passing', '-'))
+            nums = [int(x) for x in _re.findall(r'\d+', ps) if x]
+            if nums:
+                all_pos.extend(nums)
+        if not all_pos:
+            return None
+        return sum(all_pos) / len(all_pos) / max(ref_field, 1)
+
+    def _label_from_score(score: float) -> str:
+        if score <= 0.15: return '逃げ'
+        if score <= front_threshold: return '先行'
+        if score <= 0.65: return '差し'
+        return '追込'
+
+    def _label_from_avg_position(avg_pos: float, field: int) -> str:
+        if pd.isna(avg_pos): return '不明'
+        ratio = avg_pos / max(field, 1)
+        if ratio <= 0.15: return '逃げ'
+        if ratio <= front_threshold: return '先行'
+        if ratio <= 0.65: return '差し'
+        return '追込'
+
+    positional_map = {}
+    position_score_map = {}
+
+    for _, row in df.iterrows():
+        uma = int(row.get('Umaban', 0))
+        past = row.get('PastRuns', [])
+        avg_pos = float(row.get('AvgPosition', 0) or 0)
+
+        cs = _corner_score_from_past(past, total)
+        if cs is not None:
+            label = _label_from_score(cs)
+            position_score_map[uma] = round(cs, 3)
+        elif avg_pos > 0:
+            label = _label_from_avg_position(avg_pos, total)
+            position_score_map[uma] = round(avg_pos / max(total, 1), 3)
+        else:
+            label = '不明'
+            position_score_map[uma] = 0.5
+
+        positional_map[uma] = label
+
+    result['positional_map'] = positional_map
+    result['position_score_map'] = position_score_map
+
+    # ── 2. 先行密集度（重み付き版） ──
+    all_scores = list(position_score_map.values())
+    front_scores = [s for s in all_scores if s < front_threshold]
+    front_count = len(front_scores)
+    front_density = front_count / max(total, 1)
+
+    # weighted_density: score が小さい（ガチ先行）ほど寄与が大きい
+    # weight = (threshold - score) → score=0で最大、threshold付近で0
+    w_sum = sum(front_threshold - s for s in front_scores)
+    max_possible_w = front_threshold * total  # 全頭が score=0 の場合の最大値
+    weighted_front_density = round(w_sum / max(max_possible_w, 1e-9), 4)  # 0〜1
+
+    # ペーススコア：重み付き密集率ベース
+    pace_score = weighted_front_density * 100.0
+    pace_score = round(min(pace_score, 100.0), 1)
+
+    # 4段階ペース判定（重み付き密集率で判定）
+    wfd_pct = weighted_front_density * 100
+    if wfd_pct >= 20:
+        pace_estimate, pace_label, pace_intensity = 'super_high', '超ハイ', 4
+    elif wfd_pct >= 12:
+        pace_estimate, pace_label, pace_intensity = 'high', 'ハイ', 3
+    elif wfd_pct >= 6:
+        pace_estimate, pace_label, pace_intensity = 'mid', 'ミドル', 2
+    else:
+        pace_estimate, pace_label, pace_intensity = 'slow', 'スロー', 1
+
+    result['front_count'] = front_count
+    result['front_density'] = round(front_density, 2)
+    result['weighted_front_density'] = round(weighted_front_density * 100, 1)  # %表示用
+    result['pace_estimate'] = pace_estimate
+    result['pace_label'] = pace_label
+    result['pace_intensity'] = pace_intensity
+    result['pace_score'] = pace_score
+
+    # 前崩れリスク（重み付き密集率ベース）
+    collapse_base = weighted_front_density * 15.0 + (pace_intensity - 1) * 0.5
+    front_collapse_risk = round(min(5.0, max(0.0, collapse_base)), 1)
+    result['front_collapse_risk'] = front_collapse_risk
+
+    closer_advantage = '高' if front_collapse_risk >= 3.5 else ('中' if front_collapse_risk >= 2.0 else '低')
+    result['closer_advantage'] = closer_advantage
+
+    # ── 3. マクリ癖馬カウント ──
+    makuri_count = 0
+    for _, row in df.iterrows():
+        past = row.get('PastRuns', [])
+        for run in (past or [])[:5]:
+            ps = str(run.get('Passing', '-'))
+            nums = [int(x) for x in _re.findall(r'\d+', ps) if x]
+            if len(nums) >= 3:
+                drops = [nums[i] - nums[i+1] for i in range(len(nums)-1)]
+                if any(d >= 4 for d in drops):
+                    makuri_count += 1
+                    break
+    result['makuri_count'] = makuri_count
+
+    # ── 4. 騎手積極性（逃げ・先行積極騎手カウント） ──
+    # 騎手の脚質ラベルを参照（先行系ジョッキー = 逃げ or 先行 が多い馬に乗っている）
+    jockey_front_count = sum(
+        1 for _, row in df.iterrows()
+        if positional_map.get(int(row.get('Umaban', 0)), '不明') in ('逃げ', '先行')
+    )
+    result['jockey_front_count'] = jockey_front_count
+
+    # ── 5. 能力分散（BattleScore標準偏差） ──
+    ability_variance = 0.0
+    if 'BattleScore' in df.columns:
+        bs = pd.to_numeric(df['BattleScore'], errors='coerce').dropna()
+        ability_variance = round(float(bs.std()) if len(bs) > 1 else 0.0, 1)
+    result['ability_variance'] = ability_variance
+
+    # ── 6. オッズ集中度 ──
+    odds_ser = pd.to_numeric(df['Odds'], errors='coerce').dropna().sort_values() if 'Odds' in df.columns else pd.Series()
+    top3_sum = 0.0
+    odds_top1 = 0.0
+    if len(odds_ser) >= 3:
+        top3_sum = round(sum(odds_ser.iloc[:3].tolist()), 1)
+        odds_top1 = round(float(odds_ser.iloc[0]), 1)
+    result['odds_concentration'] = top3_sum
+    result['odds_top1'] = odds_top1
+
+    # ── 7. 多変数波乱確率推定 v2.0 ──
+    # 重み付き合計: 0.40×能力差 + 0.30×ペース圧力 + 0.15×オッズ集中度 + 0.10×コース補正 + 0.05×その他
+    upset_factors = []
+    breakdown = {}
+
+    # (A) 能力差因子（σ=0固い〜σ=15波乱。σ=8でニュートラル）
+    ability_factor = min(ability_variance / 15.0, 1.0) if ability_variance > 0 else 0.5
+    # 能力差が大きいほど荒れにくい（上位固定）→ 反転
+    ability_factor_adj = 1.0 - ability_factor  # 低σ=均衡=荒れやすい
+    breakdown['能力差(×0.40)'] = round(ability_factor_adj * 0.40 * 100, 1)
+    upset_factors_ability = []
+    if ability_variance >= 12.0:
+        upset_factors_ability.append(f"能力差大(σ={ability_variance:.1f})→固め")
+    elif ability_variance <= 5.0:
+        upset_factors_ability.append(f"能力均衡(σ={ability_variance:.1f})→荒れ寄り")
+    if upset_factors_ability:
+        upset_factors.extend(upset_factors_ability)
+
+    # (B) ペース圧力因子（重み付き密集率）
+    pace_factor = min(weighted_front_density * 5.0, 1.0)  # wfd=0.20で上限
+    breakdown['ペース圧力(×0.30)'] = round(pace_factor * 0.30 * 100, 1)
+    if wfd_pct >= 12:
+        upset_factors.append(f"先行密集(重み付き{weighted_front_density*100:.0f}%)")
+
+    # (C) オッズ集中度因子（固いほど波乱↓ → 反転）
+    # top3_sum: 低いほど固い(低chaos)、高いほど分散(高chaos)
+    if top3_sum > 0:
+        odds_factor = max(0.0, min((top3_sum - 5.0) / 25.0, 1.0))  # 5〜30倍を0〜1に正規化
+    else:
+        odds_factor = 0.5
+    breakdown['オッズ分散(×0.15)'] = round(odds_factor * 0.15 * 100, 1)
+    if top3_sum > 20:
+        upset_factors.append(f"オッズ分散(上位3頭計{top3_sum:.0f}倍)")
+    elif top3_sum > 0 and top3_sum < 8:
+        upset_factors.append(f"オッズ集中(上位3頭計{top3_sum:.0f}倍)→固め")
+
+    # (D) コース特性補正（距離・前崩れリスク）
+    # 短距離はペース上がりやすく荒れやすい、長距離はスタミナ勝負で荒れにくい
+    if dist > 0:
+        if dist <= 1400:
+            course_factor = 0.65
+        elif dist <= 1800:
+            course_factor = 0.50
+        elif dist <= 2200:
+            course_factor = 0.45
+        else:
+            course_factor = 0.38
+    else:
+        course_factor = 0.50
+    # 前崩れリスクで補正
+    course_factor = min(1.0, course_factor + front_collapse_risk * 0.05)
+    breakdown['コース特性(×0.10)'] = round(course_factor * 0.10 * 100, 1)
+
+    # (E) その他（マクリ・1人気高オッズ）
+    other_score = 0.0
+    if makuri_count >= 2:
+        other_score += 0.4
+        upset_factors.append(f"マクリ癖馬{makuri_count}頭")
+    if odds_top1 >= 3.5:
+        other_score += min((odds_top1 - 3.5) / 10.0, 0.6)
+        upset_factors.append(f"1人気高オッズ({odds_top1}倍)")
+    other_factor = min(other_score, 1.0)
+    breakdown['その他(×0.05)'] = round(other_factor * 0.05 * 100, 1)
+
+    # 合計
+    chaos_score = (
+        0.40 * ability_factor_adj +
+        0.30 * pace_factor +
+        0.15 * odds_factor +
+        0.10 * course_factor +
+        0.05 * other_factor
+    )
+    upset_prob = round(max(10.0, min(90.0, chaos_score * 100)), 0)
+    result['upset_prob'] = upset_prob
+    result['upset_breakdown'] = breakdown
+    result['upset_factors'] = upset_factors
+
+    # ── 8. 展開シナリオ ──
+    pace_icons = {'super_high': '💥', 'high': '🔥', 'mid': '⚡', 'slow': '🐢'}
+    icon = pace_icons.get(pace_estimate, '⚡')
+    dist_str = f"（{dist}m）" if dist > 0 else ""
+    collapse_stars = '★' * int(front_collapse_risk + 0.5) + '☆' * (5 - int(front_collapse_risk + 0.5))
+    scenario_parts = [
+        f"{icon} 想定ペース: {pace_label}{dist_str}  先行{front_count}頭（重み付き密集率{weighted_front_density*100:.0f}%・閾値{front_threshold}）"
+    ]
+    if pace_estimate in ('super_high', 'high'):
+        scenario_parts.append(f"前崩れリスク{collapse_stars}。差し・追込有利。")
+    elif pace_estimate == 'slow':
+        scenario_parts.append("先行・逃げ有利。末脚の切れ味が問われる。")
+    else:
+        scenario_parts.append("中団からの競馬が有利。実力通りになりやすい。")
+    if makuri_count >= 2:
+        scenario_parts.append(f"マクリ癖馬{makuri_count}頭の動きに注意。")
+
+    result['scenario'] = " ".join(scenario_parts)
+
+    return result
+
+
 def evaluate_race_chaos_v3(df):
     """
     高度なオッズ分析を含む統合波乱度判定ロジック。

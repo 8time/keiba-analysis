@@ -1329,8 +1329,137 @@ if nav == "🏠 Single Race Analysis":
                     with st.expander("📊 判定根拠エビデンス表", expanded=True):
                         st.table(pd.DataFrame(evidence_list))
 
+                    # ── 展開分析パネル (analyze_pace_profile) ──
+                    try:
+                        _pace = calculator.analyze_pace_profile(df)
+                        _pace_colors = {'super_high': '#C1121F', 'high': '#E63946', 'mid': '#F4A261', 'slow': '#2A9D8F'}
+                        _pace_color = _pace_colors.get(_pace['pace_estimate'], '#888')
+                        _upset_pct = int(_pace['upset_prob'])
+                        _upset_color = '#E63946' if _upset_pct >= 60 else ('#F4A261' if _upset_pct >= 40 else '#2A9D8F')
+
+                        with st.expander("🏇 展開分析 & 波乱確率", expanded=True):
+                            # ── ワンライナーサマリーカード ──
+                            _collapse_stars = '★' * int(_pace['front_collapse_risk'] + 0.5) + '☆' * (5 - int(_pace['front_collapse_risk'] + 0.5))
+                            _up_bar_filled = min(5, _upset_pct // 20)
+                            _up_bar = '🔴' * _up_bar_filled + '⚪' * (5 - _up_bar_filled)
+                            _wfd = _pace.get('weighted_front_density', _pace['front_density'] * 100)
+                            _thr = _pace.get('front_threshold', 0.42)
+                            st.markdown(f"""
+                            <div style="background:#1a1a2e; color:#eee; padding:14px 18px; border-radius:10px;
+                                        border-left:8px solid {_pace_color}; margin-bottom:14px; font-family:monospace;">
+                                <span style="font-size:15px;">
+                                🏇 想定ペース: <b style="color:{_pace_color}; font-size:18px;">{_pace['pace_label']}</b>
+                                &nbsp;|&nbsp; 前崩れリスク: <b>{_collapse_stars}</b>
+                                &nbsp;|&nbsp; 差し有利度: <b>{_pace['closer_advantage']}</b>
+                                &nbsp;|&nbsp; 波乱確率: <b style="color:{_upset_color};">{_upset_pct}%</b> {_up_bar}
+                                </span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # シナリオ帯
+                            st.markdown(f"""
+                            <div style="background:{_pace_color}22; border-left:6px solid {_pace_color};
+                                        padding:10px 14px; border-radius:8px; margin-bottom:14px;">
+                                <span style="font-size:14px;">{_pace['scenario']}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # 波乱要因タグ
+                            if _pace.get('upset_factors'):
+                                _tags_html = ' '.join(
+                                    f'<span style="background:#F4A26133; color:#b85c00; border:1px solid #F4A261; border-radius:12px; padding:2px 10px; font-size:12px; margin-right:4px;">{f}</span>'
+                                    for f in _pace['upset_factors']
+                                )
+                                st.markdown(f"<div style='margin-bottom:10px;'>⚠️ 波乱要因: {_tags_html}</div>", unsafe_allow_html=True)
+
+                            # 指標カード（行1）
+                            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+                            with _pc1:
+                                st.metric("先行馬頭数", f"{_pace['front_count']}頭",
+                                          help=f"position_score < {_thr}（距離{meta.get('distance','?')}mに合わせた閾値）の馬")
+                            with _pc2:
+                                st.metric("重み付き密集率", f"{_wfd:.0f}%",
+                                          help=f"ガチ先行馬ほど大きく寄与。閾値{_thr}。シンプル密集率: {_pace['front_density']*100:.0f}%")
+                            with _pc3:
+                                st.metric("前崩れリスク", f"{_pace['front_collapse_risk']:.1f} / 5.0",
+                                          help="重み付き密集率×ペース強度から算出。3.5以上で差し有利")
+                            with _pc4:
+                                st.metric("差し馬有利度", _pace['closer_advantage'],
+                                          help="前崩れリスクから導出")
+
+                            # 指標カード（行2）
+                            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                            with _mc1:
+                                st.metric("波乱確率", f"{_upset_pct}%",
+                                          help="多変数モデル: 0.40×能力差 + 0.30×ペース + 0.15×オッズ + 0.10×コース + 0.05×その他")
+                            with _mc2:
+                                st.metric("マクリ癖馬", f"{_pace['makuri_count']}頭",
+                                          help="過去走で中団から4ポジション以上急上昇した馬")
+                            with _mc3:
+                                st.metric("能力分散(σ)", f"{_pace['ability_variance']:.1f}",
+                                          help="BattleScore標準偏差。σ高=能力差大=固め。σ低=均衡=荒れ寄り")
+                            with _mc4:
+                                st.metric("上位3頭オッズ計", f"{_pace['odds_concentration']:.1f}倍",
+                                          help="小さいほど固め。大きいほど分散=荒れ傾向")
+
+                            # ── 波乱確率内訳（根拠の透明化） ──
+                            _breakdown = _pace.get('upset_breakdown', {})
+                            if _breakdown:
+                                st.markdown("**📊 波乱確率 内訳（各因子の寄与%）**")
+                                _bd_cols = st.columns(len(_breakdown))
+                                for _i, (_factor, _val) in enumerate(_breakdown.items()):
+                                    with _bd_cols[_i]:
+                                        st.metric(_factor, f"{_val:.1f}%")
+                                # プログレスバー風の棒グラフ（合計=upset_prob）
+                                _total_bd = sum(_breakdown.values())
+                                _bar_parts = []
+                                _bd_colors = ['#E63946', '#F4A261', '#2A9D8F', '#457B9D', '#6A4C93']
+                                for _i, (_factor, _val) in enumerate(_breakdown.items()):
+                                    _w = round(_val / max(_total_bd, 1) * 100, 1)
+                                    _c = _bd_colors[_i % len(_bd_colors)]
+                                    _bar_parts.append(f'<div style="display:inline-block; width:{_w}%; background:{_c}; height:16px; title="{_factor}"></div>')
+                                st.markdown(
+                                    f'<div style="width:100%; border-radius:4px; overflow:hidden; margin-top:4px;">{"".join(_bar_parts)}</div>',
+                                    unsafe_allow_html=True
+                                )
+                                st.caption(f"合計寄与={_total_bd:.1f}% → 波乱確率{_upset_pct}%（クランプ後）")
+
+                            # ── 脚質マップ表 ──
+                            if _pace['positional_map']:
+                                st.markdown(f"**📍 各馬の推定脚質（閾値: score < {_thr} = 本物の先行）**")
+                                _style_emoji = {'逃げ': '🔴', '先行': '🟠', '差し': '🔵', '追込': '🟣', '不明': '⚪'}
+                                _style_rows = []
+                                for _uma, _lbl in sorted(_pace['positional_map'].items()):
+                                    _horse_row = df[df['Umaban'] == _uma]
+                                    _hname = _horse_row['Name'].iloc[0] if not _horse_row.empty and 'Name' in _horse_row.columns else ''
+                                    _ps = _pace['position_score_map'].get(_uma, 0.5)
+                                    _true_front = '✅' if _ps < _thr else ''
+                                    # 重み寄与（本物先行のみ）
+                                    _w_contrib = round((_thr - _ps) * 100, 1) if _ps < _thr else 0.0
+                                    _style_rows.append({
+                                        '馬番': _uma,
+                                        '馬名': _hname,
+                                        '脚質': f"{_style_emoji.get(_lbl, '⚪')} {_lbl}",
+                                        'スコア': round(_ps, 3),
+                                        '先行判定': _true_front,
+                                        '密集寄与': _w_contrib,
+                                    })
+                                _style_df = pd.DataFrame(_style_rows)
+                                st.dataframe(_style_df, use_container_width=True, hide_index=True,
+                                             column_config={
+                                                 '馬番': st.column_config.NumberColumn(width='small'),
+                                                 '脚質': st.column_config.TextColumn(width='medium'),
+                                                 'スコア': st.column_config.NumberColumn(format='%.3f', width='small',
+                                                     help=f"コーナー通過平均/頭数。{_thr}未満=本物の先行"),
+                                                 '先行判定': st.column_config.TextColumn(width='small'),
+                                                 '密集寄与': st.column_config.NumberColumn(format='%.1f', width='small',
+                                                     help="重み付き密集率への寄与ポイント（先行判定馬のみ）"),
+                                             })
+                    except Exception as _pace_e:
+                        st.caption(f"展開分析: {_pace_e}")
+
                     st.divider()
-                    
+
                     # --- [PRE-CALCULATE SCORES & DERIVED COLUMNS] ---
                     # Move this up so Sniper Logic can use Projected Score
                     import numpy as _np_main
@@ -1402,30 +1531,143 @@ if nav == "🏠 Single Race Analysis":
 
                     # --- RESTORED ODDS MONITORING SECTIONS ---
                     with st.expander("📈 時系列オッズ・詳細分析 (高度な監視機能)", expanded=False):
-                        from core.odds_tracker import OddsTracker
-                        from core.odds_analyzer import OddsAnalyzer
-                        tracker = OddsTracker()
-                        analyzer = OddsAnalyzer()
-                        
-                        st.markdown("#### 📉 Time-Series Change")
-                        st.caption("Record Current Odds で最新の状態を保存し、推移を確認できます。")
-                        if st.button("🔴 Record Current Odds", help="現在値を記録します", key="btn_record_odds_v3"):
-                            count = tracker.track(race_id_input)
-                            if count > 0: st.success(f"Logged {count} records!")
-                        
-                        history_df = tracker.get_history_df(race_id_input)
-                        if not history_df.empty:
-                            history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
-                            line_chart = alt.Chart(history_df[history_df['odds_type']=='win']).mark_line(point=True).encode(
-                                x='timestamp:T', y='odds_value:Q', color='umaban:N'
-                            ).interactive()
-                            st.altair_chart(line_chart, width='stretch')
-                        
-                        st.markdown("#### ⚠️ Anomalies Detected")
-                        alerts = analyzer.detect_abnormal_odds(df)
-                        if alerts:
-                            for a in alerts: st.warning(f"馬番 {a['horse_number']}: {a['reason']}")
-                        else: st.success("特筆すべき異常は見つかりませんでした。")
+                        try:
+                            from core.odds_tracker import OddsTracker
+                            from core.odds_analyzer import OddsAnalyzer
+                            _tracker = OddsTracker()
+                            _analyzer = OddsAnalyzer()
+
+                            # ── 操作ボタン行 ──
+                            _ob1, _ob2 = st.columns([2, 1])
+                            with _ob1:
+                                st.caption("「📥 記録」を押すたびにスナップショットを保存。複数回記録すると推移グラフが表示されます。")
+                            with _ob2:
+                                if st.button("📥 現在オッズを記録", key="btn_record_odds_v4"):
+                                    with st.spinner("取得中..."):
+                                        _cnt = _tracker.track(race_id_input)
+                                    if _cnt > 0:
+                                        st.success(f"✅ {_cnt}件を記録しました")
+                                        st.rerun()
+                                    else:
+                                        st.error("取得失敗 — ネットワーク/レースID確認")
+
+                            _history_df = _tracker.get_history_df(race_id_input)
+
+                            # ── 最新スナップショット表示 ──
+                            st.markdown("#### 📊 最新オッズスナップショット")
+                            _latest_odds_df = _tracker.get_latest_odds_df(race_id_input)
+                            if not _latest_odds_df.empty:
+                                # メインdfの馬名をマージ
+                                if 'Umaban' in df.columns and 'Name' in df.columns:
+                                    _name_map = df[['Umaban', 'Name']].copy()
+                                    _name_map['Umaban'] = pd.to_numeric(_name_map['Umaban'], errors='coerce')
+                                    _latest_odds_df['Umaban'] = pd.to_numeric(_latest_odds_df['Umaban'], errors='coerce')
+                                    _latest_odds_df = _latest_odds_df.merge(_name_map, on='Umaban', how='left')
+                                # 表示カラム整理
+                                _disp_cols = [c for c in ['Umaban', 'Name', 'Win Odds', 'Show Odds (Min)', 'Popularity'] if c in _latest_odds_df.columns]
+                                st.dataframe(_latest_odds_df[_disp_cols].sort_values('Umaban'), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("まだ記録がありません。上の「📥 現在オッズを記録」を押してください。")
+
+                            # ── 時系列グラフ ──
+                            import altair as alt
+                            if not _history_df.empty:
+                                st.markdown("#### 📉 単勝オッズ推移")
+                                _history_df['timestamp'] = pd.to_datetime(_history_df['timestamp'])
+                                _win_hist = _history_df[_history_df['odds_type'] == 'win'].copy()
+                                _snap_count = len(_win_hist['timestamp'].unique())
+                                if not _win_hist.empty and _snap_count >= 2:
+                                    # 馬名ラベル付け
+                                    _nm = {}
+                                    if 'Umaban' in df.columns and 'Name' in df.columns:
+                                        _nm = {int(r['Umaban']): r['Name'] for _, r in df.iterrows() if pd.notna(r.get('Umaban'))}
+                                    _win_hist['horse'] = _win_hist['umaban'].apply(lambda u: f"{int(u)}:{_nm.get(int(u), str(u))}")
+
+                                    # 急変馬を検出（最初→最後のオッズ変化率 ±15%以上）
+                                    _first = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].first()
+                                    _last  = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].last()
+                                    _change = ((_last - _first) / _first.replace(0, float('nan'))).abs()
+                                    _alert_uma = set(_change[_change >= 0.15].index.tolist())
+
+                                    # 人気上位8頭 + 急変馬に絞る（全頭は線が多すぎ）
+                                    _latest_pop = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].last().sort_values()
+                                    _top8_uma = set(_latest_pop.head(8).index.tolist())
+                                    _show_uma = _top8_uma | _alert_uma
+
+                                    _win_filtered = _win_hist[_win_hist['umaban'].isin(_show_uma)].copy()
+
+                                    # 急変フラグ列（色分け用）
+                                    _win_filtered['急変'] = _win_filtered['umaban'].apply(lambda u: '🚨急変' if u in _alert_uma else '通常')
+
+                                    _line_chart = alt.Chart(_win_filtered).mark_line(point=True).encode(
+                                        x=alt.X('timestamp:T', title='記録時刻'),
+                                        y=alt.Y('odds_value:Q', title='単勝オッズ', scale=alt.Scale(zero=False)),
+                                        color=alt.Color('horse:N', title='馬番:馬名'),
+                                        strokeDash=alt.StrokeDash('急変:N', legend=alt.Legend(title='種別')),
+                                        tooltip=[
+                                            alt.Tooltip('horse:N', title='馬'),
+                                            alt.Tooltip('odds_value:Q', title='オッズ', format='.1f'),
+                                            alt.Tooltip('timestamp:T', title='時刻', format='%H:%M:%S'),
+                                            alt.Tooltip('急変:N', title='状態'),
+                                        ]
+                                    ).interactive()
+                                    st.altair_chart(_line_chart, use_container_width=True)
+
+                                    # 急変馬サマリー
+                                    if _alert_uma:
+                                        _alert_rows = []
+                                        for _u in sorted(_alert_uma):
+                                            _f = float(_first.get(_u, 0))
+                                            _l = float(_last.get(_u, 0))
+                                            _d = (_l - _f) / max(_f, 0.01) * 100
+                                            _arrow = '📉' if _d < 0 else '📈'
+                                            _alert_rows.append({'馬番': int(_u), '馬名': _nm.get(int(_u), ''), '初回': _f, '最新': _l, '変化': f"{_arrow}{_d:+.1f}%"})
+                                        st.dataframe(pd.DataFrame(_alert_rows), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.caption(f"急変馬なし（{_snap_count}スナップショット・変化率±15%未満）")
+
+                                    if len(_show_uma) < len(_win_hist['umaban'].unique()):
+                                        st.caption(f"※ 人気上位8頭 + 急変馬のみ表示（全{len(_win_hist['umaban'].unique())}頭中{len(_show_uma)}頭）")
+                                else:
+                                    st.caption(f"グラフ表示には2回以上の記録が必要です（現在 {_snap_count} スナップショット）")
+
+                            # ── 異常検知 ──
+                            st.markdown("#### ⚠️ 異常検知 (インサイダー・単複乖離)")
+                            # 記録済みのDB ODDSで分析（単複両方ある）
+                            _detect_src = _latest_odds_df if not _latest_odds_df.empty else df
+                            _static_alerts = _analyzer.detect_abnormal_odds(_detect_src)
+                            # 時系列の急落アラート
+                            _ts_alerts = _analyzer.analyze_time_series(_history_df) if not _history_df.empty else []
+                            _all_alerts = _static_alerts + _ts_alerts
+
+                            if _all_alerts:
+                                for _a in _all_alerts:
+                                    _sev = _a.get('severity', 'medium')
+                                    _icon = '🚨' if _sev == 'critical' else ('⚠️' if _sev == 'high' else 'ℹ️')
+                                    _atype = _a.get('alert_type', '')
+                                    if _atype == 'sudden_drop':
+                                        st.error(f"{_icon} 馬番{_a['horse_number']}: {_a['reason']}")
+                                    elif _sev == 'critical':
+                                        st.error(f"{_icon} 馬番{_a['horse_number']}: {_a['reason']}")
+                                    else:
+                                        st.warning(f"{_icon} 馬番{_a['horse_number']}: {_a['reason']}")
+                            else:
+                                if _latest_odds_df.empty:
+                                    st.caption("記録後に異常検知が実行されます。")
+                                else:
+                                    st.success("✅ 特筆すべき異常は検出されませんでした。")
+
+                            # 記録件数サマリー
+                            if not _history_df.empty:
+                                _snap_count = len(_history_df['timestamp'].unique())
+                                _first_ts = _history_df['timestamp'].min()
+                                _last_ts = _history_df['timestamp'].max()
+                                st.caption(f"📁 DB記録: {len(_history_df)}件 / {_snap_count}スナップショット（{_first_ts} 〜 {_last_ts}）")
+
+                        except Exception as _ot_e:
+                            st.error(f"時系列オッズモジュールエラー: {_ot_e}")
+                            import traceback
+                            st.code(traceback.format_exc(), language='text')
 
                     st.divider()
 
@@ -1435,7 +1677,7 @@ if nav == "🏠 Single Race Analysis":
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
                         "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
                         "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Waku": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
-                        "Base": 1.0, "Stress": 1.0
+                        "Base": 1.0, "Stress": 1.0, "ScoringSignal": 1.0
                     }
                     if 'score_weights_main' not in st.session_state:
                         if os.path.exists(_WEIGHTS_FILE):
@@ -1495,6 +1737,7 @@ if nav == "🏠 Single Race Analysis":
                                    ("🧬 血統%",       "Bloodline",    "bld"),
                                    ("基礎戦闘力%",     "Base",         "base"),
                                    ("🛡️ ストレス特性%", "Stress",       "strss")]
+                    _W_GROUP4   = [("🔬 スコアリング(×倍)", "ScoringSignal", "sig")]
 
                     # --- Preset Management ---
                     PRESETS_FILE = "influence_presets.json"
@@ -1565,6 +1808,23 @@ if nav == "🏠 Single Race Analysis":
                             with col3:
                                 st.markdown("#### 🎯 適性・展開")
                                 _render_weight_group_sm(_W_GROUP3, sw, "sm_g3")
+                        with st.container(border=True):
+                            st.markdown("#### 🔬 スコアリングシグナル")
+                            st.caption("J◎(騎手◎シグナル)・T●(厩舎●シグナル)検出時に加算するボーナス倍率 (1〜10倍)")
+                            _sig_sld = "wsld_sm_g4sig"; _sig_num = "wnum_sm_g4sig"
+                            _sig_cur = float(sw.get("ScoringSignal", 1.0))
+                            _sig_cur = max(1.0, min(10.0, _sig_cur))
+                            if _sig_sld not in st.session_state: st.session_state[_sig_sld] = _sig_cur
+                            if _sig_num not in st.session_state: st.session_state[_sig_num] = _sig_cur
+                            _sc1, _sc2 = st.columns([2, 1])
+                            with _sc1:
+                                st.slider("🔬 スコアリング(×倍)", 1.0, 10.0, step=0.5, key=_sig_sld,
+                                          on_change=_make_sync_num_sm(_sig_sld, _sig_num))
+                            with _sc2:
+                                st.number_input("", 1.0, 10.0, step=0.5, key=_sig_num,
+                                                on_change=_make_sync_slider_sm(_sig_num, _sig_sld),
+                                                label_visibility="collapsed")
+                            sw["ScoringSignal"] = float(st.session_state.get(_sig_num, _sig_cur))
 
                             total_w = sum(sw.values())
                             if total_w > 0:
@@ -1593,6 +1853,69 @@ if nav == "🏠 Single Race Analysis":
                                 df = calculator.calculate_strength_suitability(df, course_profile_main)
                                 st.session_state['df'] = df
                                 st.rerun()
+
+                    # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
+                    @st.cache_data(ttl=600, show_spinner=False)
+                    def _fetch_daily_signals(rid: str, race_date_str: str):
+                        """当日の全JRAレースをスキャンしてシグナルmap {umaban: {marks,j_dc,t_bullet}} を返す。
+                        race_date_str: YYYYMMDD 形式の実際のカレンダー日付"""
+                        try:
+                            from core.scraper import get_race_list_for_date
+                            from scripts.race_position_scanner import run_scan_with_signals
+                            race_list = get_race_list_for_date(race_date_str)
+                            if not race_list:
+                                return {}
+                            # JRA中央のみ (venue 01-10)
+                            urls = []
+                            for r in race_list:
+                                r_id = r['race_id'] if isinstance(r, dict) else str(r)
+                                vc = r_id[4:6] if len(r_id) == 12 else '99'
+                                if vc.isdigit() and 1 <= int(vc) <= 10:
+                                    urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+                            if not urls:
+                                return {}
+                            df_sig, _, _ = run_scan_with_signals(urls=urls, entity='both', min_patterns=1, output_csv=None)
+                            if df_sig is None or df_sig.empty:
+                                return {}
+                            # 対象レースの馬のみ抽出（min_patterns=1で検出された馬のみ入る）
+                            sig_map = {}
+                            if 'race_id' in df_sig.columns:
+                                df_target = df_sig[df_sig['race_id'] == rid]
+                            else:
+                                df_target = pd.DataFrame()
+                            for _, row in df_target.iterrows():
+                                uma = int(row.get('horse_number', 0))
+                                sig_map[uma] = {
+                                    'marks':    str(row.get('special_marks', '')),
+                                    'j_dc':     bool(row.get('jockey_dc_flag', False)),
+                                    't_bullet': bool(row.get('trainer_bullet_flag', False)),
+                                    'score':    float(row.get('score', 0)),  # スキャナー総合スコア
+                                }
+                            return sig_map
+                        except Exception as _e:
+                            import logging
+                            logging.getLogger(__name__).warning(f"[Signal] fetch failed: {_e}")
+                            return {}
+
+                    # シグナルスキャン実行（Analyze後。df から RaceDate を取得して正しいカレンダー日付を使う）
+                    _signal_map = {}
+                    _rid_str = str(race_id_input)
+                    if len(_rid_str) == 12:
+                        _vc = _rid_str[4:6]
+                        if _vc.isdigit() and 1 <= int(_vc) <= 10:  # JRAのみ
+                            # df から実際の開催日を取得（例: '2026/04/04' → '20260404'）
+                            _race_date_raw = ''
+                            if not df.empty and 'RaceDate' in df.columns:
+                                _race_date_raw = str(df['RaceDate'].iloc[0])
+                            _race_date_ymd = re.sub(r'[^\d]', '', _race_date_raw)[:8]  # YYYYMMDD
+                            if len(_race_date_ymd) == 8:
+                                with st.spinner("🔬 当日シグナルスキャン中...（初回のみ時間がかかります）"):
+                                    _signal_map = _fetch_daily_signals(_rid_str, _race_date_ymd)
+
+                    # dfに Signal 列を追加
+                    df['Signal'] = df['Umaban'].apply(
+                        lambda u: _signal_map.get(int(u) if pd.notna(u) else 0, {}).get('marks', '')
+                    )
 
                     # === プロフェッショナル・スコアリングロジック ===
                     # 1. 事前に全指標の最小値/最大値を計算（正規化用）
@@ -1679,8 +2002,19 @@ if nav == "🏠 Single Race Analysis":
                         if blood_impact != 0:
                             bonus_details.append(f"血統:{blood_impact:+.1f}")
 
+                        # --- ScoringSignal Bonus (スキャナースコア×倍率) ---
+                        uma_key = int(row.get('Umaban', 0))
+                        sig_info = _signal_map.get(uma_key, {})
+                        sig_w = sw.get('ScoringSignal', 1.0)
+                        sig_raw = float(sig_info.get('score', 0))  # スキャナー総合スコア(Evidences+Overlap+...)
+                        sig_bonus = sig_raw * sig_w
+                        if sig_bonus > 0:
+                            bonuses['ScoringSignal'] = sig_bonus
+                            marks = sig_info.get('marks', '')
+                            bonus_details.append(f"🔬{marks}(×{sig_w:.1f})=+{sig_bonus:.1f}")
+
                         total_bonus = sum(bonuses.values())
-                        
+
                         # --- Stress Multiplier (乗算デバフ: リミッター論理) ---
                         multiplier = 1.0
                         reasons = []
@@ -1767,7 +2101,10 @@ if nav == "🏠 Single Race Analysis":
                     display_icon_legend()
 
                     view_df = df.copy()
-                    
+                    # Signal列が未設定の場合に備えて補完
+                    if 'Signal' not in view_df.columns:
+                        view_df['Signal'] = ''
+
                     # ────────── Numerical Rounding (1 decimal) ──────────
                     # Ensure all numeric metrics are rounded to 1 decimal place before display
                     num_cols_to_round = ['Projected Score', 'BattleScore', 'NIndex', 'Strength (X)', 'Suitability (Y)', 'SpeedIndex', 'LaboIndex', 'UIndex', 'Stress']
@@ -1880,9 +2217,9 @@ if nav == "🏠 Single Race Analysis":
 
                     # Merge previous screenshot columns with latest advanced columns
                     # --- NEW DEFAULT ORDER BASED ON USER REQUEST ---
-                    cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'Jockey', 'Projected Score', 'BattleScore', 'AvgPosition', 
-                            'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'JockeyChange', 
-                            'ボーナス詳細', 'NIndex', 'Strength (X)', 'Suitability (Y)', 
+                    cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'Jockey', 'Signal', 'Projected Score', 'BattleScore', 'AvgPosition',
+                            'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried', 'Trainer', 'Bloodline', 'JockeyChange',
+                            'ボーナス詳細', 'NIndex', 'Strength (X)', 'Suitability (Y)',
                             'SpeedIndex', 'AvgAgari', 'Alert', 'RiskFlags']
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
@@ -1911,6 +2248,7 @@ if nav == "🏠 Single Race Analysis":
                         "WeightCarried": "斤量", "Trainer": "厩舎",
                         "Bloodline": "血統(父/母父)", "Jockey": "騎手",
                         "JockeyChange": "乗替", "Name": "馬名",
+                        "Signal": "🔬シグナル",
                         "Projected Score": "⭐予測スコア", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス",
                         "BattleScore": "🔥総合戦闘力",
@@ -1921,9 +2259,21 @@ if nav == "🏠 Single Race Analysis":
                     }
 
                     # Restore saved order if available
+                    # 新規列(Signal等)は保存済み順の先頭に自動挿入する
                     _default_cols = _all_cols[:]
                     if _saved_sra:
                         _valid_saved = [c for c in _saved_sra if c in _all_cols]
+                        # 保存済みに含まれない新列を先頭付近(Name直後)に追加
+                        _new_cols = [c for c in _all_cols if c not in _valid_saved]
+                        if _new_cols and _valid_saved:
+                            _insert_after = 'Signal'  # Signalを必ず含める
+                            if _insert_after in _new_cols:
+                                try:
+                                    _idx = _valid_saved.index('Jockey') + 1
+                                except ValueError:
+                                    _idx = min(6, len(_valid_saved))
+                                _valid_saved.insert(_idx, _insert_after)
+                                _new_cols.remove(_insert_after)
                         if _valid_saved:
                             _default_cols = _valid_saved
 
@@ -1980,6 +2330,7 @@ if nav == "🏠 Single Race Analysis":
                         "Jockey": st.column_config.TextColumn("騎手"),
                         "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
+                        "Signal": st.column_config.TextColumn("🔬シグナル", help="J◎: 騎手◎シグナル / T●: 厩舎●シグナル（当日JRA全レース横断検出）"),
                         "Projected Score": st.column_config.NumberColumn("⭐予測スコア", format="%.1f"),
                         "Stress": st.column_config.NumberColumn("ストレス", format="%.1f", help="外的・内的要因による能力減衰量。内訳ボタン（ボーナス詳細）で理由を確認できます"),
                         "ボーナス詳細": st.column_config.TextColumn("ボーナス内訳"),
