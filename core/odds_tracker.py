@@ -75,13 +75,94 @@ class OddsTracker:
             logger.warning(f"fetch_realtime_odds_api failed for {race_id}: {e}")
         return None
 
+    def _fetch_odds_requests_fallback(self, race_id):
+        """
+        Scrapling不使用のpure requests fallback（クラウド環境用）。
+        netkeiba JSON API (compress=1) を直接叩いてBase64+zlib展開。
+        レスポンス構造: inner['odds']['1'] = {umaban: [win, show_max, popularity]}
+        """
+        try:
+            is_nar = int(str(race_id)[4:6]) > 10
+            domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+            prefix = "nar" if is_nar else "jra"
+            url = f"https://{domain}/api/api_get_{prefix}_odds.html"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Referer": f"https://{domain}/odds/index.html?race_id={race_id}",
+                "Accept": "application/json, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            params = {
+                "pid": f"api_get_{prefix}_odds",
+                "race_id": str(race_id),
+                "type": "1",
+                "compress": "1",
+                "output": "json",
+            }
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            if resp.status_code != 200:
+                return None
+
+            outer = resp.json()
+            raw = outer.get("data", "")
+            if not raw or not isinstance(raw, str) or len(raw) < 10:
+                return None
+
+            # Base64 + zlib 展開
+            decoded = base64.b64decode(raw)
+            try:
+                inner = json.loads(zlib.decompress(decoded, -zlib.MAX_WBITS))
+            except Exception:
+                inner = json.loads(zlib.decompress(decoded))
+
+            # inner['odds']['1'] = 単勝, inner['odds']['2'] = 複勝
+            odds_root = inner.get("odds", {})
+            win_ary = odds_root.get("1", {})   # 単勝
+            show_ary = odds_root.get("2", {})  # 複勝
+
+            result = {}
+            for u_str, val in win_ary.items():
+                try:
+                    u_key = str(int(u_str)).zfill(2)
+                    if isinstance(val, list) and val:
+                        o_val = float(str(val[0]).replace(",", "")) if val[0] not in (None, "", "---.-") else 0.0
+                        p_val = int(val[2]) if len(val) >= 3 and val[2] is not None else 99
+                    elif isinstance(val, dict):
+                        o_val = float(val.get("Odds", 0.0))
+                        p_val = int(val.get("Ninki", 99))
+                    else:
+                        continue
+                    if o_val > 0:
+                        result[u_key] = {"Odds": o_val, "Popularity": p_val}
+                        # 複勝オッズも追加
+                        sv = show_ary.get(u_str)
+                        if isinstance(sv, list) and len(sv) >= 2:
+                            try:
+                                result[u_key]["ShowMin"] = float(str(sv[0]).replace(",", "")) if sv[0] else 0.0
+                                result[u_key]["ShowMax"] = float(str(sv[1]).replace(",", "")) if sv[1] else 0.0
+                            except Exception:
+                                pass
+                except Exception:
+                    continue
+
+            return result if result else None
+        except Exception as e:
+            logger.warning(f"requests fallback failed for {race_id}: {e}")
+            return None
+
     def get_win_show_odds(self, race_id):
-        """Parses Win/Show/Popularity odds via scraper, with HTML fallback."""
+        """Parses Win/Show/Popularity odds via scraper, with requests/HTML fallback."""
         results = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # ── Priority 1: fetch_realtime_odds_api (Scrapling) ──
         api_data = self.fetch_api_odds(race_id)
+
+        # ── Priority 2: pure requests fallback (クラウド/Scrapling不可環境) ──
+        if not api_data:
+            logger.info(f"Scrapling failed, trying requests fallback for {race_id}...")
+            api_data = self._fetch_odds_requests_fallback(race_id)
+
         if api_data:
             sorted_by_odds = sorted(
                 [(int(u), d) for u, d in api_data.items() if d.get('Odds', 0) > 0],
@@ -96,10 +177,15 @@ class OddsTracker:
                         results.append({"race_id": str(race_id), "umaban": u, "odds_type": "win", "odds_value": o_val, "timestamp": now})
                     pop = int(d.get('Popularity', pop_rank.get(u, 99)))
                     results.append({"race_id": str(race_id), "umaban": u, "odds_type": "pop", "odds_value": float(pop), "timestamp": now})
+                    # 複勝オッズ（requests fallbackが取得した場合）
+                    if d.get('ShowMin', 0) > 0:
+                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_min", "odds_value": float(d['ShowMin']), "timestamp": now})
+                    if d.get('ShowMax', 0) > 0:
+                        results.append({"race_id": str(race_id), "umaban": u, "odds_type": "show_max", "odds_value": float(d['ShowMax']), "timestamp": now})
                 except:
                     continue
 
-        # ── Priority 2: HTML fallback (fetch_robust_html + BeautifulSoup) ──
+        # ── Priority 3: HTML fallback (fetch_robust_html + BeautifulSoup) ──
         if not results:
             logger.info(f"API returned nothing for {race_id}, trying HTML fallback...")
             try:
