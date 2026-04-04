@@ -248,6 +248,15 @@ def get_bloodline_data(race_id: str, track_override: str = None, dist_override: 
                 horse_list.append({"number": int(m_num.group(1)), "name": name_a.get_text(strip=True), "id": m_id.group(1)})
             except: continue
 
+        # 馬番で重複除去（フォールバック時に同じ馬が複数回入る可能性）
+        seen_nums = set()
+        horse_list_dedup = []
+        for h in horse_list:
+            if h['number'] not in seen_nums:
+                seen_nums.add(h['number'])
+                horse_list_dedup.append(h)
+        horse_list = horse_list_dedup
+
         if not horse_list:
             return {"race_id": race_id, "condition": condition_key, "data": [], "error": "No horses found"}
 

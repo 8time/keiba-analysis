@@ -1117,9 +1117,11 @@ if nav == "🏠 Single Race Analysis":
                             # 馬番をキーにしてマージ (Umaban: main_df, number: blood_df)
                             df['Umaban_int'] = pd.to_numeric(df['Umaban'], errors='coerce')
                             df_blood['number_int'] = pd.to_numeric(df_blood['number'], errors='coerce')
-                            
+                            # 重複馬番を除去してから左結合（重複があると行が爆発する）
+                            df_blood_dedup = df_blood[['number_int', 'sire', 'broodmareSire', 'bonus']].drop_duplicates(subset=['number_int'])
+
                             df = df.merge(
-                                df_blood[['number_int', 'sire', 'broodmareSire', 'bonus']], 
+                                df_blood_dedup,
                                 left_on='Umaban_int', right_on='number_int', how='left'
                             ).drop(columns=['number_int', 'Umaban_int'])
                             
@@ -2003,9 +2005,39 @@ if nav == "🏠 Single Race Analysis":
                         blood_raw = float(row.get('bonus', 0.0) or 0)
                         blood_w = sw.get('Bloodline', 0.0)
                         blood_impact = blood_raw * blood_w
+
+                        # --- ダート血統ボーナス ---
+                        _DIRT_SIRES = {
+                            "S": ["ナダル", "シニスターミニスター", "ヘニーヒューズ", "サウスヴィグラス",
+                                  "カネヒキリ", "ゴールドアリュール", "クロフネ", "アドマイヤムーン"],
+                            "A": ["ルヴァンスレーヴ", "ドレフォン", "ベストウォーリア", "ホッコータルマエ",
+                                  "マジェスティックウォリアー", "スウェプトオーヴァーボード", "タイムパラドックス",
+                                  "エスポワールシチー", "スマートファルコン", "キングズベスト"],
+                        }
+                        _DIRT_BONUS = {"S": 25.0, "A": 15.0}
+                        _surface = str(row.get('CurrentSurface', ''))
+                        # Bloodline列 + sire/broodmareSire列の両方を参照
+                        _blood_text = " ".join([
+                            str(row.get('Bloodline', '') or ''),
+                            str(row.get('sire', '') or ''),
+                            str(row.get('broodmareSire', '') or ''),
+                        ])
+                        _dirt_bonus = 0.0
+                        _dirt_rank = None
+                        if "ダ" in _surface and _blood_text.strip() and _blood_text.strip() != "-":
+                            for _rank, _sires in _DIRT_SIRES.items():
+                                if any(s in _blood_text for s in _sires):
+                                    _dirt_rank = _rank
+                                    _dirt_bonus = _DIRT_BONUS[_rank] * blood_w
+                                    break
+                        blood_impact += _dirt_bonus
+
                         bonuses['Bloodline'] = blood_impact
                         if blood_impact != 0:
-                            bonus_details.append(f"血統:{blood_impact:+.1f}")
+                            _blood_detail = f"血統:{blood_impact:+.1f}"
+                            if _dirt_rank:
+                                _blood_detail += f"(ダート{_dirt_rank})"
+                            bonus_details.append(_blood_detail)
 
                         # --- ScoringSignal Bonus (スキャナースコア×倍率) ---
                         uma_key = int(row.get('Umaban', 0))
@@ -2082,7 +2114,9 @@ if nav == "🏠 Single Race Analysis":
                             'Stress': -round(weighted_loss, 1),
                             'sire': row.get('sire', '-'),
                             'broodmareSire': row.get('broodmareSire', '-'),
-                            'ボーナス詳細': ", ".join(bonus_details) if bonus_details else "-"
+                            'ボーナス詳細': ", ".join(bonus_details) if bonus_details else "-",
+                            '_DirtBloodlineRank': _dirt_rank or '',
+                            '_DirtBloodlineBonus': _dirt_bonus,
                         })
 
                     label_map_short = {
@@ -2109,6 +2143,8 @@ if nav == "🏠 Single Race Analysis":
                     # Signal列が未設定の場合に備えて補完
                     if 'Signal' not in view_df.columns:
                         view_df['Signal'] = ''
+
+                    # ダート血統ボーナス表示は fmt_blood() に統合済み（後続で処理）
 
                     # ────────── Numerical Rounding (1 decimal) ──────────
                     # Ensure all numeric metrics are rounded to 1 decimal place before display
@@ -2187,23 +2223,33 @@ if nav == "🏠 Single Race Analysis":
                     
                     view_df['AvgPosition'] = view_df.apply(fmt_pos, axis=1)
 
-                    # Format Bloodline (Sire / BMS + Impact)
+                    # Format Bloodline (Sire / BMS + Impact + ダート血統ボーナス)
                     def fmt_blood(row):
-                        sire = str(row.get('sire', '-'))
-                        bms = str(row.get('broodmareSire', '-'))
-                        impact = float(row.get('Bloodline_Bonus', 0.0))
-                        
+                        sire = str(row.get('sire', '-') or '-')
+                        bms = str(row.get('broodmareSire', '-') or '-')
+                        impact = float(row.get('Bloodline_Bonus', 0.0) or 0.0)
+                        dirt_rank = str(row.get('_DirtBloodlineRank', '') or '')
+                        dirt_bonus = float(row.get('_DirtBloodlineBonus', 0.0) or 0.0)
+
                         if sire in ["-", "None", "不明"] and bms in ["-", "None", "不明"]:
-                            return "-"
-                        
-                        res = f"{sire} / {bms}"
-                        if impact > 0:
-                            res += f" (+{impact:.1f}pt) 🔥"
-                        elif impact < 0:
-                            res += f" ({impact:.1f}pt) ❄️"
-                        return res
-                    
+                            base = "-"
+                        else:
+                            base = f"{sire} / {bms}"
+                            if impact > 0:
+                                base += f" (+{impact:.1f}pt) 🔥"
+                            elif impact < 0:
+                                base += f" ({impact:.1f}pt) ❄️"
+
+                        # ダート血統ボーナス表示
+                        if dirt_rank and dirt_bonus > 0:
+                            icon = '🔥' if dirt_rank == 'S' else '🔶'
+                            base += f" {icon}+{dirt_bonus:.0f}pt(ダート{dirt_rank})"
+
+                        return base
+
                     view_df['Bloodline'] = view_df.apply(fmt_blood, axis=1)
+                    # 表示後に内部列を削除
+                    view_df = view_df.drop(columns=['_DirtBloodlineRank', '_DirtBloodlineBonus'], errors='ignore')
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
