@@ -2241,13 +2241,16 @@ if nav == "🏠 Single Race Analysis":
 
                     # Format Bloodline (Sire / BMS + Impact + ダート血統ボーナス)
                     def fmt_blood(row):
-                        sire = str(row.get('sire', '-') or '-')
-                        bms = str(row.get('broodmareSire', '-') or '-')
-                        impact = float(row.get('Bloodline_Bonus', 0.0) or 0.0)
-                        dirt_rank = str(row.get('_DirtBloodlineRank', '') or '')
-                        dirt_bonus = float(row.get('_DirtBloodlineBonus', 0.0) or 0.0)
+                        def _clean(v):
+                            s = str(v) if v is not None else '-'
+                            return '-' if s in ('nan', 'NaN', 'None', '不明', '', '-') else s
+                        sire = _clean(row.get('sire'))
+                        bms = _clean(row.get('broodmareSire'))
+                        impact = _safe_float(row.get('Bloodline_Bonus'), 0.0)
+                        dirt_rank = str(row.get('_DirtBloodlineRank') or '')
+                        dirt_bonus = _safe_float(row.get('_DirtBloodlineBonus'), 0.0)
 
-                        if sire in ["-", "None", "不明"] and bms in ["-", "None", "不明"]:
+                        if sire == '-' and bms == '-':
                             base = "-"
                         else:
                             base = f"{sire} / {bms}"
