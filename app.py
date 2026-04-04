@@ -1506,10 +1506,15 @@ if nav == "🏠 Single Race Analysis":
                                 a_val = f"{last_run.get('Agari', 0.0):.1f}" if last_run.get('Agari', 0.0) > 0 else "-"
 
                                 # Jockey change check
-                                current_jockey = str(row.get('Jockey', ''))
-                                prev_jockey = str(last_run.get('PrevJockey', ''))
-                                if current_jockey and prev_jockey and current_jockey != prev_jockey and prev_jockey != "-":
-                                    j_flag = "乗替"
+                                current_jockey = str(row.get('Jockey', '')).strip()
+                                prev_jockey = str(last_run.get('PrevJockey', '') or last_run.get('Jockey', '')).strip()
+                                # 名前の部分一致も考慮（例: "川田将雅" vs "川田"）
+                                def _jockey_same(a, b):
+                                    if not a or not b or b in ('-', ''):
+                                        return True  # 不明は同一扱い
+                                    return a == b or a in b or b in a
+                                if current_jockey and prev_jockey and not _jockey_same(current_jockey, prev_jockey):
+                                    j_flag = f"乗替({prev_jockey}→{current_jockey})"
 
                                 if 'ダ' in current_surf and not any('ダ' in str(pr.get('Surface', '')) for pr in p_runs): r_list.append("初ダ")
                                 try:
@@ -2422,8 +2427,13 @@ if nav == "🏠 Single Race Analysis":
                             return ["color: red; font-weight: bold;" if "断層" in str(v) else "" for v in s]
                         if 'OddsGap' in view_df.columns:
                             styled_df = styled_df.apply(color_oddsgap, axis=0, subset=['OddsGap'])
+
+                        def color_jockey_change(s):
+                            return ["color: #e03131; font-weight: bold;" if "乗替" in str(v) else "" for v in s]
+                        if 'JockeyChange' in view_df.columns:
+                            styled_df = styled_df.apply(color_jockey_change, axis=0, subset=['JockeyChange'])
                         
-                        st.dataframe(styled_df, column_config=column_config, width='stretch', hide_index=True)
+                        st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
                         
                         # --- [NEW] ボーナス内訳の可視化 (Top 5) ---
                         if 'current_bonus_df' in st.session_state:
