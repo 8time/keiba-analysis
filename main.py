@@ -13,9 +13,10 @@ import re
 import concurrent.futures
 
 try:
-    from core.scraper import get_shared_fetcher
+    from core.scraper import get_shared_fetcher, fetch_robust_html as _fetch_robust
 except ImportError:
     get_shared_fetcher = lambda: None
+    _fetch_robust = None
 
 if HAS_FASTAPI:
     app = FastAPI()
@@ -57,14 +58,22 @@ def get_single_horse_ped(horse_id):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
     html = ""
-    # Scrapling優先（ボット検知回避）
-    fetcher = get_shared_fetcher()
-    if fetcher:
+    # fetch_robust_html優先（Scrapling多段フォールバック付き）
+    if _fetch_robust:
         try:
-            resp = fetcher.get(url)
-            html = resp.text if hasattr(resp, 'text') else ""
+            html = _fetch_robust(url) or ""
         except:
             pass
+
+    # fallback: shared fetcher
+    if not html:
+        fetcher = get_shared_fetcher()
+        if fetcher:
+            try:
+                resp = fetcher.get(url)
+                html = resp.text if hasattr(resp, 'text') else ""
+            except:
+                pass
 
     # fallback: requests
     if not html:
@@ -227,12 +236,15 @@ def get_bloodline_data(race_id: str, track_override: str = None, dist_override: 
 
         for row in rows:
             try:
-                # 馬番取得: Umaban > Waku系 > 最初の数字td
-                uma_tds = row.find_all('td', class_=re.compile(r'Umaban|umaban', re.I))
-                if not uma_tds:
-                    uma_tds = row.find_all('td', class_=re.compile(r'Waku', re.I))
-                num_td = uma_tds[0] if uma_tds else None
-                if not num_td:
+                # 馬番取得: scraper.py準拠
+                # shutuba_past.html: Waku{N}(枠番) + Waku(馬番) の2セル → 2番目を使う
+                # shutuba.html: Umaban クラスが直接ある
+                uma_tds = row.find_all('td', class_=re.compile(r'Umaban|umaban|Waku|Num', re.I))
+                if len(uma_tds) >= 2:
+                    num_td = uma_tds[1]   # shutuba_past: 2番目がUmaban
+                elif uma_tds:
+                    num_td = uma_tds[0]
+                else:
                     continue
                 m_num = re.search(r'(\d+)', num_td.get_text(strip=True))
                 if not m_num: continue
@@ -262,7 +274,7 @@ def get_bloodline_data(race_id: str, track_override: str = None, dist_override: 
 
         # 3. 各馬の血統を並列取得 & 論理計算
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             future_to_horse = {executor.submit(get_single_horse_ped, h['id']): h for h in horse_list}
             
             for future in concurrent.futures.as_completed(future_to_horse):
