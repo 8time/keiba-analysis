@@ -1130,7 +1130,26 @@ if nav == "🏠 Single Race Analysis":
                                 df.attrs['bloodline_condition'] = blood_json.get("condition", "不明")
                 except Exception as ex_blood:
                     logger.warning(f"血統データの取得に失敗しました: {ex_blood}")
-                
+
+                # --- Bloodline列から sire/broodmareSire をフォールバック抽出 ---
+                # fetch_shutuba_data() が newspaper.html から "父 / 母父" 形式で取得済みの場合に利用
+                if df is not None and not df.empty and 'Bloodline' in df.columns:
+                    _empty = ('', '-', '不明', 'nan', 'None')
+                    if 'sire' not in df.columns: df['sire'] = '-'
+                    if 'broodmareSire' not in df.columns: df['broodmareSire'] = '-'
+                    for _idx in df.index:
+                        _s = str(df.at[_idx, 'sire'] or '').strip()
+                        _b = str(df.at[_idx, 'broodmareSire'] or '').strip()
+                        if _s in _empty or _b in _empty:
+                            _bl = str(df.at[_idx, 'Bloodline'] or '').strip()
+                            if '/' in _bl:
+                                _parts = [p.strip() for p in _bl.split('/')]
+                                if len(_parts) >= 2:
+                                    if _s in _empty and _parts[0] not in ('-', ''):
+                                        df.at[_idx, 'sire'] = _parts[0]
+                                    if _b in _empty and _parts[-1] not in ('-', ''):
+                                        df.at[_idx, 'broodmareSire'] = _parts[-1]
+
                 # --- [NEW] Fetch detailed shutuba data (Barei, Futan, Weight, etc.) ---
                 try:
                     shutuba_extra = scraper.fetch_shutuba_data(race_id_input)
