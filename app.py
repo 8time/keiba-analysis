@@ -1951,23 +1951,38 @@ if nav == "🏠 Single Race Analysis":
                             if not v_series.empty:
                                 _norm_stats[m_key] = {'min': v_series.min(), 'max': v_series.max(), 'higher': higher_is_better}
 
+                    def _safe_float(v, default=0.0):
+                        """NaN/None/空文字を安全にfloatに変換"""
+                        try:
+                            f = float(v)
+                            return default if f != f else f  # NaN check: NaN != NaN
+                        except (TypeError, ValueError):
+                            return default
+
+                    def _safe_int(v, default=0):
+                        try:
+                            f = float(v)
+                            return default if f != f else int(f)
+                        except (TypeError, ValueError):
+                            return default
+
                     def _calc_pro_scores(row):
                         bonuses = {}
                         bonus_details = []
-                        
+
                         # 基礎点
-                        base_pts = float(row.get('BattleScore', 0) or 0)
-                        
+                        base_pts = _safe_float(row.get('BattleScore'), 0.0)
+
                         # 各項目のスコア化と重み付け
                         for m_key, sw_key in [
-                            ('NIndex', 'NIndex'), ('UIndex', 'UIndex'), ('LaboIndex', 'LaboIndex'), 
+                            ('NIndex', 'NIndex'), ('UIndex', 'UIndex'), ('LaboIndex', 'LaboIndex'),
                             ('SpeedIndex', 'SpeedIndex'), ('Strength (X)', 'Strength (X)'), ('Popularity', 'Popularity'),
                             ('TrainingScore', 'Training'), ('WeightDiff', 'Weight'),
                             ('WeightCarried', 'WeightCarried'), ('Suitability (Y)', 'Suitability'),
                             ('AvgAgari', 'AvgAgari'), ('Umaban', 'Umaban'), ('Waku', 'Waku'), ('AvgPosition', 'AvgPosition')
                         ]:
                             col_name = m_key if m_key in row else None
-                            raw_val = float(row.get(col_name, 0) or 0) if col_name else 0
+                            raw_val = _safe_float(row.get(col_name) if col_name else None, 0.0)
                             
                             score = 50.0 # デフォルト
                             if m_key in _norm_stats:
@@ -1988,7 +2003,8 @@ if nav == "🏠 Single Race Analysis":
 
                         # 騎手(特例)
                         j_pts = 0
-                        past = row.get('PastRuns', [])
+                        past = row.get('PastRuns')
+                        if not isinstance(past, list): past = []
                         for r in past[:10]:
                             rnk = r.get('Rank', 99)
                             if rnk == 1: j_pts += 10
@@ -2002,7 +2018,7 @@ if nav == "🏠 Single Race Analysis":
                             bonus_details.append(f"騎手:+{j_bonus:.1f}")
 
                         # --- Bloodline Influence ---
-                        blood_raw = float(row.get('bonus', 0.0) or 0)
+                        blood_raw = _safe_float(row.get('bonus'), 0.0)
                         blood_w = sw.get('Bloodline', 0.0)
                         blood_impact = blood_raw * blood_w
 
@@ -2062,11 +2078,11 @@ if nav == "🏠 Single Race Analysis":
                         curr_w = int(match_w.group(1)) if match_w else 0 # 当日馬体重
                         w_diff_val = int(match_w.group(2)) if match_w else 0 # 増減値
                         
-                        umaban = int(row.get('Umaban', 0))
-                        waku = int(row.get('Waku', 1)) 
-                        avg_pos = float(row.get('AvgPosition', 9.9))
-                        surface = str(row.get('CurrentSurface', ''))
-                        dist = float(row.get('CurrentDistance', 1600) or 1600)
+                        umaban = _safe_int(row.get('Umaban'), 0)
+                        waku = _safe_int(row.get('Waku'), 1)
+                        avg_pos = _safe_float(row.get('AvgPosition'), 9.9)
+                        surface = str(row.get('CurrentSurface') or '')
+                        dist = _safe_float(row.get('CurrentDistance'), 1600.0)
 
                         # 条件A：キックバック・ストレス (ダート内枠+後方脚質)
                         if "ダ" in surface and waku <= 3 and avg_pos >= 8.0:
