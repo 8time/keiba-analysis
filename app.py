@@ -8251,6 +8251,7 @@ if nav == "🏇 騎手分析Pro":
     from utils.jockey_stats_db import JockeyStatsDB
     from utils.jockey_screening import screen_entry, ScreeningResult
     from utils.jockey_bayesian import bayesian_adjusted_rate
+    from utils.jockey_track_condition import fetch_track_conditions, get_condition_for_venue
 
     _jpro_db = JockeyStatsDB()
 
@@ -8439,6 +8440,19 @@ if nav == "🏇 騎手分析Pro":
         elif jpro_analysis_type == "騎手×コース×脚質":
             st.markdown("##### コース適性 & 馬場状態別成績")
 
+            # 馬場状態の自動取得（キャッシュ: session_state）
+            if "jpro_track_conditions" not in st.session_state:
+                st.session_state["jpro_track_conditions"] = []
+            if st.button("🌤️ 本日の馬場を取得", key="jpro_fetch_track"):
+                with st.spinner("馬場状態を取得中..."):
+                    conditions = fetch_track_conditions()
+                    st.session_state["jpro_track_conditions"] = conditions
+                    if conditions:
+                        for c in conditions:
+                            st.caption(f"🏟️ {c.venue} {c.surface}: **{c.condition}** ({c.updated_at})")
+                    else:
+                        st.info("馬場データを自動取得できませんでした。手動で選択してください。")
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 course_options = [
@@ -8456,7 +8470,17 @@ if nav == "🏇 騎手分析Pro":
             with col2:
                 style_select = st.selectbox("脚質", ["全体", "逃げ", "先行", "差し", "追込"], key="jpro_style")
             with col3:
-                track_select = st.selectbox("馬場", ["全体", "良", "稍重", "重", "不良"], key="jpro_track")
+                # 馬場自動取得結果をデフォルト値に反映
+                track_options = ["全体", "良", "稍重", "重", "不良"]
+                auto_idx = 0
+                _tc = st.session_state.get("jpro_track_conditions", [])
+                if _tc and course_select != "全体":
+                    # コースから会場名を抽出（先頭2文字）
+                    _venue_hint = course_select[:2] if len(course_select) >= 2 else ""
+                    _auto_cond = get_condition_for_venue(_tc, _venue_hint)
+                    if _auto_cond and _auto_cond in track_options:
+                        auto_idx = track_options.index(_auto_cond)
+                track_select = st.selectbox("馬場", track_options, index=auto_idx, key="jpro_track")
 
             try:
                 target_name = None if course_select == "全体" else course_select
@@ -8920,10 +8944,184 @@ if nav == "🏇 騎手分析Pro":
                     import traceback
                     st.code(traceback.format_exc())
 
-        # TODO: netkeiba自動データ取得 — バッチ処理でjockey_statsを自動更新
-        # TODO: LightGBMによるウェイト算出 — 各相性数値の重要度を機械学習で決定
-        # TODO: PW指数連携 — PakkaWinの指数をインポートする機能
-        # TODO: 馬場状態リアルタイム反映 — 当日の馬場発表を取り込んでコース×馬場のフィルタを自動適用
+        st.markdown("---")
+
+        # =============================================
+        # netkeibaデータ自動取得
+        # =============================================
+        st.markdown("##### 📥 netkeibaデータ自動取得")
+        st.caption("騎手IDを入力すると、コース別/厩舎別/馬別の成績をnetkeibaから取得しDBに保存します。")
+
+        _fetch_col1, _fetch_col2 = st.columns([3, 1])
+        with _fetch_col1:
+            _fetch_jid = st.text_input(
+                "騎手ID（netkeiba 5桁）",
+                placeholder="例: 05212 (ルメール)",
+                key="jpro_fetch_jockey_id",
+            )
+        with _fetch_col2:
+            st.write("")
+            _fetch_single_btn = st.button("📥 単独取得", key="jpro_fetch_single", use_container_width=True)
+
+        if _fetch_single_btn and _fetch_jid.strip():
+            from utils.jockey_scraper import JockeyScraper
+            _scraper = JockeyScraper()
+            with st.spinner(f"騎手ID {_fetch_jid.strip()} のデータを取得中..."):
+                try:
+                    stats = _scraper.fetch_all_stats(_fetch_jid.strip())
+                    total_fetched = 0
+                    if not _jpro_db.table_exists():
+                        _jpro_db.init_table()
+                    for target_type, df in stats.items():
+                        if not df.empty:
+                            records = df.to_dict("records")
+                            count = _jpro_db.upsert(records)
+                            total_fetched += count
+                            st.caption(f"  {target_type}: {count}件")
+                    if total_fetched > 0:
+                        st.success(f"✅ 合計{total_fetched}件のデータを取得・保存しました。")
+                    else:
+                        st.warning("データを取得できませんでした。騎手IDを確認してください。")
+                except Exception as e:
+                    st.error(f"取得エラー: {e}")
+
+        # バッチ取得（リーディング上位）
+        with st.expander("🔄 一括取得（リーディング上位）"):
+            _batch_top_n = st.slider("上位N名", 5, 30, 10, key="jpro_batch_top_n")
+            if st.button(f"🔄 上位{_batch_top_n}名を一括取得", key="jpro_batch_fetch"):
+                from utils.jockey_scraper import JockeyScraper, TOP_JOCKEYS
+                _scraper = JockeyScraper()
+                jockey_ids = list(TOP_JOCKEYS.keys())[:_batch_top_n]
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                total_batch = 0
+                if not _jpro_db.table_exists():
+                    _jpro_db.init_table()
+                for idx, jid in enumerate(jockey_ids):
+                    jname = TOP_JOCKEYS.get(jid, jid)
+                    progress_bar.progress((idx + 1) / len(jockey_ids))
+                    status_text.caption(f"取得中: {jname} ({jid}) [{idx+1}/{len(jockey_ids)}]")
+                    try:
+                        stats = _scraper.fetch_all_stats(jid)
+                        for ttype, df in stats.items():
+                            if not df.empty:
+                                total_batch += _jpro_db.upsert(df.to_dict("records"))
+                    except Exception:
+                        pass
+                progress_bar.empty()
+                status_text.empty()
+                st.success(f"✅ {_batch_top_n}名から合計{total_batch}件を取得・保存しました。")
+
+        st.markdown("---")
+
+        # =============================================
+        # LightGBMウェイト算出
+        # =============================================
+        st.markdown("##### 🤖 機械学習ウェイト算出（LightGBM）")
+        st.caption("DB内の騎手成績データから、各相性数値が回収率にどれだけ影響するかを客観的に算出します。")
+
+        _ml_col1, _ml_col2 = st.columns([2, 1])
+        with _ml_col1:
+            _ml_target = st.selectbox(
+                "目的変数",
+                ["回収率（return_win）", "着順（finish_position）"],
+                key="jpro_ml_target",
+            )
+        with _ml_col2:
+            st.write("")
+            _ml_train_btn = st.button("🤖 ウェイト算出", key="jpro_ml_train_btn", use_container_width=True)
+
+        if _ml_train_btn:
+            try:
+                from utils.jockey_ml import train_weights
+                target = "return_win" if "回収率" in _ml_target else "finish_position"
+                with st.spinner("学習中（数秒〜数十秒）..."):
+                    weights = train_weights(target=target, db_path=_jpro_db.db_path)
+                if weights:
+                    st.success("✅ ウェイト算出完了！")
+                    df_w = pd.DataFrame([
+                        {"特徴量": k, "重要度": v} for k, v in weights.items()
+                    ])
+                    st.bar_chart(df_w.set_index("特徴量"))
+            except Exception as e:
+                st.error(f"ウェイト算出エラー: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+        # 現在のウェイト表示
+        with st.expander("📊 現在のウェイト"):
+            try:
+                from utils.jockey_ml import get_weights
+                current_weights = get_weights(db_path=_jpro_db.db_path)
+                for feat, w in current_weights.items():
+                    bar_len = int(w * 200)
+                    st.markdown(
+                        f"**{feat}**: `{w:.4f}` "
+                        f"{'█' * bar_len}{'░' * max(0, 20 - bar_len)}"
+                    )
+            except Exception as e:
+                st.info(f"ウェイト未算出: {e}")
+
+        st.markdown("---")
+
+        # =============================================
+        # 外部指数インポート（PW指数等）
+        # =============================================
+        st.markdown("##### 🔢 外部指数インポート（PW指数等）")
+        st.caption("PakkaWinのPW指数やタイム指数などのCSVデータをインポートし、出馬表ビューに統合表示します。")
+
+        pw_uploaded = st.file_uploader(
+            "PW指数データCSV",
+            type=["csv"],
+            key="jpro_pw_upload",
+            help="必須カラム: horse_id, horse_name, pw_index / オプション: race_id",
+        )
+        if pw_uploaded:
+            try:
+                df_pw = pd.read_csv(pw_uploaded, encoding="utf-8")
+            except UnicodeDecodeError:
+                df_pw = pd.read_csv(pw_uploaded, encoding="utf-8-sig")
+
+            st.dataframe(df_pw.head(10), use_container_width=True)
+            st.caption(f"プレビュー: {len(df_pw)}件、カラム: {list(df_pw.columns)}")
+
+            if st.button("📥 PW指数インポート", key="jpro_pw_import", type="primary"):
+                try:
+                    import sqlite3
+                    conn = sqlite3.connect(_jpro_db.db_path)
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS external_index (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            race_id TEXT NOT NULL DEFAULT '',
+                            horse_id TEXT NOT NULL,
+                            horse_name TEXT NOT NULL,
+                            index_name TEXT NOT NULL,
+                            index_value REAL NOT NULL,
+                            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                            UNIQUE(race_id, horse_id, index_name)
+                        )
+                    """)
+                    pw_count = 0
+                    for _, row in df_pw.iterrows():
+                        conn.execute(
+                            """INSERT OR REPLACE INTO external_index
+                               (race_id, horse_id, horse_name, index_name, index_value)
+                               VALUES (?, ?, ?, 'PW', ?)""",
+                            (
+                                str(row.get("race_id", "")),
+                                str(row.get("horse_id", "")),
+                                str(row.get("horse_name", "")),
+                                float(row.get("pw_index", 0.0)),
+                            ),
+                        )
+                        pw_count += 1
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ PW指数 {pw_count}件をインポートしました。")
+                except Exception as e:
+                    st.error(f"❌ PW指数インポートエラー: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
 
 # ──────────────────────────────────────────────
