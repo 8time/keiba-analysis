@@ -248,7 +248,7 @@ def display_icon_legend():
         
         **【能力・適性・人気（各カラム）】**
         *   **🚀 (ロケット): 上がり最速（穴馬）** (過去データで上がり3Fが全体1位かつ信頼度高)
-        *   **🦁 (ライオン): 先行馬** (過去の平均位置取りが5番手以内かつ信頼度高)
+        *   **🦁 (ライオン): 先行馬** (過去の平均位置取りが4番手以内かつ上位3頭まで)
         *   **🔥 (炎): 上位人気馬** (現在の単勝人気が1～3番人気の馬)
         """)
 
@@ -2396,15 +2396,14 @@ if nav == "🏠 Single Race Analysis":
                     top_5_lion_umaban = set()
                     if 'AvgPosition' in view_df.columns and 'Umaban' in view_df.columns:
                         try:
-                            # 1. 最小の5頭を特定（同率順位があっても厳密に5頭まで）
-                            # Umaban と AvgPosition をペアにして、AvgPosition 昇順でソート
+                            # 1. 最小の3頭を特定（平均位置取り 4.0以内の馬限定）
                             pos_df = view_df[['Umaban', 'AvgPosition']].copy()
                             pos_df['AvgPosition'] = pd.to_numeric(pos_df['AvgPosition'], errors='coerce')
                             pos_df = pos_df.dropna(subset=['AvgPosition'])
-                            pos_df = pos_df[pos_df['AvgPosition'] > 0]
+                            pos_df = pos_df[(pos_df['AvgPosition'] > 0) & (pos_df['AvgPosition'] <= 4.0)]
                             
-                            top_5_df = pos_df.sort_values(by='AvgPosition', ascending=True).head(5)
-                            top_5_lion_umaban = set(top_5_df['Umaban'].astype(int).tolist())
+                            top_3_df = pos_df.sort_values(by='AvgPosition', ascending=True).head(3)
+                            top_5_lion_umaban = set(top_3_df['Umaban'].astype(int).tolist())
                         except: pass
 
                     def fmt_pos(row):

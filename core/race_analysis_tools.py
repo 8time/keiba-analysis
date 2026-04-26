@@ -305,9 +305,9 @@ def calculate_all_deploy_scores(
         if high_risk and is_front:
             effect = '▲高（不利）'
         elif high_risk and is_back:
-            effect = '◎恩恵大'
+            effect = '◎恩恵大' if deploy_score >= 70 else '○恩恵(小)'
         elif low_risk and is_front:
-            effect = '○恩恵大（先行残り）'
+            effect = '○恩恵大(前残)' if deploy_score >= 70 else '○恩恵(小)'
         elif low_risk and is_back:
             effect = '△不利（脚余り）'
         else:
@@ -377,23 +377,32 @@ def get_deployment_match_rate(
         avg_pci = float(row.get('AvgPCI', 50.0))
         pci_type = str(row.get('PCIType', '不明'))
 
-        # 適合判定
-        if rpci >= 56.0:        # 後傾ペース想定
-            if avg_pci >= 50.0:  # 持続型・後傾型
+        # 適合判定（条件を厳格化して◎と○を細分化）
+        if rpci >= 55.0:        # 後傾ペース想定
+            if avg_pci >= 54.0:
                 level = '◎ 適合'
                 matched += 1
-            else:               # 前傾型
+            elif avg_pci >= 51.0:
+                level = '○ やや適合'
+                matched += 0.5
+            else:
                 level = '△ 不向き'
-        elif rpci <= 49.9:      # 前傾ペース想定
-            if avg_pci <= 53.0:  # 持続型・前傾型
+        elif rpci <= 50.0:      # 前傾ペース想定
+            if avg_pci <= 51.0:
                 level = '◎ 適合'
                 matched += 1
-            else:               # 後傾型
+            elif avg_pci <= 53.0:
+                level = '○ やや適合'
+                matched += 0.5
+            else:
                 level = '△ 不向き'
         else:                   # ミドル
-            if 48.0 <= avg_pci <= 56.0:
-                level = '○ やや適合'
+            if 49.5 <= avg_pci <= 53.5:
+                level = '◎ 適合'
                 matched += 1
+            elif 48.0 <= avg_pci <= 55.0:
+                level = '○ やや適合'
+                matched += 0.5
             else:
                 level = '△ 不向き'
 
