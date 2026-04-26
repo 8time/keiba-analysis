@@ -70,6 +70,36 @@ from core.odds_tracker import OddsTracker
 from core.odds_analyzer import OddsAnalyzer
 from core.kaggle_client import KaggleChatClient
 from core import lab_fetcher
+from core import jockey_analyzer
+try:
+    importlib.reload(jockey_analyzer)
+except:
+    pass
+
+# ──────────────────────────────────────────────
+# 起動時ボーナスキャッシュ初期化
+# Settingsタブを開かなくても分析時にボーナスが反映されるよう
+# モジュールロード直後に一度だけ実行する
+# ──────────────────────────────────────────────
+try:
+    from core.jockey_analyzer import (
+        _DBKEIBA_BONUS_CACHE as _STARTUP_CACHE,
+        JOCKEY_TENDENCY_DB   as _STARTUP_JTDB,
+        get_tendency_as_bonus_dict as _startup_get_tendency,
+        load_bonus_csv             as _startup_load_csv,
+    )
+    # Step1: 組み込み傾向DBを自動ロード（未ロードのときのみ）
+    if not _STARTUP_CACHE:
+        for _st_jid, _st_data in _STARTUP_JTDB.items():
+            _STARTUP_CACHE[_st_jid] = _startup_get_tendency(_st_jid)
+
+    # Step2: data/bonus_conditions.csv があれば上書きロード（CSV優先）
+    _startup_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "data", "bonus_conditions.csv")
+    if os.path.exists(_startup_csv):
+        _startup_load_csv(_startup_csv)
+except Exception:
+    pass
 
 
 st.set_page_config(page_title="Keiba Analysis - Modified Ogura Index", layout="wide")
@@ -1099,7 +1129,15 @@ if nav == "🏠 Single Race Analysis":
 
     if analyze_btn:
         st.session_state['tab1_analyzed_id'] = race_id_input
-        
+
+    # --- 他タブで df が消されていた場合、tab1専用バックアップから自動復元 ---
+    if (
+        st.session_state.get('df') is None
+        and st.session_state.get('tab1_df') is not None
+        and st.session_state.get('tab1_analyzed_id') == race_id_input
+    ):
+        st.session_state['df'] = st.session_state['tab1_df'].copy()
+
     if analyze_btn or ("race_id" in query_params and race_id_input == default_id) or st.session_state.get('tab1_analyzed_id') == race_id_input:
         # Determine if we need to fetch fresh data from the web
         # Fetch if analyze button is pressed, OR if it's a new race, OR if df is missing
@@ -1256,6 +1294,8 @@ if nav == "🏠 Single Race Analysis":
                     except Exception as _de:
                         import logging as _log; _log.getLogger(__name__).warning(f"[DeployScore] {_de}")
                     st.session_state['df'] = df
+                    # --- tab1専用バックアップ: 他タブに移動しても復元可能にする ---
+                    st.session_state['tab1_df'] = df.copy()
                     # Preserve metadata in session state
                     if hasattr(df, 'attrs') and 'metadata' in df.attrs:
                         st.session_state['race_metadata'] = df.attrs['metadata']
@@ -1332,6 +1372,7 @@ if nav == "🏠 Single Race Analysis":
                                     df = calculator.calculate_battle_score(df)
                                     df = calculator.calculate_n_index(df)
                                     st.session_state['df'] = df
+                                    st.session_state['tab1_df'] = df.copy()
                                     st.success("✅ データを反映し、全ての指数を再計算しました。")
                                     st.rerun()
 
@@ -1855,7 +1896,7 @@ if nav == "🏠 Single Race Analysis":
                         "NIndex": 0.0, "UIndex": 0.0, "LaboIndex": 0.0, "SpeedIndex": 0.0, "Popularity": 0.0,
                         "Strength (X)": 0.0, "Jockey": 0.0, "Training": 0.0, "Weight": 0.0, "WeightPenalty": -0.1, "WeightCarried": 0.0,
                         "Suitability": 0.0, "AvgAgari": 0.0, "Umaban": 0.0, "Waku": 0.0, "AvgPosition": 0.0, "Bloodline": 1.0,
-                        "Base": 1.0, "Stress": 1.0, "ScoringSignal": 1.0
+                        "Base": 1.0, "Stress": 1.0, "ScoringSignal": 1.0, "TopBattleBonus": 0.0
                     }
                     if 'score_weights_main' not in st.session_state:
                         if os.path.exists(_WEIGHTS_FILE):
@@ -1954,11 +1995,15 @@ if nav == "🏠 Single Race Analysis":
                             max_val = 1.0
                             min_val = -1.0
                             if sw_key == "WeightPenalty": max_val = 0.0
-                            if sw_key == "Base": min_val, max_val = 0.0, 2.0
+                            if sw_key == "Base": min_val, max_val = 0.0, 10.0
+                            if sw_key == "Suitability": max_val = 10.0
+                            if sw_key == "SpeedIndex": max_val = 10.0
                             if sw_key == "Bloodline": max_val = 10.0
                             if sw_key == "Stress": max_val = 15.0
                             if sw_key == "Popularity": max_val = 10.0
                             if sw_key == "Stress": max_val = 15.0
+                            if sw_key == "AvgAgari": max_val = 10.0
+                            if sw_key == "AvgPosition": max_val = 10.0
 
                             # Initialize if missing with clamping safety
                             safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
@@ -1988,7 +2033,7 @@ if nav == "🏠 Single Race Analysis":
                                 _render_weight_group_sm(_W_GROUP3, sw, "sm_g3")
                         with st.container(border=True):
                             st.markdown("#### 🔬 スコアリングシグナル")
-                            st.caption("J◎(騎手◎シグナル)・T●(厩舎●シグナル)検出時に加算するボーナス倍率 (1〜10倍)")
+                            st.caption("J◎(騎手◎シグナル)・T◎(厩舎◎シグナル)・T●(厩舎●シグナル)検出時に加算するボーナス。ベース各30ポイントに対し、設定した倍率(1〜10倍)が乗算されます。")
                             _sig_sld = "wsld_sm_g4sig"; _sig_num = "wnum_sm_g4sig"
                             _sig_cur = float(sw.get("ScoringSignal", 1.0))
                             _sig_cur = max(1.0, min(10.0, _sig_cur))
@@ -2004,9 +2049,27 @@ if nav == "🏠 Single Race Analysis":
                                                 label_visibility="collapsed")
                             sw["ScoringSignal"] = float(st.session_state.get(_sig_num, _sig_cur))
 
-                            total_w = sum(sw.values())
+                        with st.container(border=True):
+                            st.markdown("#### 🏆 総合戦闘力ボーナス")
+                            st.caption("BattleScore(基礎戦闘力)上位3頭の予測スコアに、入力した値をそのまま加算します")
+                            _tbb_sld = "wsld_sm_tbb"; _tbb_num = "wnum_sm_tbb"
+                            _tbb_cur = float(sw.get("TopBattleBonus", 0.0))
+                            _tbb_cur = max(0.0, min(300.0, _tbb_cur))
+                            if _tbb_sld not in st.session_state: st.session_state[_tbb_sld] = _tbb_cur
+                            if _tbb_num not in st.session_state: st.session_state[_tbb_num] = _tbb_cur
+                            _tb1, _tb2 = st.columns([2, 1])
+                            with _tb1:
+                                st.slider("🏆 上位3頭ボーナス", 0.0, 300.0, step=0.5, key=_tbb_sld,
+                                          on_change=_make_sync_num_sm(_tbb_sld, _tbb_num))
+                            with _tb2:
+                                st.number_input("", 0.0, 300.0, step=0.5, key=_tbb_num,
+                                                on_change=_make_sync_slider_sm(_tbb_num, _tbb_sld),
+                                                label_visibility="collapsed")
+                            sw["TopBattleBonus"] = float(st.session_state.get(_tbb_num, _tbb_cur))
+
+                            total_w = sum(v for k, v in sw.items() if k != "TopBattleBonus")
                             if total_w > 0:
-                                st.info(f"💡 合計: **{total_w:.2f}%**")
+                                st.info(f"💡 合計(影響率): **{total_w:.2f}%** ｜ 🏆上位3頭ボーナス: **+{sw.get('TopBattleBonus', 0.0):.1f}**")
                             else:
                                 st.success(f"✅ 全て 0%（戦闘力のみのプレーン状態です）")
                                 
@@ -2030,6 +2093,7 @@ if nav == "🏠 Single Race Analysis":
                                 df = calculator.calculate_n_index(df)
                                 df = calculator.calculate_strength_suitability(df, course_profile_main)
                                 st.session_state['df'] = df
+                                st.session_state['tab1_df'] = df.copy()
                                 st.rerun()
 
                     # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
@@ -2317,6 +2381,19 @@ if nav == "🏠 Single Race Analysis":
                     for c in res_df.columns:
                         df[c] = res_df[c]
                     
+                    # --- 🏆 総合戦闘力ボーナス: BattleScore上位3頭に加算 ---
+                    _top_battle_bonus = float(sw.get('TopBattleBonus', 0.0))
+                    if _top_battle_bonus > 0 and 'BattleScore' in df.columns and 'Projected Score' in df.columns:
+                        _bs_col = pd.to_numeric(df['BattleScore'], errors='coerce').fillna(0)
+                        _top3_idx = _bs_col.nlargest(3).index
+                        df.loc[_top3_idx, 'Projected Score'] = df.loc[_top3_idx, 'Projected Score'] + _top_battle_bonus
+                        # ボーナス詳細にも追記
+                        for _tidx in _top3_idx:
+                            _existing = str(df.at[_tidx, 'ボーナス詳細']) if 'ボーナス詳細' in df.columns else ''
+                            _rank = list(_top3_idx).index(_tidx) + 1
+                            _tag = f"🏆Top{_rank}:+{_top_battle_bonus:.1f}"
+                            df.at[_tidx, 'ボーナス詳細'] = f"{_existing}, {_tag}" if _existing and _existing != '-' else _tag
+
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
                             
@@ -2646,7 +2723,7 @@ if nav == "🏠 Single Race Analysis":
                         "Jockey": st.column_config.TextColumn("騎手"),
                         "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
-                        "Signal": st.column_config.TextColumn("🔬シグナル", help="J◎: 騎手◎シグナル / T●: 厩舎●シグナル（当日JRA全レース横断検出）"),
+                        "Signal": st.column_config.TextColumn("🔬シグナル", help="J◎: 騎手◎ / T◎: 厩舎◎ / T●: 厩舎●（各30pt × ウェイト倍率）"),
                         "Projected Score": st.column_config.NumberColumn("⭐予測スコア", format="%.1f"),
                         "Stress": st.column_config.NumberColumn("ストレス", format="%.1f", help="外的・内的要因による能力減衰量。内訳ボタン（ボーナス詳細）で理由を確認できます"),
                         "ボーナス詳細": st.column_config.TextColumn("ボーナス内訳"),
@@ -3375,8 +3452,8 @@ if nav == "🏠 Single Race Analysis":
                         if _chaos_rank in ['A', 'S']:
                             st.html("""
                             <div style="background-color: #3d0000; border: 3px solid #ff4500; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 0 30px #ff450077;">
-                                <h3 style="color: #ffff00; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
-                                <p style="color: #ffffff; text-align: center; margin-top: 0; font-size: 1.1em; font-weight: bold;">このレースは難易度がA/S判定のため、自動的に高配当特化の「選択した軸2頭 ＋ その他の全馬」の組み合わせに切り替わりました。</p>
+                                <h3 style="color: #ffff00 !important; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
+                                <p style="color: #ffffff !important; text-align: center; margin-top: 0; font-size: 1.1em; font-weight: bold;">このレースは難易度がA/S判定のため、自動的に高配当特化の「選択した軸2頭 ＋ その他の全馬」の組み合わせに切り替わりました。</p>
                             </div>
                             """)
                         else:
@@ -5203,6 +5280,8 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                 if sw_key == "WeightPenalty": max_val = 0.0
                 if sw_key == "Base": min_val, max_val = 0.0, 2.0
                 if sw_key == "Bloodline": max_val = 10.0
+                if sw_key == "AvgAgari": max_val = 10.0
+                if sw_key == "AvgPosition": max_val = 10.0
                 
                 # Initialize if missing with clamping safety
                 safe_val = max(float(min_val), min(float(max_val), float(cur_val)))
@@ -6185,9 +6264,9 @@ if nav == "🤓 N氏の研究室":
         | **Evidences** | 検出された配置証拠1件につき | +1 |
         | **Overlap** | 証拠が2種類(P1~P4)以上のタイプに及ぶ | +2 |
         | **Multi-Entry** | 同一レースに同一厩舎が2頭以上出走 | +2 |
-        | **Signal J◎** | 騎手の当日全出走が同一馬番等で統一 | +3 |
-        | **Signal T◎** | 厩舎の当日全出走が同一馬番等で統一 | +3 |
-        | **Signal T●** | 厩舎が異なる場・同一Rで好配置一致 | +2 |
+        | **Signal J◎** | 騎手の当日全出走が同一馬番等で統一 | +30 |
+        | **Signal T◎** | 厩舎の当日全出走が同一馬番等で統一 | +30 |
+        | **Signal T●** | 厩舎が異なる場・同一Rで好配置一致 | +30 |
         | **Longshot** | 7人気以下 または 単勝20倍以上 | +1 |
         | **J1R (Single Ride)** | 当該場での騎乗が当日1回のみ | (表示のみ) |
         """)
@@ -8301,11 +8380,11 @@ if nav == "🏇 騎手分析Pro":
     </style>
     """, unsafe_allow_html=True)
 
-    # --- メインUI: 4タブ構成 ---
-    jpro_tab1, jpro_tab2, jpro_tab3, jpro_tab4 = st.tabs([
-        "🔍 コンビネーション分析",
-        "🚦 スクリーニング",
-        "📋 出馬表ビュー",
+    # --- メインUI: 1ページ完結体験（出馬表ビューを先頭に） ---
+    jpro_tab3, jpro_tab1, jpro_tab2, jpro_tab4 = st.tabs([
+        "✅ 最強予想ビュー (One-Push)",
+        "🔍 詳細データ (コンビ/脚質)",
+        "🚦 フラグ手動入力",
         "⚙️ 設定・データ管理",
     ])
 
@@ -8525,174 +8604,6 @@ if nav == "🏇 騎手分析Pro":
                 st.warning(f"DB検索エラー: {e}")
                 st.info("⚙️設定タブからDB初期化を実行してください。")
 
-        # --- レースID分析（既存機能を保持） ---
-        st.divider()
-        st.markdown("##### 🔍 レースID分析（netkeiba直接取得）")
-        st.caption("レースIDを入力すると、出場全騎手の当該コース相性をスキャンし、フラグ判定を行います。")
-
-        jp_col1, jp_col2 = st.columns([3, 1])
-        with jp_col1:
-            jp_race_input = st.text_input(
-                "レースID または URL",
-                placeholder="例: 202505021211 または https://race.netkeiba.com/race/shutuba.html?race_id=...",
-                key="jp_race_input",
-            )
-        with jp_col2:
-            st.write("")
-            jp_analyze_btn = st.button("🏇 分析開始", type="primary", key="jp_analyze_btn", use_container_width=True)
-
-        jp_race_id = ""
-        if jp_race_input:
-            m = re.search(r'(\d{12})', jp_race_input)
-            if m:
-                jp_race_id = m.group(1)
-
-        if 'jp_analysis_result' not in st.session_state:
-            st.session_state.jp_analysis_result = None
-
-        if jp_analyze_btn and jp_race_id:
-            from core.jockey_analyzer import analyze_race, create_result_dataframe
-
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            def jp_progress(current, total, msg):
-                if total > 0:
-                    progress_bar.progress(min(1.0, current / total))
-                status_text.caption(msg)
-
-            with st.spinner("騎手データを収集中... (しばらくお待ちください)"):
-                try:
-                    result = analyze_race(jp_race_id, progress_callback=jp_progress)
-                    st.session_state.jp_analysis_result = result
-                except Exception as e:
-                    st.error(f"分析エラー: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-            progress_bar.empty()
-            status_text.empty()
-
-        elif jp_analyze_btn and not jp_race_id:
-            st.warning("有効なレースID（12桁の数字）を入力してください。")
-
-        # --- レース分析結果表示 ---
-        result = st.session_state.jp_analysis_result
-        if result and result.get('entries'):
-            venue = result.get('venue', '')
-            st.success(f"✅ {venue} {len(result['entries'])}頭の分析が完了しました")
-
-            from core.jockey_analyzer import create_result_dataframe
-            df_result = create_result_dataframe(result)
-
-            if not df_result.empty:
-                def _style_flag(val):
-                    if "鉄板" in str(val):
-                        return "background-color: #8B0000; color: white; font-weight: bold;"
-                    elif "妙味" in str(val):
-                        return "background-color: #B8860B; color: white; font-weight: bold;"
-                    elif "危険" in str(val):
-                        return "background-color: #0D6EFD; color: white; font-weight: bold;"
-                    return ""
-
-                styled = df_result.style.applymap(_style_flag, subset=["期待値アラート"])
-                st.dataframe(
-                    styled,
-                    column_config={
-                        "馬番": st.column_config.NumberColumn("馬番", width="small"),
-                        "馬名": st.column_config.TextColumn("馬名"),
-                        "騎手": st.column_config.TextColumn("騎手"),
-                        "厩舎": st.column_config.TextColumn("厩舎"),
-                        "人気": st.column_config.NumberColumn("人気", format="%d"),
-                        "オッズ": st.column_config.NumberColumn("オッズ", format="%.1f"),
-                        "期待値アラート": st.column_config.TextColumn("⚡ アラート", width="medium"),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
-
-            # --- 騎手詳細カード表示 ---
-            st.divider()
-            st.subheader("🃏 騎手詳細カード")
-
-            sorted_entries = sorted(
-                result['entries'],
-                key=lambda x: (0 if x.get('flags') else 1, x.get('umaban', 99))
-            )
-
-            for entry in sorted_entries:
-                flags = entry.get('flags', [])
-                vs = entry.get('venue_stats') or {}
-                profile = entry.get('jockey_profile') or {}
-                year_stats = profile.get('year_stats') or {}
-
-                badge_html = ""
-                for f in flags:
-                    if "鉄板" in f:
-                        badge_html += '<span class="jockey-flag-teppan">🔴 鉄板</span> '
-                    elif "妙味" in f:
-                        badge_html += '<span class="jockey-flag-myomi">🟡 妙味</span> '
-                    elif "危険" in f:
-                        badge_html += '<span class="jockey-flag-kiken">🔵 危険</span> '
-
-                card_border = "#DC3545" if any("鉄板" in f for f in flags) else (
-                    "#FFC107" if any("妙味" in f for f in flags) else (
-                        "#0D6EFD" if any("危険" in f for f in flags) else "#333"
-                    )
-                )
-
-                st.html(f"""
-                <div class="jockey-card" style="border-color: {card_border};">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-size: 1.4em; font-weight: bold; color: #fff;">
-                                {entry.get('umaban', '')}番 {entry.get('horse_name', '')}
-                            </span>
-                            <span style="color: #aaa; margin-left: 12px;">
-                                🏇 {entry.get('jockey_name', '')} ／ 🏠 {entry.get('trainer_name', '')}
-                            </span>
-                        </div>
-                        <div>{badge_html if badge_html else '<span style="color:#666;">— フラグなし</span>'}</div>
-                    </div>
-                    <div class="jockey-stat-grid">
-                        <div class="jockey-stat-item">
-                            <div class="jockey-stat-val">{vs.get('adj_top2_rate', 0)*100:.1f}%</div>
-                            <div class="jockey-stat-label">{venue} 連対率 (補正)</div>
-                        </div>
-                        <div class="jockey-stat-item">
-                            <div class="jockey-stat-val" style="color: {'#6fcf97' if vs.get('adj_win_return', 0) >= 100 else '#f59e0b' if vs.get('adj_win_return', 0) >= 80 else '#ef4444'};">{vs.get('adj_win_return', 0):.0f}%</div>
-                            <div class="jockey-stat-label">{venue} 単回 (補正)</div>
-                        </div>
-                        <div class="jockey-stat-item">
-                            <div class="jockey-stat-val">{vs.get('rides', 0)}</div>
-                            <div class="jockey-stat-label">{venue} 騎乗数</div>
-                        </div>
-                        <div class="jockey-stat-item">
-                            <div class="jockey-stat-val">{year_stats.get('win_rate', 0)*100:.1f}%</div>
-                            <div class="jockey-stat-label">本年 勝率</div>
-                        </div>
-                        <div class="jockey-stat-item">
-                            <div class="jockey-stat-val">{year_stats.get('top2_rate', 0)*100:.1f}%</div>
-                            <div class="jockey-stat-label">本年 連対率</div>
-                        </div>
-                    </div>
-                </div>
-                """)
-
-            # --- CSV ダウンロード ---
-            st.divider()
-            if not df_result.empty:
-                csv_bytes = df_result.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button(
-                    "💾 分析結果をCSVダウンロード",
-                    data=csv_bytes,
-                    file_name=f"jockey_analysis_{jp_race_id}.csv",
-                    mime="text/csv",
-                    key="jp_csv_download",
-                )
-
-        elif result and result.get('error'):
-            st.warning(result['error'])
 
     # =============================================
     # タブ2: スクリーニング
@@ -8805,59 +8716,512 @@ if nav == "🏇 騎手分析Pro":
             )
 
     # =============================================
-    # タブ3: 出馬表ビュー
+    # タブ3: 出馬表ビュー (Jockey Ranking Table)
     # =============================================
     with jpro_tab3:
-        st.subheader("📋 出馬表ビュー")
+        st.markdown("### 🏇 騎手ランキング — レースID一発分析")
+        st.caption("レースIDを1回入力するだけで、全騎手の全指標を取得・スコア化してランキング表示します。")
 
-        if "jpro_screening_result" in st.session_state:
-            df = st.session_state["jpro_screening_result"]
+        # ── レースID入力 ──
+        jp3_col1, jp3_col2 = st.columns([3, 1])
+        with jp3_col1:
+            jp_race_input = st.text_input(
+                "レースID または URL",
+                placeholder="例: 202505021211 または https://race.netkeiba.com/race/shutuba.html?race_id=...",
+                value=st.session_state.get("main_race_id_input", ""),
+                key="jp_race_input",
+            )
+        with jp3_col2:
+            st.write("")
+            jp_analyze_btn = st.button("🏇 分析開始", type="primary", key="jp_analyze_btn", use_container_width=True)
 
-            st.markdown("##### 判定サマリー")
+        jp_race_id = ""
+        if jp_race_input:
+            _m = re.search(r'(\d{12})', jp_race_input)
+            if _m:
+                jp_race_id = _m.group(1)
 
-            # バッジカウント
-            iron_count = len(df[df["判定"].str.contains("🔴", na=False)])
-            value_count = len(df[df["判定"].str.contains("🟡", na=False)])
-            danger_count = len(df[df["判定"].str.contains("🔵", na=False)])
+        if 'jp_analysis_result' not in st.session_state:
+            st.session_state.jp_analysis_result = None
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("🔴 鉄板", f"{iron_count}頭")
-            col2.metric("🟡 妙味", f"{value_count}頭")
-            col3.metric("🔵 危険", f"{danger_count}頭")
+        # ── 分析実行 ──
+        if jp_analyze_btn and jp_race_id:
+            from core.jockey_analyzer import analyze_race
 
-            st.markdown("---")
+            _jp_pb = st.progress(0)
+            _jp_st = st.empty()
 
-            # 出馬表形式で表示
-            for _, row in df.iterrows():
-                badge = row["判定"] if row["判定"] else "—"
-                # バッジに応じたカードスタイル
-                if "🔴" in str(badge):
-                    card_bg = "#2a1515"
-                    card_border = "#DC3545"
-                elif "🟡" in str(badge):
-                    card_bg = "#2a2515"
-                    card_border = "#FFC107"
-                elif "🔵" in str(badge):
-                    card_bg = "#151a2a"
-                    card_border = "#0D6EFD"
-                else:
-                    card_bg = "#1e1e2e"
-                    card_border = "#333"
+            def jp_progress(current, total, msg):
+                if total > 0:
+                    _jp_pb.progress(min(1.0, current / total))
+                _jp_st.caption(msg)
 
-                reason_html = f'<span style="color:#aaa;font-size:0.82em;">{row["理由"]}</span>' if row["理由"] else ""
+            with st.spinner("騎手データを収集中... (しばらくお待ちください)"):
+                try:
+                    _jp_result = analyze_race(jp_race_id, progress_callback=jp_progress)
+                    st.session_state.jp_analysis_result = _jp_result
+                except Exception as _e:
+                    st.error(f"分析エラー: {_e}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
+            _jp_pb.empty()
+            _jp_st.empty()
+
+        elif jp_analyze_btn and not jp_race_id:
+            st.warning("有効なレースID（12桁の数字）を入力してください。")
+
+        # ── 結果表示 ──
+        _jp_res = st.session_state.get('jp_analysis_result')
+        if _jp_res and _jp_res.get('entries'):
+            from core.jockey_analyzer import calculate_jockey_metrics
+
+            _jp_venue = _jp_res.get('venue', '')
+            _jp_entries = _jp_res.get('entries', [])
+
+            st.success(f"✅ {_jp_venue}  {len(_jp_entries)}頭の分析完了")
+
+            # ── スコアリング（全指標を集計） ──
+            def _compute_full_score(entry, venue):
+                """全取得可能指標を合計してスコア化"""
+                vs  = entry.get('venue_stats') or {}
+                pr  = entry.get('jockey_profile') or {}
+                ys  = pr.get('year_stats') or {}
+                flg = entry.get('flags', [])
+                score = 0.0
+                breakdown = {}
+
+                # 1) コース連対率 (補正済) — 最大配点40
+                v_top2 = vs.get('adj_top2_rate', 0)
+                s1 = v_top2 * 200
+                score += s1
+                breakdown['コース連対率'] = round(s1, 1)
+
+                # 2) 本年勝率 — 最大配点30
+                y_win = ys.get('win_rate', 0)
+                s2 = y_win * 300
+                score += s2
+                breakdown['本年勝率'] = round(s2, 1)
+
+                # 3) 本年連対率 — 最大配点20
+                y_top2 = ys.get('top2_rate', 0)
+                s3 = y_top2 * 100
+                score += s3
+                breakdown['本年連対率'] = round(s3, 1)
+
+                # 4) 単回収率（コース）— 超過分のみ加点
+                win_ret = vs.get('adj_win_return', 80)
+                s4 = max(0, (win_ret - 80)) * 0.5
+                score += s4
+                breakdown['単回収率超過'] = round(s4, 1)
+
+                # 5) 騎乗経験（コース）— ログスケール
+                rides = vs.get('rides', 0)
+                s5 = math.log10(rides + 1) * 8
+                score += s5
+                breakdown['コース騎乗経験'] = round(s5, 1)
+
+                # 6) 通算騎乗数（信頼度）
+                total_rides = ys.get('total', 0)
+                s6 = math.log10(total_rides + 1) * 5
+                score += s6
+                breakdown['通算経験'] = round(s6, 1)
+
+                # 7) コース複勝率（3着以内率）— 純粋な実力指標
+                v_top3 = vs.get('top3_rate', 0)
+                s7 = v_top3 * 80
+                score += s7
+                breakdown['コース複勝率'] = round(s7, 1)
+
+                # 8) 本年複勝率
+                y_top3 = ys.get('top3_rate', 0)
+                s8 = y_top3 * 60
+                score += s8
+                breakdown['本年複勝率'] = round(s8, 1)
+
+                # 9) PW指数 — 0~999の整数値想定、100点で最大10点加算
+                pw_idx = entry.get('pw_index')
+                if pw_idx is not None:
+                    try:
+                        s9 = float(pw_idx) * 0.1
+                        score += s9
+                        breakdown['PW指数'] = round(s9, 1)
+                    except (TypeError, ValueError):
+                        pass
+
+                # 10) db-keiba ボーナス/減点（今レースにマッチした条件のみ加算）
+                bonuses = entry.get('bonuses') or {}
+                s10_add = bonuses.get('matched_bonus_score', 0.0)
+                s10_sub = bonuses.get('matched_penalty_score', 0.0)  # 既に負値
+                if s10_add != 0:
+                    score += s10_add
+                    breakdown['加算ボーナス'] = round(s10_add, 1)
+                if s10_sub != 0:
+                    score += s10_sub
+                    breakdown['減点ペナルティ'] = round(s10_sub, 1)
+
+                return round(score, 1), breakdown
+
+            # 各エントリのスコアを計算
+            scored = []
+            for _e in _jp_entries:
+                _sc, _bd = _compute_full_score(_e, _jp_venue)
+                _vs = _e.get('venue_stats') or {}
+                _pr = _e.get('jockey_profile') or {}
+                _ys = _pr.get('year_stats') or {}
+                _flg = _e.get('flags', [])
+                _flag_str = " ".join(_flg) if _flg else "—"
+                scored.append({
+                    '_umaban': _e.get('umaban', 0),
+                    '_score': _sc,
+                    '_breakdown': _bd,
+                    '順位': 0,  # 後で設定
+                    '評価': '',  # 後で設定
+                    '馬番': _e.get('umaban', ''),
+                    '馬名': _e.get('horse_name', ''),
+                    '騎手': _e.get('jockey_name', ''),
+                    '厩舎': _e.get('trainer_name', ''),
+                    '人気': _e.get('popularity', 99) if _e.get('popularity', 99) < 99 else '—',
+                    'オッズ': f"{_e.get('odds', 0):.1f}" if _e.get('odds', 0) > 0 else '—',
+                    'コース連対%': f"{_vs.get('adj_top2_rate', 0)*100:.1f}",
+                    'コース複勝%': f"{_vs.get('top3_rate', 0)*100:.1f}",
+                    '単回収%': f"{_vs.get('adj_win_return', 0):.0f}",
+                    '騎乗数': _vs.get('rides', 0),
+                    '本年勝率': f"{_ys.get('win_rate', 0)*100:.1f}",
+                    '本年連対%': f"{_ys.get('top2_rate', 0)*100:.1f}",
+                    '本年複勝%': f"{_ys.get('top3_rate', 0)*100:.1f}",
+                    'フラグ': _flag_str,
+                    'PW指数': f"{float(_e['pw_index']):.1f}" if _e.get('pw_index') is not None else '—',
+                    '加減点': (lambda b: (
+                        f"+{b.get('matched_bonus_score',0):.0f} / {b.get('matched_penalty_score',0):.0f}"
+                        if b.get('matched_bonus_score',0) != 0 or b.get('matched_penalty_score',0) != 0 else '—'
+                    ))(_e.get('bonuses') or {}),
+                    '総合スコア': _sc,
+                    '_bonuses': _e.get('bonuses') or {},
+                })
+
+            scored.sort(key=lambda x: x['_score'], reverse=True)
+            _eval_marks = ['◎', '◎', '◎', '○', '▲', '△', '×']
+            for _i, _s in enumerate(scored):
+                _s['順位'] = _i + 1
+                _s['評価'] = _eval_marks[_i] if _i < len(_eval_marks) else '—'
+
+            # ── サマリーメトリクス ──
+            _iron_n   = sum(1 for s in scored if "🔴 鉄板" in s['フラグ'])
+            _value_n  = sum(1 for s in scored if "🟡 妙味" in s['フラグ'])
+            _danger_n = sum(1 for s in scored if "🔵 危険" in s['フラグ'])
+            _top1 = scored[0] if scored else {}
+
+            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+            _mc1.metric("🥇 本命", f"{_top1.get('馬番', '?')}番 {_top1.get('騎手', '?')[:4]}", f"スコア {_top1.get('総合スコア', 0):.0f}")
+            _mc2.metric("🔴 鉄板フラグ", f"{_iron_n}騎手")
+            _mc3.metric("🟡 妙味フラグ", f"{_value_n}騎手")
+            _mc4.metric("🔵 危険フラグ", f"{_danger_n}騎手")
+
+            st.divider()
+
+            # ── ランキング表 ──
+            st.subheader("📊 騎手ランキング（全指標スコア順）")
+
+            _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
+                             '人気', 'オッズ', 'コース連対%', 'コース複勝%', '単回収%',
+                             '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
+            _df_rank = pd.DataFrame(scored)[_display_cols]
+
+            def _style_rank_row(row):
+                rank = row['順位']
+                flag = str(row['フラグ'])
+                if rank == 1:
+                    return ['background-color: #3D1A00; color: #FFD700; font-weight: bold;'] * len(row)
+                if rank == 2:
+                    return ['background-color: #1A2B3D; color: #C0C0C0; font-weight: bold;'] * len(row)
+                if rank == 3:
+                    return ['background-color: #1A3D1A; color: #CD7F32; font-weight: bold;'] * len(row)
+                if "🔵 危険" in flag:
+                    return ['background-color: #0D1A3D; color: #7B9FFF;'] * len(row)
+                return [''] * len(row)
+
+            def _style_eval(val):
+                if val == '◎': return 'color:#FF1744; font-weight:bold; font-size:1.3em;'
+                if val == '○': return 'color:#FF9100; font-weight:bold;'
+                if val == '▲': return 'color:#FFEA00; font-weight:bold;'
+                return 'color:#888;'
+
+            def _style_score(val):
+                try:
+                    v = float(val)
+                    if v >= 120: return 'color:#FF5252; font-weight:bold;'
+                    if v >= 90:  return 'color:#FFAB40;'
+                    if v < 40:   return 'color:#666;'
+                except: pass
+                return ''
+
+            _styled = (_df_rank.style
+                .apply(_style_rank_row, axis=1)
+                .applymap(_style_eval, subset=['評価'])
+                .applymap(_style_score, subset=['総合スコア'])
+            )
+
+            st.dataframe(
+                _styled,
+                column_config={
+                    '順位':       st.column_config.NumberColumn("順位", width="small"),
+                    '評価':       st.column_config.TextColumn("評価", width="small"),
+                    '馬番':       st.column_config.NumberColumn("馬番", width="small"),
+                    '馬名':       st.column_config.TextColumn("馬名", width="medium"),
+                    '騎手':       st.column_config.TextColumn("騎手", width="medium"),
+                    '厩舎':       st.column_config.TextColumn("厩舎", width="medium"),
+                    '人気':       st.column_config.TextColumn("人気", width="small"),
+                    'オッズ':     st.column_config.TextColumn("オッズ", width="small"),
+                    'コース連対%': st.column_config.TextColumn(f"{_jp_venue}連対%", width="small"),
+                    'コース複勝%': st.column_config.TextColumn(f"{_jp_venue}複勝%", width="small"),
+                    '単回収%':    st.column_config.TextColumn("単回収%", width="small"),
+                    '騎乗数':     st.column_config.NumberColumn("騎乗数", width="small"),
+                    '本年勝率':   st.column_config.TextColumn("本年勝率", width="small"),
+                    '本年連対%':  st.column_config.TextColumn("本年連対%", width="small"),
+                    '本年複勝%':  st.column_config.TextColumn("本年複勝%", width="small"),
+                    'PW指数':     st.column_config.TextColumn("PW指数", width="small"),
+                    '加減点':     st.column_config.TextColumn("加減点", width="small",
+                                    help="db-keiba傾向まとめによる加算/減点（詳細は各カードのExpanderで確認）"),
+                    'フラグ':     st.column_config.TextColumn("フラグ", width="medium"),
+                    '総合スコア': st.column_config.NumberColumn("総合スコア", format="%.1f", width="small"),
+                },
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            # ── スコア内訳バー（上位5頭） ──
+            st.divider()
+            st.subheader("📈 勝ち指数バー（上位5頭）")
+            _top5 = scored[:7]
+            _bar_labels = [f"{s['馬番']}番 {s['騎手']}" for s in _top5]
+            _bar_scores = [s['総合スコア'] for s in _top5]
+            _bar_colors = ['#FFD700','#FFD700','#FFD700','#C0C0C0','#CD7F32','#4A90D9','#888888']
+            try:
+                _fig, _ax = plt.subplots(figsize=(10, 3))
+                _fig.patch.set_facecolor('#0E1117')
+                _ax.set_facecolor('#0E1117')
+                _bars = _ax.barh(_bar_labels[::-1], _bar_scores[::-1], color=_bar_colors[::-1])
+                _ax.tick_params(colors='white')
+                for sp in _ax.spines.values(): sp.set_color('#444')
+                _ax.set_xlabel('総合スコア', color='white')
+                for _bar in _bars:
+                    _w = _bar.get_width()
+                    _ax.text(_w + 1, _bar.get_y() + _bar.get_height()/2,
+                             f'{_w:.0f}', va='center', color='white', fontsize=9)
+                st.pyplot(_fig)
+                plt.close(_fig)
+            except Exception:
+                pass
+
+            # ── 上位3頭の詳細カード ──
+            st.divider()
+            st.subheader("🃏 評価付き7頭 詳細カード")
+            for _s in scored[:7]:
+                _ent = next((e for e in _jp_entries if e.get('umaban') == _s['_umaban']), None)
+                if not _ent: continue
+                _vs2  = _ent.get('venue_stats') or {}
+                _pr2  = _ent.get('jockey_profile') or {}
+                _ys2  = _pr2.get('year_stats') or {}
+                _flg2 = _ent.get('flags', [])
+                _rank_color_map = {
+                    1: '#FFD700', 2: '#FFD700', 3: '#FFD700',  # ◎ 金
+                    4: '#C0C0C0',                               # ○ 銀
+                    5: '#CD7F32',                               # ▲ 銅
+                    6: '#4A90D9',                               # △ 青
+                    7: '#888888',                               # × グレー
+                }
+                _rank_color = _rank_color_map.get(_s['順位'], '#555555')
+                _bd   = _s['_breakdown']
+                _bd_html = "".join(
+                    f'<span style="background:#1e1e2e;border:1px solid #444;padding:3px 8px;border-radius:8px;font-size:0.8em;margin:2px;display:inline-block;">'
+                    f'{k}: <b style="color:#FFAB40;">{v:+.0f}</b></span>'
+                    for k, v in _bd.items() if v != 0
+                )
+                _badge_html2 = "".join(
+                    f'<span style="background:{"#8B0000" if "鉄板" in f else "#7B6000" if "妙味" in f else "#0D47A1"};'
+                    f'color:white;padding:2px 8px;border-radius:10px;font-size:0.85em;margin-right:4px;">{f}</span>'
+                    for f in _flg2
+                ) or '<span style="color:#666;">フラグなし</span>'
+
+                _pw2 = _ent.get('pw_index')
+                _pw2_str = f"{float(_pw2):.1f}" if _pw2 is not None else '—'
+                _pw2_color = '#6fcf97' if _pw2 is not None and _pw2 >= 100 else '#FFAB40' if _pw2 is not None and _pw2 >= 50 else '#fff'
+                _bon2 = _s.get('_bonuses') or {}
+                _add100 = _bon2.get('add_100', [])
+                _add90  = _bon2.get('add_90', [])
+                _sub70  = _bon2.get('sub_70', [])
+                _sub60  = _bon2.get('sub_60', [])
+                _bonus_score   = _bon2.get('bonus_score', 0.0)
+                _penalty_score = _bon2.get('penalty_score', 0.0)
                 st.html(f"""
-                <div style="background:{card_bg}; border-left:4px solid {card_border}; border-radius:8px;
-                            padding:10px 16px; margin-bottom:6px; display:flex; align-items:center; gap:16px;">
-                    <span style="font-weight:bold; color:#fff; min-width:36px; font-size:1.1em;">{row['馬番']}</span>
-                    <span style="color:#fff; min-width:100px;">{row['馬名']}</span>
-                    <span style="color:#aaa; min-width:80px;">{row['騎手']}</span>
-                    <span style="font-weight:bold; min-width:80px;">{badge}</span>
-                    {reason_html}
+                <div style="border:2px solid {_rank_color};border-radius:12px;padding:16px;margin-bottom:12px;background:#111;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <div>
+                      <span style="font-size:2em;color:{_rank_color};font-weight:bold;margin-right:10px;">
+                        {_s['評価']}
+                      </span>
+                      <span style="font-size:1.3em;font-weight:bold;color:#fff;">
+                        {_s['馬番']}番 {_s['馬名']}
+                      </span>
+                      <span style="color:#aaa;margin-left:10px;font-size:0.95em;">
+                        🏇 {_s['騎手']} ／ 🏠 {_s['厩舎']}
+                      </span>
+                    </div>
+                    <div style="text-align:right;">
+                      <div style="font-size:1.8em;font-weight:bold;color:{_rank_color};">{_s['総合スコア']:.0f} pt</div>
+                      <div style="font-size:0.8em;color:#888;">総合スコア</div>
+                    </div>
+                  </div>
+                  <div style="margin-bottom:8px;">{_badge_html2}</div>
+                  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin:10px 0;">
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('adj_top2_rate', 0)*100:.1f}%</div>
+                      <div style="font-size:0.75em;color:#888;">{_jp_venue}連対率</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('top3_rate', 0)*100:.1f}%</div>
+                      <div style="font-size:0.75em;color:#888;">{_jp_venue}複勝率</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:{'#6fcf97' if _vs2.get('adj_win_return',0)>=100 else '#f59e0b' if _vs2.get('adj_win_return',0)>=80 else '#ef4444'};">{_vs2.get('adj_win_return', 0):.0f}%</div>
+                      <div style="font-size:0.75em;color:#888;">単回収率</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('rides', 0)}</div>
+                      <div style="font-size:0.75em;color:#888;">騎乗数</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('win_rate', 0)*100:.1f}%</div>
+                      <div style="font-size:0.75em;color:#888;">本年勝率</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('top3_rate', 0)*100:.1f}%</div>
+                      <div style="font-size:0.75em;color:#888;">本年複勝率</div>
+                    </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;border:1px solid #444;">
+                      <div style="font-size:1.3em;font-weight:bold;color:{_pw2_color};">{_pw2_str}</div>
+                      <div style="font-size:0.75em;color:#888;">PW指数</div>
+                    </div>
+                  </div>
+                  <div style="font-size:0.8em;color:#888;margin-top:6px;">📐 スコア内訳: {_bd_html}</div>
                 </div>
                 """)
-        else:
-            st.info("🚦 スクリーニングタブでデータを入力・実行してください。")
+
+                # ── ボーナス/減点内訳（Expander） ──
+                _m_add100 = _bon2.get('matched_add_100', [])
+                _m_add90  = _bon2.get('matched_add_90', [])
+                _m_sub70  = _bon2.get('matched_sub_70', [])
+                _m_sub60  = _bon2.get('matched_sub_60', [])
+                _m_bonus  = _bon2.get('matched_bonus_score', 0.0)
+                _m_penalty= _bon2.get('matched_penalty_score', 0.0)
+                _has_bonus_data = _add100 or _add90 or _sub70 or _sub60
+                _has_match = _m_add100 or _m_add90 or _m_sub70 or _m_sub60
+
+                _bonus_label_parts = []
+                if _m_bonus > 0:
+                    _bonus_label_parts.append(f"✅ 加算 +{_m_bonus:.0f}pt")
+                if _m_penalty < 0:
+                    _bonus_label_parts.append(f"⚠️ 減点 {_m_penalty:.0f}pt")
+                if not _has_match and _has_bonus_data:
+                    _bonus_label_parts.append("今レースは条件不一致")
+                _expander_label = (
+                    f"📊 ボーナス/減点内訳 （{'・'.join(_bonus_label_parts) if _bonus_label_parts else 'データなし'}）"
+                )
+                with st.expander(_expander_label, expanded=False):
+                    if not _has_bonus_data:
+                        st.caption("db-keibaからボーナスデータを取得できませんでした。")
+                    else:
+                        # レースメタ情報を表示
+                        _rm = _ent.get('race_meta') or {}
+                        if _rm:
+                            _rm_parts = []
+                            if _rm.get('surface'): _rm_parts.append(_rm['surface'])
+                            if _rm.get('distance'): _rm_parts.append(f"{_rm['distance']}m")
+                            if _rm.get('condition'): _rm_parts.append(f"馬場:{_rm['condition']}")
+                            if _rm.get('weather'): _rm_parts.append(f"天候:{_rm['weather']}")
+                            if _rm.get('race_class'): _rm_parts.append(_rm['race_class'])
+                            if _rm.get('waku'): _rm_parts.append(f"{_ent.get('waku',0)}枠")
+                            if _ent.get('trainer_name'): _rm_parts.append(f"厩舎:{_ent['trainer_name']}")
+                            if _ent.get('owner_name'): _rm_parts.append(f"馬主:{_ent['owner_name']}")
+                            st.caption(f"🔍 照合条件: {' / '.join(_rm_parts)}")
+
+                        _bcol1, _bcol2 = st.columns(2)
+                        with _bcol1:
+                            st.markdown("#### ✅ 加算条件")
+                            if _add100:
+                                st.markdown("🟢 **回収率100%以上** `+15pt/件`")
+                                for _cond in _add100:
+                                    _hit = _cond in _m_add100
+                                    _prefix = "🎯 **" if _hit else "　"
+                                    _suffix = "** ← 今レース発動！" if _hit else ""
+                                    st.markdown(f"- {_prefix}{_cond}{_suffix}")
+                            if _add90:
+                                st.markdown("🟡 **回収率90%以上** `+8pt/件`")
+                                for _cond in _add90:
+                                    _hit = _cond in _m_add90
+                                    _prefix = "🎯 **" if _hit else "　"
+                                    _suffix = "** ← 今レース発動！" if _hit else ""
+                                    st.markdown(f"- {_prefix}{_cond}{_suffix}")
+                            if not _add100 and not _add90:
+                                st.caption("加算条件なし")
+                        with _bcol2:
+                            st.markdown("#### ⚠️ 減点条件")
+                            if _sub60:
+                                st.markdown("🔴 **回収率60%未満** `-15pt/件`")
+                                for _cond in _sub60:
+                                    _hit = _cond in _m_sub60
+                                    _prefix = "💥 **" if _hit else "　"
+                                    _suffix = "** ← 今レース発動！" if _hit else ""
+                                    st.markdown(f"- {_prefix}{_cond}{_suffix}")
+                            if _sub70:
+                                st.markdown("🟠 **回収率70%未満** `-8pt/件`")
+                                for _cond in _sub70:
+                                    _hit = _cond in _m_sub70
+                                    _prefix = "💥 **" if _hit else "　"
+                                    _suffix = "** ← 今レース発動！" if _hit else ""
+                                    st.markdown(f"- {_prefix}{_cond}{_suffix}")
+                            if not _sub60 and not _sub70:
+                                st.caption("減点条件なし")
+
+            # ── 買い目サジェスト ──
+            st.divider()
+            st.subheader("🎯 買い目サジェスト")
+            _honmei = scored[0] if len(scored) > 0 else None
+            _taikou = scored[1] if len(scored) > 1 else None
+            _tanaka  = scored[2] if len(scored) > 2 else None
+            _myomi_list = [s for s in scored if "🟡 妙味" in s['フラグ'] and s['順位'] > 3][:2]
+
+            _buy_lines = []
+            if _honmei and _taikou:
+                _buy_lines.append(f"**単勝**: {_honmei['馬番']}番（{_honmei['騎手']}）")
+                _buy_lines.append(f"**馬連**: {_honmei['馬番']}番 ー {_taikou['馬番']}番")
+            if _honmei and _taikou and _tanaka:
+                _buy_lines.append(f"**3連複**: {_honmei['馬番']}番 ー {_taikou['馬番']}番 ー {_tanaka['馬番']}番")
+                _buy_lines.append(f"**3連単（軸1頭流し）**: {_honmei['馬番']}番 → {_taikou['馬番']}番, {_tanaka['馬番']}番 ...")
+            if _myomi_list:
+                _myomi_str = "・".join([f"{s['馬番']}番（{s['騎手']}）" for s in _myomi_list])
+                _buy_lines.append(f"**妙味馬（ヒモ候補）**: {_myomi_str}")
+
+            for _line in _buy_lines:
+                st.markdown(f"- {_line}")
+
+            # ── CSVダウンロード ──
+            st.divider()
+            _csv_bytes = _df_rank.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                "💾 ランキング結果をCSVダウンロード",
+                data=_csv_bytes,
+                file_name=f"jockey_ranking_{jp_race_id}.csv",
+                mime="text/csv",
+                key="jp_csv_download",
+            )
+
+        elif _jp_res and _jp_res.get('error'):
+            st.warning(_jp_res['error'])
+        elif not _jp_res:
+            st.info("⬆️ レースIDを入力して「分析開始」ボタンを押してください。")
+
 
     # =============================================
     # タブ4: 設定・データ管理
@@ -9122,6 +9486,432 @@ if nav == "🏇 騎手分析Pro":
                     st.error(f"❌ PW指数インポートエラー: {e}")
                     import traceback
                     st.code(traceback.format_exc())
+
+        st.markdown("---")
+
+        # =============================================
+        # レース一括ボーナス条件作成モード
+        # =============================================
+        st.markdown("##### 🏇 レース一括ボーナス条件作成モード")
+        st.caption("レースIDを入力するだけで出走騎手のCSVテンプレートとdb-keibaリンクを一括生成します。")
+
+        _bulk_race_id = st.text_input(
+            "netkeibaレースIDを入力",
+            placeholder="例: 202504050811",
+            key="bonus_bulk_race_id",
+        )
+        if st.button("🔍 騎手一覧を抽出してテンプレート生成", key="bonus_bulk_btn", type="primary"):
+            if not _bulk_race_id.strip():
+                st.warning("レースIDを入力してください。")
+            else:
+                with st.spinner("出走騎手を取得中..."):
+                    try:
+                        from core.jockey_analyzer import extract_jockey_ids_from_race
+                        _bulk_entries = extract_jockey_ids_from_race(_bulk_race_id.strip())
+                    except Exception as _bulk_e:
+                        _bulk_entries = []
+                        st.error(f"取得失敗: {_bulk_e}")
+
+                if _bulk_entries:
+                    st.success(f"{len(_bulk_entries)}人の騎手を抽出しました。")
+
+                    # db-keibaスラッグ変換（ローマ字）— 既知の主要騎手マッピング
+                    _SLUG_MAP = {
+                        '川田将雅': 'kawada', '福永祐一': 'fukunaga', '武豊': 'take',
+                        'ルメール': 'lemaire', 'デムーロ': 'demuro', '横山典弘': 'yokoyama-n',
+                        '横山武史': 'yokoyama-t', '松山弘平': 'matsuyama', '岩田康誠': 'iwata-k',
+                        '岩田望来': 'iwata-m', '戸崎圭太': 'tosaki', '浜中俊': 'hamanaka',
+                        '池添謙一': 'ikezoe', '和田竜二': 'wada', '藤岡佑介': 'fujioka-y',
+                        '藤岡康太': 'fujioka-k', '幸英明': 'miyuki', '丸山元気': 'maruyama',
+                        '三浦皇成': 'miura', '田辺裕信': 'tanabe', '内田博幸': 'uchida',
+                        '北村友一': 'kitamura-t', '北村宏司': 'kitamura-h', '石橋脩': 'ishibashi',
+                        '坂井瑠星': 'sakai', '津村明秀': 'tsumura', '鮫島克駿': 'samejima',
+                        '鮫島良太': 'samejima-r', '永野猛蔵': 'nagano', '西村淳也': 'nishimura',
+                        '菅原明良': 'sugawara', '団野大成': 'danno', '古川吉洋': 'furukawa',
+                        '角田大河': 'tsunoda', '角田大和': 'tsunoda-y', '小沢大仁': 'ozawa',
+                        'モレイラ': 'moreira', 'ムーア': 'moore', 'ビュイック': 'buick',
+                    }
+
+                    # 表示用DataFrame
+                    _bulk_rows = []
+                    for _be in _bulk_entries:
+                        _jname = _be.get('jockey_name', '')
+                        _jid   = _be.get('jockey_id', '')
+                        _slug  = _SLUG_MAP.get(_jname, '')
+                        _dburl = f"https://db-keiba.com/jockey-{_slug}/" if _slug else '（スラッグ不明）'
+                        _bulk_rows.append({
+                            '馬番':    _be.get('umaban', ''),
+                            '馬名':    _be.get('horse_name', ''),
+                            '騎手名':  _jname,
+                            '騎手ID':  _jid,
+                            'db-keiba傾向URL': _dburl,
+                        })
+                    _bulk_df = pd.DataFrame(_bulk_rows)
+
+                    # テーブル表示（URLはリンクとして）
+                    st.dataframe(
+                        _bulk_df,
+                        column_config={
+                            '馬番':  st.column_config.NumberColumn(width='small'),
+                            '馬名':  st.column_config.TextColumn(width='medium'),
+                            '騎手名': st.column_config.TextColumn(width='medium'),
+                            '騎手ID': st.column_config.TextColumn(width='small'),
+                            'db-keiba傾向URL': st.column_config.LinkColumn(
+                                "db-keiba傾向ページ",
+                                display_text="傾向を見る",
+                                width='medium',
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+                    # CSVテンプレート自動生成（既知騎手は傾向DBから条件を自動埋め込み）
+                    from core.jockey_analyzer import JOCKEY_TENDENCY_DB
+                    _tmpl_rows = []
+                    _known_count = 0
+                    _unknown_count = 0
+                    for _be in _bulk_entries:
+                        _jid = _be.get('jockey_id', '')
+                        if not _jid:
+                            continue
+                        _jname = _be.get('jockey_name', '')
+                        _tendency = JOCKEY_TENDENCY_DB.get(_jid)
+                        if _tendency:
+                            _known_count += 1
+                            # 既知騎手: 傾向DBから条件を自動埋め込み
+                            for _typ in ['add_100', 'add_90', 'sub_70', 'sub_60']:
+                                for _cond in _tendency.get(_typ, []):
+                                    _tmpl_rows.append({
+                                        'jockey_id': _jid,
+                                        'jockey_name': _jname,
+                                        'type': _typ,
+                                        'condition': _cond,
+                                    })
+                            # 余白行（追記用）
+                            for _typ in ['add_100', 'add_90', 'sub_70', 'sub_60']:
+                                _tmpl_rows.append({
+                                    'jockey_id': _jid,
+                                    'jockey_name': _jname,
+                                    'type': _typ,
+                                    'condition': '',
+                                })
+                        else:
+                            _unknown_count += 1
+                            # 未知騎手: 空欄×2行
+                            for _typ in ['add_100', 'add_90', 'sub_70', 'sub_60']:
+                                for _ in range(2):
+                                    _tmpl_rows.append({
+                                        'jockey_id': _jid,
+                                        'jockey_name': _jname,
+                                        'type': _typ,
+                                        'condition': '',
+                                    })
+                    _tmpl_df = pd.DataFrame(_tmpl_rows)
+                    _tmpl_csv = _tmpl_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+
+                    if _known_count > 0:
+                        st.info(f"✅ {_known_count}人は傾向DBから条件を自動入力済みです。"
+                                f"{'（残り' + str(_unknown_count) + '人は手動入力が必要）' if _unknown_count > 0 else ''}")
+                    st.download_button(
+                        "📥 CSVテンプレートをダウンロード（既知騎手は条件自動入力済み）",
+                        data=_tmpl_csv,
+                        file_name=f"bonus_{_bulk_race_id.strip()}.csv",
+                        mime="text/csv",
+                        key="bonus_bulk_dl",
+                        type="primary",
+                    )
+                    st.caption(
+                        "既知騎手（約20名）の条件はDB自動入力済みです。"
+                        "未知騎手の `condition` 欄はdb-keibaの傾向ページを参照しながら入力してください。"
+                        "入力後、下の「ボーナス条件CSVインポート」からアップロードしてください。"
+                    )
+                elif _bulk_entries is not None:
+                    st.warning("出走騎手を取得できませんでした。レースIDを確認してください。")
+
+        st.markdown("---")
+
+        # =============================================
+        # 騎手ボーナス条件 統合エディタ
+        # （登録・修正・削除・新規追加をひとつの表で管理）
+        # =============================================
+        import json as _json_tendency
+
+        # グリーン基調のヘッダー
+        st.markdown("""
+<div style="background:linear-gradient(90deg,#1a6e3c,#27ae60);
+            padding:12px 18px;border-radius:8px;margin-bottom:12px;">
+  <span style="color:#fff;font-size:1.1rem;font-weight:700;">
+    🟢 騎手ボーナス条件エディタ
+  </span>
+  <span style="color:#d4f5e2;font-size:0.85rem;margin-left:12px;">
+    登録・追加・修正・削除をこの表で一括管理
+  </span>
+</div>
+""", unsafe_allow_html=True)
+
+        # 保存先CSVパス
+        _BONUS_CSV_PATH = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "data", "bonus_conditions.csv"
+        )
+
+        # ---- キャッシュ → DataFrame に展開 ----
+        from core.jockey_analyzer import _DBKEIBA_BONUS_CACHE as _UE_CACHE
+        _ue_rows = []
+        for _uejid, _uebd in _UE_CACHE.items():
+            _uename = _uebd.get('name', _uejid)
+            for _uetyp in ['add_100', 'add_90', 'sub_70', 'sub_60']:
+                for _uecond in _uebd.get(_uetyp, []):
+                    _ue_rows.append({
+                        'jockey_id':   _uejid,
+                        'jockey_name': _uename,
+                        'type':        _uetyp,
+                        'condition':   _uecond,
+                    })
+        _ue_df = pd.DataFrame(_ue_rows) if _ue_rows else pd.DataFrame(
+            columns=['jockey_id','jockey_name','type','condition'])
+
+        # ---- 統計サマリをグリーンカードで表示 ----
+        _ue_jcount = _ue_df['jockey_id'].nunique() if len(_ue_df) else 0
+        _ue_rcount = len(_ue_df)
+        _ua1, _ua2, _ua3, _ua4 = st.columns(4)
+        _ua1.markdown(f"""<div style="background:#e8f8ee;border-left:4px solid #27ae60;
+            padding:8px 12px;border-radius:6px;text-align:center;">
+            <div style="color:#1a6e3c;font-size:1.4rem;font-weight:700;">{_ue_jcount}</div>
+            <div style="color:#2e7d52;font-size:0.8rem;">登録騎手数</div></div>""",
+            unsafe_allow_html=True)
+        _ua2.markdown(f"""<div style="background:#e8f8ee;border-left:4px solid #27ae60;
+            padding:8px 12px;border-radius:6px;text-align:center;">
+            <div style="color:#1a6e3c;font-size:1.4rem;font-weight:700;">{_ue_rcount}</div>
+            <div style="color:#2e7d52;font-size:0.8rem;">条件総数</div></div>""",
+            unsafe_allow_html=True)
+        _ue_add = len(_ue_df[_ue_df['type'].isin(['add_100','add_90'])]) if len(_ue_df) else 0
+        _ua3.markdown(f"""<div style="background:#e8f8ee;border-left:4px solid #2ecc71;
+            padding:8px 12px;border-radius:6px;text-align:center;">
+            <div style="color:#1a6e3c;font-size:1.4rem;font-weight:700;">+{_ue_add}</div>
+            <div style="color:#2e7d52;font-size:0.8rem;">加算条件</div></div>""",
+            unsafe_allow_html=True)
+        _ue_sub = len(_ue_df[_ue_df['type'].isin(['sub_70','sub_60'])]) if len(_ue_df) else 0
+        _ua4.markdown(f"""<div style="background:#fdf0f0;border-left:4px solid #e74c3c;
+            padding:8px 12px;border-radius:6px;text-align:center;">
+            <div style="color:#922b21;font-size:1.4rem;font-weight:700;">-{_ue_sub}</div>
+            <div style="color:#922b21;font-size:0.8rem;">減点条件</div></div>""",
+            unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+        st.markdown("""<div style="background:#f0faf4;border:1px solid #a8dbb8;
+            border-radius:6px;padding:8px 14px;font-size:0.85rem;color:#1a5e34;">
+            💡 <b>使い方</b>：セルをクリックして直接編集 ／ 下の「＋」ボタンで行追加（新騎手登録も可）
+            ／ 行選択→ Delete で削除 ／ 編集後は <b>💾 保存</b> ボタンを押してください
+        </div>""", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+
+        # ---- data_editor ----
+        _ue_edited = st.data_editor(
+            _ue_df,
+            column_config={
+                'jockey_id': st.column_config.TextColumn(
+                    '騎手ID', width='small',
+                    help='netkeibaの5桁ID（例: 01167）',
+                ),
+                'jockey_name': st.column_config.TextColumn(
+                    '騎手名', width='small',
+                ),
+                'type': st.column_config.SelectboxColumn(
+                    'タイプ', width='medium',
+                    options=['add_100','add_90','sub_70','sub_60'],
+                    help='add_100=+15pt / add_90=+8pt / sub_70=-8pt / sub_60=-15pt',
+                ),
+                'condition': st.column_config.TextColumn(
+                    '条件', width='large',
+                    help='例: 芝逃げ / 東京芝コース / 前走逃げ馬 など',
+                ),
+            },
+            num_rows='dynamic',
+            use_container_width=True,
+            hide_index=True,
+            key="unified_bonus_editor",
+        )
+
+        # ---- ボタン行 ----
+        _ubtn1, _ubtn2, _ubtn3 = st.columns([2, 2, 3])
+        with _ubtn1:
+            _ue_save = st.button(
+                "💾 保存して反映",
+                type="primary",
+                key="unified_bonus_save",
+                use_container_width=True,
+            )
+        with _ubtn2:
+            _ue_dl_csv = _ue_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                "⬇️ CSVダウンロード",
+                data=_ue_dl_csv,
+                file_name="bonus_conditions_export.csv",
+                mime="text/csv",
+                key="unified_bonus_dl",
+                use_container_width=True,
+            )
+        with _ubtn3:
+            st.markdown(
+                "<span style='color:#888;font-size:0.8rem;line-height:2.4rem;'>"
+                "※ 保存するとキャッシュとCSVファイルに即時反映されます</span>",
+                unsafe_allow_html=True,
+            )
+
+        if _ue_save:
+            _ue_new_cache = {}
+            for _, _uer in _ue_edited.iterrows():
+                _ueid   = str(_uer.get('jockey_id','')).strip().zfill(5)
+                _uetyp2 = str(_uer.get('type','')).strip()
+                _uecnd  = str(_uer.get('condition','')).strip()
+                _uenm   = str(_uer.get('jockey_name','')).strip()
+                if not _ueid or not _uetyp2 or not _uecnd or _uecnd in ('nan',''):
+                    continue
+                if _ueid not in _ue_new_cache:
+                    _ue_new_cache[_ueid] = {
+                        'name': _uenm,
+                        'add_100':[], 'add_90':[], 'sub_70':[], 'sub_60':[],
+                    }
+                if _uetyp2 in ('add_100','add_90','sub_70','sub_60'):
+                    _ue_new_cache[_ueid][_uetyp2].append(_uecnd)
+
+            # キャッシュ更新
+            _UE_CACHE.clear()
+            _UE_CACHE.update(_ue_new_cache)
+
+            # CSV永続保存
+            _ue_save_rows = []
+            for _us_id, _us_bd in _ue_new_cache.items():
+                for _us_typ in ['add_100','add_90','sub_70','sub_60']:
+                    for _us_cnd in _us_bd.get(_us_typ,[]):
+                        _ue_save_rows.append({
+                            'jockey_id':   _us_id,
+                            'jockey_name': _us_bd.get('name', _us_id),
+                            'type':        _us_typ,
+                            'condition':   _us_cnd,
+                        })
+            pd.DataFrame(_ue_save_rows).to_csv(
+                _BONUS_CSV_PATH, index=False, encoding='utf-8-sig'
+            )
+
+            _ue_jc2 = len(_ue_new_cache)
+            _ue_rc2 = len(_ue_save_rows)
+            st.markdown(f"""<div style="background:#e8f8ee;border-left:4px solid #27ae60;
+                border-radius:6px;padding:10px 16px;margin-top:8px;">
+                ✅ <b>{_ue_jc2}騎手 / {_ue_rc2}件</b> を保存しました。次回分析から反映されます。
+            </div>""", unsafe_allow_html=True)
+            st.rerun()
+
+        st.markdown("---")
+
+        # =============================================
+        # ボーナス/減点条件CSVインポート
+        # =============================================
+        st.markdown("##### 🎯 ボーナス/減点条件CSVインポート")
+
+        st.markdown("**📖 使い方**")
+        st.markdown("""
+1. **db-keiba.com** で騎手ページを開く（例: `https://db-keiba.com/jockey-kawada/`）
+2. 「条件別成績・回収率まとめ」を参照し、回収率の高い／低い条件を確認
+3. 下の **CSVテンプレート** をダウンロードしてExcelやメモ帳で条件を入力して保存
+4. 保存したCSVをアップロード → 「インポート」ボタンを押す
+5. 次回の騎手ランキング分析時にスコアへ自動反映。詳細カードの「📊 ボーナス/減点内訳」で発動状況を確認
+""")
+        st.markdown("**typeの種類（condition 1件あたりの加減点）:**")
+        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+        _tc1.success("add_100: 回収率100%以上 +15pt")
+        _tc2.warning("add_90 : 回収率90%以上  +8pt")
+        _tc3.warning("sub_70 : 回収率70%未満  -8pt")
+        _tc4.error("sub_60 : 回収率60%未満  -15pt")
+        st.markdown(
+            "**騎手ID確認:** netkeibaの騎手URLの5桁数字 "
+            "（例: `db.netkeiba.com/jockey/01167/` → `01167`）  \n"
+            "**condition例:** 芝 / ダート / 東京 / 阪神 / 中山 / 京都 / 良 / 重 / 稍重 / "
+            "マイル / 短距離 / 中距離 / 長距離 / 1600m / G1 / オープン / 新馬 / 厩舎名 / 馬主名 など"
+        )
+
+        # CSVテンプレートダウンロード
+        _bonus_template = (
+            "jockey_id,type,condition\n"
+            "01167,add_100,芝\n"
+            "01167,add_100,阪神\n"
+            "01167,add_90,マイル\n"
+            "01167,sub_70,ダート\n"
+            "01167,sub_60,新馬\n"
+        )
+        st.download_button(
+            "📄 CSVテンプレートをダウンロード",
+            data=_bonus_template.encode('utf-8-sig'),
+            file_name="bonus_conditions_template.csv",
+            mime="text/csv",
+            key="bonus_template_dl",
+            help="このテンプレートに騎手IDと条件を入力して保存し、下からアップロードしてください",
+        )
+
+        _bonus_csv_uploaded = st.file_uploader(
+            "ボーナス条件CSV",
+            type=["csv"],
+            key="bonus_csv_upload",
+            help="必須カラム: jockey_id, type, condition",
+        )
+        if _bonus_csv_uploaded:
+            try:
+                try:
+                    _df_bonus = pd.read_csv(_bonus_csv_uploaded, dtype=str, encoding='utf-8-sig').fillna('')
+                except UnicodeDecodeError:
+                    _bonus_csv_uploaded.seek(0)
+                    _df_bonus = pd.read_csv(_bonus_csv_uploaded, dtype=str, encoding='cp932').fillna('')
+                _df_bonus.columns = [c.strip() for c in _df_bonus.columns]
+                st.dataframe(_df_bonus.head(15), use_container_width=True, hide_index=True)
+                st.caption(f"プレビュー: {len(_df_bonus)}件 / カラム: {list(_df_bonus.columns)}")
+
+                if st.button("📥 ボーナス条件をインポート", key="bonus_csv_import", type="primary"):
+                    # CSVを一時ファイルに保存してload_bonus_csvで読み込む
+                    _bonus_csv_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), "data", "bonus_conditions.csv"
+                    )
+                    os.makedirs(os.path.dirname(_bonus_csv_path), exist_ok=True)
+                    _bonus_csv_uploaded.seek(0)
+                    with open(_bonus_csv_path, 'wb') as _f:
+                        _f.write(_bonus_csv_uploaded.read())
+
+                    # キャッシュをリセットしてから再読み込み
+                    from core.jockey_analyzer import load_bonus_csv, _DBKEIBA_BONUS_CACHE
+                    _DBKEIBA_BONUS_CACHE.clear()
+                    load_bonus_csv(_bonus_csv_path)
+
+                    _loaded_ids = len(_DBKEIBA_BONUS_CACHE)
+                    _loaded_rows = sum(
+                        len(v['add_100']) + len(v['add_90']) + len(v['sub_70']) + len(v['sub_60'])
+                        for v in _DBKEIBA_BONUS_CACHE.values()
+                    )
+                    st.success(f"✅ {_loaded_ids}騎手 / {_loaded_rows}件のボーナス条件をインポートしました。")
+                    st.caption("次回の分析実行時から自動的にスコアへ反映されます。")
+
+            except Exception as _be:
+                st.error(f"❌ ボーナスCSVエラー: {_be}")
+
+
+        # 起動時: 傾向DBを自動ロード → 保存済みCSVがあれば上書き
+        try:
+            from core.jockey_analyzer import (
+                _DBKEIBA_BONUS_CACHE, JOCKEY_TENDENCY_DB,
+                get_tendency_as_bonus_dict, load_bonus_csv,
+            )
+            # Step1: JOCKEY_TENDENCY_DBから既知騎手を自動ロード
+            if not _DBKEIBA_BONUS_CACHE:
+                for _jid_t, _tdata in JOCKEY_TENDENCY_DB.items():
+                    _DBKEIBA_BONUS_CACHE[_jid_t] = get_tendency_as_bonus_dict(_jid_t)
+
+            # Step2: 保存済みCSVがあれば追加ロード（CSV側が優先）
+            _auto_bonus_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "data", "bonus_conditions.csv"
+            )
+            if os.path.exists(_auto_bonus_path):
+                load_bonus_csv(_auto_bonus_path)
+        except Exception:
+            pass
 
 
 # ──────────────────────────────────────────────

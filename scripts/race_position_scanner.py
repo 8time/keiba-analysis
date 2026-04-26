@@ -405,9 +405,9 @@ class RacePositionScanner:
                         df.at[idx, "jockey_single_ride"] = e.jockey_single_ride_flag
                         # スコア加算
                         bonus = 0
-                        if e.jockey_double_circle_flag: bonus += 3
-                        if e.trainer_double_circle_flag: bonus += 3
-                        if e.trainer_bullet_flag: bonus += 2
+                        if e.jockey_double_circle_flag: bonus += 30
+                        if e.trainer_double_circle_flag: bonus += 30
+                        if e.trainer_bullet_flag: bonus += 30
                         df.at[idx, "score"] = row["score"] + bonus
 
                 # ◎●サマリーを保持 (UIで表示用)
