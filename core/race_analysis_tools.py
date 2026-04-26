@@ -286,7 +286,8 @@ def calculate_all_deploy_scores(
 
         # ── 密集ペナルティ補正（0〜100） ──
         # density_score: 負=先頭/余裕(高評価)、正=窮屈(低評価)
-        density_pts = max(0.0, min(100.0, 50.0 - density_score * 10.0))
+        # 0.0(通常の間隔)で80点となるようベースを底上げ
+        density_pts = max(0.0, min(100.0, 80.0 - density_score * 15.0))
 
         # ── 総合展開適合度スコア ──
         deploy_score = round(pos_pts * 0.40 + pci_match * 0.35 + density_pts * 0.25, 1)
@@ -305,9 +306,9 @@ def calculate_all_deploy_scores(
         if high_risk and is_front:
             effect = '▲高（不利）'
         elif high_risk and is_back:
-            effect = '◎恩恵大' if deploy_score >= 70 else '○恩恵(小)'
+            effect = '◎恩恵大' if deploy_score >= 65 else '○恩恵(小)'
         elif low_risk and is_front:
-            effect = '○恩恵大(前残)' if deploy_score >= 70 else '○恩恵(小)'
+            effect = '◎恩恵大(前残)' if deploy_score >= 65 else '○恩恵(小)'
         elif low_risk and is_back:
             effect = '△不利（脚余り）'
         else:
