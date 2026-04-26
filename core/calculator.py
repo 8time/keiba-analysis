@@ -209,11 +209,11 @@ def analyze_pace_profile(df) -> dict:
             except:
                 pass
     if dist <= 1400:
-        front_threshold = 0.40
+        front_threshold = 0.28  # 16頭立てで4.4番手以内
     elif dist >= 2000:
-        front_threshold = 0.45
+        front_threshold = 0.35  # 16頭立てで5.6番手以内
     else:
-        front_threshold = 0.42
+        front_threshold = 0.32  # 16頭立てで5.1番手以内
     result['front_threshold'] = front_threshold
 
     # ── 1. 各馬のposition_score計算 ──
@@ -229,17 +229,17 @@ def analyze_pace_profile(df) -> dict:
         return sum(all_pos) / len(all_pos) / max(ref_field, 1)
 
     def _label_from_score(score: float) -> str:
-        if score <= 0.15: return '逃げ'
+        if score <= 0.10: return '逃げ'  # 16頭立てで1.6番手以内
         if score <= front_threshold: return '先行'
-        if score <= 0.65: return '差し'
+        if score <= 0.60: return '差し'  # 16頭立てで9.6番手以内
         return '追込'
 
     def _label_from_avg_position(avg_pos: float, field: int) -> str:
         if pd.isna(avg_pos): return '不明'
         ratio = avg_pos / max(field, 1)
-        if ratio <= 0.15: return '逃げ'
+        if ratio <= 0.10: return '逃げ'
         if ratio <= front_threshold: return '先行'
-        if ratio <= 0.65: return '差し'
+        if ratio <= 0.60: return '差し'
         return '追込'
 
     positional_map = {}

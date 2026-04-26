@@ -377,34 +377,17 @@ def get_deployment_match_rate(
         avg_pci = float(row.get('AvgPCI', 50.0))
         pci_type = str(row.get('PCIType', '不明'))
 
-        # 適合判定（条件を厳格化して◎と○を細分化）
-        if rpci >= 55.0:        # 後傾ペース想定
-            if avg_pci >= 54.0:
-                level = '◎ 適合'
-                matched += 1
-            elif avg_pci >= 51.0:
-                level = '○ やや適合'
-                matched += 0.5
-            else:
-                level = '△ 不向き'
-        elif rpci <= 50.0:      # 前傾ペース想定
-            if avg_pci <= 51.0:
-                level = '◎ 適合'
-                matched += 1
-            elif avg_pci <= 53.0:
-                level = '○ やや適合'
-                matched += 0.5
-            else:
-                level = '△ 不向き'
-        else:                   # ミドル
-            if 49.5 <= avg_pci <= 53.5:
-                level = '◎ 適合'
-                matched += 1
-            elif 48.0 <= avg_pci <= 55.0:
-                level = '○ やや適合'
-                matched += 0.5
-            else:
-                level = '△ 不向き'
+        # 適合判定（絶対誤差ベースに変更して差別化を極限まで強化）
+        pci_diff = abs(avg_pci - rpci)
+        
+        if pci_diff <= 1.5:
+            level = '◎ 適合'
+            matched += 1
+        elif pci_diff <= 3.5:
+            level = '○ やや適合'
+            matched += 0.5
+        else:
+            level = '△ 不向き'
 
         match_horses.append({'馬番': uma, '馬名': name, 'AvgPCI': avg_pci, 'PCIタイプ': pci_type, '適合度': level})
 
