@@ -2572,12 +2572,12 @@ if nav == "🏠 Single Race Analysis":
                     with _filter_row[0]:
                         _deploy_filter = st.selectbox(
                             '🚦 展開フィルター',
-                            options=['全て', '◎恩恵大のみ', '▲不利除外', '展開適合80+のみ'],
+                            options=['全て', '◎恩恵大のみ', '▲不利除外', '展開適合85+のみ'],
                             key='deploy_filter_sra',
                             help=(
                                 "・◎恩恵大のみ: 前崩れやスローなどの展開利がある馬に絞り込み。\n"
                                 "・▲不利除外: 逆に展開が不向き（不利）な馬をリストから消去。\n"
-                                "・展開適合80+のみ: 総合的な展開適合スコアが高い(★)馬のみを表示します。"
+                                "・展開適合85+のみ: 総合的な展開適合スコアが極めて高い(85点以上)馬のみを表示します。"
                             )
                         )
                     with _filter_row[1]:
@@ -2589,10 +2589,10 @@ if nav == "🏠 Single Race Analysis":
                         _view_df_filtered = _view_df_filtered[_view_df_filtered['FrontCollapseEffect'].str.contains('◎', na=False)]
                     elif _deploy_filter == '▲不利除外' and 'FrontCollapseEffect' in _view_df_filtered.columns:
                         _view_df_filtered = _view_df_filtered[~_view_df_filtered['FrontCollapseEffect'].str.contains('▲', na=False)]
-                    elif _deploy_filter == '展開適合80+のみ' and 'DeployScore' in df.columns:
-                        _umas_80 = set(df[df['DeployScore'] >= 80]['Umaban'].astype(str).tolist())
+                    elif _deploy_filter == '展開適合85+のみ' and 'DeployScore' in df.columns:
+                        _umas_85 = set(df[df['DeployScore'] >= 85]['Umaban'].astype(str).tolist())
                         if 'Umaban' in _view_df_filtered.columns:
-                            _view_df_filtered = _view_df_filtered[_view_df_filtered['Umaban'].astype(str).isin(_umas_80)]
+                            _view_df_filtered = _view_df_filtered[_view_df_filtered['Umaban'].astype(str).isin(_umas_85)]
                     view_df = _view_df_filtered
                     # ─────────────────────────────────────────────────────── #
 
