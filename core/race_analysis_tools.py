@@ -279,10 +279,23 @@ def calculate_all_deploy_scores(
             # 中立：中団（pos_score≒0.5）が最適
             pos_pts = max(0.0, 100.0 - abs(pos_score - 0.5) * 200.0)
 
-        # ── PCIマッチ率（0〜100） ──
-        # RPCIとAvgPCIの差が小さいほど高マッチ
-        pci_diff = abs(avg_pci - rpci)
-        pci_match = max(0.0, 100.0 - pci_diff * 5.0)  # 差20で0点
+        # ── PCIマッチ率（0〜100）＆ 致命的ペース不一致判定 ──
+        is_pci_fatal = False
+        # 前傾戦（消耗戦）：自分より速いペースにはついていけない（追走バテ）
+        if rpci <= 49.5 and avg_pci > rpci + 1.5:
+            is_pci_fatal = True
+        # 後傾戦（瞬発力戦）：自分より遅いペースではキレ負けする
+        elif rpci >= 50.5 and avg_pci < rpci - 1.5:
+            is_pci_fatal = True
+        # ミドルペース：極端に離れている場合は不適
+        elif 49.5 < rpci < 50.5 and abs(avg_pci - rpci) > 3.0:
+            is_pci_fatal = True
+
+        if is_pci_fatal:
+            pci_match = 0.0  # 致命的ミスマッチは0点
+        else:
+            pci_diff = abs(avg_pci - rpci)
+            pci_match = max(0.0, 100.0 - pci_diff * 5.0)
 
         # ── 密集ペナルティ補正（0〜100） ──
         # density_score: 負=先頭/余裕(高評価)、正=窮屈(低評価)
@@ -314,8 +327,8 @@ def calculate_all_deploy_scores(
         else:
             effect = '－（中立）'
             
-        # ── [NEW] ペース完全不一致(PCI誤差3.6以上)は「▲不利」として上書き ──
-        if pci_diff >= 3.6:
+        # ── [NEW] ペース完全不一致(追走バテ・キレ負け)は「▲不利」として上書き ──
+        if is_pci_fatal:
             effect = '▲不利(ペース不適)'
         df.at[i, 'FrontCollapseEffect'] = effect
 
@@ -382,17 +395,35 @@ def get_deployment_match_rate(
         avg_pci = float(row.get('AvgPCI', 50.0))
         pci_type = str(row.get('PCIType', '不明'))
 
-        # 適合判定（絶対誤差ベースに変更して差別化を極限まで強化）
-        pci_diff = abs(avg_pci - rpci)
-        
-        if pci_diff <= 1.5:
-            level = '◎ 適合'
-            matched += 1
-        elif pci_diff <= 3.5:
-            level = '○ やや適合'
-            matched += 0.5
-        else:
-            level = '△ 不向き'
+        # 適合判定（競馬のペース非対称性を考慮した厳密判定）
+        if rpci <= 49.5:  # 前傾戦（消耗戦）
+            if avg_pci > rpci + 1.5:
+                level = '△ 不向き'  # 追走で脚をなくす
+            elif avg_pci >= rpci - 2.5:
+                level = '◎ 適合'
+                matched += 1
+            else:
+                level = '○ やや適合'  # 余裕はあるが掛かるリスクあり
+                matched += 0.5
+        elif rpci >= 50.5:  # 後傾戦（瞬発力戦）
+            if avg_pci < rpci - 1.5:
+                level = '△ 不向き'  # 上がり勝負でキレ負けする
+            elif avg_pci <= rpci + 2.5:
+                level = '◎ 適合'
+                matched += 1
+            else:
+                level = '○ やや適合'
+                matched += 0.5
+        else:  # ミドル
+            pci_diff = abs(avg_pci - rpci)
+            if pci_diff <= 1.5:
+                level = '◎ 適合'
+                matched += 1
+            elif pci_diff <= 3.0:
+                level = '○ やや適合'
+                matched += 0.5
+            else:
+                level = '△ 不向き'
 
         match_horses.append({'馬番': uma, '馬名': name, 'AvgPCI': avg_pci, 'PCIタイプ': pci_type, '適合度': level})
 
