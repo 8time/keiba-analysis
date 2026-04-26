@@ -313,6 +313,10 @@ def calculate_all_deploy_scores(
             effect = '△不利（脚余り）'
         else:
             effect = '－（中立）'
+            
+        # ── [NEW] ペース完全不一致(PCI誤差3.6以上)は「▲不利」として上書き ──
+        if pci_diff >= 3.6:
+            effect = '▲不利(ペース不適)'
         df.at[i, 'FrontCollapseEffect'] = effect
 
         # ── DensityPenaltyLabel（-1.2 密集 バッジ用） ──
