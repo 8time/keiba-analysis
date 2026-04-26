@@ -216,6 +216,15 @@ def analyze_pace_profile(df) -> dict:
         front_threshold = 0.32  # 16頭立てで5.1番手以内
     result['front_threshold'] = front_threshold
 
+    current_surf = '芝'
+    for col in ('Type', 'Track', 'CurrentSurface'):
+        if col in df.columns:
+            try:
+                if str(df[col].iloc[0]) not in ('nan', 'None', ''):
+                    current_surf = str(df[col].iloc[0])
+                    break
+            except: pass
+
     # ── 1. 各馬のposition_score計算 ──
     def _corner_score_from_past(past_runs: list, ref_field: int):
         all_pos = []
@@ -303,6 +312,15 @@ def analyze_pace_profile(df) -> dict:
 
     # 前崩れリスク（重み付き密集率ベース）
     collapse_base = weighted_front_density * 15.0 + (pace_intensity - 1) * 0.5
+    
+    # ── [NEW] 距離・馬場補正（前残りのセオリーを適用） ──
+    # 短距離（1400m以下）は物理的に前が止まりにくいためリスクを半減
+    if dist > 0 and dist <= 1400:
+        collapse_base *= 0.5
+    # ダートは芝より前残りしやすいためリスク低減
+    if 'ダ' in current_surf:
+        collapse_base *= 0.7
+
     front_collapse_risk = round(min(5.0, max(0.0, collapse_base)), 1)
     result['front_collapse_risk'] = front_collapse_risk
 
