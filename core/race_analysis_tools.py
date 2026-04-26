@@ -306,9 +306,9 @@ def calculate_all_deploy_scores(
         if high_risk and is_front:
             effect = '▲高（不利）'
         elif high_risk and is_back:
-            effect = '◎恩恵大' if deploy_score >= 65 else '○恩恵(小)'
+            effect = '◎恩恵大' if deploy_score >= 75 else '○恩恵(小)'
         elif low_risk and is_front:
-            effect = '◎恩恵大(前残)' if deploy_score >= 65 else '○恩恵(小)'
+            effect = '◎恩恵大(前残)' if deploy_score >= 75 else '○恩恵(小)'
         elif low_risk and is_back:
             effect = '△不利（脚余り）'
         else:
