@@ -2394,6 +2394,7 @@ if nav == "🏠 Single Race Analysis":
                             _tag = f"🏆Top{_rank}:+{_top_battle_bonus:.1f}"
                             df.at[_tidx, 'ボーナス詳細'] = f"{_existing}, {_tag}" if _existing and _existing != '-' else _tag
 
+
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
                             
@@ -2660,7 +2661,12 @@ if nav == "🏠 Single Race Analysis":
                         )
                     with _filter_row[1]:
                         _avg_deploy_val = float(df['DeployScore'].mean()) if 'DeployScore' in df.columns else 0.0
-                        st.metric('強適上位馬 展開適合度', f"平均{_avg_deploy_val:.1f}（{['低','中','高','最高'][min(3,int(_avg_deploy_val//25))]}）")
+                        _deploy_rank_label = ['低', '中', '高', '最高'][min(3, int(_avg_deploy_val // 25))]
+                        st.markdown(
+                            f"<div style='font-size:0.8em;color:#888;margin-bottom:2px;'>強適上位馬 展開適合度</div>"
+                            f"<div style='font-size:1.2em;font-weight:700;white-space:nowrap;'>平均{_avg_deploy_val:.1f}（{_deploy_rank_label}）</div>",
+                            unsafe_allow_html=True
+                        )
                     # フィルター適用
                     _view_df_filtered = view_df.copy()
                     if _deploy_filter == '◎恩恵大のみ' and 'FrontCollapseEffect' in _view_df_filtered.columns:
