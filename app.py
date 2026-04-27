@@ -2096,6 +2096,81 @@ if nav == "🏠 Single Race Analysis":
                                 st.session_state['tab1_df'] = df.copy()
                                 st.rerun()
 
+                        # ─── 名前付きプリセット管理 ───────────────────────
+                        import json as _json_p
+                        _PRESETS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_presets.json")
+
+                        def _load_presets():
+                            try:
+                                if os.path.exists(_PRESETS_FILE):
+                                    with open(_PRESETS_FILE, 'r', encoding='utf-8') as _f:
+                                        return _json_p.load(_f)
+                            except: pass
+                            return {}
+
+                        def _save_presets(presets: dict):
+                            with open(_PRESETS_FILE, 'w', encoding='utf-8') as _f:
+                                _json_p.dump(presets, _f, ensure_ascii=False, indent=2)
+
+                        st.divider()
+                        st.markdown("##### 📂 名前付きプリセット管理")
+                        _presets = _load_presets()
+
+                        # ロード
+                        if _presets:
+                            _p_col1, _p_col2 = st.columns([3, 1])
+                            with _p_col1:
+                                _sel_preset = st.selectbox(
+                                    "保存済みプリセットを選択",
+                                    options=list(_presets.keys()),
+                                    key="preset_selector_main",
+                                    label_visibility="collapsed",
+                                )
+                            with _p_col2:
+                                if st.button("📂 ロード", key="btn_load_preset_main", use_container_width=True):
+                                    _loaded = _presets.get(_sel_preset, {})
+                                    if _loaded:
+                                        # session_state の各スライダーキーに反映
+                                        for _wk, _wv in _loaded.items():
+                                            _sld_k = f"wsld_sm_{_wk}"
+                                            _num_k = f"wnum_sm_{_wk}"
+                                            if _sld_k in st.session_state: st.session_state[_sld_k] = float(_wv)
+                                            if _num_k in st.session_state: st.session_state[_num_k] = float(_wv)
+                                        # 既定ファイルにも書き込んで次回も適用
+                                        with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf2:
+                                            _json_p.dump(_loaded, _wf2, ensure_ascii=False, indent=2)
+                                        st.success(f"✅ プリセット「{_sel_preset}」をロードしました。")
+                                        st.rerun()
+
+                            # 削除
+                            if st.button(f"🗑 「{_sel_preset}」を削除", key="btn_del_preset_main"):
+                                del _presets[_sel_preset]
+                                _save_presets(_presets)
+                                st.success(f"🗑 「{_sel_preset}」を削除しました。")
+                                st.rerun()
+                        else:
+                            st.caption("保存済みプリセットはまだありません。")
+
+                        # 名前付き保存
+                        _p_name_col, _p_save_col = st.columns([3, 1])
+                        with _p_name_col:
+                            _new_preset_name = st.text_input(
+                                "新しいプリセット名",
+                                placeholder="例: ダート短距離特化、差し馬優先 など",
+                                key="new_preset_name_main",
+                                label_visibility="collapsed",
+                            )
+                        with _p_save_col:
+                            if st.button("💾 名前で保存", key="btn_save_preset_main", use_container_width=True):
+                                if _new_preset_name.strip():
+                                    _presets[_new_preset_name.strip()] = dict(sw)
+                                    _save_presets(_presets)
+                                    st.success(f"✅ 「{_new_preset_name.strip()}」として保存しました！")
+                                    st.rerun()
+                                else:
+                                    st.warning("プリセット名を入力してください。")
+                        # ────────────────────────────────────────────────────
+
                     # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
                     @st.cache_data(ttl=600, show_spinner=False)
                     def _fetch_daily_signals(rid: str, race_date_str: str):
