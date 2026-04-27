@@ -2101,24 +2101,34 @@ if nav == "🏠 Single Race Analysis":
                         _PRESETS_FILE = os.path.join(os.path.dirname(__file__), ".score_weights_presets.json")
 
                         def _load_presets():
+                            # session_state キャッシュを優先（サーバーファイルが消えても保持）
+                            if 'weight_presets_cache' in st.session_state:
+                                return st.session_state['weight_presets_cache']
                             try:
                                 if os.path.exists(_PRESETS_FILE):
                                     with open(_PRESETS_FILE, 'r', encoding='utf-8') as _f:
-                                        return _json_p.load(_f)
+                                        data = _json_p.load(_f)
+                                        st.session_state['weight_presets_cache'] = data
+                                        return data
                             except: pass
                             return {}
 
                         def _save_presets(presets: dict):
-                            with open(_PRESETS_FILE, 'w', encoding='utf-8') as _f:
-                                _json_p.dump(presets, _f, ensure_ascii=False, indent=2)
+                            # session_state + ファイル両方に保存
+                            st.session_state['weight_presets_cache'] = presets
+                            try:
+                                with open(_PRESETS_FILE, 'w', encoding='utf-8') as _f:
+                                    _json_p.dump(presets, _f, ensure_ascii=False, indent=2)
+                            except: pass
 
                         st.divider()
                         st.markdown("##### 📂 名前付きプリセット管理")
+                        st.caption("💡 アプリ更新後もプリセットを保持するには、定期的に「📤 エクスポート」でPCに保存してください。")
                         _presets = _load_presets()
 
-                        # ロード
+                        # ── ロード＆削除 ──
                         if _presets:
-                            _p_col1, _p_col2 = st.columns([3, 1])
+                            _p_col1, _p_col2, _p_col3 = st.columns([3, 1, 1])
                             with _p_col1:
                                 _sel_preset = st.selectbox(
                                     "保存済みプリセットを選択",
@@ -2130,28 +2140,27 @@ if nav == "🏠 Single Race Analysis":
                                 if st.button("📂 ロード", key="btn_load_preset_main", use_container_width=True):
                                     _loaded = _presets.get(_sel_preset, {})
                                     if _loaded:
-                                        # session_state の各スライダーキーに反映
                                         for _wk, _wv in _loaded.items():
                                             _sld_k = f"wsld_sm_{_wk}"
                                             _num_k = f"wnum_sm_{_wk}"
                                             if _sld_k in st.session_state: st.session_state[_sld_k] = float(_wv)
                                             if _num_k in st.session_state: st.session_state[_num_k] = float(_wv)
-                                        # 既定ファイルにも書き込んで次回も適用
-                                        with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf2:
-                                            _json_p.dump(_loaded, _wf2, ensure_ascii=False, indent=2)
+                                        try:
+                                            with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf2:
+                                                _json_p.dump(_loaded, _wf2, ensure_ascii=False, indent=2)
+                                        except: pass
                                         st.success(f"✅ プリセット「{_sel_preset}」をロードしました。")
                                         st.rerun()
-
-                            # 削除
-                            if st.button(f"🗑 「{_sel_preset}」を削除", key="btn_del_preset_main"):
-                                del _presets[_sel_preset]
-                                _save_presets(_presets)
-                                st.success(f"🗑 「{_sel_preset}」を削除しました。")
-                                st.rerun()
+                            with _p_col3:
+                                if st.button("🗑 削除", key="btn_del_preset_main", use_container_width=True):
+                                    del _presets[_sel_preset]
+                                    _save_presets(_presets)
+                                    st.success(f"🗑 「{_sel_preset}」を削除しました。")
+                                    st.rerun()
                         else:
                             st.caption("保存済みプリセットはまだありません。")
 
-                        # 名前付き保存
+                        # ── 名前付き保存 ──
                         _p_name_col, _p_save_col = st.columns([3, 1])
                         with _p_name_col:
                             _new_preset_name = st.text_input(
@@ -2169,6 +2178,39 @@ if nav == "🏠 Single Race Analysis":
                                     st.rerun()
                                 else:
                                     st.warning("プリセット名を入力してください。")
+
+                        # ── エクスポート / インポート（デプロイ後もデータを保持するための永続化手段）──
+                        _ex_col, _im_col = st.columns(2)
+                        with _ex_col:
+                            if _presets:
+                                _export_bytes = _json_p.dumps(_presets, ensure_ascii=False, indent=2).encode('utf-8')
+                                st.download_button(
+                                    label="📤 エクスポート（PCに保存）",
+                                    data=_export_bytes,
+                                    file_name="keiba_weight_presets.json",
+                                    mime="application/json",
+                                    key="btn_export_presets_main",
+                                    use_container_width=True,
+                                    help="このJSONファイルをPCに保存しておけば、アプリ更新後も「インポート」で完全復元できます。"
+                                )
+                        with _im_col:
+                            _uploaded = st.file_uploader(
+                                "📥 インポート（JSONファイル）",
+                                type=["json"],
+                                key="preset_uploader_main",
+                                label_visibility="collapsed",
+                                help="エクスポートしたJSONファイルをアップロードすると、プリセットを復元します。"
+                            )
+                            if _uploaded is not None:
+                                try:
+                                    _imported = _json_p.loads(_uploaded.read().decode('utf-8'))
+                                    # 既存プリセットとマージ（上書き）
+                                    _presets.update(_imported)
+                                    _save_presets(_presets)
+                                    st.success(f"✅ {len(_imported)} 件のプリセットをインポートしました！")
+                                    st.rerun()
+                                except Exception as _ie:
+                                    st.error(f"インポートに失敗しました: {_ie}")
                         # ────────────────────────────────────────────────────
 
                     # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
