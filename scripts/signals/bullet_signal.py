@@ -39,15 +39,12 @@ def compute_trainer_daily_entry_counts(entries: List[Entry]) -> Dict[Tuple[str, 
 
 
 def is_strict_bullet_candidate(entries_for_race: List[Entry], total_entries_on_date: int) -> bool:
-    """厳格候補判定:
-    - 当日総出走2頭のみ
-    - 異なるvenue
+    """●候補判定:
+    - 同一レース番号(R)に、異なるvenueからちょうど2頭が出走
     - 各venue 1頭ずつ
+    （※当日総出走数の制約は撤廃。大手厩舎でもT●を正しく検出するため）
     """
-    if total_entries_on_date != 2:
-        return False
-    
-    # このgroup(同一R)にちょうど2頭いないとおかしい（異なる場・同一Rで各1頭ずつという要件のため）
+    # このgroup(同一R)にちょうど2頭いること（異なる場・同一Rで各1頭ずつという要件のため）
     if len(entries_for_race) != 2:
         return False
         
