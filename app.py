@@ -8627,7 +8627,7 @@ if nav == "🏇 騎手分析Pro":
 
                     styled = df_show.style
                     if "補正連対率" in df_show.columns:
-                        styled = styled.applymap(_color_top2_rate, subset=["補正連対率"])
+                        styled = styled.map(_color_top2_rate, subset=["補正連対率"])
 
                     st.dataframe(styled, use_container_width=True, hide_index=True)
                     st.caption(f"📊 {len(df_show)}件（最低{min_rides_trainer}回騎乗、ベイズ補正済み）")
@@ -9109,8 +9109,8 @@ if nav == "🏇 騎手分析Pro":
 
             _styled = (_df_rank.style
                 .apply(_style_rank_row, axis=1)
-                .applymap(_style_eval, subset=['評価'])
-                .applymap(_style_score, subset=['総合スコア'])
+                .map(_style_eval, subset=['評価'])
+                .map(_style_score, subset=['総合スコア'])
             )
 
             st.dataframe(
