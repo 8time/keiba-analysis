@@ -473,20 +473,63 @@ def validate_horse_name(name):
 @retry(tries=3, delay=2)
 def fetch_sanrenpuku_odds(race_id):
     """
-    Fetches Sanrenpuku (Trio / 3連複) odds ordered by popularity.
-    Uses netkeiba JSONP API (type=7, action=init, sort=ninki).
-    Response format: odds['7'][rank] = [odds_str, None, rank_int, combo_6digit]
+    3連複オッズを取得する。
+
+    取得優先順序:
+      1. リアルタイム JSONP API (type=7) ← 発売中レース
+      2. compress=0 JSON API (type=7) ← 上記失敗時
+      3. result.html 払い戻しテーブル ← 確定済みレース（当選組み合わせのみ）
     """
-    import json, zlib, base64, re, requests as _req
+    import json, zlib, base64, re
 
     is_nar = _is_nar(race_id)
     domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
     api_url = f"https://{domain}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html"
 
-    # JSONP callback (any unique string works)
+    # -------------------------------------------------------------------
+    # Helper: result.html 払い戻しテーブルから3連複当選組み合わせを取得
+    # -------------------------------------------------------------------
+    def _fetch_from_result_html():
+        """確定済みレースの払い戻しテーブルから3連複当選組み合わせを返す。"""
+        res_results = []
+        try:
+            res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+            res_html = fetch_robust_html(res_url)
+            if not res_html:
+                return []
+            from bs4 import BeautifulSoup
+            rsoup = BeautifulSoup(res_html, 'html.parser', from_encoding='euc-jp')
+            for table in rsoup.find_all('table', class_='Payout_Detail_Table'):
+                rows = table.find_all('tr')
+                for tr in rows:
+                    th_td = tr.find_all(['th', 'td'])
+                    if len(th_td) >= 4 and '3連複' in th_td[0].get_text(strip=True):
+                        combo_str = th_td[1].get_text(separator='-', strip=True) # "8-11-16" のように取得
+                        raw_combo = re.findall(r'\d+', combo_str)
+                        if len(raw_combo) >= 3:
+                            h1, h2, h3 = int(raw_combo[0]), int(raw_combo[1]), int(raw_combo[2])
+                            # th_td[2] は払戻金, th_td[3] は人気
+                            payout_str = re.sub(r'[^\d]', '', th_td[2].get_text(strip=True))
+                            payout = float(payout_str) / 100.0 if payout_str else 0.0  # 円→オッズ換算
+                            pop_m = re.search(r'(\d+)', th_td[3].get_text(strip=True))
+                            pop = int(pop_m.group(1)) if pop_m else 1
+                            res_results.append({
+                                'Combination': f"{h1}-{h2}-{h3}",
+                                'Horses': [h1, h2, h3],
+                                'Odds': round(payout, 1),
+                                'Rank': pop,
+                                '_source': 'result_html',  # 出所フラグ
+                            })
+            logger.info(f"[Sanrenpuku] result.html から {len(res_results)} 件の3連複払い戻しを取得")
+        except Exception as e:
+            logger.warning(f"[Sanrenpuku] result.html フォールバック失敗: {e}")
+        return res_results
+
+    # -------------------------------------------------------------------
+    # Priority 1: JSONP API (発売中・リアルタイム)
+    # -------------------------------------------------------------------
     import time
     cb = f"jQuery_{int(time.time() * 1000)}"
-
     params = {
         "callback": cb,
         "pid": f"api_get_{'nar' if is_nar else 'jra'}_odds",
@@ -508,23 +551,24 @@ def fetch_sanrenpuku_odds(race_id):
         fetcher = ScraplingFetcher(impersonate='chrome120')
         _resp = fetcher.get(api_url, params=params, headers=api_headers, timeout=15)
         if _resp and _resp.body:
-            text = _resp.body
+            text = _resp.body.decode('utf-8', errors='ignore') if isinstance(_resp.body, bytes) else _resp.body
             jsonp_match = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
             if jsonp_match:
                 data = json.loads(jsonp_match.group(1))
             else:
                 data = json.loads(text)
         else:
-            return []
+            raise ValueError("Empty response from JSONP API")
 
         api_status = data.get('status', '')
         raw = data.get('data', '')
 
-        if not raw:
-            logger.info(f"Sanrenpuku API: status={api_status} empty data for {race_id}")
-            return []
+        # 確定済みレース (status=result) または空データ → result.html へ
+        if not raw or api_status in ('result', 'NG'):
+            logger.info(f"[Sanrenpuku] JSONP API status={api_status}, result.html フォールバックへ")
+            return _fetch_from_result_html()
 
-        # --- New format: data is compressed string → dict with odds['7'][rank] ---
+        # --- データ解凍 ---
         if isinstance(raw, str) and len(raw) > 10:
             decoded = base64.b64decode(raw)
             try:
@@ -535,7 +579,7 @@ def fetch_sanrenpuku_odds(race_id):
         elif isinstance(raw, dict):
             odds_data = raw
         else:
-            return []
+            return _fetch_from_result_html()
 
         results = []
 
@@ -579,6 +623,10 @@ def fetch_sanrenpuku_odds(race_id):
                     except Exception:
                         continue
 
+        if not results:
+            # JSONP解析でも空 → result.html へ
+            return _fetch_from_result_html()
+
         results.sort(key=lambda x: x['Odds'])
         for i, item in enumerate(results):
             if item['Rank'] == 0:
@@ -588,7 +636,10 @@ def fetch_sanrenpuku_odds(race_id):
     except Exception as e:
         logger.warning(f"Sanrenpuku API failed for {race_id}: {e}")
 
-    return []
+    # -------------------------------------------------------------------
+    # Priority 2 (最終フォールバック): result.html
+    # -------------------------------------------------------------------
+    return _fetch_from_result_html()
 
 @retry(tries=3, delay=1)
 def fetch_win_odds(race_id):
@@ -1681,36 +1732,75 @@ def get_race_data(race_id, use_storage=True):
     return df
 
 def fetch_result_odds_pop(race_id):
-    """Fallback: fetch result.html to get final odds and popularity for past races."""
+    """
+    result.html から確定オッズ・人気を取得する（過去レース用フォールバック）。
+
+    実測列インデックス（HorseList td）:
+      td[2]  = 馬番 (Num Txt_C)
+      td[7]  = タイム
+      td[9]  = 人気 (Odds Txt_C)
+      td[10] = 単勝オッズ (Odds Txt_R)
+      td[11] = 上がり3F
+    """
     url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
     html = fetch_robust_html(url)
     res_odds = {}
-    res_pop = {}
-    if html:
-        from bs4 import BeautifulSoup
-        import re
-        soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-        
-        headers = [th.text.strip() for th in soup.find_all('th')]
-        u_idx = headers.index('馬番') if '馬番' in headers else 2
-        p_idx = headers.index('人気') if '人気' in headers else 10
-        o_idx = headers.index('単勝') if '単勝' in headers else 9
-        
-        for row in soup.find_all('tr', class_='HorseList'):
-            cols = row.find_all('td')
-            if len(cols) > max(u_idx, p_idx, o_idx):
-                try:
-                    u_txt = cols[u_idx].text.strip()
-                    p_txt = cols[p_idx].text.strip()
-                    o_txt = cols[o_idx].text.strip()
-                    
-                    if u_txt.isdigit():
-                        u = int(u_txt)
-                        if p_txt.isdigit():
-                            res_pop[u] = int(p_txt)
-                        m_o = re.search(r'(\d+\.\d+|\d+)', o_txt)
-                        if m_o: res_odds[u] = float(m_o.group(1))
-                except: pass
+    res_pop  = {}
+    if not html:
+        return pd.Series(res_odds), pd.Series(res_pop)
+
+    from bs4 import BeautifulSoup
+    import re
+    # result.html は EUC-JP エンコード
+    soup = BeautifulSoup(html, 'html.parser', from_encoding='euc-jp')
+
+    for row in soup.find_all('tr', class_='HorseList'):
+        cols = row.find_all('td')
+        if len(cols) < 11:
+            continue
+        try:
+            # 馬番: td[2]
+            u_txt = cols[2].get_text(strip=True)
+            if not u_txt.isdigit():
+                continue
+            u = int(u_txt)
+
+            # 人気: CSSクラス "Odds Txt_C" の td を優先検索、なければ td[9]
+            pop_td = row.find('td', class_='Txt_C') or (cols[9] if len(cols) > 9 else None)
+            # 単勝オッズ: CSSクラス "Odds Txt_R" の td を優先検索、なければ td[10]
+            odds_td = row.find('td', class_='Txt_R') or (cols[10] if len(cols) > 10 else None)
+
+            # 人気 td[9] = class="Odds Txt_C"  ← Odds クラスも必須（td[2]馬番との誤混同防止）
+            for td_p in row.find_all('td'):
+                cls = td_p.get('class', [])
+                if 'Odds' in cls and 'Txt_C' in cls:
+                    m = re.search(r'^(\d+)$', td_p.get_text(strip=True))
+                    if m:
+                        res_pop[u] = int(m.group(1))
+                        break
+
+            # 単勝オッズ td[10] = class="Odds Txt_R"
+            for td_o in row.find_all('td'):
+                cls = td_o.get('class', [])
+                if 'Odds' in cls and 'Txt_R' in cls:
+                    m = re.search(r'(\d+\.\d+)', td_o.get_text(strip=True))
+                    if m:
+                        res_odds[u] = float(m.group(1))
+                        break
+
+            # CSSクラスで見つからない場合は固定インデックスでフォールバック
+            if u not in res_pop and len(cols) > 9:
+                m = re.search(r'^(\d+)$', cols[9].get_text(strip=True))
+                if m:
+                    res_pop[u] = int(m.group(1))
+            if u not in res_odds and len(cols) > 10:
+                m = re.search(r'(\d+\.\d+)', cols[10].get_text(strip=True))
+                if m:
+                    res_odds[u] = float(m.group(1))
+        except Exception:
+            pass
+
+    logger.info(f"[fetch_result_odds_pop] odds={len(res_odds)}頭 pop={len(res_pop)}頭 for {race_id}")
     import pandas as pd
     return pd.Series(res_odds), pd.Series(res_pop)
 def fetch_shutuba_data(race_id):

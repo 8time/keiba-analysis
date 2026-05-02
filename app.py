@@ -8868,7 +8868,7 @@ if nav == "🏇 騎手分析Pro":
 
         # ── 分析実行 ──
         if jp_analyze_btn and jp_race_id:
-            from core.jockey_analyzer import analyze_race
+
 
             _jp_pb = st.progress(0)
             _jp_st = st.empty()
@@ -8880,7 +8880,7 @@ if nav == "🏇 騎手分析Pro":
 
             with st.spinner("騎手データを収集中... (しばらくお待ちください)"):
                 try:
-                    _jp_result = analyze_race(jp_race_id, progress_callback=jp_progress)
+                    _jp_result = jockey_analyzer.analyze_race(jp_race_id, progress_callback=jp_progress)
                     st.session_state.jp_analysis_result = _jp_result
                 except Exception as _e:
                     st.error(f"分析エラー: {_e}")
@@ -8896,7 +8896,7 @@ if nav == "🏇 騎手分析Pro":
         # ── 結果表示 ──
         _jp_res = st.session_state.get('jp_analysis_result')
         if _jp_res and _jp_res.get('entries'):
-            from core.jockey_analyzer import calculate_jockey_metrics
+
 
             _jp_venue = _jp_res.get('venue', '')
             _jp_entries = _jp_res.get('entries', [])
@@ -8982,6 +8982,23 @@ if nav == "🏇 騎手分析Pro":
                     score += s10_sub
                     breakdown['減点ペナルティ'] = round(s10_sub, 1)
 
+                # 11) PRB (Percentage of Rivals Beaten) — 0.5が平均、高いほど良い
+                _madv = entry.get('matched_adv') or {}
+                prb_val = _madv.get('prb_overall', 0.5)
+                s11 = (prb_val - 0.5) * 80
+                if abs(s11) > 0.5:
+                    score += s11
+                    breakdown['PRB'] = round(s11, 1)
+
+                # 12) Hot/Cold — 直近好調なら加点、不調なら減点
+                hc = _madv.get('hot_cold', '—')
+                if hc == 'HOT':
+                    score += 10
+                    breakdown['好調'] = 10
+                elif hc == 'COLD':
+                    score -= 8
+                    breakdown['不調'] = -8
+
                 return round(score, 1), breakdown
 
             # 各エントリのスコアを計算
@@ -8993,18 +9010,27 @@ if nav == "🏇 騎手分析Pro":
                 _ys = _pr.get('year_stats') or {}
                 _flg = _e.get('flags', [])
                 _flag_str = " ".join(_flg) if _flg else "—"
+                _madv = _e.get('matched_adv') or {}
+                _adv_full = _e.get('advanced_stats') or {}
+                _prb = _madv.get('prb_overall', 0.5)
+                _hc = _madv.get('hot_cold', '—')
+                _hc_icon = {'HOT': '🔥', 'COLD': '🧊'}.get(_hc, '')
+                _rstyle = _madv.get('riding_style', '—')
                 scored.append({
                     '_umaban': _e.get('umaban', 0),
                     '_score': _sc,
                     '_breakdown': _bd,
-                    '順位': 0,  # 後で設定
-                    '評価': '',  # 後で設定
+                    '順位': 0,
+                    '評価': '',
                     '馬番': _e.get('umaban', ''),
                     '馬名': _e.get('horse_name', ''),
                     '騎手': _e.get('jockey_name', ''),
                     '厩舎': _e.get('trainer_name', ''),
                     '人気': _e.get('popularity', 99) if _e.get('popularity', 99) < 99 else '—',
                     'オッズ': f"{_e.get('odds', 0):.1f}" if _e.get('odds', 0) > 0 else '—',
+                    'PRB': f"{_prb:.2f}",
+                    '調子': f"{_hc_icon}{_hc}" if _hc != '—' else '—',
+                    '脚質傾向': _rstyle,
                     'コース連対%': f"{_vs.get('adj_top2_rate', 0)*100:.1f}",
                     'コース複勝%': f"{_vs.get('top3_rate', 0)*100:.1f}",
                     '単回収%': f"{_vs.get('adj_win_return', 0):.0f}",
@@ -9020,6 +9046,8 @@ if nav == "🏇 騎手分析Pro":
                     ))(_e.get('bonuses') or {}),
                     '総合スコア': _sc,
                     '_bonuses': _e.get('bonuses') or {},
+                    '_adv': _adv_full,
+                    '_matched_adv': _madv,
                 })
 
             scored.sort(key=lambda x: x['_score'], reverse=True)
@@ -9046,7 +9074,8 @@ if nav == "🏇 騎手分析Pro":
             st.subheader("📊 騎手ランキング（全指標スコア順）")
 
             _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
-                             '人気', 'オッズ', 'コース連対%', 'コース複勝%', '単回収%',
+                             '人気', 'オッズ', 'PRB', '調子', '脚質傾向',
+                             'コース連対%', 'コース複勝%', '単回収%',
                              '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
             _df_rank = pd.DataFrame(scored)[_display_cols]
 
@@ -9095,6 +9124,12 @@ if nav == "🏇 騎手分析Pro":
                     '厩舎':       st.column_config.TextColumn("厩舎", width="medium"),
                     '人気':       st.column_config.TextColumn("人気", width="small"),
                     'オッズ':     st.column_config.TextColumn("オッズ", width="small"),
+                    'PRB':        st.column_config.TextColumn("PRB", width="small",
+                                    help="Percentage of Rivals Beaten (0~1, 0.50が平均)。直近60走の相対勝率。"),
+                    '調子':       st.column_config.TextColumn("調子", width="small",
+                                    help="直近30日PRB vs 全体PRB比較。HOT=好調 / COLD=不調"),
+                    '脚質傾向':   st.column_config.TextColumn("脚質", width="small",
+                                    help="直近の通過順位から推定した騎乗スタイル"),
                     'コース連対%': st.column_config.TextColumn(f"{_jp_venue}連対%", width="small"),
                     'コース複勝%': st.column_config.TextColumn(f"{_jp_venue}複勝%", width="small"),
                     '単回収%':    st.column_config.TextColumn("単回収%", width="small"),
@@ -9176,6 +9211,37 @@ if nav == "🏇 騎手分析Pro":
                 _sub60  = _bon2.get('sub_60', [])
                 _bonus_score   = _bon2.get('bonus_score', 0.0)
                 _penalty_score = _bon2.get('penalty_score', 0.0)
+                _cadv = _s.get('_adv') or {}
+                _cmadv = _s.get('_matched_adv') or {}
+                _cprb = _cmadv.get('prb_overall', 0.5)
+                _cprb_color = '#6fcf97' if _cprb >= 0.60 else '#FFAB40' if _cprb >= 0.50 else '#ef4444'
+                _chc = _cmadv.get('hot_cold', '—')
+                _chc_str = {'HOT': '🔥 HOT', 'COLD': '🧊 COLD'}.get(_chc, '— 平常')
+                _chc_color = '#FF5252' if _chc == 'HOT' else '#64B5F6' if _chc == 'COLD' else '#888'
+                _c_rstyle = _cmadv.get('riding_style', '—')
+
+                # Recent Form bars
+                _rf = _cadv.get('recent_form', {})
+                _rf_html = ""
+                for _rfd, _rfl in [('14d', '14日'), ('30d', '30日'), ('90d', '90日')]:
+                    _rfv = _rf.get(_rfd)
+                    if _rfv:
+                        _rfp = _rfv.get('prb', 0.5)
+                        _rfn = _rfv.get('sample', 0)
+                        _rft3 = _rfv.get('top3_rate', 0)
+                        _rfbar_w = int(min(_rfp * 100, 100))
+                        _rfbar_c = '#6fcf97' if _rfp >= 0.60 else '#FFAB40' if _rfp >= 0.50 else '#ef4444'
+                        _rf_html += (
+                            f'<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">'
+                            f'<span style="width:32px;font-size:0.7em;color:#aaa;">{_rfl}</span>'
+                            f'<div style="flex:1;background:#222;border-radius:4px;height:14px;overflow:hidden;">'
+                            f'<div style="width:{_rfbar_w}%;background:{_rfbar_c};height:100%;border-radius:4px;"></div>'
+                            f'</div>'
+                            f'<span style="font-size:0.75em;color:{_rfbar_c};width:60px;">{_rfp:.2f} ({_rfn}走)</span>'
+                            f'<span style="font-size:0.7em;color:#888;">複{_rft3*100:.0f}%</span>'
+                            f'</div>'
+                        )
+
                 st.html(f"""
                 <div style="border:2px solid {_rank_color};border-radius:12px;padding:16px;margin-bottom:12px;background:#111;">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -9196,7 +9262,7 @@ if nav == "🏇 騎手分析Pro":
                     </div>
                   </div>
                   <div style="margin-bottom:8px;">{_badge_html2}</div>
-                  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin:10px 0;">
+                  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0;">
                     <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
                       <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('adj_top2_rate', 0)*100:.1f}%</div>
                       <div style="font-size:0.75em;color:#888;">{_jp_venue}連対率</div>
@@ -9213,6 +9279,25 @@ if nav == "🏇 騎手分析Pro":
                       <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('rides', 0)}</div>
                       <div style="font-size:0.75em;color:#888;">騎乗数</div>
                     </div>
+                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;border:1px solid #444;">
+                      <div style="font-size:1.3em;font-weight:bold;color:{_pw2_color};">{_pw2_str}</div>
+                      <div style="font-size:0.75em;color:#888;">PW指数</div>
+                    </div>
+                  </div>
+                  <!-- PRB / 調子 / 脚質 / 本年 -->
+                  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:6px 0;">
+                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.3em;font-weight:bold;color:{_cprb_color};">{_cprb:.2f}</div>
+                      <div style="font-size:0.75em;color:#888;">PRB</div>
+                    </div>
+                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.1em;font-weight:bold;color:{_chc_color};">{_chc_str}</div>
+                      <div style="font-size:0.75em;color:#888;">調子</div>
+                    </div>
+                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
+                      <div style="font-size:1em;font-weight:bold;color:#fff;">{_c_rstyle}</div>
+                      <div style="font-size:0.75em;color:#888;">脚質傾向</div>
+                    </div>
                     <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
                       <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('win_rate', 0)*100:.1f}%</div>
                       <div style="font-size:0.75em;color:#888;">本年勝率</div>
@@ -9221,10 +9306,11 @@ if nav == "🏇 騎手分析Pro":
                       <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('top3_rate', 0)*100:.1f}%</div>
                       <div style="font-size:0.75em;color:#888;">本年複勝率</div>
                     </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;border:1px solid #444;">
-                      <div style="font-size:1.3em;font-weight:bold;color:{_pw2_color};">{_pw2_str}</div>
-                      <div style="font-size:0.75em;color:#888;">PW指数</div>
-                    </div>
+                  </div>
+                  <!-- Recent Form -->
+                  <div style="background:#0a0a1a;border-radius:8px;padding:8px 12px;margin:8px 0;">
+                    <div style="font-size:0.75em;color:#888;margin-bottom:4px;">📈 Recent Form (PRB推移)</div>
+                    {_rf_html if _rf_html else '<span style="color:#666;font-size:0.8em;">データなし</span>'}
                   </div>
                   <div style="font-size:0.8em;color:#888;margin-top:6px;">📐 スコア内訳: {_bd_html}</div>
                 </div>
@@ -9305,6 +9391,46 @@ if nav == "🏇 騎手分析Pro":
                                     st.markdown(f"- {_prefix}{_cond}{_suffix}")
                             if not _sub60 and not _sub70:
                                 st.caption("減点条件なし")
+
+                # ── 条件別PRB内訳（Expander） ──
+                _cadv_data = _s.get('_adv') or {}
+                if _cadv_data.get('sample_size', 0) > 0:
+                    with st.expander(f"📈 条件別PRB・複勝率 （直近{_cadv_data.get('sample_size',0)}走）", expanded=False):
+                        def _render_prb_table(title, data_dict, highlight_key=None):
+                            if not data_dict:
+                                st.caption(f"{title}: データなし")
+                                return
+                            _rows = []
+                            for _dk, _dv in data_dict.items():
+                                _rows.append({
+                                    '条件': ('→ ' + _dk if _dk == highlight_key else _dk),
+                                    'PRB': f"{_dv['prb']:.2f}",
+                                    '勝率': f"{_dv.get('win_rate',0)*100:.1f}%",
+                                    '複勝率': f"{_dv.get('top3_rate',0)*100:.1f}%",
+                                    'サンプル': _dv.get('sample', 0),
+                                })
+                            st.markdown(f"**{title}**")
+                            st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
+
+                        _rm2 = _ent.get('race_meta') or {}
+                        _dist_hl = None
+                        if _rm2.get('distance'):
+                            _dist_hl = jockey_analyzer._classify_distance(_rm2['distance'])
+                        _cond_hl = _rm2.get('condition', '')
+                        _gate_hl = None
+                        if _ent.get('umaban', 0) > 0:
+                            _gate_hl = jockey_analyzer._classify_gate(_ent['umaban'])
+
+                        _pcol1, _pcol2, _pcol3 = st.columns(3)
+                        with _pcol1:
+                            _render_prb_table("距離区分別", _cadv_data.get('by_distance', {}), _dist_hl)
+                            _render_prb_table("馬場状態別", _cadv_data.get('by_condition', {}), _cond_hl)
+                        with _pcol2:
+                            _render_prb_table("枠順別", _cadv_data.get('by_gate', {}), _gate_hl)
+                            _render_prb_table("レースクラス別", _cadv_data.get('by_class', {}))
+                        with _pcol3:
+                            _render_prb_table("オッズ帯別", _cadv_data.get('by_odds_band', {}))
+                            _render_prb_table("斤量別", _cadv_data.get('by_weight', {}))
 
             # ── 買い目サジェスト ──
             st.divider()
@@ -9628,8 +9754,7 @@ if nav == "🏇 騎手分析Pro":
             else:
                 with st.spinner("出走騎手を取得中..."):
                     try:
-                        from core.jockey_analyzer import extract_jockey_ids_from_race
-                        _bulk_entries = extract_jockey_ids_from_race(_bulk_race_id.strip())
+                        _bulk_entries = jockey_analyzer.extract_jockey_ids_from_race(_bulk_race_id.strip())
                     except Exception as _bulk_e:
                         _bulk_entries = []
                         st.error(f"取得失敗: {_bulk_e}")
@@ -9689,7 +9814,7 @@ if nav == "🏇 騎手分析Pro":
                     )
 
                     # CSVテンプレート自動生成（既知騎手は傾向DBから条件を自動埋め込み）
-                    from core.jockey_analyzer import JOCKEY_TENDENCY_DB
+                    JOCKEY_TENDENCY_DB = jockey_analyzer.JOCKEY_TENDENCY_DB
                     _tmpl_rows = []
                     _known_count = 0
                     _unknown_count = 0
@@ -9778,7 +9903,7 @@ if nav == "🏇 騎手分析Pro":
         )
 
         # ---- キャッシュ → DataFrame に展開 ----
-        from core.jockey_analyzer import _DBKEIBA_BONUS_CACHE as _UE_CACHE
+        _UE_CACHE = jockey_analyzer._DBKEIBA_BONUS_CACHE
         _ue_rows = []
         for _uejid, _uebd in _UE_CACHE.items():
             _uename = _uebd.get('name', _uejid)
@@ -9999,14 +10124,13 @@ if nav == "🏇 騎手分析Pro":
                         _f.write(_bonus_csv_uploaded.read())
 
                     # キャッシュをリセットしてから再読み込み
-                    from core.jockey_analyzer import load_bonus_csv, _DBKEIBA_BONUS_CACHE
-                    _DBKEIBA_BONUS_CACHE.clear()
-                    load_bonus_csv(_bonus_csv_path)
+                    jockey_analyzer._DBKEIBA_BONUS_CACHE.clear()
+                    jockey_analyzer.load_bonus_csv(_bonus_csv_path)
 
-                    _loaded_ids = len(_DBKEIBA_BONUS_CACHE)
+                    _loaded_ids = len(jockey_analyzer._DBKEIBA_BONUS_CACHE)
                     _loaded_rows = sum(
                         len(v['add_100']) + len(v['add_90']) + len(v['sub_70']) + len(v['sub_60'])
-                        for v in _DBKEIBA_BONUS_CACHE.values()
+                        for v in jockey_analyzer._DBKEIBA_BONUS_CACHE.values()
                     )
                     st.success(f"✅ {_loaded_ids}騎手 / {_loaded_rows}件のボーナス条件をインポートしました。")
                     st.caption("次回の分析実行時から自動的にスコアへ反映されます。")
@@ -10017,10 +10141,10 @@ if nav == "🏇 騎手分析Pro":
 
         # 起動時: 傾向DBを自動ロード → 保存済みCSVがあれば上書き
         try:
-            from core.jockey_analyzer import (
-                _DBKEIBA_BONUS_CACHE, JOCKEY_TENDENCY_DB,
-                get_tendency_as_bonus_dict, load_bonus_csv,
-            )
+            _DBKEIBA_BONUS_CACHE = jockey_analyzer._DBKEIBA_BONUS_CACHE
+            JOCKEY_TENDENCY_DB = jockey_analyzer.JOCKEY_TENDENCY_DB
+            get_tendency_as_bonus_dict = jockey_analyzer.get_tendency_as_bonus_dict
+            load_bonus_csv = jockey_analyzer.load_bonus_csv
             # Step1: JOCKEY_TENDENCY_DBから既知騎手を自動ロード
             if not _DBKEIBA_BONUS_CACHE:
                 for _jid_t, _tdata in JOCKEY_TENDENCY_DB.items():
