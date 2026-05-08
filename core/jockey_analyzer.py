@@ -1616,6 +1616,76 @@ def _aggregate_race_group(races: list, key_func) -> dict:
     return result
 
 
+# USM（馬力絞り出しメーター）用 期待値テーブル
+# (max_odds, expected_win_rate, expected_top2_rate, expected_top3_rate)
+_USM_EXPECTED_RATES = [
+    (1.4, 0.675, 0.800, 0.900),
+    (1.9, 0.476, 0.650, 0.750),
+    (2.9, 0.322, 0.500, 0.620),
+    (3.9, 0.245, 0.400, 0.520),
+    (4.9, 0.180, 0.320, 0.430),
+    (6.9, 0.125, 0.240, 0.340),
+    (9.9, 0.085, 0.170, 0.250),
+    (14.9, 0.063, 0.120, 0.190),
+    (19.9, 0.052, 0.095, 0.150),
+    (29.9, 0.035, 0.065, 0.105),
+    (49.9, 0.023, 0.040, 0.070),
+    (99.9, 0.010, 0.020, 0.035),
+    (float('inf'), 0.003, 0.005, 0.010),
+]
+
+def calculate_usm(races: List[dict]) -> dict:
+    """
+    USM（馬力絞り出しメーター）を計算する。
+    実際の成績 ÷ 期待成績 × 100 で算出。
+    """
+    expected_win = 0.0
+    expected_top2 = 0.0
+    expected_top3 = 0.0
+    actual_win = 0
+    actual_top2 = 0
+    actual_top3 = 0
+    
+    valid_races = [r for r in races if r.get('odds') is not None and r.get('finish') is not None]
+    if not valid_races:
+        return {'win_usm': '-', 'top2_usm': '-', 'top3_usm': '-'}
+        
+    for r in valid_races:
+        odds = float(r['odds'])
+        finish = int(r['finish'])
+        
+        # 期待値の取得
+        e_win, e_top2, e_top3 = 0.0, 0.0, 0.0
+        for max_odds, w, t2, t3 in _USM_EXPECTED_RATES:
+            if odds <= max_odds:
+                e_win, e_top2, e_top3 = w, t2, t3
+                break
+                
+        expected_win += e_win
+        expected_top2 += e_top2
+        expected_top3 += e_top3
+        
+        if finish == 1:
+            actual_win += 1
+            actual_top2 += 1
+            actual_top3 += 1
+        elif finish == 2:
+            actual_top2 += 1
+            actual_top3 += 1
+        elif finish == 3:
+            actual_top3 += 1
+            
+    win_usm = int(round((actual_win / expected_win) * 100)) if expected_win > 0 else 100
+    top2_usm = int(round((actual_top2 / expected_top2) * 100)) if expected_top2 > 0 else 100
+    top3_usm = int(round((actual_top3 / expected_top3) * 100)) if expected_top3 > 0 else 100
+    
+    return {
+        'win_usm': win_usm,
+        'top2_usm': top2_usm,
+        'top3_usm': top3_usm
+    }
+
+
 def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
     """
     騎手の直近成績ページから高度指標を算出する。
@@ -1859,6 +1929,7 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         'by_odds_band': by_odds_band,
         'by_weight': by_weight,
         'riding_style': riding_style,
+        'usm': calculate_usm(races),
     }
 
 
@@ -2033,8 +2104,16 @@ def analyze_race(race_id: str, progress_callback=None) -> dict:
         bonuses = match_bonus_conditions(bonuses_raw, race_meta, entry)
 
         # 高度指標 (PRB / Recent Form / 条件別)
-        adv_stats = fetch_jockey_advanced_stats(jockey_id)
-        matched_adv = get_matched_advanced_stats(adv_stats, race_meta, entry)
+        try:
+            adv_stats = fetch_jockey_advanced_stats(jockey_id)
+            matched_adv = get_matched_advanced_stats(adv_stats, race_meta, entry)
+        except Exception as _adv_err:
+            logger.warning(f"[AdvStats] {entry.get('jockey_name','')} 取得失敗: {_adv_err}")
+            adv_stats = {'prb_overall': 0.5, 'sample_size': 0, 'recent_form': {},
+                         'hot_cold': '—', 'by_distance': {}, 'by_condition': {},
+                         'by_gate': {}, 'by_class': {}, 'by_odds_band': {},
+                         'by_weight': {}, 'riding_style': '—'}
+            matched_adv = {'prb_overall': 0.5, 'hot_cold': '—', 'riding_style': '—'}
 
         # 単回収率をadv_statsから補完（既存値がPRIOR_WIN_RETURNフォールバックの場合）
         if (venue_stat and venue_stat.get('adj_win_return') == PRIOR_WIN_RETURN
@@ -2100,6 +2179,12 @@ def create_result_dataframe(analysis_result: dict) -> pd.DataFrame:
         flags = e.get('flags', [])
         flag_text = " ".join(flags) if flags else "—"
 
+        adv = e.get('advanced_stats', {})
+        usm = adv.get('usm', {})
+        win_usm = usm.get('win_usm', '-')
+        top2_usm = usm.get('top2_usm', '-')
+        top3_usm = usm.get('top3_usm', '-')
+
         rows.append({
             '馬番': e.get('umaban', 0),
             '馬名': e.get('horse_name', ''),
@@ -2108,6 +2193,9 @@ def create_result_dataframe(analysis_result: dict) -> pd.DataFrame:
             '人気': e.get('popularity', 99),
             'オッズ': e.get('odds', 0.0),
             '期待値アラート': flag_text,
+            '単勝USM': f"{win_usm}%" if isinstance(win_usm, int) else "-",
+            '連対USM': f"{top2_usm}%" if isinstance(top2_usm, int) else "-",
+            '複勝USM': f"{top3_usm}%" if isinstance(top3_usm, int) else "-",
             # コース別データ (ベイズ補正済み)
             f'{analysis_result.get("venue", "")}連対率': f"{vs.get('adj_top2_rate', 0) * 100:.1f}%" if vs else "—",
             f'{analysis_result.get("venue", "")}単回': f"{vs.get('adj_win_return', 0):.0f}%" if vs else "—",
@@ -2221,6 +2309,12 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
             if odds > 15: odds_gap = "▲断層"
             elif odds < 3: odds_gap = "◎支持"
 
+        adv = e.get('advanced_stats', {})
+        usm = adv.get('usm', {})
+        win_usm = usm.get('win_usm', '-')
+        top2_usm = usm.get('top2_usm', '-')
+        top3_usm = usm.get('top3_usm', '-')
+
         rows.append({
             '騎手': e.get('jockey_name', ''),
             '騎乗馬': e.get('horse_name', ''),
@@ -2232,6 +2326,9 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
             '相性偏差値': metrics['comp_score'],
             '平均位置取り': "-", # プロフィール等から取れれば後で追加
             'オッズ断層': odds_gap,
+            '単勝USM': f"{win_usm}%" if isinstance(win_usm, int) else "-",
+            '連対USM': f"{top2_usm}%" if isinstance(top2_usm, int) else "-",
+            '複勝USM': f"{top3_usm}%" if isinstance(top3_usm, int) else "-",
             '現在状態': status,
             '加点要因': ", ".join(factors) if factors else "-",
             '最終評価': eval_label,
@@ -2249,7 +2346,7 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
         cols = [
             'Rank', '騎手', '騎乗馬', '人気', '馬番/枠', '騎手シグナル', 
             '騎手勝ち指数', '総合騎手力', '相性偏差値', '平均位置取り', 
-            'オッズ断層', '現在状態', '加点要因', '最終評価'
+            'オッズ断層', '単勝USM', '連対USM', '複勝USM', '現在状態', '加点要因', '最終評価'
         ]
         # '馬番'は連動用に内部で使うため残すが、表示側で制御
         df = df[cols + ['馬番']] 

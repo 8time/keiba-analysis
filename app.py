@@ -244,6 +244,7 @@ with st.sidebar:
             "🎓 MAGI回顧学習",
             "💰 BetSync（資金管理）",
             "🔍 Race Scanner (Batch)",
+            "🧹 消去フィルター",
             "📊 History & Review",
             "🧪 新ロジックテスト(FEW+マクリ)",
             "🧪 テスト",
@@ -996,7 +997,9 @@ if nav == "🏠 Single Race Analysis":
     if "race_id" in query_params:
         default_id = query_params["race_id"]
         
-    if 'main_race_id_input' not in st.session_state:
+    if 'persisted_main_race_id' in st.session_state:
+        st.session_state['main_race_id_input'] = st.session_state['persisted_main_race_id']
+    elif 'main_race_id_input' not in st.session_state:
         st.session_state['main_race_id_input'] = default_id
 
     def _on_main_race_id_change():
@@ -1010,6 +1013,7 @@ if nav == "🏠 Single Race Analysis":
             if extracted != val:
                 st.session_state['main_race_id_input'] = extracted
                 st.session_state['main_race_id_extracted'] = True
+        st.session_state['persisted_main_race_id'] = st.session_state['main_race_id_input']
         
         # Always clear stale advanced data when the ID is touched (prevent cross-race leakage)
         if 'test_adv_data' in st.session_state:
@@ -1019,6 +1023,7 @@ if nav == "🏠 Single Race Analysis":
     col1, col2 = st.columns([1, 2])
     with col1:
         race_id_input = st.text_input("Race ID (Netkeiba)", key='main_race_id_input', on_change=_on_main_race_id_change)
+        st.session_state['persisted_main_race_id'] = race_id_input
         
         if st.session_state.get('main_race_id_extracted', False):
             st.success("🔗 URLからレースIDを自動抽出しました！", icon="🔗")
@@ -1075,6 +1080,7 @@ if nav == "🏠 Single Race Analysis":
                 rid = conf["rid"]
                 # Load: Set input and trigger analysis flag
                 st.session_state.main_race_id_input = str(rid)
+                st.session_state['persisted_main_race_id'] = str(rid)
                 st.session_state.tab1_analyzed_id = str(rid)
                 st.session_state.main_race_action_confirm = None
                 st.rerun()
@@ -1146,6 +1152,8 @@ if nav == "🏠 Single Race Analysis":
         if must_fetch:
             with st.spinner("Fetching data from web..."):
                 df = scraper.get_race_data(race_id_input)
+                # Keep metadata safe from pandas operations that wipe .attrs
+                _meta = df.attrs.get('metadata', {}) if hasattr(df, 'attrs') else {}
                 
                 # --- [NEW] Fetch Bloodline and Condition Bonus ---
                 try:
@@ -1169,11 +1177,20 @@ if nav == "🏠 Single Race Analysis":
                                 left_on='Umaban_int', right_on='number_int', how='left'
                             ).drop(columns=['number_int', 'Umaban_int'])
                             
+                            # Restore metadata after merge
+                            if not hasattr(df, 'attrs') or df.attrs is None:
+                                df.attrs = {}
+                            df.attrs['metadata'] = _meta
+                            
                             # APIが返した判定条件（芝_1800等）を記録
-                            if hasattr(df, 'attrs'):
-                                df.attrs['bloodline_condition'] = blood_json.get("condition", "不明")
+                            df.attrs['bloodline_condition'] = blood_json.get("condition", "不明")
                 except Exception as ex_blood:
                     logger.warning(f"血統データの取得に失敗しました: {ex_blood}")
+
+                # Ensure metadata is present on df
+                if not hasattr(df, 'attrs') or df.attrs is None:
+                    df.attrs = {}
+                df.attrs['metadata'] = _meta
 
                 # --- Bloodline列から sire/broodmareSire をフォールバック抽出 ---
                 # fetch_shutuba_data() が newspaper.html から "父 / 母父" 形式で取得済みの場合に利用
@@ -1263,49 +1280,65 @@ if nav == "🏠 Single Race Analysis":
                         st.error(f"No data found for Race ID: {race_id_input}. (データが取得できませんでした。レースIDが正しいか、または出馬表が既に公開されているかご確認ください。)")
                         st.markdown(f"🔍 **確認用URL (JRA):** [{chk_url}]({chk_url})")
                 else:
-                    # 2. Calculate
-                    df = calculator.calculate_battle_score(df)
-                    df = calculator.calculate_n_index(df)
-                    # --- [NEW] Race Analysis Tools Integration ---
-                    df = race_analysis_tools.get_pci_summary(df)
-                    # Corner Parsing & Density Score (直近走の記号パース)
-                    if 'DensityScore' not in df.columns: df['DensityScore'] = 0.0
-                    for i, row in df.iterrows():
-                        past = row.get('PastRuns', [])
-                        if past:
-                            last_p = past[0].get('Passing', '-')
-                            p_info = race_analysis_tools.parse_corner_passing(last_p)
-                            df.at[i, 'DensityScore'] = p_info['density_score']
-                    # 残り600m位置推測列を追加（過去最終走）
-                    df = race_analysis_tools.add_pos600m_column(df)
-                    # 展開適合度スコア / 前崩れ影響度 / 密集ペナルティラベル を計算
-                    try:
-                        _pace_pre = calculator.analyze_pace_profile(df)
-                        _deploy_info = race_analysis_tools.get_deployment_match_rate(
-                            df, _pace_pre['positional_map'], _pace_pre['pace_label']
-                        )
-                        df = race_analysis_tools.calculate_all_deploy_scores(
-                            df,
-                            positional_map=_pace_pre['positional_map'],
-                            position_score_map=_pace_pre['position_score_map'],
-                            rpci=_deploy_info['rpci'],
-                            front_collapse_risk=_pace_pre['front_collapse_risk'],
-                        )
-                    except Exception as _de:
-                        import logging as _log; _log.getLogger(__name__).warning(f"[DeployScore] {_de}")
-                    st.session_state['df'] = df
-                    # --- tab1専用バックアップ: 他タブに移動しても復元可能にする ---
-                    st.session_state['tab1_df'] = df.copy()
-                    # Preserve metadata in session state
-                    if hasattr(df, 'attrs') and 'metadata' in df.attrs:
-                        st.session_state['race_metadata'] = df.attrs['metadata']
+                    if must_fetch:
+                        # 0. Preserve metadata before calculations wipe df.attrs
+                        _saved_metadata = df.attrs.get('metadata', {}) if hasattr(df, 'attrs') else {}
+
+                        # 2. Calculate
+                        df = calculator.calculate_battle_score(df)
+                        df = calculator.calculate_n_index(df)
+                        # --- [NEW] Race Analysis Tools Integration ---
+                        df = race_analysis_tools.get_pci_summary(df)
+                        # Corner Parsing & Density Score (直近走の記号パース)
+                        if 'DensityScore' not in df.columns: df['DensityScore'] = 0.0
+                        for i, row in df.iterrows():
+                            past = row.get('PastRuns', [])
+                            if past:
+                                last_p = past[0].get('Passing', '-')
+                                p_info = race_analysis_tools.parse_corner_passing(last_p)
+                                df.at[i, 'DensityScore'] = p_info['density_score']
+                        # 残り600m位置推測列を追加（過去最終走）
+                        df = race_analysis_tools.add_pos600m_column(df)
+                        # 展開適合度スコア / 前崩れ影響度 / 密集ペナルティラベル を計算
+                        try:
+                            _pace_pre = calculator.analyze_pace_profile(df)
+                            _deploy_info = race_analysis_tools.get_deployment_match_rate(
+                                df, _pace_pre['positional_map'], _pace_pre['pace_label']
+                            )
+                            df = race_analysis_tools.calculate_all_deploy_scores(
+                                df,
+                                positional_map=_pace_pre['positional_map'],
+                                position_score_map=_pace_pre['position_score_map'],
+                                rpci=_deploy_info['rpci'],
+                                front_collapse_risk=_pace_pre['front_collapse_risk'],
+                            )
+                        except Exception as _de:
+                            import logging as _log; _log.getLogger(__name__).warning(f"[DeployScore] {_de}")
+                        
+                        # Restore metadata to the final df
+                        if not hasattr(df, 'attrs') or df.attrs is None:
+                            df.attrs = {}
+                        df.attrs['metadata'] = _saved_metadata
+
+                        st.session_state['df'] = df
+                        # --- tab1専用バックアップ: 他タブに移動しても復元可能にする ---
+                        st.session_state['tab1_df'] = df.copy()
+                        # Preserve metadata in session state
+                        if hasattr(df, 'attrs') and 'metadata' in df.attrs:
+                            st.session_state['race_metadata'] = df.attrs['metadata']
+                        else:
+                            st.session_state['race_metadata'] = {'class': '-', 'weight_rule': '-', 'holding_days': '-', 'weather': '-', 'condition': '-', 'is_handicap': False}
+                        
+                        # Reset vision apply flag for new race
+                        if st.session_state.get('last_race_id') != race_id_input:
+                            st.session_state['vision_data_applied'] = True
+                            st.session_state['last_race_id'] = race_id_input
                     else:
-                        st.session_state['race_metadata'] = {'class': '-', 'weight_rule': '-', 'holding_days': '-', 'weather': '-', 'condition': '-', 'is_handicap': False}
-                    
-                    # Reset vision apply flag for new race
-                    if st.session_state.get('last_race_id') != race_id_input:
-                        st.session_state['vision_data_applied'] = True
-                        st.session_state['last_race_id'] = race_id_input
+                        # Restore metadata from df attrs if must_fetch is False
+                        if hasattr(df, 'attrs') and 'metadata' in df.attrs:
+                            st.session_state['race_metadata'] = df.attrs['metadata']
+                        elif st.session_state.get('tab1_df') is not None and hasattr(st.session_state['tab1_df'], 'attrs') and 'metadata' in st.session_state['tab1_df'].attrs:
+                            st.session_state['race_metadata'] = st.session_state['tab1_df'].attrs['metadata']
 
                     # --- オッズ・人気未取得 警告バナー ---
                     _pop_series = pd.to_numeric(df['Popularity'], errors='coerce') if 'Popularity' in df.columns else pd.Series(dtype=float)
@@ -1369,8 +1402,10 @@ if nav == "🏠 Single Race Analysis":
                                             df.at[idx[0], 'Odds'] = row['Odds']
                                     
                                     # 関連する計算を再実行
+                                    _saved_meta_manual = df.attrs.get('metadata', {}) if hasattr(df, 'attrs') else {}
                                     df = calculator.calculate_battle_score(df)
                                     df = calculator.calculate_n_index(df)
+                                    df.attrs['metadata'] = _saved_meta_manual
                                     st.session_state['df'] = df
                                     st.session_state['tab1_df'] = df.copy()
                                     st.success("✅ データを反映し、全ての指数を再計算しました。")
@@ -1690,12 +1725,79 @@ if nav == "🏠 Single Race Analysis":
 
                         if 'Popularity' in res.columns and 'Odds' in res.columns:
                             import pandas as _pd_conv
-                            gap_df = res.sort_values('Popularity').copy()
+                            gap_df = res.sort_values('Popularity').reset_index(drop=True).copy()
                             gap_df['Odds_num'] = _pd_conv.to_numeric(gap_df['Odds'], errors='coerce')
-                            gap_df['PrevOdds'] = gap_df['Odds_num'].shift(1)
-                            gap_df['OddsGap'] = gap_df.apply(lambda r: "⚠断層" if (r['PrevOdds'] or 0) > 0 and (r['Odds_num'] or 0)/(r['PrevOdds'] or 1) >= 1.5 else "-", axis=1)
+                            pop_ser = _pd_conv.to_numeric(gap_df['Popularity'], errors='coerce')
+
+                            # 断層位置を検出: 人気順で隣接する馬のオッズ比
+                            _gap_positions = []  # 断層が発生する「何番人気と何番人気の間」
+                            # 1〜6番人気の隣接間のみチェック（インデックス0〜4: 1-2位間〜5-6位間）
+                            for _gi in range(min(5, len(gap_df) - 1)):
+                                _o_cur = gap_df['Odds_num'].iloc[_gi]
+                                _o_nxt = gap_df['Odds_num'].iloc[_gi + 1]
+                                if _o_cur and _o_cur > 0 and _o_nxt and _o_nxt > 0:
+                                    if _o_nxt / _o_cur >= 2.0:
+                                        _gap_positions.append(_gi + 1)  # 0-indexedで「i+1番目の人気の前」に断層
+
+                                                        # 各馬のOddsGapパターン判定
+                            _num_gaps = len(_gap_positions)
+                            _gap_set = set(_gap_positions)
+
+                            def _classify_oddsgap(row_idx):
+                                """各馬に対してオッズ断層パターンを分類する"""
+                                if _num_gaps == 0:
+                                    return "断層なし"
+
+                                _has_gap_before = row_idx in _gap_set
+
+                                # 断層D系（2箇所以上）優先判定
+                                if _num_gaps >= 2:
+                                    # 断層D1: 1-2間 AND 2-3間 → 1・2番人気が圧倒的に強い
+                                    _is_d1 = (1 in _gap_set and 2 in _gap_set)
+                                    # 断層D2: 2-3間 AND 3-4間 → 2・3番人気を主軸に
+                                    _is_d2 = (2 in _gap_set and 3 in _gap_set)
+
+                                    if _has_gap_before:
+                                        if _is_d1 and row_idx in (1, 2):
+                                            return "断層D1"
+                                        if _is_d2 and row_idx in (2, 3):
+                                            return "断層D2"
+                                        return "断層D"
+                                    return "-"
+
+                                # 断層が1箇所のみ
+                                if not _has_gap_before:
+                                    return "-"
+
+                                if row_idx == 1:
+                                    return "断層A"
+                                if row_idx == 2:
+                                    return "断層B"
+                                if 3 <= row_idx <= 5:
+                                    return "断層C"
+
+                                return "-"
+
+                            gap_df['OddsGap'] = [_classify_oddsgap(_i) for _i in range(len(gap_df))]
+
+                            # 断層D判定: 2箇所以上断層がある場合、全行を「断層D」にする（先頭行判定を上書き）
+                            if _num_gaps >= 2:
+                                gap_df['OddsGap'] = gap_df['OddsGap'].apply(
+                                    lambda v: "断層D" if v not in ["-", "断層なし"] else v
+                                )
+                                # 断層D の場合は断層位置の直後の馬にのみ表示（全馬には付けない）
+                                gap_df['OddsGap'] = [
+                                    "断層D" if (_i in _gap_positions) else
+                                    ("断層なし" if _num_gaps == 0 else "-")
+                                    for _i in range(len(gap_df))
+                                ]
+
                             # ここでマージ
                             res = res.merge(gap_df[['Umaban', 'OddsGap']], on='Umaban', how='left')
+                            res['OddsGap'] = res['OddsGap'].fillna('-')
+
+                            # OddsGap はラベル文字列のまま（断層A, 断層B, ... 断層なし, -）
+                            # バッジパネル側でホバー説明＋クリック画像を実装
                         else:
                             res['OddsGap'] = "-"
 
@@ -2836,7 +2938,10 @@ if nav == "🏠 Single Race Analysis":
                         "Umaban": st.column_config.NumberColumn("馬番"),
                         "Popularity": st.column_config.TextColumn("人気"),
                         "Odds": st.column_config.TextColumn("単勝オッズ"),
-                        "OddsGap": st.column_config.TextColumn("オッズ断層"),
+                        "OddsGap": st.column_config.TextColumn(
+                            "オッズ断層",
+                            help="ホバーで詳細説明、クリックで解説画像が新タブ表示（テーブル上部のバッジをご利用ください）"
+                        ),
                         "SexAge": st.column_config.TextColumn("性別/年齢"),
                         "WeightHistory": st.column_config.TextColumn("当日馬体重(増減)"),
                         "WeightCarried": st.column_config.TextColumn("斤量"),
@@ -3058,7 +3163,17 @@ if nav == "🏠 Single Race Analysis":
                             styled_df = styled_df.apply(color_density_penalty, axis=0, subset=['DensityPenaltyLabel'])
 
                         def color_oddsgap(s):
-                            return ["color: red; font-weight: bold;" if "断層" in str(v) else "" for v in s]
+                            """オッズ断層パターン別カラーリング"""
+                            _gap_colors = {
+                                "断層A":   "color: #f59f00; font-weight: bold;",   # 金 — 1番人気圧倒的
+                                "断層B":   "color: #2b8a3e; font-weight: bold;",   # 緑 — 2番人気逆転狙い
+                                "断層C":   "color: #1864ab; font-weight: bold;",   # 青 — 直上馬浮上
+                                "断層D1":  "color: #7950f2; font-weight: bold;",   # 濃紫 — 1-2間+2-3間、上位2頭軸
+                                "断層D2":  "color: #d6336c; font-weight: bold;",   # 赤紫 — 2-3間+3-4間、2・3番人気軸
+                                "断層D":   "color: #ae3ec9; font-weight: bold;",   # 紫 — その他の複数断層
+                                "断層なし": "color: #868e96; font-style: italic;",  # グレー — 混戦
+                            }
+                            return [_gap_colors.get(str(v), "") for v in s]
                         if 'OddsGap' in view_df.columns:
                             styled_df = styled_df.apply(color_oddsgap, axis=0, subset=['OddsGap'])
 
@@ -3067,6 +3182,74 @@ if nav == "🏠 Single Race Analysis":
                         if 'JockeyChange' in view_df.columns:
                             styled_df = styled_df.apply(color_jockey_change, axis=0, subset=['JockeyChange'])
                         
+                        # === オッズ断層バッジパネル（ホバー→説明文 / クリック→解説画像）===
+                        try:
+                            _sb_base = "http://localhost:8501/app/static"
+                            _gap_badge_info = {
+                                "断層A":   {"color":"#f59f00","border":"#f59f00","bg":"rgba(245,159,0,0.08)",
+                                            "url":f"{_sb_base}/断層A.png",
+                                            "tip":"【断層A】1番人気と2番人気の間に断層&#10;&#10;特徴・戦略: 1番人気が圧倒的。1番人気を軸または1着固定にする。&#10;&#10;期待値・データ: 1番人気の勝率 52.9%、複勝率 80.7%。"},
+                                "断層B":   {"color":"#2b8a3e","border":"#2b8a3e","bg":"rgba(43,138,62,0.08)",
+                                            "url":f"{_sb_base}/断層B.png",
+                                            "tip":"【断層B】2番人気と3番人気の間に断層&#10;&#10;特徴・戦略: 1・2位の差が小さい(2倍以内)場合、2番人気の逆転を狙う。&#10;&#10;期待値・データ: 1番人気の勝率が通常より約8%低下する。"},
+                                "断層C":   {"color":"#1864ab","border":"#1864ab","bg":"rgba(24,100,171,0.08)",
+                                            "url":f"{_sb_base}/断層C.png",
+                                            "tip":"【断層C】3〜6番人気の間に断層&#10;&#10;特徴・戦略: その断層のすぐ上にいる直上馬が勝ち負けに浮上しやすい。&#10;&#10;期待値・データ: 4番人気などを軸に組み立てる。"},
+                                "断層D1":  {"color":"#7950f2","border":"#7950f2","bg":"rgba(121,80,242,0.08)",
+                                            "url":f"{_sb_base}/断層D1.png",
+                                            "tip":"【断層D1】1-2間 ＋ 2-3間に断層&#10;&#10;状態: 例 1番人気2.0倍、2番人気5.0倍(断層2.5倍)、3番人気12倍(断層2.4倍)。&#10;&#10;意味: 上位2頭の能力が3番人気以下と圧倒的な差。&#10;&#10;狙い方: 上位2頭を主軸に。1・2の差が大きければ1番人気不動軸、小さければ2番人気の逆転も視野に。"},
+                                "断層D2":  {"color":"#d6336c","border":"#d6336c","bg":"rgba(214,51,108,0.08)",
+                                            "url":f"{_sb_base}/断層D2.png",
+                                            "tip":"【断層D2】2-3間 ＋ 3-4間に断層&#10;&#10;状態: 例 2番人気5倍、3番人気10倍、4番人気25倍のような連続断層。&#10;&#10;意味: 4番人気以下の評価が極端に低く、上位3頭の信頼度が相対的に高い。&#10;&#10;狙い方: 2番人気と3番人気を主軸に。あえて1番人気をヒモに回す戦略も。"},
+                                "断層D":   {"color":"#ae3ec9","border":"#ae3ec9","bg":"rgba(174,62,201,0.08)",
+                                            "url":f"{_sb_base}/断層D.png",
+                                            "tip":"【断層D】複数箇所に断層&#10;&#10;能力の壁が複数存在し明確。断層の上にいる馬(直上馬)が好走しやすく、断層の下の馬は凡走しやすい傾向。&#10;&#10;狙い方: 断層上位の馬に絞り込んで厚く狙う。"},
+                                "断層なし": {"color":"#868e96","border":"#868e96","bg":"rgba(134,142,150,0.08)",
+                                             "url":f"{_sb_base}/断層なし.png",
+                                             "tip":"【断層なし】全てのオッズ差が2倍以下のなだらかなレース。&#10;&#10;特徴: 混戦で予想が困難。見送りが無難。"},
+                            }
+                            _gap_src = df if 'OddsGap' in df.columns else view_df
+                            _detected_gaps = [v for v in _gap_src['OddsGap'].unique()
+                                              if str(v) not in ['-', '', 'nan', 'None']]
+                            if _detected_gaps:
+                                _badge_html_parts = []
+                                for _gp in _detected_gaps:
+                                    _bi = _gap_badge_info.get(str(_gp))
+                                    if not _bi: continue
+                                    _badge_html_parts.append(
+                                        f'''<a href="{_bi['url']}" target="_blank" class="kba-gap-badge"
+                                            style="color:{_bi['color']};border:2px solid {_bi['border']};background:{_bi['bg']};">
+                                            {_gp}
+                                            <span class="kba-gap-tip">{_bi['tip']}</span>
+                                        </a>'''
+                                    )
+                                _full_badge_html = f"""
+<style>
+.kba-gap-badge {{
+    display:inline-block; padding:5px 15px; border-radius:20px; font-weight:bold;
+    font-size:14px; cursor:pointer; position:relative; text-decoration:none;
+    margin-right:8px; margin-bottom:6px; transition: box-shadow 0.2s;
+}}
+.kba-gap-badge:hover {{ box-shadow: 0 2px 12px rgba(0,0,0,0.25); }}
+.kba-gap-tip {{
+    visibility:hidden; opacity:0; background:#1a1a2e; color:#eee;
+    text-align:left; border-radius:10px; padding:12px 16px;
+    position:absolute; z-index:9999; bottom:130%; left:0;
+    transform:none; width:330px; font-size:13px;
+    font-weight:normal; white-space:pre-line; line-height:1.7;
+    border:1px solid #444; box-shadow:0 6px 24px rgba(0,0,0,0.5);
+    transition:opacity 0.2s; pointer-events:none;
+}}
+.kba-gap-badge:hover .kba-gap-tip {{ visibility:visible; opacity:1; }}
+</style>
+<div style="margin:4px 0 10px 0;">
+  <span style="font-size:12px;color:#888;margin-right:6px;">🔍 検出断層（ホバー→説明 / クリック→解説画像）</span><br style="margin:3px 0">
+  {"".join(_badge_html_parts)}
+</div>"""
+                                st.markdown(_full_badge_html, unsafe_allow_html=True)
+                        except Exception as _badge_ex:
+                            pass
+                        # ======================================================
                         st.dataframe(styled_df, column_config=column_config, use_container_width=True, hide_index=True)
                         
                         # --- [NEW] ボーナス内訳の可視化 (Top 5) ---
@@ -4113,6 +4296,439 @@ if nav == "🏠 Single Race Analysis":
                 st.error(f"An error occurred: {e}")
                 st.exception(e)
                 logger.error(f"Analysis Failed: {traceback.format_exc()}")
+
+# Tab 2 placeholder logic
+if nav == "🧹 消去フィルター":
+    st.header("🧹 消去フィルター")
+    st.caption("自然言語で消去条件を設定し、出馬表から該当する馬をリアルタイムで除外します。")
+
+    import json
+    import os
+    import re
+    from datetime import datetime
+
+    FILTER_PACK_FILE = "saved_filter_packs.json"
+
+    def load_filter_packs():
+        if os.path.exists(FILTER_PACK_FILE):
+            try:
+                with open(FILTER_PACK_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def save_filter_packs(packs):
+        with open(FILTER_PACK_FILE, "w", encoding="utf-8") as f:
+            json.dump(packs, f, ensure_ascii=False, indent=2)
+
+    def convert_natural_language_to_rule(user_input: str) -> dict:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            try:
+                api_key = st.secrets.get("GEMINI_API_KEY")
+            except:
+                pass
+                
+        fallback_rule = {
+            "field": "Name",
+            "operator": "contains",
+            "value": user_input,
+            "explanation": f"「{user_input}」を含む馬"
+        }
+        
+        if not api_key:
+            return fallback_rule
+            
+        prompt = f"""あなたは競馬データフィルタリングのルール変換AIです。
+ユーザーが指定した自然言語の消去条件を、プログラムで処理可能な構造化JSONルールに変換してください。
+
+馬のデータ構造は以下の通りです：
+- `Umaban` (int): 馬番
+- `Name` (str): 馬名
+- `SexAge` (str): 性別と年齢（例：「牡3」「牝4」「セ5」）
+- `Jockey` (str): 騎手名（例：「ルメール」「川田将雅」）
+- `Odds` (float): 単勝オッズ
+- `Popularity` (int): 単勝人気
+- `Weight` (str): 馬体重（例：「474(+6)」「512(-2)」）
+- `WeightCarried` (float): 斤量（例: 57.0）
+- `Trainer` (str): 調教師名（例：「国枝」「藤原」）
+
+出力フォーマットは必ず以下のJSONオブジェクト1つのみとしてください。Markdownのコードブロック（```json）は使わずに、直接プレーンテキストのJSON文字列として出力してください：
+{{
+  "field": "フィールド名（'Umaban', 'Name', 'SexAge', 'Jockey', 'Odds', 'Popularity', 'Weight', 'WeightCarried', 'Trainer' のいずれか）",
+  "operator": "演算子（'contains', 'not_contains', 'eq', 'ne', 'gt', 'ge', 'lt', 'le', 'is_odd', 'is_even'）",
+  "value": "比較する値（文字列、数値。演算子が is_odd/is_even などの場合は null。数値の場合は引用符をつけない数値型にしてください）",
+  "explanation": "条件の日本語説明（例: 'オッズが10倍未満'）"
+}}
+
+ユーザーの消去条件: 「{user_input}」
+"""
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            rule = json.loads(text)
+            return rule
+        except Exception as e:
+            logger.warning(f"AI rule conversion failed, using fallback: {e}")
+            import re
+            
+            # オッズの判定
+            m_odds_lt = re.search(r'オッズ\s*(\d+(?:\.\d+)?)\s*倍?\s*(未満|以下|より小さい|より低)', user_input)
+            if m_odds_lt:
+                val = float(m_odds_lt.group(1))
+                return {"field": "Odds", "operator": "lt", "value": val, "explanation": f"オッズが {val}倍 未満"}
+                
+            m_odds_gt = re.search(r'オッズ\s*(\d+(?:\.\d+)?)\s*倍?\s*(以上|超|より大きい|より高)', user_input)
+            if m_odds_gt:
+                val = float(m_odds_gt.group(1))
+                return {"field": "Odds", "operator": "gt", "value": val, "explanation": f"オッズが {val}倍 以上"}
+                
+            # 人気の判定
+            m_pop_lt = re.search(r'(\d+)\s*人気\s*(以内|以下|より上|未満)', user_input)
+            if m_pop_lt:
+                val = int(m_pop_lt.group(1))
+                return {"field": "Popularity", "operator": "le", "value": val, "explanation": f"{val}人気 以内"}
+                
+            m_pop_gt = re.search(r'(\d+)\s*人気\s*(以降|以上|より下|超)', user_input)
+            if m_pop_gt:
+                val = int(m_pop_gt.group(1))
+                return {"field": "Popularity", "operator": "ge", "value": val, "explanation": f"{val}人気 以下"}
+
+            # 3歳馬などの年齢
+            m_age = re.search(r'(\d+)\s*歳馬?', user_input)
+            if m_age:
+                val = m_age.group(1)
+                return {"field": "SexAge", "operator": "contains", "value": val, "explanation": f"{val}歳馬"}
+
+            # 馬番
+            if "奇数" in user_input:
+                return {"field": "Umaban", "operator": "is_odd", "value": None, "explanation": "馬番が奇数"}
+            if "偶数" in user_input:
+                return {"field": "Umaban", "operator": "is_even", "value": None, "explanation": "馬番が偶数"}
+
+            return fallback_rule
+
+    def apply_rule_to_row(row: dict, rule: dict) -> bool:
+        field = rule.get("field")
+        operator = rule.get("operator")
+        val = rule.get("value")
+        
+        if field not in row:
+            return False
+            
+        row_val = row[field]
+        if row_val is None:
+            return False
+            
+        try:
+            if operator == "contains":
+                return str(val).lower() in str(row_val).lower()
+            elif operator == "not_contains":
+                return str(val).lower() not in str(row_val).lower()
+            elif operator == "eq":
+                if isinstance(row_val, (int, float)) and isinstance(val, (int, float)):
+                    return float(row_val) == float(val)
+                return str(row_val).lower() == str(val).lower()
+            elif operator == "ne":
+                if isinstance(row_val, (int, float)) and isinstance(val, (int, float)):
+                    return float(row_val) != float(val)
+                return str(row_val).lower() != str(val).lower()
+            elif operator == "gt":
+                if field == "Weight" and isinstance(row_val, str):
+                    m = re.search(r'^(\d+)', row_val)
+                    if m: row_val = float(m.group(1))
+                return float(row_val) > float(val)
+            elif operator == "ge":
+                if field == "Weight" and isinstance(row_val, str):
+                    m = re.search(r'^(\d+)', row_val)
+                    if m: row_val = float(m.group(1))
+                return float(row_val) >= float(val)
+            elif operator == "lt":
+                if field == "Weight" and isinstance(row_val, str):
+                    m = re.search(r'^(\d+)', row_val)
+                    if m: row_val = float(m.group(1))
+                return float(row_val) < float(val)
+            elif operator == "le":
+                if field == "Weight" and isinstance(row_val, str):
+                    m = re.search(r'^(\d+)', row_val)
+                    if m: row_val = float(m.group(1))
+                return float(row_val) <= float(val)
+            elif operator == "is_odd":
+                return int(row_val) % 2 != 0
+            elif operator == "is_even":
+                return int(row_val) % 2 == 0
+        except Exception as e:
+            logger.warning(f"Error applying rule {rule} to field {field}: {e}")
+            
+        return False
+
+    # ── Session Stateの初期化 ──
+    if 'kf_rules' not in st.session_state:
+        st.session_state['kf_rules'] = []
+    if 'kf_race_id' not in st.session_state:
+        st.session_state['kf_race_id'] = "202405020611"
+    if 'kf_race_data' not in st.session_state:
+        st.session_state['kf_race_data'] = None
+    if 'kf_selected_rules' not in st.session_state:
+        st.session_state['kf_selected_rules'] = {}
+        
+    packs = load_filter_packs()
+    
+    # --- 上部: レース検索カード ---
+    st.markdown("### 🔍 レースを検索")
+    
+    col_id, col_btn = st.columns([4, 1])
+    with col_id:
+        race_id_input = st.text_input(
+            "netkeibaのレースIDを入力して出馬表を取得します",
+            value=st.session_state['kf_race_id'],
+            placeholder="例: 202405020611",
+            label_visibility="collapsed"
+        )
+    with col_btn:
+        fetch_clicked = st.button("▶ データ取得", use_container_width=True)
+        
+    if fetch_clicked or st.session_state['kf_race_data'] is None:
+        if race_id_input:
+            st.session_state['kf_race_id'] = race_id_input
+            with st.spinner("出馬データを取得中..."):
+                try:
+                    df = scraper.get_race_data(race_id_input)
+                    if not df.empty:
+                        st.session_state['kf_race_data'] = df
+                        st.success(f"レースデータを取得しました！ ({len(df)}頭)")
+                    else:
+                        st.error("データの取得に失敗しました。レースIDが正しいか、またはネットワーク環境を確認してください。")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+                    
+    if st.session_state['kf_race_data'] is not None:
+        df = st.session_state['kf_race_data']
+        metadata = df.attrs.get('metadata', {})
+        
+        col_left, col_right = st.columns([1, 3])
+        
+        with col_left:
+            st.markdown("### 🧠 AIフィルタリング")
+            st.caption("自然言語で条件を追加できます。")
+            st.caption("例: 「オッズ10倍未満」「ルメール騎手」「3歳馬」「馬番が奇数」")
+            
+            col_cond_input, col_cond_add = st.columns([4, 1])
+            with col_cond_input:
+                new_cond = st.text_input(
+                    "条件を入力してEnter",
+                    placeholder="ルメール騎手",
+                    label_visibility="collapsed",
+                    key="kf_new_cond_input"
+                )
+            with col_cond_add:
+                add_cond_clicked = st.button("➕", key="kf_add_cond_btn")
+                
+            if add_cond_clicked or (new_cond and new_cond != st.session_state.get('last_processed_cond', '')):
+                if new_cond:
+                    st.session_state['last_processed_cond'] = new_cond
+                    with st.spinner("AIが条件を解析中..."):
+                        rule = convert_natural_language_to_rule(new_cond)
+                        if rule not in st.session_state['kf_rules']:
+                            st.session_state['kf_rules'].append(rule)
+                            st.rerun()
+                            
+            st.write("---")
+            st.write("**追加された条件:**")
+            
+            if not st.session_state['kf_rules']:
+                st.info("条件は追加されていません。")
+            else:
+                rules_to_delete = []
+                for idx, rule in enumerate(st.session_state['kf_rules']):
+                    explanation = rule.get("explanation", "不明な条件")
+                    
+                    r_col_chk, r_col_del = st.columns([4, 1])
+                    with r_col_chk:
+                        is_checked = st.checkbox(
+                            explanation,
+                            value=st.session_state['kf_selected_rules'].get(idx, True),
+                            key=f"kf_rule_chk_{idx}"
+                        )
+                        st.session_state['kf_selected_rules'][idx] = is_checked
+                    with r_col_del:
+                        if st.button("🗑️", key=f"kf_rule_del_{idx}"):
+                            rules_to_delete.append(idx)
+                            
+                if rules_to_delete:
+                    for idx in sorted(rules_to_delete, reverse=True):
+                        st.session_state['kf_rules'].pop(idx)
+                        if idx in st.session_state['kf_selected_rules']:
+                            del st.session_state['kf_selected_rules'][idx]
+                    st.rerun()
+                    
+                st.write("---")
+                st.write("**📁 フィルターパックとして保存**")
+                pack_name = st.text_input("パック名（例: １次選抜）", placeholder="１次選抜", key="kf_pack_name")
+                if st.button("💾 選択した条件をパックとして保存", use_container_width=True):
+                    if pack_name:
+                        selected_rules = [
+                            st.session_state['kf_rules'][idx]
+                            for idx, checked in st.session_state['kf_selected_rules'].items()
+                            if checked and idx < len(st.session_state['kf_rules'])
+                        ]
+                        if selected_rules:
+                            packs[pack_name] = selected_rules
+                            save_filter_packs(packs)
+                            st.success(f"パック『{pack_name}』を保存しました！")
+                            st.rerun()
+                        else:
+                            st.warning("保存する条件が選択されていません。")
+                    else:
+                        st.warning("パック名を入力してください。")
+                        
+            if packs:
+                st.write("---")
+                st.write("**📂 保存済みパックを読み込む**")
+                selected_pack = st.selectbox("パックを選択", ["選択してください..."] + list(packs.keys()), key="kf_pack_select")
+                if selected_pack != "選択してください...":
+                    if st.button("⚡ パックを適用する", use_container_width=True):
+                        st.session_state['kf_rules'] = list(packs[selected_pack])
+                        st.session_state['kf_selected_rules'] = {i: True for i in range(len(packs[selected_pack]))}
+                        st.success(f"パック『{selected_pack}』を適用しました！")
+                        st.rerun()
+                    if st.button("🗑️ パックを削除する", use_container_width=True):
+                        del packs[selected_pack]
+                        save_filter_packs(packs)
+                        st.success(f"パック『{selected_pack}』を削除しました。")
+                        st.rerun()
+                        
+        with col_right:
+            race_name = metadata.get('RaceName', metadata.get('RaceTitle', 'Unknown Race'))
+            race_date = df.iloc[0]['RaceDate'] if not df.empty else datetime.now().strftime("%Y/%m/%d")
+            venue = df.iloc[0]['Venue'] if not df.empty else 'Unknown'
+            dist = df.iloc[0]['CurrentDistance'] if not df.empty else 1600
+            surf = df.iloc[0]['CurrentSurface'] if not df.empty else '芝'
+            weather = metadata.get('weather', '-')
+            condition = metadata.get('condition', '-')
+            class_val = metadata.get('class', '-')
+            weight_rule = metadata.get('weight_rule', '-')
+            
+            header_detail = f"{race_date} | {venue} {class_val} {weight_rule} / {surf}{dist}m | 天候:{weather} 馬場:{condition}"
+            
+            active_rules = [
+                st.session_state['kf_rules'][idx]
+                for idx, checked in st.session_state['kf_selected_rules'].items()
+                if checked and idx < len(st.session_state['kf_rules'])
+            ]
+            
+            eliminated_umaban = []
+            display_rows = []
+            
+            for _, row in df.iterrows():
+                row_dict = row.to_dict()
+                
+                is_eliminated = False
+                matched_rule_explanation = ""
+                for rule in active_rules:
+                    if apply_rule_to_row(row_dict, rule):
+                        is_eliminated = True
+                        matched_rule_explanation = rule.get("explanation", "")
+                        break
+                        
+                row_data = {
+                    'Status': '❌ 消去' if is_eliminated else '✅ 残存',
+                    'MatchReason': matched_rule_explanation if is_eliminated else '',
+                    'Umaban': int(row['Umaban']) if pd.notna(row['Umaban']) else 0,
+                    'Name': row['Name'],
+                    'SexAge': row.get('SexAge', '-'),
+                    'Jockey': row['Jockey'],
+                    'WeightCarried': row.get('WeightCarried', '-'),
+                    'Odds': row.get('Odds', 0.0),
+                    'Popularity': int(row['Popularity']) if pd.notna(row['Popularity']) else 99,
+                    'Weight': row.get('Weight', '-'),
+                    'Trainer': row.get('Trainer', '-')
+                }
+                
+                if is_eliminated:
+                    eliminated_umaban.append(row_data['Umaban'])
+                    
+                display_rows.append(row_data)
+                
+            total_horses = len(df)
+            eliminated_count = len(eliminated_umaban)
+            
+            col_h_left, col_h_right = st.columns([3, 1])
+            with col_h_left:
+                st.markdown(f"## {race_name}")
+                st.markdown(f"*{header_detail}*")
+            with col_h_right:
+                st.html(f"""
+                <div style="background-color: #1e1e1e; border: 2px solid #FF3333; border-radius: 20px; padding: 10px 20px; text-align: center; color: white; font-weight: bold; font-size: 1.1em; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                    消去対象: <span style="color: #FF3333; font-size: 1.3em;">{eliminated_count}</span> / {total_horses} 頭
+                </div>
+                """)
+                
+            st.write("---")
+            
+            hide_eliminated = st.checkbox("❌ 消去対象の馬を非表示にする", value=False)
+            
+            df_display = pd.DataFrame(display_rows)
+            
+            if hide_eliminated:
+                df_display = df_display[df_display['Status'] == '✅ 残存']
+                
+            df_display = df_display.rename(columns={
+                'Status': '状態',
+                'MatchReason': '消去理由',
+                'Umaban': '馬番',
+                'Name': '馬名',
+                'SexAge': '性齢',
+                'Jockey': '騎手',
+                'WeightCarried': '斤量',
+                'Odds': '単勝オッズ',
+                'Popularity': '人気',
+                'Weight': '馬体重',
+                'Trainer': '厩舎'
+            })
+            
+            col_order = ['状態', '馬番', '馬名', '性齢', '騎手', '斤量', '単勝オッズ', '人気', '馬体重', '厩舎', '消去理由']
+            df_display = df_display[[c for c in col_order if c in df_display.columns]]
+            
+            def style_dataframe(df_in):
+                styler = df_in.style.format({
+                    '単勝オッズ': '{:.1f}'
+                })
+                
+                def apply_row_styles(row):
+                    if row['状態'] == '❌ 消去':
+                        # グレー背景 + 赤打ち消し線
+                        return [
+                            'background-color: #2e2e2e; color: #aaaaaa; '
+                            'text-decoration: line-through; text-decoration-color: #ff4444; '
+                            'text-decoration-thickness: 2px;'
+                        ] * len(row)
+                    return [''] * len(row)
+                    
+                styler = styler.apply(apply_row_styles, axis=1)
+                return styler
+                
+            st.write("**📊 出馬データ表**")
+            # 全頭スクロールなし表示: 1行あたり約35px + ヘッダー38px
+            n_rows = len(df_display)
+            table_height = 38 + n_rows * 35
+            st.dataframe(
+                style_dataframe(df_display),
+                use_container_width=True,
+                hide_index=True,
+                height=table_height
+            )
 
 # Tab 2 placeholder logic
 if nav == "🔍 Race Scanner (Batch)":
@@ -9016,6 +9632,11 @@ if nav == "🏇 騎手分析Pro":
                 _hc = _madv.get('hot_cold', '—')
                 _hc_icon = {'HOT': '🔥', 'COLD': '🧊'}.get(_hc, '')
                 _rstyle = _madv.get('riding_style', '—')
+                _usm = _adv_full.get('usm', {})
+                _win_usm = _usm.get('win_usm', '-')
+                _top2_usm = _usm.get('top2_usm', '-')
+                _top3_usm = _usm.get('top3_usm', '-')
+
                 scored.append({
                     '_umaban': _e.get('umaban', 0),
                     '_score': _sc,
@@ -9031,6 +9652,9 @@ if nav == "🏇 騎手分析Pro":
                     'PRB': f"{_prb:.2f}",
                     '調子': f"{_hc_icon}{_hc}" if _hc != '—' else '—',
                     '脚質傾向': _rstyle,
+                    '単勝USM': f"{_win_usm}%" if isinstance(_win_usm, int) else "-",
+                    '連対USM': f"{_top2_usm}%" if isinstance(_top2_usm, int) else "-",
+                    '複勝USM': f"{_top3_usm}%" if isinstance(_top3_usm, int) else "-",
                     'コース連対%': f"{_vs.get('adj_top2_rate', 0)*100:.1f}",
                     'コース複勝%': f"{_vs.get('top3_rate', 0)*100:.1f}",
                     '単回収%': f"{_vs.get('adj_win_return', 0):.0f}",
@@ -9075,6 +9699,7 @@ if nav == "🏇 騎手分析Pro":
 
             _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
                              '人気', 'オッズ', 'PRB', '調子', '脚質傾向',
+                             '単勝USM', '連対USM', '複勝USM',
                              'コース連対%', 'コース複勝%', '単回収%',
                              '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
             _df_rank = pd.DataFrame(scored)[_display_cols]
@@ -9130,6 +9755,9 @@ if nav == "🏇 騎手分析Pro":
                                     help="直近30日PRB vs 全体PRB比較。HOT=好調 / COLD=不調"),
                     '脚質傾向':   st.column_config.TextColumn("脚質", width="small",
                                     help="直近の通過順位から推定した騎乗スタイル"),
+                    '単勝USM':    st.column_config.TextColumn("単勝USM", width="small"),
+                    '連対USM':    st.column_config.TextColumn("連対USM", width="small"),
+                    '複勝USM':    st.column_config.TextColumn("複勝USM", width="small"),
                     'コース連対%': st.column_config.TextColumn(f"{_jp_venue}連対%", width="small"),
                     'コース複勝%': st.column_config.TextColumn(f"{_jp_venue}複勝%", width="small"),
                     '単回収%':    st.column_config.TextColumn("単回収%", width="small"),
@@ -9223,11 +9851,17 @@ if nav == "🏇 騎手分析Pro":
                 # Recent Form bars
                 _rf = _cadv.get('recent_form', {})
                 _rf_html = ""
+                _prev_sample = -1
                 for _rfd, _rfl in [('14d', '14日'), ('30d', '30日'), ('90d', '90日')]:
                     _rfv = _rf.get(_rfd)
                     if _rfv:
+                        _sample_size = _rfv.get('sample', 0)
+                        if _sample_size > 0 and _sample_size == _prev_sample:
+                            continue
+                        _prev_sample = _sample_size
+                        
                         _rfp = _rfv.get('prb', 0.5)
-                        _rfn = _rfv.get('sample', 0)
+                        _rfn = _sample_size
                         _rft3 = _rfv.get('top3_rate', 0)
                         _rfbar_w = int(min(_rfp * 100, 100))
                         _rfbar_c = '#6fcf97' if _rfp >= 0.60 else '#FFAB40' if _rfp >= 0.50 else '#ef4444'
@@ -10164,3 +10798,6 @@ if nav == "🏇 騎手分析Pro":
 # --- Footer ---
 st.divider()
 st.caption("Keiba Analysis v2.5 - Powered by Streamlit & Gemini API")
+
+
+

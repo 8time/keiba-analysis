@@ -1219,6 +1219,57 @@ def extract_trainer(row):
         logger.warning(f"[Trainer] Extraction failed for row block.")
     return trainer
 
+def extract_race_metadata(soup, race_date_val=""):
+    """Extracts metadata like weather, condition, and holding days from the page."""
+    metadata = {
+        'class': '-',
+        'weight_rule': '-',
+        'holding_days': '-',
+        'weather': '-',
+        'condition': '-',
+        'is_handicap': False,
+        'date_val': race_date_val
+    }
+    try:
+        name_box = soup.find('div', class_='RaceList_NameBox')
+        if name_box:
+            d01 = name_box.find('div', class_='RaceData01')
+            if d01:
+                t01 = d01.text.strip()
+                m_weather = re.search(r'天候:(\w+)', t01)
+                if m_weather: metadata['weather'] = m_weather.group(1)
+                m_cond = re.search(r'馬場:(\w+)', t01)
+                if m_cond: metadata['condition'] = m_cond.group(1)
+            
+            d02 = name_box.find('div', class_='RaceData02')
+            if d02:
+                t02 = d02.text.strip()
+                m_day = re.search(r'(\d+)日目', t02)
+                venue = ''
+                parts = [p.strip() for p in t02.split('\n') if p.strip()]
+                for i, p in enumerate(parts):
+                    if p.endswith('回') and i+1 < len(parts):
+                        venue = parts[i+1]
+                        break
+                if m_day:
+                    metadata['holding_days'] = f"{venue} {m_day.group(1)}" if venue else m_day.group(1)
+                
+                rules = ['ハンデ', '別定', '定量', '馬齢']
+                for r in rules:
+                    if r in t02:
+                        metadata['weight_rule'] = r
+                        if r == 'ハンデ': metadata['is_handicap'] = True
+                        break
+                
+                classes = ['新馬', '未勝利', '1勝クラス', '2勝クラス', '3勝クラス', 'オープン', 'G1', 'G2', 'G3', 'GI', 'GII', 'GIII']
+                for c in classes:
+                    if c in t02:
+                        metadata['class'] = c
+                        break
+    except Exception as e:
+        logger.warning(f"Failed to extract race metadata: {e}")
+    return metadata
+
 def get_race_data(race_id, use_storage=True):
     """Main function to scrape race card data with ROBUST EXTRACTION.
 
@@ -1269,8 +1320,24 @@ def get_race_data(race_id, use_storage=True):
                                 logger.info(f"[Storage] Re-fetched {len(_odds_map)} live odds for {race_id}")
                         except Exception as _oe:
                             logger.warning(f"[Storage] Live odds re-fetch failed: {_oe}")
-                        # ─────────────────────────────────────────────────────────
-                        return _stored.reset_index(drop=True)
+                        
+                        _res_df = _stored.reset_index(drop=True)
+                        # --- Re-fetch metadata for cached data ---
+                        try:
+                            _url = f"https://nar.netkeiba.com/race/shutuba.html?race_id={race_id}" if _is_nar(race_id) else f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
+                            _html = fetch_robust_html(_url)
+                            if _html:
+                                _soup = BeautifulSoup(_html, 'html.parser', from_encoding='utf-8')
+                                if not _is_nar(race_id) and not _soup.find('tr', class_='HorseList'):
+                                    _url2 = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+                                    _html2 = fetch_robust_html(_url2)
+                                    if _html2: _soup = BeautifulSoup(_html2, 'html.parser', from_encoding='utf-8')
+                                _res_df.attrs['metadata'] = extract_race_metadata(_soup, "")
+                        except Exception as _me:
+                            logger.warning(f"[Storage] Failed to re-fetch metadata: {_me}")
+                            _res_df.attrs['metadata'] = {}
+                        
+                        return _res_df
         except Exception as _e:
             logger.warning(f"[Storage] Failed to load from cache: {_e}")
     # ────────────────────────────────────────────────────────────────────────
@@ -1671,53 +1738,7 @@ def get_race_data(race_id, use_storage=True):
                 df['Popularity'] = df['Umaban'].map(lambda u: _rp.get(u, 99) if pd.notna(u) else 99)
 
     # --- [NEW] Extract Metadata for Dashboard ---
-    metadata = {
-        'class': '-',
-        'weight_rule': '-',
-        'holding_days': '-',
-        'weather': '-',
-        'condition': '-',
-        'is_handicap': False,
-        'date_val': race_date_val
-    }
-    
-    try:
-        name_box = soup.find('div', class_='RaceList_NameBox')
-        if name_box:
-            d01 = name_box.find('div', class_='RaceData01')
-            if d01:
-                t01 = d01.text.strip()
-                # 天候:晴 馬場:良
-                m_weather = re.search(r'天候:(\w+)', t01)
-                if m_weather: metadata['weather'] = m_weather.group(1)
-                m_cond = re.search(r'馬場:(\w+)', t01)
-                if m_cond: metadata['condition'] = m_cond.group(1)
-            
-            d02 = name_box.find('div', class_='RaceData02')
-            if d02:
-                t02 = d02.text.strip()
-                # 2回中山8日目 4歳以上オープン 別定
-                # 開催日数
-                m_day = re.search(r'(\d+)日目', t02)
-                if m_day: metadata['holding_days'] = m_day.group(1)
-                
-                # 斤量ルール
-                rules = ['ハンデ', '別定', '定量', '馬齢']
-                for r in rules:
-                    if r in t02:
-                        metadata['weight_rule'] = r
-                        if r == 'ハンデ': metadata['is_handicap'] = True
-                        break
-                
-                # クラス
-                classes = ['新馬', '未勝利', '1勝クラス', '2勝クラス', '3勝クラス', 'オープン', 'G1', 'G2', 'G3', 'GI', 'GII', 'GIII']
-                for c in classes:
-                    if c in t02:
-                        metadata['class'] = c
-                        break
-    except Exception as e:
-        logger.warning(f"Failed to extract race metadata: {e}")
-
+    metadata = extract_race_metadata(soup, race_date_val)
     df.attrs['metadata'] = metadata
 
     if df.empty:

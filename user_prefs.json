@@ -2,8 +2,8 @@
   "single_race_col_order": [
     "Rank",
     "Umaban",
+    "Waku",
     "Popularity",
-    "Odds",
     "Name",
     "Jockey",
     "Signal",
@@ -14,17 +14,18 @@
     "Stress",
     "SexAge",
     "WeightHistory",
-    "WeightCarried",
     "Trainer",
     "Bloodline",
     "JockeyChange",
-    "ボーナス詳細",
     "NIndex",
     "Strength (X)",
     "Suitability (Y)",
     "SpeedIndex",
     "AvgAgari",
     "Alert",
-    "RiskFlags"
+    "RiskFlags",
+    "WeightCarried",
+    "Pos600m",
+    "Odds"
   ]
 }
