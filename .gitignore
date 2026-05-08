@@ -4,6 +4,6 @@ __pycache__/
 auth_session.json
 *.html
 saved_logic_notes.json
-.streamlit/
+.streamlit/secrets.toml
 data/
 race_history.csv
