@@ -9824,13 +9824,13 @@ if nav == "🏇 騎手分析Pro":
                 rank = row['順位']
                 flag = str(row['フラグ'])
                 if rank == 1:
-                    return ['background-color: #3D1A00; color: #FFD700; font-weight: bold;'] * len(row)
+                    return ['background-color: #2a2200; color: #FBC02D; font-weight: bold; border-top: 1px solid #FBC02D; border-bottom: 1px solid #FBC02D;'] * len(row)
                 if rank == 2:
-                    return ['background-color: #1A2B3D; color: #C0C0C0; font-weight: bold;'] * len(row)
+                    return ['background-color: #2a1100; color: #F57C00; font-weight: bold; border-top: 1px solid #F57C00; border-bottom: 1px solid #F57C00;'] * len(row)
                 if rank == 3:
-                    return ['background-color: #1A3D1A; color: #CD7F32; font-weight: bold;'] * len(row)
+                    return ['background-color: #001a00; color: #66BB6A; font-weight: bold; border-top: 1px solid #66BB6A; border-bottom: 1px solid #66BB6A;'] * len(row)
                 if "🔵 危険" in flag:
-                    return ['background-color: #0D1A3D; color: #7B9FFF;'] * len(row)
+                    return ['color: #7B9FFF;'] * len(row)
                 return [''] * len(row)
 
             def _style_eval(val):
@@ -9997,7 +9997,7 @@ if nav == "🏇 騎手分析Pro":
                 if _t_tac or _j_tac:
                     _tactics_html = f"""
                     <div style="font-size:0.75em;color:#888;margin:8px 0 2px 0;">🏠 生涯脚質・作戦傾向（専門家集計データ / 2016年〜2026年）</div>
-                    <div style="background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;margin:2px 0 8px 0;">
+                    <div style="background:#222;border:1px solid #333;border-radius:8px;padding:8px;margin:2px 0 8px 0;">
                       <table style="width:100%;font-size:0.85em;text-align:center;color:#eee;border-collapse:collapse;">
                         <tr style="border-bottom:1px solid #444;"><th style="color:#aaa;padding:4px;">対象</th><th>逃げ</th><th>先行</th><th>中団</th><th>後方</th><th>マクリ</th></tr>
                     """
@@ -10039,89 +10039,94 @@ if nav == "🏇 騎手分析Pro":
                             f'</div>'
                         )
 
+                # 順位に応じたバッジ色
+                _badge_bg = "#FBC02D" if _s['順位'] == 1 else "#F57C00" if _s['順位'] == 2 else "#757575"
+                _badge_color = "#000" if _s['順位'] == 1 else "#fff"
+
                 st.html(f"""
-                <div style="border:2px solid {_rank_color};border-radius:12px;padding:16px;margin-bottom:12px;background:#111;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <div>
-                      <span style="font-size:2em;color:{_rank_color};font-weight:bold;margin-right:10px;">
-                        {_s['評価']}
-                      </span>
-                      <span style="font-size:1.3em;font-weight:bold;color:#fff;">
+                <div style="border: 1px solid #333; border-radius: 12px; padding: 16px; margin-bottom: 16px; background: #1c1c1c;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center;">
+                      <!-- 順位バッジ -->
+                      <div style="width: 28px; height: 28px; border-radius: 6px; background: {_badge_bg}; color: {_badge_color}; font-weight: bold; font-size: 1.1em; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
+                        {_s['順位']}
+                      </div>
+                      <span style="font-size: 1.3em; font-weight: bold; color: #fff;">
                         {_s['馬番']}番 {_s['馬名']}
                       </span>
-                      <span style="color:#aaa;margin-left:10px;font-size:0.95em;">
+                      <span style="color: #aaa; margin-left: 12px; font-size: 0.9em;">
                         🏇 {_s['騎手']} ／ 🏠 {_s['厩舎']}
                       </span>
                     </div>
-                    <div style="text-align:right;">
-                      <div style="font-size:1.8em;font-weight:bold;color:{_rank_color};">{_s['総合スコア']:.0f} pt</div>
-                      <div style="font-size:0.8em;color:#888;">総合スコア</div>
+                    <div style="text-align: right;">
+                      <div style="font-size: 1.6em; font-weight: bold; color: #fff;">{_s['総合スコア']:.1f} <span style="font-size: 0.6em; color: #888;">pt</span></div>
                     </div>
                   </div>
-                  <div style="margin-bottom:8px;">{_badge_html2}</div>
-                  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0;">
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('adj_top2_rate', 0)*100:.1f}%</div>
-                      <div style="font-size:0.75em;color:#888;">{_jp_venue}連対率</div>
+                  <div style="margin-bottom: 12px;">{_badge_html2}</div>
+                  
+                  <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 12px 0;">
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: #fff;">{_vs2.get('adj_top2_rate', 0)*100:.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">{_jp_venue}連対率</div>
                     </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('top3_rate', 0)*100:.1f}%</div>
-                      <div style="font-size:0.75em;color:#888;">{_jp_venue}複勝率</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: #fff;">{_vs2.get('top3_rate', 0)*100:.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">{_jp_venue}複勝率</div>
                     </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:{'#6fcf97' if _vs2.get('adj_win_return',0)>=100 else '#f59e0b' if _vs2.get('adj_win_return',0)>=80 else '#ef4444'};">{_vs2.get('adj_win_return', 0):.0f}%</div>
-                      <div style="font-size:0.75em;color:#888;">単回収率</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: {'#6fcf97' if _vs2.get('adj_win_return',0)>=100 else '#fff'};">{_vs2.get('adj_win_return', 0):.0f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">単回収率</div>
                     </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_vs2.get('rides', 0)}</div>
-                      <div style="font-size:0.75em;color:#888;">騎乗数</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: #fff;">{_vs2.get('rides', 0)}</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">騎乗数</div>
                     </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;border:1px solid #444;">
-                      <div style="font-size:1.3em;font-weight:bold;color:{_pw2_color};">{_pw2_str}</div>
-                      <div style="font-size:0.75em;color:#888;">PW指数</div>
-                    </div>
-                  </div>
-                  <!-- PRB / 調子 / 脚質 / 本年 -->
-                  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:6px 0;">
-                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:{_cprb_color};">{_cprb:.2f}</div>
-                      <div style="font-size:0.75em;color:#888;">PRB</div>
-                    </div>
-                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.1em;font-weight:bold;color:{_chc_color};">{_chc_str}</div>
-                      <div style="font-size:0.75em;color:#888;">調子</div>
-                    </div>
-                    <div style="text-align:center;background:#0d1f0d;border:1px solid #2d5a2d;border-radius:8px;padding:8px;">
-                      <div style="font-size:1em;font-weight:bold;color:#fff;">{_c_rstyle}</div>
-                      <div style="font-size:0.75em;color:#888;">脚質傾向</div>
-                    </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('win_rate', 0)*100:.1f}%</div>
-                      <div style="font-size:0.75em;color:#888;">本年勝率</div>
-                    </div>
-                    <div style="text-align:center;background:#1a1a2e;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.3em;font-weight:bold;color:#fff;">{_ys2.get('top3_rate', 0)*100:.1f}%</div>
-                      <div style="font-size:0.75em;color:#888;">本年複勝率</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: {_pw2_color};">{_pw2_str}</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">PW指数</div>
                     </div>
                   </div>
-                  <!-- 人間変数 (ジョッキー・スキル) -->
-                  <div style="font-size:0.75em;color:#888;margin:8px 0 2px 0;">🧠 騎手特有変数（直近戦績分析による人間スキル数値化）</div>
-                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:2px 0 8px 0;">
-                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('pos_skill', 50.0):.1f}%</div>
-                      <div style="font-size:0.75em;color:#aaa;">位置取り奪取力</div>
+                  
+                  <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 8px 0;">
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: {_cprb_color};">{_cprb:.2f}</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">PRB</div>
                     </div>
-                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('drive_power', 0.0):+.2f}頭/R</div>
-                      <div style="font-size:0.75em;color:#aaa;">剛腕追い上げ数</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.1em; font-weight: bold; color: {_chc_color};">{_chc_str}</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">調子</div>
                     </div>
-                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('clutch_score', 50.0):.1f}%</div>
-                      <div style="font-size:0.75em;color:#aaa;">プレッシャー耐性</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1em; font-weight: bold; color: #fff;">{_c_rstyle}</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">脚質傾向</div>
                     </div>
-                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
-                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('gate_adapt', 50.0):.1f}%</div>
-                      <div style="font-size:0.75em;color:#aaa;">外枠克服力</div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: #fff;">{_ys2.get('win_rate', 0)*100:.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">本年勝率</div>
+                    </div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 10px;">
+                      <div style="font-size: 1.3em; font-weight: bold; color: #fff;">{_ys2.get('top3_rate', 0)*100:.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 4px;">本年複勝率</div>
+                    </div>
+                  </div>
+                  
+                  <!-- 人間変数 -->
+                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 12px 0;">
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 8px;">
+                      <div style="font-size: 1.2em; font-weight: bold; color: #ddd;">{_cadv.get('pos_skill', 50.0):.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 2px;">位置取り奪取力</div>
+                    </div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 8px;">
+                      <div style="font-size: 1.2em; font-weight: bold; color: #ddd;">{_cadv.get('drive_power', 0.0):+.2f}頭/R</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 2px;">剛腕追い上げ数</div>
+                    </div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 8px;">
+                      <div style="font-size: 1.2em; font-weight: bold; color: #ddd;">{_cadv.get('clutch_score', 50.0):.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 2px;">プレッシャー耐性</div>
+                    </div>
+                    <div style="text-align: center; background: #2a2a2a; border-radius: 8px; padding: 8px;">
+                      <div style="font-size: 1.2em; font-weight: bold; color: #ddd;">{_cadv.get('gate_adapt', 50.0):.1f}%</div>
+                      <div style="font-size: 0.75em; color: #aaa; margin-top: 2px;">外枠克服力</div>
                     </div>
                   </div>
                   {_tactics_html}
