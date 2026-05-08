@@ -9641,6 +9641,12 @@ if nav == "🏇 騎手分析Pro":
                     score -= 8
                     breakdown['不調'] = -8
 
+                # 13) 調子P（Jockey Form Score）
+                form_score = entry.get('advanced_stats', {}).get('form_score', 0.0)
+                if form_score != 0:
+                    score += form_score
+                    breakdown['調子P'] = round(form_score, 1)
+
                 return round(score, 1), breakdown
 
             # 各エントリのスコアを計算
@@ -9675,6 +9681,7 @@ if nav == "🏇 騎手分析Pro":
                     '厩舎': _e.get('trainer_name', ''),
                     '人気': _e.get('popularity', 99) if _e.get('popularity', 99) < 99 else '—',
                     'オッズ': f"{_e.get('odds', 0):.1f}" if _e.get('odds', 0) > 0 else '—',
+                    '調子P': _adv_full.get('form_score', 0.0),
                     'PRB': f"{_prb:.2f}",
                     '調子': f"{_hc_icon}{_hc}" if _hc != '—' else '—',
                     '脚質傾向': _rstyle,
@@ -9724,7 +9731,7 @@ if nav == "🏇 騎手分析Pro":
             st.subheader("📊 騎手ランキング（全指標スコア順）")
 
             _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
-                             '人気', 'オッズ', 'PRB', '調子', '脚質傾向',
+                             '人気', 'オッズ', '調子P', 'PRB', '調子', '脚質傾向',
                              '単勝USM', '連対USM', '複勝USM',
                              'コース連対%', 'コース複勝%', '単回収%',
                              '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
@@ -9775,6 +9782,8 @@ if nav == "🏇 騎手分析Pro":
                     '厩舎':       st.column_config.TextColumn("厩舎", width="medium"),
                     '人気':       st.column_config.TextColumn("人気", width="small"),
                     'オッズ':     st.column_config.TextColumn("オッズ", width="small"),
+                    '調子P':      st.column_config.NumberColumn("調子P", width="small", format="%.1f",
+                                    help="直近10走における人気と着順の乖離を数値化した好不調ポイント。"),
                     'PRB':        st.column_config.TextColumn("PRB", width="small",
                                     help="Percentage of Rivals Beaten (0~1, 0.50が平均)。直近60走の相対勝率。"),
                     '調子':       st.column_config.TextColumn("調子", width="small",

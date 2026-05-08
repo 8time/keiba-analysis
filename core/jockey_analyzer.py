@@ -1849,6 +1849,7 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         'by_distance': {}, 'by_condition': {}, 'by_gate': {},
         'by_class': {}, 'by_odds_band': {}, 'by_weight': {},
         'riding_style': '—',
+        'form_score': 0.0,
     }
     if not races:
         return empty_result
@@ -1917,6 +1918,35 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         else:
             riding_style = '差し・追込'
 
+    # === 📈 騎手調子スコア（調子P）の算出 ===
+    form_score = 0.0
+    valid_form_count = 0
+    for r in races:
+        if valid_form_count >= 10:
+            break
+        pop = r.get('popularity')
+        fin = r.get('finish')
+        if pop is not None and fin is not None:
+            try:
+                pop_val = int(pop)
+                fin_val = int(fin)
+                # 基本ポイント: 人気 - 着順
+                base_pt = float(pop_val - fin_val)
+                # 補正ルール
+                if pop_val <= 3 and fin_val >= 4:
+                    # 人気馬の裏切りペナルティ: マイナスを1.5倍にする
+                    base_pt = base_pt * 1.5
+                elif pop_val >= 6 and fin_val <= 3:
+                    # 穴馬の激走ボーナス: +5
+                    base_pt += 5.0
+                elif pop_val >= 10 and fin_val >= 4:
+                    # 超大穴の着外切り捨て: 一律 -1.0 とする
+                    base_pt = -1.0
+                form_score += base_pt
+                valid_form_count += 1
+            except (ValueError, TypeError):
+                continue
+
     return {
         'prb_overall': round(prb_overall, 3),
         'sample_size': len(races),
@@ -1930,6 +1960,7 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         'by_weight': by_weight,
         'riding_style': riding_style,
         'usm': calculate_usm(races),
+        'form_score': round(form_score, 1),
     }
 
 
@@ -2174,17 +2205,17 @@ def create_result_dataframe(analysis_result: dict) -> pd.DataFrame:
         vs = e.get('venue_stats') or {}
         profile = e.get('jockey_profile') or {}
         year_stats = profile.get('year_stats') or {}
-
+ 
         # フラグテキスト
         flags = e.get('flags', [])
         flag_text = " ".join(flags) if flags else "—"
-
+ 
         adv = e.get('advanced_stats', {})
         usm = adv.get('usm', {})
         win_usm = usm.get('win_usm', '-')
         top2_usm = usm.get('top2_usm', '-')
         top3_usm = usm.get('top3_usm', '-')
-
+ 
         rows.append({
             '馬番': e.get('umaban', 0),
             '馬名': e.get('horse_name', ''),
@@ -2192,6 +2223,7 @@ def create_result_dataframe(analysis_result: dict) -> pd.DataFrame:
             '厩舎': e.get('trainer_name', ''),
             '人気': e.get('popularity', 99),
             'オッズ': e.get('odds', 0.0),
+            '調子P': adv.get('form_score', 0.0),
             '期待値アラート': flag_text,
             '単勝USM': f"{win_usm}%" if isinstance(win_usm, int) else "-",
             '連対USM': f"{top2_usm}%" if isinstance(top2_usm, int) else "-",
@@ -2204,7 +2236,7 @@ def create_result_dataframe(analysis_result: dict) -> pd.DataFrame:
             '本年勝率': f"{year_stats.get('win_rate', 0) * 100:.1f}%" if year_stats else "—",
             '本年連対率': f"{year_stats.get('top2_rate', 0) * 100:.1f}%" if year_stats else "—",
         })
-
+ 
     df = pd.DataFrame(rows)
     if not df.empty:
         # 人気順ソート
@@ -2231,7 +2263,7 @@ def calculate_jockey_metrics(entry: dict, venue: str) -> dict:
     # 経験ボーナス: 騎乗数が多いほど信頼度アップ
     experience_bonus = math.log10(total_rides + 1) * 10
     total_power = round(base_power + experience_bonus, 1)
-
+ 
     # --- 2. 相性偏差値 (Compatibility) ---
     # 会場連対率 / 本年連対率 をベースにする
     v_top2 = vs.get('adj_top2_rate', vs.get('top2_rate', 0))
@@ -2241,7 +2273,7 @@ def calculate_jockey_metrics(entry: dict, venue: str) -> dict:
     else:
         comp_score = 50.0
     comp_score = min(99.9, max(0.0, comp_score))
-
+ 
     # --- 3. 騎手勝ち指数 (Jockey Win Index) ---
     # 総合力 + 相性ボーナス + フラグ加算
     win_index = total_power + (comp_score - 50) * 2
@@ -2255,13 +2287,17 @@ def calculate_jockey_metrics(entry: dict, venue: str) -> dict:
     if vs.get('adj_win_return', 0) > 100:
         win_index += (vs.get('adj_win_return', 100) - 100) / 2
 
+    # 調子P（Form Score）の加減算補正（1:1で勝ち指数を微調整。好調騎手を後押し、不振を減点）
+    form_score = entry.get('advanced_stats', {}).get('form_score', 0.0)
+    win_index += form_score
+ 
     return {
         'total_power': total_power,
         'comp_score': round(comp_score, 1),
         'win_index': round(win_index, 1),
     }
-
-
+ 
+ 
 def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
     """
     「騎手強適 Ranking Table」用のデータを生成する。
@@ -2280,7 +2316,7 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
         elif idx >= 90: eval_label = "▲"
         elif idx >= 60: eval_label = "△"
         else: eval_label = "×"
-
+ 
         # 加点要因タグ
         factors = []
         if "🔴 鉄板" in e.get('flags', []): factors.append(f"{venue}強勢")
@@ -2308,18 +2344,20 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
             # 1つ下の人気との差を見る（ここでは単体オッズから簡易判定）
             if odds > 15: odds_gap = "▲断層"
             elif odds < 3: odds_gap = "◎支持"
-
+ 
         adv = e.get('advanced_stats', {})
+        form_score = adv.get('form_score', 0.0)
         usm = adv.get('usm', {})
         win_usm = usm.get('win_usm', '-')
         top2_usm = usm.get('top2_usm', '-')
         top3_usm = usm.get('top3_usm', '-')
-
+ 
         rows.append({
             '騎手': e.get('jockey_name', ''),
             '騎乗馬': e.get('horse_name', ''),
             '人気': e.get('popularity', 99),
             '馬番/枠': f"{e.get('umaban', 0)} ({waku_label})" if waku_label else str(e.get('umaban', 0)),
+            '調子P': form_score,
             '騎手シグナル': " ".join(e.get('flags', [])),
             '騎手勝ち指数': metrics['win_index'],
             '総合騎手力': metrics['total_power'],
@@ -2336,7 +2374,7 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
             '馬番': e.get('umaban', 0),
             '_win_index': metrics['win_index']
         })
-
+ 
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values('_win_index', ascending=False).reset_index(drop=True)
@@ -2344,7 +2382,7 @@ def create_jockey_ranking_dataframe(analysis_result: dict) -> pd.DataFrame:
         
         # カラム順の強制
         cols = [
-            'Rank', '騎手', '騎乗馬', '人気', '馬番/枠', '騎手シグナル', 
+            'Rank', '騎手', '騎乗馬', '人気', '馬番/枠', '調子P', '騎手シグナル', 
             '騎手勝ち指数', '総合騎手力', '相性偏差値', '平均位置取り', 
             'オッズ断層', '単勝USM', '連対USM', '複勝USM', '現在状態', '加点要因', '最終評価'
         ]
