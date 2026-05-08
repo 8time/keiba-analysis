@@ -9657,6 +9657,79 @@ if nav == "🏇 騎手分析Pro":
                     score += form_score
                     breakdown['調子P'] = round(form_score, 1)
 
+                # ── 🧠 人間変数＆作戦連携加減点（騎手分析Pro特別アップグレード） ──
+                adv = entry.get('advanced_stats') or {}
+                pos_skill = adv.get('pos_skill', 50.0)
+                drive_power = adv.get('drive_power', 0.0)
+                clutch_score = adv.get('clutch_score', 50.0)
+                gate_adapt = adv.get('gate_adapt', 50.0)
+
+                # 14) 位置取り力（ポジション奪取力）の実力加減点
+                s14 = (pos_skill - 50.0) * 0.2
+                if abs(s14) > 0.1:
+                    score += s14
+                    breakdown['位置取り力'] = round(s14, 1)
+
+                # 15) 剛腕追い上げ数（差し馬との連携）
+                r_style = _madv.get('riding_style', '—')
+                s15 = drive_power * 4.0
+                if r_style in ['差し・追込', '中団']:
+                    s15 = s15 * 1.5  # 差し馬に乗る際は追い上げ力が1.5倍に生きる
+                if abs(s15) > 0.1:
+                    score += s15
+                    breakdown['剛腕追い上げ'] = round(s15, 1)
+
+                # 16) プレッシャー耐性（人気との連携）
+                try:
+                    pop_val = int(entry.get('popularity', 99))
+                    if pop_val <= 3:  # 上位人気のときにプレッシャー耐性が生きる
+                        s16 = (clutch_score - 50.0) * 0.3
+                        if abs(s16) > 0.1:
+                            score += s16
+                            breakdown['プレ耐性'] = round(s16, 1)
+                except:
+                    pass
+
+                # 17) 外枠克服力（馬番・枠順との連携）
+                try:
+                    umaban_val = int(entry.get('umaban', 0))
+                    if umaban_val >= 10:  # 外枠のときに外枠克服力が生きる
+                        s17 = (gate_adapt - 50.0) * 0.3
+                        if abs(s17) > 0.1:
+                            score += s17
+                            breakdown['外枠克服'] = round(s17, 1)
+                except:
+                    pass
+
+                # 18) 専門家脚質作戦完全一致ボーナス（厩舎×騎手×馬）
+                t_name = entry.get('trainer_name', '')
+                j_name = entry.get('jockey_name', '')
+                t_tac = trainer_tactics.get_trainer_tactics(t_name) if 'trainer_tactics' in globals() else None
+                j_tac = jockey_tactics.get_jockey_tactics(j_name) if 'jockey_tactics' in globals() else None
+
+                if t_tac or j_tac:
+                    s18_t = 0.0
+                    s18_j = 0.0
+                    if r_style in ['逃げ・番手', '先行']:
+                        if t_tac:
+                            t_front = t_tac.get('逃げ', 0) + t_tac.get('先行', 0)
+                            s18_t = (t_front - 35.0) * 0.25  # 35%を基準平均とする
+                        if j_tac:
+                            j_front = j_tac.get('逃げ', 0) + j_tac.get('先行', 0)
+                            s18_j = (j_front - 35.0) * 0.25
+                    elif r_style in ['差し・追込', '中団']:
+                        if t_tac:
+                            t_back = t_tac.get('中団', 0) + t_tac.get('後方', 0) + t_tac.get('マクリ', 0)
+                            s18_t = (t_back - 65.0) * 0.25  # 65%を基準平均とする
+                        if j_tac:
+                            j_back = j_tac.get('中団', 0) + j_tac.get('後方', 0) + j_tac.get('マクリ', 0)
+                            s18_j = (j_back - 65.0) * 0.25
+
+                    s18 = s18_t + s18_j
+                    if abs(s18) > 0.1:
+                        score += s18
+                        breakdown['作戦一致'] = round(s18, 1)
+
                 return round(score, 1), breakdown
 
             # 各エントリのスコアを計算
