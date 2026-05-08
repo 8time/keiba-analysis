@@ -9976,6 +9976,26 @@ if nav == "🏇 騎手分析Pro":
                       <div style="font-size:0.75em;color:#888;">本年複勝率</div>
                     </div>
                   </div>
+                  <!-- 人間変数 (ジョッキー・スキル) -->
+                  <div style="font-size:0.75em;color:#888;margin:8px 0 2px 0;">🧠 騎手特有変数（直近戦績分析による人間スキル数値化）</div>
+                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:2px 0 8px 0;">
+                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('pos_skill', 50.0):.1f}%</div>
+                      <div style="font-size:0.75em;color:#aaa;">位置取り奪取力</div>
+                    </div>
+                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('drive_power', 0.0):+.2f}頭/R</div>
+                      <div style="font-size:0.75em;color:#aaa;">剛腕追い上げ数</div>
+                    </div>
+                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('clutch_score', 50.0):.1f}%</div>
+                      <div style="font-size:0.75em;color:#aaa;">プレッシャー耐性</div>
+                    </div>
+                    <div style="text-align:center;background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;">
+                      <div style="font-size:1.2em;font-weight:bold;color:#b388ff;">{_cadv.get('gate_adapt', 50.0):.1f}%</div>
+                      <div style="font-size:0.75em;color:#aaa;">外枠克服力</div>
+                    </div>
+                  </div>
                   <!-- Recent Form -->
                   <div style="background:#0a0a1a;border-radius:8px;padding:8px 12px;margin:8px 0;">
                     <div style="font-size:0.75em;color:#888;margin-bottom:4px;">📈 Recent Form (PRB推移)</div>

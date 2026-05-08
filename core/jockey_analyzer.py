@@ -1850,6 +1850,10 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         'by_class': {}, 'by_odds_band': {}, 'by_weight': {},
         'riding_style': '—',
         'form_score': 0.0,
+        'pos_skill': 50.0,
+        'drive_power': 0.0,
+        'clutch_score': 50.0,
+        'gate_adapt': 50.0,
     }
     if not races:
         return empty_result
@@ -1947,6 +1951,65 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
             except (ValueError, TypeError):
                 continue
 
+    # === 🧠 人間変数（ジョッキー・スキル）の算出 ===
+    pos_ratios = []
+    drive_diffs = []
+    clutch_rides = 0
+    clutch_top2 = 0
+    outer_prbs = []
+
+    for r in races:
+        pop = r.get('popularity')
+        fin = r.get('finish')
+        runners = r.get('runners')
+        passing = r.get('passing')
+        umaban = r.get('umaban')
+        prb = r.get('prb', 0.5)
+
+        # 1) positioning_skill
+        if passing and len(passing) > 0:
+            try:
+                runners_val = int(runners) if runners else 14
+                if runners_val > 0:
+                    pos_ratios.append(float(passing[0]) / runners_val)
+            except (ValueError, TypeError):
+                pass
+
+        # 2) drive_power
+        if passing and len(passing) > 0 and fin is not None:
+            try:
+                fin_val = int(fin)
+                drive_diffs.append(float(passing[-1] - fin_val))
+            except (ValueError, TypeError):
+                pass
+
+        # 3) clutch_score
+        if pop is not None and fin is not None:
+            try:
+                pop_val = int(pop)
+                fin_val = int(fin)
+                if pop_val <= 3:
+                    clutch_rides += 1
+                    if fin_val <= 2:
+                        clutch_top2 += 1
+            except (ValueError, TypeError):
+                pass
+
+        # 4) gate_adapt (外枠克服力)
+        if umaban is not None:
+            try:
+                umaban_val = int(umaban)
+                runners_val = int(runners) if runners else 14
+                if runners_val >= 8 and umaban_val >= 10:
+                    outer_prbs.append(float(prb))
+            except (ValueError, TypeError):
+                pass
+
+    pos_skill = round((1.0 - float(np.mean(pos_ratios))) * 100, 1) if pos_ratios else 50.0
+    drive_power = round(float(np.mean(drive_diffs)), 2) if drive_diffs else 0.0
+    clutch_score = round((clutch_top2 / clutch_rides) * 100, 1) if clutch_rides > 0 else 50.0
+    gate_adapt = round(float(np.mean(outer_prbs)) * 100, 1) if outer_prbs else 50.0
+
     return {
         'prb_overall': round(prb_overall, 3),
         'sample_size': len(races),
@@ -1961,6 +2024,10 @@ def fetch_jockey_advanced_stats(jockey_id: str) -> dict:
         'riding_style': riding_style,
         'usm': calculate_usm(races),
         'form_score': round(form_score, 1),
+        'pos_skill': pos_skill,
+        'drive_power': drive_power,
+        'clutch_score': clutch_score,
+        'gate_adapt': gate_adapt,
     }
 
 
