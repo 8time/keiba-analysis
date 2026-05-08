@@ -63,6 +63,8 @@ class JockeyStatsDB:
         self.db_path = db_path or DEFAULT_DB_PATH
         # dataディレクトリが存在しない場合は作成
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        # 起動時に自動でテーブルを初期化（存在しない場合のみ作成される）
+        self.init_table()
 
     def _get_conn(self) -> sqlite3.Connection:
         """DB接続を取得する（UTF-8対応）"""
