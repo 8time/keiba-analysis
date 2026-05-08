@@ -1440,26 +1440,37 @@ if nav == "🏠 Single Race Analysis":
 
                     evidence_list = [
                         {"項目": "コース条件", "値": display_cond, "ステータス": "✅ 血統カタログ連動"},
-                        {"項目": "クラス", "値": meta.get('class', '-'), "ステータス": "-"},
+                        {"項目": "クラス", "値": meta.get('class', '-'), "ステータス": "✅ 実力勝負（最高峰重賞）" if any(g in str(meta.get('class', '')) for g in ['G1', 'G2', 'G3', 'GI', 'GII', 'GIII']) else ("✅ 実力勝負（紛れ少）" if 'オープン' in str(meta.get('class', '')) else ("✅ 正常（実力準拠）" if any(c in str(meta.get('class', '')) for c in ['1勝クラス', '2勝クラス', '3勝クラス']) else ("⚠️ 荒れ警戒（能力未確定）" if any(c in str(meta.get('class', '')) for c in ['新馬', '未勝利']) else "✅ 一般競走"))) if meta.get('class', '-') != '-' else "情報なし"},
                         {"項目": "斤量ルール", "値": meta.get('weight_rule', '-'), "ステータス": "⚠️ ハンデ戦: 波乱リスク高" if meta.get('is_handicap') else "✅ 定量/馬齢"},
                     ]
                     
-                    # Holding days logic
+                    # Holding days logic with regex to support venue prefix
                     hd = meta.get('holding_days', '-')
-                    hd_status = "-"
-                    try:
-                        if str(hd).isdigit() and int(hd) >= 7: hd_status = "🚩 馬場劣化警告"
-                        elif str(hd).isdigit(): hd_status = "✅ 良好"
-                    except: pass
-                    evidence_list.append({"項目": "開催日数", "値": f"{hd}日目", "ステータス": hd_status})
+                    hd_status = "情報なし"
+                    if hd != '-':
+                        import re as _re
+                        hd_digit = _re.search(r'\d+', str(hd))
+                        if hd_digit:
+                            hd_num = int(hd_digit.group())
+                            if hd_num >= 7: hd_status = "🚩 馬場劣化警告（外差し有利化）"
+                            else: hd_status = "✅ 良好（内枠フラット路面）"
+                    evidence_list.append({"項目": "開催日数", "値": f"{hd}日目" if hd != '-' else "-", "ステータス": hd_status})
                     
-                    evidence_list.append({"項目": "天候/馬場", "値": f"{meta.get('weather', '-')}/{meta.get('condition', '-')}", "ステータス": "-"})
+                    # Weather / Condition logic
+                    w_val = meta.get('weather', '-')
+                    c_val = meta.get('condition', '-')
+                    wc_status = "情報なし"
+                    if c_val != '-':
+                        if c_val in ['重', '不良']: wc_status = "⚠️ 道悪: パワー・道悪適性重視"
+                        elif c_val == '稍重': wc_status = "⚠️ 稍重: 適性・時計変化に注意"
+                        elif c_val == '良': wc_status = "✅ 正常（良馬場・時計準拠）"
+                    evidence_list.append({"項目": "天候/馬場", "値": f"{w_val}/{c_val}" if (w_val != '-' or c_val != '-') else "-", "ステータス": wc_status})
                     
                     # Existing items
                     evidence_list.extend([
-                        {"項目": "1番人気オッズ", "値": f"{df['Odds'].min():.1f}倍" if not df.empty else "-", "ステータス": "🚩 要注意" if (not df.empty and df['Odds'].min() >= 3.5) else "✅ 正常"},
+                        {"項目": "1番人気オッズ", "値": f"{df['Odds'].min():.1f}倍" if not df.empty else "-", "ステータス": "🚩 要注意（混戦・大波乱高）" if (not df.empty and df['Odds'].min() >= 3.5) else "✅ 正常（信頼の1番人気）"},
                         {"項目": "要警戒アノマリー数", "値": f"{chaos_data.get('anomaly_count', 0)}件", "ステータス": "⚠️ 検出" if chaos_data.get('anomaly_count', 0) > 0 else "✅ 低"},
-                        {"項目": "先行馬密集度", "値": "高" if "先行馬が密集" in chaos_data['reason'] else "中以下", "ステータス": "-"}
+                        {"項目": "先行馬密集度", "値": "高" if "先行馬が密集" in chaos_data['reason'] else "中以下", "ステータス": "⚠️ 展開崩れ・差し追込有利" if "先行馬が密集" in chaos_data['reason'] else "✅ フラット（先行前残り注意）"}
                     ])
 
                     st.markdown(f"""
