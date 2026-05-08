@@ -1,4 +1,4 @@
-﻿import sys, io
+import sys, io
 sys.setrecursionlimit(10000) # Increased to handle Torch initialization
 import os
 import re
@@ -9076,8 +9076,9 @@ if nav == "🏇 騎手分析Pro":
                 # 13) 調子P（Jockey Form Score）
                 form_score = entry.get('advanced_stats', {}).get('form_score', 0.0)
                 if form_score != 0:
-                    score += form_score
-                    breakdown['調子P'] = round(form_score, 1)
+                    s13 = max(-15.0, min(15.0, form_score * 0.3))
+                    score += s13
+                    breakdown['調子P'] = round(s13, 1)
 
                 # ── 🧠 人間変数＆作戦連携加減点（騎手分析Pro特別アップグレード） ──
                 adv = entry.get('advanced_stats') or {}
@@ -9087,16 +9088,17 @@ if nav == "🏇 騎手分析Pro":
                 gate_adapt = adv.get('gate_adapt', 50.0)
 
                 # 14) 位置取り力（ポジション奪取力）の実力加減点
-                s14 = (pos_skill - 50.0) * 0.2
+                s14 = (pos_skill - 50.0) * 0.1
                 if abs(s14) > 0.1:
                     score += s14
                     breakdown['位置取り力'] = round(s14, 1)
 
                 # 15) 剛腕追い上げ数（差し馬との連携）
                 r_style = _madv.get('riding_style', '—')
-                s15 = drive_power * 4.0
+                s15 = drive_power * 0.5
                 if r_style in ['差し・追込', '中団']:
                     s15 = s15 * 1.5  # 差し馬に乗る際は追い上げ力が1.5倍に生きる
+                s15 = min(s15, 10.0) # 最大でも10点の加点に抑える
                 if abs(s15) > 0.1:
                     score += s15
                     breakdown['剛腕追い上げ'] = round(s15, 1)
@@ -9105,7 +9107,7 @@ if nav == "🏇 騎手分析Pro":
                 try:
                     pop_val = int(entry.get('popularity', 99))
                     if pop_val <= 3:  # 上位人気のときにプレッシャー耐性が生きる
-                        s16 = (clutch_score - 50.0) * 0.3
+                        s16 = (clutch_score - 50.0) * 0.1
                         if abs(s16) > 0.1:
                             score += s16
                             breakdown['プレ耐性'] = round(s16, 1)
@@ -9116,7 +9118,7 @@ if nav == "🏇 騎手分析Pro":
                 try:
                     umaban_val = int(entry.get('umaban', 0))
                     if umaban_val >= 10:  # 外枠のときに外枠克服力が生きる
-                        s17 = (gate_adapt - 50.0) * 0.3
+                        s17 = (gate_adapt - 50.0) * 0.1
                         if abs(s17) > 0.1:
                             score += s17
                             breakdown['外枠克服'] = round(s17, 1)
