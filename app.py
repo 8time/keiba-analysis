@@ -118,6 +118,49 @@ def get_netkeiba_domain(race_id):
         pass
     return "race.netkeiba.com"
 
+# === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
+@st.cache_data(ttl=600, show_spinner=False)
+def _fetch_daily_signals(rid: str, race_date_str: str):
+    """当日の全JRAレースをスキャンしてシグナルmap {umaban: {marks,j_dc,t_bullet}} を返す。
+    race_date_str: YYYYMMDD 形式の実際のカレンダー日付"""
+    try:
+        from core.scraper import get_race_list_for_date
+        from scripts.race_position_scanner import run_scan_with_signals
+        race_list = get_race_list_for_date(race_date_str)
+        if not race_list:
+            return {}
+        # JRA中央のみ (venue 01-10)
+        urls = []
+        for r in race_list:
+            r_id = r['race_id'] if isinstance(r, dict) else str(r)
+            vc = r_id[4:6] if len(r_id) == 12 else '99'
+            if vc.isdigit() and 1 <= int(vc) <= 10:
+                urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+        if not urls:
+            return {}
+        df_sig, _, _ = run_scan_with_signals(urls=urls, entity='both', min_patterns=1, output_csv=None)
+        if df_sig is None or df_sig.empty:
+            return {}
+        # 対象レースの馬のみ抽出（min_patterns=1で検出された馬のみ入る）
+        sig_map = {}
+        if 'race_id' in df_sig.columns:
+            df_target = df_sig[df_sig['race_id'] == rid]
+        else:
+            df_target = pd.DataFrame()
+        for _, row in df_target.iterrows():
+            uma = int(row.get('horse_number', 0))
+            sig_map[uma] = {
+                'marks':    str(row.get('special_marks', '')),
+                'j_dc':     bool(row.get('jockey_dc_flag', False)),
+                't_bullet': bool(row.get('trainer_bullet_flag', False)),
+                'score':    float(row.get('score', 0)),  # スキャナー総合スコア
+            }
+        return sig_map
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(f"[Signal] fetch failed: {_e}")
+        return {}
+
 def render_session_status(key_prefix=""):
     """Renders session status and login buttons for Umanity and KeibaLab."""
     import os
@@ -2327,62 +2370,30 @@ if nav == "🏠 Single Race Analysis":
                         # ────────────────────────────────────────────────────
 
                     # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
-                    @st.cache_data(ttl=600, show_spinner=False)
-                    def _fetch_daily_signals(rid: str, race_date_str: str):
-                        """当日の全JRAレースをスキャンしてシグナルmap {umaban: {marks,j_dc,t_bullet}} を返す。
-                        race_date_str: YYYYMMDD 形式の実際のカレンダー日付"""
-                        try:
-                            from core.scraper import get_race_list_for_date
-                            from scripts.race_position_scanner import run_scan_with_signals
-                            race_list = get_race_list_for_date(race_date_str)
-                            if not race_list:
-                                return {}
-                            # JRA中央のみ (venue 01-10)
-                            urls = []
-                            for r in race_list:
-                                r_id = r['race_id'] if isinstance(r, dict) else str(r)
-                                vc = r_id[4:6] if len(r_id) == 12 else '99'
-                                if vc.isdigit() and 1 <= int(vc) <= 10:
-                                    urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
-                            if not urls:
-                                return {}
-                            df_sig, _, _ = run_scan_with_signals(urls=urls, entity='both', min_patterns=1, output_csv=None)
-                            if df_sig is None or df_sig.empty:
-                                return {}
-                            # 対象レースの馬のみ抽出（min_patterns=1で検出された馬のみ入る）
-                            sig_map = {}
-                            if 'race_id' in df_sig.columns:
-                                df_target = df_sig[df_sig['race_id'] == rid]
-                            else:
-                                df_target = pd.DataFrame()
-                            for _, row in df_target.iterrows():
-                                uma = int(row.get('horse_number', 0))
-                                sig_map[uma] = {
-                                    'marks':    str(row.get('special_marks', '')),
-                                    'j_dc':     bool(row.get('jockey_dc_flag', False)),
-                                    't_bullet': bool(row.get('trainer_bullet_flag', False)),
-                                    'score':    float(row.get('score', 0)),  # スキャナー総合スコア
-                                }
-                            return sig_map
-                        except Exception as _e:
-                            import logging
-                            logging.getLogger(__name__).warning(f"[Signal] fetch failed: {_e}")
-                            return {}
-
                     # シグナルスキャン実行（Analyze後。df から RaceDate を取得して正しいカレンダー日付を使う）
                     _signal_map = {}
                     _rid_str = str(race_id_input)
                     if len(_rid_str) == 12:
                         _vc = _rid_str[4:6]
                         if _vc.isdigit() and 1 <= int(_vc) <= 10:  # JRAのみ
-                            # df から実際の開催日を取得（例: '2026/04/04' → '20260404'）
-                            _race_date_raw = ''
-                            if not df.empty and 'RaceDate' in df.columns:
-                                _race_date_raw = str(df['RaceDate'].iloc[0])
-                            _race_date_ymd = re.sub(r'[^\d]', '', _race_date_raw)[:8]  # YYYYMMDD
-                            if len(_race_date_ymd) == 8:
-                                with st.spinner("🔬 当日シグナルスキャン中...（初回のみ時間がかかります）"):
-                                    _signal_map = _fetch_daily_signals(_rid_str, _race_date_ymd)
+                            # セッションキャッシュの初期化
+                            if 'daily_signals_cache' not in st.session_state:
+                                st.session_state['daily_signals_cache'] = {}
+                            
+                            # キャッシュに存在する場合はそれを使用
+                            if _rid_str in st.session_state['daily_signals_cache']:
+                                _signal_map = st.session_state['daily_signals_cache'][_rid_str]
+                            else:
+                                # df から実際の開催日を取得（例: '2026/04/04' → '20260404'）
+                                _race_date_raw = ''
+                                if not df.empty and 'RaceDate' in df.columns:
+                                    _race_date_raw = str(df['RaceDate'].iloc[0])
+                                _race_date_ymd = re.sub(r'[^\d]', '', _race_date_raw)[:8]  # YYYYMMDD
+                                if len(_race_date_ymd) == 8:
+                                    with st.spinner("🔬 当日シグナルスキャン中...（初回のみ時間がかかります）"):
+                                        _signal_map = _fetch_daily_signals(_rid_str, _race_date_ymd)
+                                        # 結果をキャッシュに保存
+                                        st.session_state['daily_signals_cache'][_rid_str] = _signal_map
 
                     # dfに Signal 列を追加
                     df['Signal'] = df['Umaban'].apply(
