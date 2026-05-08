@@ -3195,7 +3195,7 @@ if nav == "🏠 Single Race Analysis":
                         
                         # === オッズ断層バッジパネル（ホバー→説明文 / クリック→解説画像）===
                         try:
-                            _sb_base = "http://localhost:8501/app/static"
+                            _sb_base = "/app/static"
                             _gap_badge_info = {
                                 "断層A":   {"color":"#f59f00","border":"#f59f00","bg":"rgba(245,159,0,0.08)",
                                             "url":f"{_sb_base}/断層A.png",
