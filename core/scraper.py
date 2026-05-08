@@ -1233,6 +1233,11 @@ def extract_race_metadata(soup, race_date_val=""):
     try:
         name_box = soup.find('div', class_='RaceList_NameBox')
         if name_box:
+            title_el = name_box.find(class_='RaceName')
+            if title_el:
+                for icon in title_el.find_all('span', class_=re.compile(r'Icon_')):
+                    icon.decompose()
+                metadata['RaceName'] = title_el.text.strip()
             d01 = name_box.find('div', class_='RaceData01')
             if d01:
                 t01 = d01.text.strip()
@@ -1386,8 +1391,8 @@ def get_race_data(race_id, use_storage=True):
     # Title & Dist
     name_box = soup.find('div', class_='RaceList_NameBox')
     if name_box:
-        title_div = name_box.find('div', class_='RaceName')
-        if title_div: race_title = title_div.text.strip()
+        title_el = name_box.find(class_='RaceName')
+        if title_el: race_title = title_el.text.strip()
         
         data01 = name_box.find('div', class_='RaceData01')
         if data01:

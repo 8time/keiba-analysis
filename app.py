@@ -4621,7 +4621,11 @@ if nav == "🧹 消去フィルター":
                         st.rerun()
                         
         with col_right:
-            race_name = metadata.get('RaceName', metadata.get('RaceTitle', 'Unknown Race'))
+            race_name = metadata.get('RaceName', metadata.get('RaceTitle', ''))
+            if not race_name and 'RaceName' in df.columns and not df.empty:
+                race_name = str(df['RaceName'].iloc[0]) if pd.notna(df['RaceName'].iloc[0]) else ''
+            if not race_name:
+                race_name = 'Unknown Race'
             race_date = df.iloc[0]['RaceDate'] if not df.empty else datetime.now().strftime("%Y/%m/%d")
             venue = df.iloc[0]['Venue'] if not df.empty else 'Unknown'
             dist = df.iloc[0]['CurrentDistance'] if not df.empty else 1600
