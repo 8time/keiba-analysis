@@ -75,6 +75,16 @@ try:
     importlib.reload(jockey_analyzer)
 except:
     pass
+from core import trainer_tactics
+try:
+    importlib.reload(trainer_tactics)
+except:
+    pass
+from core import jockey_tactics
+try:
+    importlib.reload(jockey_tactics)
+except:
+    pass
 
 # ──────────────────────────────────────────────
 # 起動時ボーナスキャッシュ初期化
@@ -9843,6 +9853,10 @@ if nav == "🏇 騎手分析Pro":
                 _vs2  = _ent.get('venue_stats') or {}
                 _pr2  = _ent.get('jockey_profile') or {}
                 _ys2  = _pr2.get('year_stats') or {}
+                _t_name = _s.get('厩舎', '')
+                _j_name = _s.get('騎手', '')
+                _t_tac = trainer_tactics.get_trainer_tactics(_t_name) if 'trainer_tactics' in globals() else None
+                _j_tac = jockey_tactics.get_jockey_tactics(_j_name) if 'jockey_tactics' in globals() else None
                 _flg2 = _ent.get('flags', [])
                 _rank_color_map = {
                     1: '#FFD700', 2: '#FFD700', 3: '#FFD700',  # ◎ 金
@@ -9882,6 +9896,24 @@ if nav == "🏇 騎手分析Pro":
                 _chc_str = {'HOT': '🔥 HOT', 'COLD': '🧊 COLD'}.get(_chc, '— 平常')
                 _chc_color = '#FF5252' if _chc == 'HOT' else '#64B5F6' if _chc == 'COLD' else '#888'
                 _c_rstyle = _cmadv.get('riding_style', '—')
+
+                _tactics_html = ""
+                if _t_tac or _j_tac:
+                    _tactics_html = f"""
+                    <div style="font-size:0.75em;color:#888;margin:8px 0 2px 0;">🏠 生涯脚質・作戦傾向（専門家集計データ / 2016年〜2026年）</div>
+                    <div style="background:#1a102f;border:1px solid #4a2d8a;border-radius:8px;padding:8px;margin:2px 0 8px 0;">
+                      <table style="width:100%;font-size:0.85em;text-align:center;color:#eee;border-collapse:collapse;">
+                        <tr style="border-bottom:1px solid #444;"><th style="color:#aaa;padding:4px;">対象</th><th>逃げ</th><th>先行</th><th>中団</th><th>後方</th><th>マクリ</th></tr>
+                    """
+                    if _t_tac:
+                        _tactics_html += f"<tr><td style='color:#b388ff;font-weight:bold;padding:4px;border-bottom:1px solid #333;'>厩舎({_t_name[:4]})</td><td style='border-bottom:1px solid #333;'>{_t_tac.get('逃げ', 0)}%</td><td style='border-bottom:1px solid #333;'>{_t_tac.get('先行', 0)}%</td><td style='border-bottom:1px solid #333;'>{_t_tac.get('中団', 0)}%</td><td style='border-bottom:1px solid #333;'>{_t_tac.get('後方', 0)}%</td><td style='border-bottom:1px solid #333;'>{_t_tac.get('マクリ', 0)}%</td></tr>"
+                    if _j_tac:
+                        _tactics_html += f"<tr><td style='color:#b388ff;font-weight:bold;padding:4px;'>騎手({_j_name[:4]})</td><td>{_j_tac.get('逃げ', 0)}%</td><td>{_j_tac.get('先行', 0)}%</td><td>{_j_tac.get('中団', 0)}%</td><td>{_j_tac.get('後方', 0)}%</td><td>{_j_tac.get('マクリ', 0)}%</td></tr>"
+                    
+                    _tactics_html += """
+                      </table>
+                    </div>
+                    """
 
                 # Recent Form bars
                 _rf = _cadv.get('recent_form', {})
@@ -9996,6 +10028,7 @@ if nav == "🏇 騎手分析Pro":
                       <div style="font-size:0.75em;color:#aaa;">外枠克服力</div>
                     </div>
                   </div>
+                  {_tactics_html}
                   <!-- Recent Form -->
                   <div style="background:#0a0a1a;border-radius:8px;padding:8px 12px;margin:8px 0;">
                     <div style="font-size:0.75em;color:#888;margin-bottom:4px;">📈 Recent Form (PRB推移)</div>
