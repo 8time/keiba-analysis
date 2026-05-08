@@ -9893,29 +9893,52 @@ if nav == "🏇 騎手分析Pro":
                 use_container_width=True,
             )
 
-            # ── スコア内訳バー（上位5頭） ──
+            # ── 📈 勝ち指数バー（HTML+CSSプレミアムグラデーションバー） ──
             st.divider()
             st.subheader("📈 勝ち指数バー（上位5頭）")
-            _top5 = scored[:7]
-            _bar_labels = [f"{s['馬番']}番 {s['騎手']}" for s in _top5]
-            _bar_scores = [s['総合スコア'] for s in _top5]
-            _bar_colors = ['#FFD700','#FFD700','#FFD700','#C0C0C0','#CD7F32','#4A90D9','#888888']
-            try:
-                _fig, _ax = plt.subplots(figsize=(10, 3))
-                _fig.patch.set_facecolor('#0E1117')
-                _ax.set_facecolor('#0E1117')
-                _bars = _ax.barh(_bar_labels[::-1], _bar_scores[::-1], color=_bar_colors[::-1])
-                _ax.tick_params(colors='white')
-                for sp in _ax.spines.values(): sp.set_color('#444')
-                _ax.set_xlabel('総合スコア', color='white')
-                for _bar in _bars:
-                    _w = _bar.get_width()
-                    _ax.text(_w + 1, _bar.get_y() + _bar.get_height()/2,
-                             f'{_w:.0f}', va='center', color='white', fontsize=9)
-                st.pyplot(_fig)
-                plt.close(_fig)
-            except Exception:
-                pass
+            _top5 = scored[:5]
+            
+            _gradients = [
+                "linear-gradient(90deg, #FFE082, #FFB300)",  # 1位 金ゴールド
+                "linear-gradient(90deg, #FFF59D, #FBC02D)",  # 2位 黄ゴールド
+                "linear-gradient(90deg, #FFE082, #F57F17)",  # 3位 濃ゴールド
+                "linear-gradient(90deg, #E0E0E0, #757575)",  # 4位 銀
+                "linear-gradient(90deg, #FFCC80, #CA8A04)",  # 5位 銅
+            ]
+            
+            _max_score = max([s['総合スコア'] for s in _top5]) if _top5 else 100
+            
+            _bars_html = ""
+            for _idx, _s in enumerate(_top5):
+                _pct = max(10, min(100, int((_s['総合スコア'] / _max_score) * 85)))
+                _grad = _gradients[_idx] if _idx < len(_gradients) else "linear-gradient(90deg, #424242, #212121)"
+                _eval = _s.get('評価', '—')
+                _eval_color = '#FFD700' if _eval == '◎' else '#C0C0C0' if _eval == '○' else '#CD7F32' if _eval == '▲' else '#aaa'
+                
+                _bars_html += f"""
+                <div style="margin-bottom: 14px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 0.9em;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-weight: bold; color: {_eval_color}; width: 20px; text-align: center; font-size: 1.1em;">{_eval}</span>
+                      <span style="color: #fff; font-weight: bold; background: #222; padding: 2px 6px; border-radius: 4px; font-size: 0.85em;">{_s.get('馬番', '')}番</span>
+                      <span style="color: #fff; font-weight: 500;">{_s.get('馬名', '')[:10]}</span>
+                      <span style="color: #888; font-size: 0.85em;">({_s.get('騎手', '')[:4]})</span>
+                    </div>
+                    <span style="font-weight: bold; color: #FFF; font-size: 1.1em; font-family: monospace;">{_s['総合スコア']:.1f} pt</span>
+                  </div>
+                  <div style="background: #111; border: 1px solid #222; border-radius: 6px; height: 18px; width: 100%; overflow: hidden; display: flex; align-items: center; padding: 1px;">
+                    <div style="background: {_grad}; width: {_pct}%; height: 100%; border-radius: 5px; 
+                                transition: width 0.8s ease-in-out; 
+                                box-shadow: 0 0 10px rgba(255,171,64,0.15);"></div>
+                  </div>
+                </div>
+                """
+            
+            st.html(f"""
+            <div style="background: #0d0d1a; border: 1px solid #2d1b4e; border-radius: 12px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+              {_bars_html}
+            </div>
+            """)
 
             # ── 上位3頭の詳細カード ──
             st.divider()
