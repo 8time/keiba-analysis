@@ -9244,6 +9244,49 @@ if nav == "🏇 騎手分析Pro":
                              '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
             _df_rank = pd.DataFrame(scored)[_display_cols]
 
+            def _to_numeric(val):
+                if val is None:
+                    return float('inf')
+                s = str(val).strip()
+                if s in ('—', '—', '-', 'None', 'nan', ''):
+                    return float('inf')
+                s = s.replace('%', '')
+                try:
+                    return float(s)
+                except ValueError:
+                    return float('inf')
+
+            def _style_top3_per_col(df):
+                style_df = pd.DataFrame('', index=df.index, columns=df.columns)
+                col_ascending_map = {
+                    '人気': True,
+                    'オッズ': True,
+                    '調子P': False,
+                    'PRB': False,
+                    '単勝USM': False,
+                    '連対USM': False,
+                    '複勝USM': False,
+                    'コース連対%': False,
+                    'コース複勝%': False,
+                    '単回収%': False,
+                    '騎乗数': False,
+                    '本年勝率': False,
+                    '本年連対%': False,
+                    '本年複勝%': False,
+                    'PW指数': False,
+                    '総合スコア': False
+                }
+                for col, asc in col_ascending_map.items():
+                    if col in df.columns:
+                        nums = df[col].map(_to_numeric)
+                        valid_nums = nums[nums != float('inf')]
+                        if len(valid_nums) > 0:
+                            ranks = valid_nums.rank(method='min', ascending=asc)
+                            top3_idx = ranks[ranks <= 3].index
+                            for idx in top3_idx:
+                                style_df.at[idx, col] = 'border: 2px solid #FF1744; box-shadow: inset 0 0 0 2px #FF1744;'
+                return style_df
+
             def _style_rank_row(row):
                 rank = row['順位']
                 flag = str(row['フラグ'])
@@ -9276,6 +9319,7 @@ if nav == "🏇 騎手分析Pro":
                 .apply(_style_rank_row, axis=1)
                 .map(_style_eval, subset=['評価'])
                 .map(_style_score, subset=['総合スコア'])
+                .apply(_style_top3_per_col, axis=None)
             )
 
             st.dataframe(
