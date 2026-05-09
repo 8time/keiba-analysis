@@ -9277,6 +9277,17 @@ if nav == "🏇 騎手分析Pro":
                     if isinstance(top3_usm, int):
                         score += (top3_usm / 100.0) * weights.get('複勝USM', 0.0)
 
+                # ── 👑 [NEW] フラグボーナス (妙味・危険) ──
+                # 妙味または危険フラグがつくと、総合スコアに50ポイント加算する
+                _flg_list = entry.get('flags', [])
+                _flag_bonus = 0.0
+                for _f in _flg_list:
+                    if "妙味" in _f or "危険" in _f:
+                        _flag_bonus += 50.0
+                if _flag_bonus > 0:
+                    score += _flag_bonus
+                    breakdown['フラグボーナス'] = _flag_bonus
+
                 return round(score, 1), breakdown
 
             # 各エントリのスコアを計算
@@ -9287,7 +9298,6 @@ if nav == "🏇 騎手分析Pro":
                 _pr = _e.get('jockey_profile') or {}
                 _ys = _pr.get('year_stats') or {}
                 _flg = _e.get('flags', [])
-                _flag_str = " ".join(_flg) if _flg else "—"
                 _madv = _e.get('matched_adv') or {}
                 _adv_full = _e.get('advanced_stats') or {}
                 _prb = _madv.get('prb_overall', 0.5)
@@ -9298,6 +9308,28 @@ if nav == "🏇 騎手分析Pro":
                 _win_usm = _usm.get('win_usm', '-')
                 _top2_usm = _usm.get('top2_usm', '-')
                 _top3_usm = _usm.get('top3_usm', '-')
+
+                # フラグ表示のアップデート (妙味/危険があれば+50.0ボーナス内訳を付記)
+                _flag_bonus_val = _bd.get('フラグボーナス', 0.0)
+                _flag_str = " ".join(_flg) if _flg else "—"
+                if _flag_bonus_val > 0:
+                    _flag_display = f"{_flag_str} (+{_flag_bonus_val:.1f})"
+                else:
+                    _flag_display = _flag_str
+
+                # 加減点表示のアップデート (フラグボーナス内訳をわかりやすく付記)
+                _bonuses = _e.get('bonuses') or {}
+                _b_score = _bonuses.get('matched_bonus_score', 0.0)
+                _p_score = _bonuses.get('matched_penalty_score', 0.0)
+                
+                _kagenten_str = '—'
+                if _b_score != 0 or _p_score != 0:
+                    _kagenten_str = f"+{_b_score:.1f} / {_p_score:.1f}"
+                if _flag_bonus_val > 0:
+                    if _kagenten_str == '—':
+                        _kagenten_str = f"フラグ加点: +{_flag_bonus_val:.1f}"
+                    else:
+                        _kagenten_str += f" (フラグ: +{_flag_bonus_val:.1f})"
 
                 scored.append({
                     '_umaban': _e.get('umaban', 0),
@@ -9325,14 +9357,11 @@ if nav == "🏇 騎手分析Pro":
                     '本年勝率': f"{_ys.get('win_rate', 0)*100:.1f}",
                     '本年連対%': f"{_ys.get('top2_rate', 0)*100:.1f}",
                     '本年複勝%': f"{_ys.get('top3_rate', 0)*100:.1f}",
-                    'フラグ': _flag_str,
+                    'フラグ': _flag_display,
                     'PW指数': f"{float(_e['pw_index']):.1f}" if _e.get('pw_index') is not None else '—',
-                    '加減点': (lambda b: (
-                        f"+{b.get('matched_bonus_score',0):.1f} / {b.get('matched_penalty_score',0):.1f}"
-                        if b.get('matched_bonus_score',0) != 0 or b.get('matched_penalty_score',0) != 0 else '—'
-                    ))(_e.get('bonuses') or {}),
+                    '加減点': _kagenten_str,
                     '総合スコア': _sc,  # Stylerや判定用にfloatのままとし、表示上のHTMLでのみ後から丸める
-                    '_bonuses': _e.get('bonuses') or {},
+                    '_bonuses': _bonuses,
                     '_adv': _adv_full,
                     '_matched_adv': _madv,
                 })
