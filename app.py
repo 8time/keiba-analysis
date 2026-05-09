@@ -8944,7 +8944,8 @@ if nav == "🏇 騎手分析Pro":
         _WEIGHTS_FILE_JOCKEY = os.path.join(os.path.dirname(__file__), ".score_weights_jockey.json")
         _jockey_weight_defaults = {
             "調子P": 0.0, "単回収%": 0.0, "人気": 0.0, "オッズ": 0.0,
-            "PW指数": 0.0, "単勝USM": 0.0, "連対USM": 0.0, "複勝USM": 0.0
+            "PW指数": 0.0, "単勝USM": 0.0, "連対USM": 0.0, "複勝USM": 0.0,
+            "フラグボーナス": 50.0
         }
         if 'score_weights_jockey' not in st.session_state:
             if os.path.exists(_WEIGHTS_FILE_JOCKEY):
@@ -8963,18 +8964,19 @@ if nav == "🏇 騎手分析Pro":
             if k not in sw_jockey: sw_jockey[k] = v
 
         with st.expander("📊 騎手分析Pro：総合スコア影響率（ウェイト）設定", expanded=False):
-            st.caption("各指標の生の値に、設定した影響率ウェイト（乗数）を乗算して総合スコアに加算します。")
+            st.caption("各指標の生の値に、設定した影響率ウェイト（乗数）を乗算して総合スコアに加算します。フラグボーナス値は「妙味」「危険」フラグ時のポイント加算値です。")
             j_col1, j_col2 = st.columns(2)
             
             _J_WEIGHTS_CONFIG = [
-                ("📈 調子Pウェイト", "調子P", "調子ポイント(好不調)の乗数ウェイト。"),
-                ("💰 単回収%ウェイト", "単回収%", "コース単勝回収率(割合換算)の乗数ウェイト。"),
-                ("👥 人気ウェイト", "人気", "人気値(1〜18、1人気ほど高得点化)の乗数ウェイト。"),
-                ("オッズウェイト", "オッズ", "オッズ値(1.0〜150.0)の乗数ウェイト。"),
-                ("🥋 PW指数ウェイト", "PW指数", "PW指数(0〜150程度、/10)の乗数ウェイト。"),
-                ("🎯 単勝USMウェイト", "単勝USM", "単勝USM(割合換算)の乗数ウェイト。"),
-                ("🥈 連対USMウェイト", "連対USM", "連対USM(割合換算)の乗数ウェイト。"),
-                ("🥉 複勝USMウェイト", "複勝USM", "複勝USM(割合換算)の乗数ウェイト。")
+                ("📈 調子Pウェイト", "調子P", "調子ポイント(好不調)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("💰 単回収%ウェイト", "単回収%", "コース単勝回収率(割合換算)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("👥 人気ウェイト", "人気", "人気値(1〜18、1人気ほど高得点化)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("オッズウェイト", "オッズ", "オッズ値(1.0〜150.0)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("🥋 PW指数ウェイト", "PW指数", "PW指数(0〜150程度、/10)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("🎯 単勝USMウェイト", "単勝USM", "単勝USM(割合換算)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("🥈 連対USMウェイト", "連対USM", "連対USM(割合換算)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("🥉 複勝USMウェイト", "複勝USM", "複勝USM(割合換算)の乗数ウェイト。", 0.0, 10.0, 0.01),
+                ("🚩 フラグボーナス値", "フラグボーナス", "「妙味」や「危険」フラグがついた際に、総合スコアに加算するポイントボーナス。", 0.0, 100.0, 1.0)
             ]
             
             def _sync_slider_jockey(sld_key, num_key):
@@ -8982,13 +8984,11 @@ if nav == "🏇 騎手分析Pro":
             def _sync_num_jockey(num_key, sld_key):
                 st.session_state[sld_key] = st.session_state[num_key]
                 
-            for _i, (label, sw_key, help_text) in enumerate(_J_WEIGHTS_CONFIG):
+            for _i, (label, sw_key, help_text, min_v, max_v, step_v) in enumerate(_J_WEIGHTS_CONFIG):
                 sld_key = f"wsld_jockey_{sw_key}"
                 num_key = f"wnum_jockey_{sw_key}"
-                cur_v = float(sw_jockey.get(sw_key, 0.0))
+                cur_v = float(sw_jockey.get(sw_key, 50.0 if sw_key == "フラグボーナス" else 0.0))
                 
-                # 影響率範囲：0.0 〜 10.00
-                min_v, max_v = 0.0, 10.00
                 cur_v = max(min_v, min(max_v, cur_v))
                 
                 if sld_key not in st.session_state: st.session_state[sld_key] = cur_v
@@ -8998,11 +8998,11 @@ if nav == "🏇 騎手分析Pro":
                 with target_col:
                     c_sld, c_num = st.columns([3, 1])
                     with c_sld:
-                        st.slider(label, min_v, max_v, step=0.01, key=sld_key, 
+                        st.slider(label, min_v, max_v, step=step_v, key=sld_key, 
                                   help=help_text, on_change=lambda sk=sld_key, nk=num_key: _sync_slider_jockey(sk, nk))
                     with c_num:
                         st.write("")
-                        st.number_input("", min_v, max_v, step=0.01, key=num_key, label_visibility="collapsed",
+                        st.number_input("", min_v, max_v, step=step_v, key=num_key, label_visibility="collapsed",
                                         on_change=lambda nk=num_key, sk=sld_key: _sync_num_jockey(nk, sk))
                     
                     sw_jockey[sw_key] = float(st.session_state.get(num_key, cur_v))
@@ -9278,12 +9278,13 @@ if nav == "🏇 騎手分析Pro":
                         score += (top3_usm / 100.0) * weights.get('複勝USM', 0.0)
 
                 # ── 👑 [NEW] フラグボーナス (妙味・危険) ──
-                # 妙味または危険フラグがつくと、総合スコアに50ポイント加算する
+                # 妙味または危険フラグがつくと、総合スコアにユーザー設定のボーナスポイントを加算する
                 _flg_list = entry.get('flags', [])
+                _bonus_v = weights.get('フラグボーナス', 50.0) if weights else 50.0
                 _flag_bonus = 0.0
                 for _f in _flg_list:
                     if "妙味" in _f or "危険" in _f:
-                        _flag_bonus += 50.0
+                        _flag_bonus += _bonus_v
                 if _flag_bonus > 0:
                     score += _flag_bonus
                     breakdown['フラグボーナス'] = _flag_bonus
