@@ -9315,51 +9315,140 @@ if nav == "🏇 騎手分析Pro":
                 except: pass
                 return ''
 
-            _styled = (_df_rank.style
+            # 列名を画面表示用にリネーム（旧 st.dataframe の column_config 設定に準拠）
+            _df_rank_display = _df_rank.rename(columns={
+                '脚質傾向': '脚質',
+                'コース連対%': f'{_jp_venue}連対%',
+                'コース複勝%': f'{_jp_venue}複勝%',
+            })
+
+            # スタイル適用（インデックス非表示化も Styler 側で実現）
+            _styled = (_df_rank_display.style
+                .hide(axis='index')
                 .apply(_style_rank_row, axis=1)
                 .map(_style_eval, subset=['評価'])
                 .map(_style_score, subset=['総合スコア'])
                 .apply(_style_top3_per_col, axis=None)
             )
 
-            st.dataframe(
-                _styled,
-                column_config={
-                    '順位':       st.column_config.NumberColumn("順位", width="small"),
-                    '評価':       st.column_config.TextColumn("評価", width="small"),
-                    '馬番':       st.column_config.NumberColumn("馬番", width="small"),
-                    '馬名':       st.column_config.TextColumn("馬名", width="medium"),
-                    '騎手':       st.column_config.TextColumn("騎手", width="medium"),
-                    '厩舎':       st.column_config.TextColumn("厩舎", width="medium"),
-                    '人気':       st.column_config.TextColumn("人気", width="small"),
-                    'オッズ':     st.column_config.TextColumn("オッズ", width="small"),
-                    '調子P':      st.column_config.NumberColumn("調子P", width="small", format="%.1f",
-                                    help="直近10走における人気と着順の乖離を数値化した好不調ポイント。"),
-                    'PRB':        st.column_config.TextColumn("PRB", width="small",
-                                    help="Percentage of Rivals Beaten (0~1, 0.50が平均)。直近60走の相対勝率。"),
-                    '調子':       st.column_config.TextColumn("調子", width="small",
-                                    help="直近30日PRB vs 全体PRB比較。HOT=好調 / COLD=不調"),
-                    '脚質傾向':   st.column_config.TextColumn("脚質", width="small",
-                                    help="直近の通過順位から推定した騎乗スタイル"),
-                    '単勝USM':    st.column_config.TextColumn("単勝USM", width="small"),
-                    '連対USM':    st.column_config.TextColumn("連対USM", width="small"),
-                    '複勝USM':    st.column_config.TextColumn("複勝USM", width="small"),
-                    'コース連対%': st.column_config.TextColumn(f"{_jp_venue}連対%", width="small"),
-                    'コース複勝%': st.column_config.TextColumn(f"{_jp_venue}複勝%", width="small"),
-                    '単回収%':    st.column_config.TextColumn("単回収%", width="small"),
-                    '騎乗数':     st.column_config.NumberColumn("騎乗数", width="small"),
-                    '本年勝率':   st.column_config.TextColumn("本年勝率", width="small"),
-                    '本年連対%':  st.column_config.TextColumn("本年連対%", width="small"),
-                    '本年複勝%':  st.column_config.TextColumn("本年複勝%", width="small"),
-                    'PW指数':     st.column_config.TextColumn("PW指数", width="small"),
-                    '加減点':     st.column_config.TextColumn("加減点", width="small",
-                                    help="db-keiba傾向まとめによる加算/減点（詳細は各カードのExpanderで確認）"),
-                    'フラグ':     st.column_config.TextColumn("フラグ", width="medium"),
-                    '総合スコア': st.column_config.NumberColumn("総合スコア", format="%.1f", width="small"),
-                },
-                hide_index=True,
-                use_container_width=True,
-            )
+            # HTMLテーブル生成
+            _styled.set_uuid("jpro_rank")
+            _table_html = _styled.to_html(escape=False)
+
+            # プレミアムダークテーマCSSおよびインタラクティブJavaScriptソーター
+            _premium_table_html = f"""
+            <div class="premium-table-container">
+              <style>
+                .premium-table-container {{
+                    background: #0d0d1a;
+                    border: 1px solid #2d1b4e;
+                    border-radius: 12px;
+                    padding: 16px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 4px 25px rgba(0,0,0,0.6);
+                    overflow-x: auto;
+                }}
+                .premium-table-container table {{
+                    width: 100%;
+                    border-collapse: separate;
+                    border-spacing: 0;
+                    color: #eee;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    font-size: 0.85rem;
+                }}
+                .premium-table-container th {{
+                    background: #121225;
+                    color: #b388ff;
+                    font-weight: bold;
+                    text-align: center;
+                    padding: 12px 10px;
+                    border-bottom: 2px solid #2d1b4e;
+                    cursor: pointer;
+                    user-select: none;
+                    white-space: nowrap;
+                    position: relative;
+                    transition: background 0.2s, color 0.2s;
+                }}
+                .premium-table-container th:hover {{
+                    background: #1e1e3f;
+                    color: #ffffff;
+                }}
+                .premium-table-container th::after {{
+                    content: " ↕";
+                    font-size: 0.75em;
+                    color: #666;
+                    margin-left: 4px;
+                }}
+                .premium-table-container th.sorted-asc::after {{
+                    content: " ▲" !important;
+                    color: #ffab40 !important;
+                }}
+                .premium-table-container th.sorted-desc::after {{
+                    content: " ▼" !important;
+                    color: #ffab40 !important;
+                }}
+                .premium-table-container td {{
+                    padding: 10px 10px;
+                    border-bottom: 1px solid #1a1a35;
+                    text-align: center;
+                    white-space: nowrap;
+                    transition: background 0.15s;
+                }}
+                .premium-table-container tr:hover td {{
+                    background: rgba(255, 255, 255, 0.05) !important;
+                }}
+              </style>
+              
+              {_table_html}
+              
+              <script>
+                (function() {{
+                    const table = document.querySelector('.premium-table-container table');
+                    if (!table) return;
+                    const headers = table.querySelectorAll('th');
+                    const tbody = table.querySelector('tbody');
+                    if (!tbody) return;
+                    
+                    headers.forEach((header, index) => {{
+                        let asc = true;
+                        header.addEventListener('click', () => {{
+                            const rows = Array.from(tbody.querySelectorAll('tr'));
+                            
+                            rows.sort((rowA, rowB) => {{
+                                const cellA = rowA.children[index].innerText.trim();
+                                const cellB = rowB.children[index].innerText.trim();
+                                
+                                const clean = (val) => {{
+                                    val = val.replace('%', '').replace('🔥', '').replace('🧊', '').trim();
+                                    if (val === '—' || val === '-' || val === '' || val === 'None') {{
+                                        return asc ? Infinity : -Infinity;
+                                    }}
+                                    const num = parseFloat(val);
+                                    return isNaN(num) ? val : num;
+                                }};
+                                
+                                const valA = clean(cellA);
+                                const valB = clean(cellB);
+                                
+                                if (typeof valA === 'number' && typeof valB === 'number') {{
+                                    return asc ? valA - valB : valB - valA;
+                                }}
+                                return asc ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
+                            }});
+                            
+                            rows.forEach(row => tbody.appendChild(row));
+                            asc = !asc;
+                            
+                            headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+                            header.classList.add(asc ? 'sorted-desc' : 'sorted-asc');
+                        }});
+                    }});
+                }})();
+              </script>
+            </div>
+            """
+
+            st.html(_premium_table_html)
 
             # ── 📈 勝ち指数バー（HTML+CSSプレミアムグラデーションバー） ──
             st.divider()
