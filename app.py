@@ -8977,8 +8977,90 @@ if nav == "🏇 騎手分析Pro":
 
             st.success(f"✅ {_jp_venue}  {len(_jp_entries)}頭の分析完了")
 
+            # ── 💡 騎手分析Pro：総合スコア影響率（ウェイト）設定 ──
+            _WEIGHTS_FILE_JOCKEY = os.path.join(os.path.dirname(__file__), ".score_weights_jockey.json")
+            _jockey_weight_defaults = {
+                "調子P": 0.0, "単回収%": 0.0, "人気": 0.0, "オッズ": 0.0,
+                "PW指数": 0.0, "単勝USM": 0.0, "連対USM": 0.0, "複勝USM": 0.0
+            }
+            if 'score_weights_jockey' not in st.session_state:
+                if os.path.exists(_WEIGHTS_FILE_JOCKEY):
+                    try:
+                        import json as _json
+                        with open(_WEIGHTS_FILE_JOCKEY, 'r', encoding='utf-8') as _wf:
+                            _loaded = _json.load(_wf)
+                        st.session_state['score_weights_jockey'] = {**_jockey_weight_defaults, **_loaded}
+                    except Exception:
+                        st.session_state['score_weights_jockey'] = _jockey_weight_defaults.copy()
+                else:
+                    st.session_state['score_weights_jockey'] = _jockey_weight_defaults.copy()
+
+            sw_jockey = st.session_state['score_weights_jockey']
+            for k, v in _jockey_weight_defaults.items():
+                if k not in sw_jockey: sw_jockey[k] = v
+
+            with st.expander("📊 騎手分析Pro：総合スコア影響率（ウェイト）設定", expanded=False):
+                st.caption("各指標の生の値に、設定した影響率ウェイト（乗数）を乗算して総合スコアに加算します。")
+                j_col1, j_col2 = st.columns(2)
+                
+                _J_WEIGHTS_CONFIG = [
+                    ("📈 調子Pウェイト", "調子P", "調子ポイント(好不調)の乗数ウェイト。"),
+                    ("💰 単回収%ウェイト", "単回収%", "コース単勝回収率(割合換算)の乗数ウェイト。"),
+                    ("👥 人気ウェイト", "人気", "人気値(1〜18、1人気ほど高得点化)の乗数ウェイト。"),
+                    ("オッズウェイト", "オッズ", "オッズ値(1.0〜150.0)の乗数ウェイト。"),
+                    ("🥋 PW指数ウェイト", "PW指数", "PW指数(0〜150程度、/10)の乗数ウェイト。"),
+                    ("🎯 単勝USMウェイト", "単勝USM", "単勝USM(割合換算)の乗数ウェイト。"),
+                    ("🥈 連対USMウェイト", "連対USM", "連対USM(割合換算)の乗数ウェイト。"),
+                    ("🥉 複勝USMウェイト", "複勝USM", "複勝USM(割合換算)の乗数ウェイト。")
+                ]
+                
+                def _sync_slider_jockey(sld_key, num_key):
+                    st.session_state[num_key] = st.session_state[sld_key]
+                def _sync_num_jockey(num_key, sld_key):
+                    st.session_state[sld_key] = st.session_state[num_key]
+                    
+                for _i, (label, sw_key, help_text) in enumerate(_J_WEIGHTS_CONFIG):
+                    sld_key = f"wsld_jockey_{sw_key}"
+                    num_key = f"wnum_jockey_{sw_key}"
+                    cur_v = float(sw_jockey.get(sw_key, 0.0))
+                    
+                    # 影響率範囲：0.0 〜 10.00
+                    min_v, max_v = 0.0, 10.00
+                    cur_v = max(min_v, min(max_v, cur_v))
+                    
+                    if sld_key not in st.session_state: st.session_state[sld_key] = cur_v
+                    if num_key not in st.session_state: st.session_state[num_key] = cur_v
+                    
+                    target_col = j_col1 if _i % 2 == 0 else j_col2
+                    with target_col:
+                        c_sld, c_num = st.columns([3, 1])
+                        with c_sld:
+                            st.slider(label, min_v, max_v, step=0.01, key=sld_key, 
+                                      help=help_text, on_change=lambda sk=sld_key, nk=num_key: _sync_slider_jockey(sk, nk))
+                        with c_num:
+                            st.write("")
+                            st.number_input("", min_v, max_v, step=0.01, key=num_key, label_visibility="collapsed",
+                                            on_change=lambda nk=num_key, sk=sld_key: _sync_num_jockey(nk, sk))
+                        
+                        sw_jockey[sw_key] = float(st.session_state.get(num_key, cur_v))
+                
+                st.session_state['score_weights_jockey'] = sw_jockey
+                
+                jb_col1, jb_col2 = st.columns(2)
+                with jb_col1:
+                    if st.button("💾 影響率を保存（全ランキングに適用）", key="btn_save_weights_jockey"):
+                        try:
+                            import json as _json
+                            with open(_WEIGHTS_FILE_JOCKEY, 'w', encoding='utf-8') as _wf:
+                                _json.dump(sw_jockey, _wf, ensure_ascii=False, indent=2)
+                            st.success("✅ 騎手分析影響率を保存しました。")
+                        except Exception as _e:
+                            st.error(f"保存失敗: {_e}")
+                with jb_col2:
+                    st.caption("💡 スライダーを動かすと、リアルタイムに下のランキングが再計算されます。")
+
             # ── スコアリング（全指標を集計） ──
-            def _compute_full_score(entry, venue):
+            def _compute_full_score(entry, venue, weights=None):
                 """全取得可能指標を合計してスコア化"""
                 vs  = entry.get('venue_stats') or {}
                 pr  = entry.get('jockey_profile') or {}
@@ -9154,12 +9236,52 @@ if nav == "🏇 騎手分析Pro":
                         score += s18
                         breakdown['作戦一致'] = round(s18, 1)
 
+                # ── 👑 [NEW] 影響率（ウェイト）の加算 ──
+                if weights:
+                    # 1) 調子P
+                    form_score_val = float(entry.get('advanced_stats', {}).get('form_score', 0.0))
+                    score += form_score_val * weights.get('調子P', 0.0)
+                    
+                    # 2) 単回収% (割合換算)
+                    win_ret_val = float(vs.get('adj_win_return', 0))
+                    score += (win_ret_val / 100.0) * weights.get('単回収%', 0.0)
+                    
+                    # 3) 人気 (1人気ほど加点)
+                    pop = entry.get('popularity', 99)
+                    if pop < 99:
+                        score += (19.0 - float(pop)) * weights.get('人気', 0.0)
+                        
+                    # 4) オッズ (大穴加点、そのまま乗算)
+                    odds = float(entry.get('odds', 0.0))
+                    score += odds * weights.get('オッズ', 0.0)
+                    
+                    # 5) PW指数 (/10でベーススケール調整)
+                    pw_idx_val = entry.get('pw_index')
+                    if pw_idx_val is not None:
+                        try:
+                            score += (float(pw_idx_val) / 10.0) * weights.get('PW指数', 0.0)
+                        except (TypeError, ValueError):
+                            pass
+                            
+                    # 6) 単勝USM, 7) 連対USM, 8) 複勝USM (割合換算)
+                    usm_data = entry.get('advanced_stats', {}).get('usm', {})
+                    win_usm = usm_data.get('win_usm')
+                    top2_usm = usm_data.get('top2_usm')
+                    top3_usm = usm_data.get('top3_usm')
+                    
+                    if isinstance(win_usm, int):
+                        score += (win_usm / 100.0) * weights.get('単勝USM', 0.0)
+                    if isinstance(top2_usm, int):
+                        score += (top2_usm / 100.0) * weights.get('連対USM', 0.0)
+                    if isinstance(top3_usm, int):
+                        score += (top3_usm / 100.0) * weights.get('複勝USM', 0.0)
+
                 return round(score, 1), breakdown
 
             # 各エントリのスコアを計算
             scored = []
             for _e in _jp_entries:
-                _sc, _bd = _compute_full_score(_e, _jp_venue)
+                _sc, _bd = _compute_full_score(_e, _jp_venue, weights=sw_jockey)
                 _vs = _e.get('venue_stats') or {}
                 _pr = _e.get('jockey_profile') or {}
                 _ys = _pr.get('year_stats') or {}
@@ -9188,16 +9310,16 @@ if nav == "🏇 騎手分析Pro":
                     '厩舎': _e.get('trainer_name', ''),
                     '人気': _e.get('popularity', 99) if _e.get('popularity', 99) < 99 else '—',
                     'オッズ': f"{_e.get('odds', 0):.1f}" if _e.get('odds', 0) > 0 else '—',
-                    '調子P': _adv_full.get('form_score', 0.0),
-                    'PRB': f"{_prb:.2f}",
+                    '調子P': f"{_adv_full.get('form_score', 0.0):.1f}",
+                    'PRB': f"{_prb:.1f}",
                     '調子': f"{_hc_icon}{_hc}" if _hc != '—' else '—',
                     '脚質傾向': _rstyle,
-                    '単勝USM': f"{_win_usm}%" if isinstance(_win_usm, int) else "-",
-                    '連対USM': f"{_top2_usm}%" if isinstance(_top2_usm, int) else "-",
-                    '複勝USM': f"{_top3_usm}%" if isinstance(_top3_usm, int) else "-",
+                    '単勝USM': f"{float(_win_usm):.1f}%" if isinstance(_win_usm, int) else "-",
+                    '連対USM': f"{float(_top2_usm):.1f}%" if isinstance(_top2_usm, int) else "-",
+                    '複勝USM': f"{float(_top3_usm):.1f}%" if isinstance(_top3_usm, int) else "-",
                     'コース連対%': f"{_vs.get('adj_top2_rate', 0)*100:.1f}",
                     'コース複勝%': f"{_vs.get('top3_rate', 0)*100:.1f}",
-                    '単回収%': f"{_vs.get('adj_win_return', 0):.0f}",
+                    '単回収%': f"{float(_vs.get('adj_win_return', 0)):.1f}",
                     '騎乗数': _vs.get('rides', 0),
                     '本年勝率': f"{_ys.get('win_rate', 0)*100:.1f}",
                     '本年連対%': f"{_ys.get('top2_rate', 0)*100:.1f}",
@@ -9205,10 +9327,10 @@ if nav == "🏇 騎手分析Pro":
                     'フラグ': _flag_str,
                     'PW指数': f"{float(_e['pw_index']):.1f}" if _e.get('pw_index') is not None else '—',
                     '加減点': (lambda b: (
-                        f"+{b.get('matched_bonus_score',0):.0f} / {b.get('matched_penalty_score',0):.0f}"
+                        f"+{b.get('matched_bonus_score',0):.1f} / {b.get('matched_penalty_score',0):.1f}"
                         if b.get('matched_bonus_score',0) != 0 or b.get('matched_penalty_score',0) != 0 else '—'
                     ))(_e.get('bonuses') or {}),
-                    '総合スコア': _sc,
+                    '総合スコア': _sc,  # Stylerや判定用にfloatのままとし、表示上のHTMLでのみ後から丸める
                     '_bonuses': _e.get('bonuses') or {},
                     '_adv': _adv_full,
                     '_matched_adv': _madv,
@@ -9227,7 +9349,7 @@ if nav == "🏇 騎手分析Pro":
             _top1 = scored[0] if scored else {}
 
             _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-            _mc1.metric("🥇 本命", f"{_top1.get('馬番', '?')}番 {_top1.get('騎手', '?')[:4]}", f"スコア {_top1.get('総合スコア', 0):.0f}")
+            _mc1.metric("🥇 本命", f"{_top1.get('馬番', '?')}番 {_top1.get('騎手', '?')[:4]}", f"スコア {float(_top1.get('総合スコア', 0)):.1f}")
             _mc2.metric("🔴 鉄板フラグ", f"{_iron_n}騎手")
             _mc3.metric("🟡 妙味フラグ", f"{_value_n}騎手")
             _mc4.metric("🔵 危険フラグ", f"{_danger_n}騎手")
@@ -9308,7 +9430,7 @@ if nav == "🏇 騎手分析Pro":
 
             def _style_score(val):
                 try:
-                    v = float(val)
+                    v = float(str(val).replace('%', ''))
                     if v >= 120: return 'color:#FF5252; font-weight:bold;'
                     if v >= 90:  return 'color:#FFAB40;'
                     if v < 40:   return 'color:#666;'
@@ -9322,9 +9444,10 @@ if nav == "🏇 騎手分析Pro":
                 'コース複勝%': f'{_jp_venue}複勝%',
             })
 
-            # スタイル適用（インデックス非表示化も Styler 側で実現）
+            # スタイル適用（インデックス非表示化および小数点第1位フォーマットも Styler 側で実現）
             _styled = (_df_rank_display.style
                 .hide(axis='index')
+                .format(subset=['総合スコア'], formatter="{:.1f}")
                 .apply(_style_rank_row, axis=1)
                 .map(_style_eval, subset=['評価'])
                 .map(_style_score, subset=['総合スコア'])
