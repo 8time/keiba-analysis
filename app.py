@@ -8940,6 +8940,88 @@ if nav == "🏇 騎手分析Pro":
         if 'jp_analysis_result' not in st.session_state:
             st.session_state.jp_analysis_result = None
 
+        # ── 💡 騎手分析Pro：総合スコア影響率（ウェイト）設定 ──
+        _WEIGHTS_FILE_JOCKEY = os.path.join(os.path.dirname(__file__), ".score_weights_jockey.json")
+        _jockey_weight_defaults = {
+            "調子P": 0.0, "単回収%": 0.0, "人気": 0.0, "オッズ": 0.0,
+            "PW指数": 0.0, "単勝USM": 0.0, "連対USM": 0.0, "複勝USM": 0.0
+        }
+        if 'score_weights_jockey' not in st.session_state:
+            if os.path.exists(_WEIGHTS_FILE_JOCKEY):
+                try:
+                    import json as _json
+                    with open(_WEIGHTS_FILE_JOCKEY, 'r', encoding='utf-8') as _wf:
+                        _loaded = _json.load(_wf)
+                    st.session_state['score_weights_jockey'] = {**_jockey_weight_defaults, **_loaded}
+                except Exception:
+                    st.session_state['score_weights_jockey'] = _jockey_weight_defaults.copy()
+            else:
+                st.session_state['score_weights_jockey'] = _jockey_weight_defaults.copy()
+
+        sw_jockey = st.session_state['score_weights_jockey']
+        for k, v in _jockey_weight_defaults.items():
+            if k not in sw_jockey: sw_jockey[k] = v
+
+        with st.expander("📊 騎手分析Pro：総合スコア影響率（ウェイト）設定", expanded=False):
+            st.caption("各指標の生の値に、設定した影響率ウェイト（乗数）を乗算して総合スコアに加算します。")
+            j_col1, j_col2 = st.columns(2)
+            
+            _J_WEIGHTS_CONFIG = [
+                ("📈 調子Pウェイト", "調子P", "調子ポイント(好不調)の乗数ウェイト。"),
+                ("💰 単回収%ウェイト", "単回収%", "コース単勝回収率(割合換算)の乗数ウェイト。"),
+                ("👥 人気ウェイト", "人気", "人気値(1〜18、1人気ほど高得点化)の乗数ウェイト。"),
+                ("オッズウェイト", "オッズ", "オッズ値(1.0〜150.0)の乗数ウェイト。"),
+                ("🥋 PW指数ウェイト", "PW指数", "PW指数(0〜150程度、/10)の乗数ウェイト。"),
+                ("🎯 単勝USMウェイト", "単勝USM", "単勝USM(割合換算)の乗数ウェイト。"),
+                ("🥈 連対USMウェイト", "連対USM", "連対USM(割合換算)の乗数ウェイト。"),
+                ("🥉 複勝USMウェイト", "複勝USM", "複勝USM(割合換算)の乗数ウェイト。")
+            ]
+            
+            def _sync_slider_jockey(sld_key, num_key):
+                st.session_state[num_key] = st.session_state[sld_key]
+            def _sync_num_jockey(num_key, sld_key):
+                st.session_state[sld_key] = st.session_state[num_key]
+                
+            for _i, (label, sw_key, help_text) in enumerate(_J_WEIGHTS_CONFIG):
+                sld_key = f"wsld_jockey_{sw_key}"
+                num_key = f"wnum_jockey_{sw_key}"
+                cur_v = float(sw_jockey.get(sw_key, 0.0))
+                
+                # 影響率範囲：0.0 〜 10.00
+                min_v, max_v = 0.0, 10.00
+                cur_v = max(min_v, min(max_v, cur_v))
+                
+                if sld_key not in st.session_state: st.session_state[sld_key] = cur_v
+                if num_key not in st.session_state: st.session_state[num_key] = cur_v
+                
+                target_col = j_col1 if _i % 2 == 0 else j_col2
+                with target_col:
+                    c_sld, c_num = st.columns([3, 1])
+                    with c_sld:
+                        st.slider(label, min_v, max_v, step=0.01, key=sld_key, 
+                                  help=help_text, on_change=lambda sk=sld_key, nk=num_key: _sync_slider_jockey(sk, nk))
+                    with c_num:
+                        st.write("")
+                        st.number_input("", min_v, max_v, step=0.01, key=num_key, label_visibility="collapsed",
+                                        on_change=lambda nk=num_key, sk=sld_key: _sync_num_jockey(nk, sk))
+                    
+                    sw_jockey[sw_key] = float(st.session_state.get(num_key, cur_v))
+            
+            st.session_state['score_weights_jockey'] = sw_jockey
+            
+            jb_col1, jb_col2 = st.columns(2)
+            with jb_col1:
+                if st.button("💾 影響率を保存（全ランキングに適用）", key="btn_save_weights_jockey"):
+                    try:
+                        import json as _json
+                        with open(_WEIGHTS_FILE_JOCKEY, 'w', encoding='utf-8') as _wf:
+                            _json.dump(sw_jockey, _wf, ensure_ascii=False, indent=2)
+                        st.success("✅ 騎手分析影響率を保存しました。")
+                    except Exception as _e:
+                        st.error(f"保存失敗: {_e}")
+            with jb_col2:
+                st.caption("💡 スライダーを動かすと、リアルタイムに下のランキングが再計算されます。")
+
         # ── 分析実行 ──
         if jp_analyze_btn and jp_race_id:
 
