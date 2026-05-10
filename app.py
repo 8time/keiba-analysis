@@ -3745,6 +3745,563 @@ if nav == "🏠 Single Race Analysis":
                             else:
                                 st.warning("分析データがありません。先に分析を実行してください。")
 
+                    # --- 🎯 買い目用 10選 コンテナ (Visual Reordering) ---
+                    # We create the container here so it renders ABOVE the Axis Selection,
+                    # but we populate it below after Axis Selection is determined.
+                    recommends_container = st.container()
+
+                    # --- 共通の軸馬選択 (Shared Axis Selection) ---
+                    st.divider()
+                    st.subheader("🔩 買い目用 軸馬設定")
+                    st.caption("ここで選んだ軸馬は、下部の「荒れ予想専用特殊狙い」および「3連複スペシャル」のベースとなります。")
+
+                    # Build horse choices ordered by Projected Score (desc)
+                    sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                    df_axis_sorted = df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+                    horse_choices = []
+                    for _, row in df_axis_sorted.iterrows():
+                        u_val = int(row['Umaban']) if pd.notnull(row['Umaban']) else 0
+                        horse_choices.append(f"[{u_val:02d}] {row['Name']}")
+
+                    # Pre-fill top-2 Projected Score horses as default axis
+                    default_axis = horse_choices[:2] if len(horse_choices) >= 2 else []
+
+                    axis_selections = st.multiselect(
+                        "🔩 軸馬を「2頭」選んでください（予測スコア順にソート済み）:",
+                        options=horse_choices,
+                        default=default_axis,
+                        max_selections=2
+                    )
+
+                    # Extract raw umaban lists
+                    selected_axis_umaban = None
+                    if len(axis_selections) == 2:
+                        valid_names = [sel.split("] ")[1] for sel in axis_selections]
+                        selected_axis_umaban = df[df['Name'].isin(valid_names)]['Umaban'].tolist()
+
+                    # --- 🎯 指数該当・人気順10選 / A・S専用買い目 ---
+                    # Populate the container created above
+                    with recommends_container:
+                        st.divider()
+                        
+                        # race_pattern の代わりに波乱度 (chaos_rank) を使用
+                        _chaos_rank = calculator.evaluate_race_chaos_v2(df).get('rank', 'B')
+                        if _chaos_rank in ['A', 'S']:
+                            st.html("""
+                            <div style="background-color: #3d0000; border: 3px solid #ff4500; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 0 30px #ff450077;">
+                                <h3 style="color: #ffff00 !important; text-align: center; margin-bottom: 5px; font-weight: 900; letter-spacing: 2px;">🚨 【荒れ予想専用】あなた独自の軸2頭 ＋ 中穴 特殊狙い 🚨</h3>
+                                <p style="color: #ffffff !important; text-align: center; margin-top: 0; font-size: 1.1em; font-weight: bold;">このレースは難易度がA/S判定のため、自動的に高配当特化の「選択した軸2頭 ＋ その他の全馬」の組み合わせに切り替わりました。</p>
+                            </div>
+                            """)
+                        else:
+                            st.subheader("🎯 指数上位＋推奨穴馬の最適買い目")
+                            st.caption("予測スコア上位5頭に「推奨穴馬（🔥）」を加え、期待値上位の買い目を抽出します。トリガミを防ぐ資金管理も自動計算します。")
+                            
+                        _rec_cache_key = f"sanrenpuku_odds_{race_id_input}"
+
+                        @st.cache_data(ttl=120, show_spinner=False)
+                        def _fetch_sanrenpuku_cached(_race_id: str):
+                            return scraper.fetch_sanrenpuku_odds(_race_id)
+
+                        if st.button("🎯 推奨買い目を取得・更新", key="btn_fetch_san_recs"):
+                            _fetch_sanrenpuku_cached.clear()  # 古いキャッシュをクリア
+                            with st.spinner("3連複オッズ取得中..."):
+                                _fetched = _fetch_sanrenpuku_cached(race_id_input)
+                                st.caption(f"取得件数: {len(_fetched) if _fetched else 0}")
+                                st.session_state[_rec_cache_key] = _fetched
+                                if _fetched:
+                                    st.session_state["sanrenpuku_odds_df"] = pd.DataFrame([
+                                        {
+                                            "人気": item["Rank"],
+                                            "馬番組": item["Combination"],
+                                            "オッズ": item["Odds"],
+                                            "horse1": item["Horses"][0],
+                                            "horse2": item["Horses"][1],
+                                            "horse3": item["Horses"][2],
+                                        }
+                                        for item in _fetched[:100]
+                                    ])
+                                    st.rerun()
+                                else:
+                                    st.session_state["sanrenpuku_odds_df"] = pd.DataFrame()
+                                    st.caption("⚠️ オッズ未取得。発売前または取得エラーの可能性があります。")
+
+                        odds_list = st.session_state.get(_rec_cache_key, None)
+                        if odds_list is None:
+                            st.info("ボタンを押すと推奨買い目を表示します（発売開始後にご利用ください）")
+                        else:
+                            try:
+                                # Top-20 人気順オッズ表示
+                                if odds_list:
+                                    st.markdown("##### 📊 3連複 人気順オッズ（上位20件）")
+                                    top20_df = pd.DataFrame([
+                                        {"人気": item["Rank"], "馬番組": item["Combination"], "オッズ": item["Odds"]}
+                                        for item in odds_list[:20]
+                                    ])
+                                    st.dataframe(top20_df, width='stretch', hide_index=True)
+                                    st.divider()
+
+                                # Use Projected Score to define top-5 axis horses
+                                if 'Projected Score' in df.columns:
+                                    df_for_recs = df.copy()
+                                    df_for_recs['BattleScore'] = df_for_recs['Projected Score']
+                                else:
+                                    df_for_recs = df
+
+                                if not odds_list:
+                                    st.info("📡 3連複オッズ未取得。発売開始後（レース約30〜60分前）に「推奨買い目を取得・更新」ボタンを押してください。")
+                                    recs = []
+                                else:
+                                    # Define top-5 horses based on Projected Score
+                                    sort_col = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                                    top5_df = df.sort_values(by=sort_col, ascending=False).head(5)
+                                    top5_scores = [float(row[sort_col]) for idx, row in top5_df.iterrows()]
+                                    
+                                    # Identify any Dark Horses or Fitness Horses not in Top 5
+                                    icon_regex = r'🔥|🎯|○|▲|🚀'
+                                    fitness_horse_df = df[(df['Alert'].str.contains(icon_regex, na=False, regex=True)) & (~df['Name'].isin(top5_df['Name']))]
+                                    
+                                    # Combine Top 5 + Fitness Horses to form candidate pool
+                                    candidate_df = pd.concat([top5_df, fitness_horse_df]).drop_duplicates(subset=['Umaban'])
+                                    
+                                    candidate_horses = []
+                                    import re
+                                    for idx, row in candidate_df.iterrows():
+                                        alert_str = str(row['Alert'])
+                                        candidate_horses.append({
+                                            'Umaban': int(row['Umaban']),
+                                            'Name': row['Name'],
+                                            'Score': float(row[sort_col]),
+                                            'HasFitness': bool(re.search(r'🔥|🎯|○|▲', alert_str)),
+                                            'HasRocket': '🚀' in alert_str
+                                        })
+
+                                    # Strategic Formation Recommendation Panel
+                                    scores = top5_scores
+                                    if len(scores) >= 4:
+                                        first_score = scores[0]
+                                        second_score = scores[1]
+                                        fourth_score = scores[3]
+                                        
+                                        st.markdown("#### 💡 システム推奨フォーメーション")
+                                        if first_score >= second_score * 1.2:
+                                            st.success(f"**【1頭軸フォーメーション推奨】** トップの {top5_df.iloc[0]['Name']} が抜けています。(1-4-4)などの組み立てが有効です。")
+                                        elif (first_score - fourth_score) <= (first_score * 0.05):
+                                            st.warning("**【混戦用フォーメーション推奨】** 上位陣の実力差がほぼありません。(2-2-6)などの手広いフォーメーションが有効です。")
+                                        else:
+                                            st.info("**【標準ボックス推奨】** 順当なスコア分布です。上位5頭のボックス買い（10点）を軸に検討してください。")
+                                            
+                                    st.divider()
+                                    st.markdown("#### 💸 合成オッズ・資金配分シミュレーター")
+                                    bankroll = st.number_input("この買い目にかける総予算（円）", min_value=100, value=10000, step=100, format="%d")
+                                    
+                                    from itertools import combinations
+                                    box_combos = list(combinations(candidate_horses, 3))
+                                    
+                                    raw_recs = []
+                                    
+                                    for combo in box_combos:
+                                        # combo is a tuple of 3 horse dicts
+                                        sorted_combo = sorted(combo, key=lambda x: x['Umaban'])
+                                        combo_str = f"{sorted_combo[0]['Umaban']}-{sorted_combo[1]['Umaban']}-{sorted_combo[2]['Umaban']}"
+                                        combo_names = f"{sorted_combo[0]['Name']}・{sorted_combo[1]['Name']}・{sorted_combo[2]['Name']}"
+                                        score_sum = sum(h['Score'] for h in combo)
+                                        has_fitness = any(h['HasFitness'] for h in combo)
+                                        has_rocket = any(h['HasRocket'] for h in combo)
+                                        
+                                        # Find odds from the fetched list
+                                        matched_odds = 0.0
+                                        for odds_item in odds_list:
+                                            if odds_item['Combination'] == combo_str:
+                                                matched_odds = odds_item['Odds']
+                                                break
+                                                
+                                        # Skip if no odds found or odds is zero (e.g. ---)
+                                        if matched_odds <= 0.0:
+                                            continue
+                                            
+                                        expected_value = score_sum * matched_odds
+                                        if has_fitness:
+                                            score_sum *= 1.2 # Fitness Bonus (+20%)
+                                            expected_value *= 1.2
+                                        if has_rocket:
+                                            score_sum *= 1.15 # Rocket Bonus (+15%)
+                                            expected_value *= 1.15
+                                        
+                                        raw_recs.append({
+                                            'Combination': combo_str,
+                                            'HorseNames': combo_names,
+                                            'ScoreSum': score_sum,
+                                            'Odds': matched_odds,
+                                            'ExpectedValue': expected_value,
+                                            'HasFitness': has_fitness,
+                                            'HasRocket': has_rocket
+                                        })
+                                        
+                                    # 1. 🎯 的中重視枠 (Hit-focused): Top 3 by ScoreSum (Regardless of odds)
+                                    raw_recs.sort(key=lambda x: x['ScoreSum'], reverse=True)
+                                    hit_focused = raw_recs[:3]
+                                    for r in hit_focused: r['Slot'] = "🎯 的中優先"
+                                    
+                                    # 2. 💸 期待値重視枠 (EV-focused): Top 7 by ExpectedValue from the remainder
+                                    remaining = raw_recs[3:]
+                                    remaining.sort(key=lambda x: x['ExpectedValue'], reverse=True)
+                                    ev_focused = remaining[:7]
+                                    for r in ev_focused: r['Slot'] = "💸 期待値優先"
+                                    
+                                    # Combine to total 10 combinations
+                                    recs = hit_focused + ev_focused
+                                    
+                                    # Calculate Bankroll Distribution on the extracted 10 combinations
+                                    inverse_odds_sum = sum((1.0 / r['Odds']) for r in recs)
+                                    synthetic_odds = 0.0
+                                    
+                                    if inverse_odds_sum > 0:
+                                        synthetic_odds = 1.0 / inverse_odds_sum
+                                        
+                                        if synthetic_odds < 3.0:
+                                            st.error(f"⚠️ **トリガミ注意**: 現在のオッズプールでの合成オッズは **{synthetic_odds:.2f}倍** です。リターンが低すぎるため見送りも検討してください。")
+                                        else:
+                                            st.success(f"📊 現在のオッズプールでの合成オッズ: **{synthetic_odds:.2f}倍**")
+                                            
+                                        for r in recs:
+                                            target_payout = bankroll * synthetic_odds
+                                            exact_bet = target_payout / r['Odds']
+                                            r['RecommendedBet'] = max(100, int(round(exact_bet / 100.0) * 100))
+                                    else:
+                                        for r in recs: r['RecommendedBet'] = 0
+
+                                if recs:
+                                    def highlight_dark_horse(row):
+                                        return ['background-color: #3b0a0a; color: #ffebcc' if '含有' in str(row['適性フラグ']) else '' for _ in row]
+                                        
+                                    for r in recs:
+                                        if r['HasFitness'] and r['HasRocket']:
+                                            r['HorseNames'] = f"🔥🚀 {r['HorseNames']}"
+                                            r['FlagText'] = "🔥🚀 含有 (+35%)"
+                                        elif r['HasFitness']:
+                                            r['HorseNames'] = f"✅ {r['HorseNames']}"
+                                            r['FlagText'] = "🔥 含有 (1.2倍)"
+                                        elif r['HasRocket']:
+                                            r['HorseNames'] = f"🚀 {r['HorseNames']}"
+                                            r['FlagText'] = "🚀 上がり最速 (1.15倍)"
+                                        else:
+                                            r['FlagText'] = ""
+                                            
+                                    rec_df = pd.DataFrame([
+                                        {
+                                            "選出枠": r['Slot'],
+                                            "適性フラグ": r['FlagText'],
+                                            "期待値": f"{r['ExpectedValue']:.1f}",
+                                            "買い目": r['Combination'],
+                                            "馬名組み合わせ": r['HorseNames'],
+                                            "オッズ": f"{r['Odds']:.1f}倍",
+                                            "推奨購入額(円)": f"¥{r['RecommendedBet']:,}",
+                                        } for r in recs
+                                    ])
+                                    st.dataframe(rec_df.style.apply(highlight_dark_horse, axis=1), width='stretch')
+                                else:
+                                    is_nar = False
+                                    if 'race_id_input' in locals() and len(race_id_input) >= 6:
+                                        try:
+                                            # Netkeiba venue codes > 10 are NAR (e.g., 42, 45, 65)
+                                            if int(str(race_id_input)[4:6]) > 10:
+                                                is_nar = True
+                                        except: pass
+                                        
+                                    if is_nar:
+                                        st.warning("⚠️ **地方競馬（NAR）のオッズ自動取得は現在サポートされていません。** 買い目と資金配分の計算はJRAレースでのみご利用いただけます。")
+                                    else:
+                                        st.info("オッズが取得できなかったか、該当する買い目が見つかりませんでした。（発売前の場合は発売開始後に再度お試しください）")
+
+                            except Exception as e:
+                                st.error(f"3連複推奨データの取得中にエラーが発生しました: {e}")
+
+                    # --- ✨ ３連複スペシャル（2頭軸流し自動生成） ---
+                    st.divider()
+                    st.subheader("✨ ３連複スペシャル（2頭軸流し自動生成）")
+                    st.caption("上で設定した軸馬2頭に対して、残りから強適スコア順にヒモを自動選出します。")
+                    
+                    if axis_selections and len(axis_selections) == 2:
+                        # Extract selected horse names
+                        axis_names = [sel.split("] ")[1] for sel in axis_selections]
+                    
+                        # Filter out axis horses + danger horses
+                        pool_df = df[~df['Name'].isin(axis_names)].copy()
+                        pool_df = pool_df[~pool_df['Alert'].astype(str).str.contains(r"💣|💀", regex=True)]
+                    
+                        # Sort remaining horses by Projected Score (new) descending
+                        pool_df = pool_df.sort_values(sort_col, ascending=False)
+                        
+                        # Select top 10 opponents
+                        recommended_opponents = pool_df.head(10)
+                    
+                        if not recommended_opponents.empty:
+                            opp_list_strs = []
+                            for _, r in recommended_opponents.iterrows():
+                                u_val = int(r['Umaban']) if pd.notnull(r['Umaban']) else 0
+                                opp_list_strs.append(f"[{u_val:02d}] {r['Name']}")
+                        
+                            st.markdown("#### 【あなたの軸馬】")
+                            st.write(f"**{axis_selections[0]}** と **{axis_selections[1]}**")
+                        
+                            st.markdown("#### 【システム推奨の相手】")
+                            for opp in opp_list_strs:
+                                st.write(f"- {opp}")
+                        
+                            st.markdown("#### 【買い目点数】")
+                            st.success(f"3連複 2頭軸流し 計 **{len(opp_list_strs)}** 点")
+                        
+                        else:
+                            st.warning("推奨できる相手馬が見つかりませんでした（全頭が除外条件に該当）。")
+                    elif len(axis_selections) > 0:
+                        st.info("※上で軸馬を「あと1頭」選んでください。")
+
+                    # =========================================================
+                    # 買い目点数より下のセクション
+                    # =========================================================
+                    st.divider()
+                    # Recommended Bets Section
+                    st.markdown("### 🎫 推奨買い目")
+                    rec_col1, rec_col2 = st.columns([2, 1])
+                    with rec_col1:
+                        top_horses = df.head(3)
+                        if chaos_data['rank'] in ['S', 'A']:
+                            st.success(f"【穴狙い】高指数・人気薄の軸から広く流す構成を推奨。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                        else:
+                            st.info(f"【堅実】上位人気・高指数の有力馬による順当な決着を予想。 軸馬: **{top_horses.iloc[0]['Name']}**")
+                    with rec_col2:
+                        st.button("📋 買い目を生成", help="詳細な資金配分を含む買い目を生成します", key="btn_gen_bets_gpt")
+
+                    # --- 精選10点予想: 2強軸＋期待値上位フィルタ ---
+                    _chaos_r = chaos_data['rank']
+
+                    _san_threshold = st.slider(
+                        "足切り閾値（軸1位スコアの何割未満を除外）",
+                        min_value=0.4, max_value=0.8, value=0.6, step=0.05,
+                        key="sanrenpuku_threshold_sra",
+                        help="値を上げると相手が絞られ、下げると相手が広がります"
+                    )
+                    _san_result = calculator.generate_sanrenpuku_10(
+                        df, _chaos_r, min_score_ratio=_san_threshold
+                    )
+
+                    if _san_result.get("warning") and not _san_result["bets"]:
+                        st.error(_san_result["warning"])
+                    else:
+                        _j1 = _san_result.get("jiku_1")
+                        _j2 = _san_result.get("jiku_2")
+                        if _j1 is not None and _j2 is not None:
+                            _sc = _san_result.get("score_col", "BattleScore")
+                            _jc1, _jc2 = st.columns(2)
+                            with _jc1:
+                                st.metric(
+                                    label=f"軸① {_j1['Name']}（{int(_j1['Umaban'])}番）",
+                                    value=f"スコア {_j1[_sc]:.1f}",
+                                    delta=f"{_j1.get('Popularity', '-')}番人気 / {_j1.get('Odds', '-')}倍",
+                                )
+                            with _jc2:
+                                st.metric(
+                                    label=f"軸② {_j2['Name']}（{int(_j2['Umaban'])}番）",
+                                    value=f"スコア {_j2[_sc]:.1f}",
+                                    delta=f"{_j2.get('Popularity', '-')}番人気 / {_j2.get('Odds', '-')}倍",
+                                )
+                            st.caption(f"戦略：{_san_result.get('strategy', '')}")
+
+                        if _san_result.get("warning"):
+                            st.warning(_san_result["warning"])
+
+                        if _san_result["bets"]:
+                            _num_to_name = dict(zip(df['Umaban'], df['Name']))
+                            _bet_rows = []
+                            for _i, (_a, _b, _c) in enumerate(_san_result["bets"]):
+                                _bet_rows.append({
+                                    "#": _i + 1,
+                                    "買い目（馬番）": f"{_a}-{_b}-{_c}",
+                                    "馬名": " - ".join(_num_to_name.get(_n, str(_n)) for _n in [_a, _b, _c]),
+                                })
+                            st.markdown(f"#### 🎫 3連複買い目（{_san_result['bet_count']}点）")
+                            st.dataframe(pd.DataFrame(_bet_rows), width='stretch', hide_index=True)
+                        else:
+                            st.info("買い目を生成できませんでした。足切り閾値を下げてみてください。")
+
+                    st.divider()
+
+                    # --- 3連複：人気順オッズ × スコアTop5フィルタ ---
+                    st.subheader("🎯 3連複 中穴10点（オッズ×スコアフィルタ）")
+                    st.caption("市場の人気順オッズにスコアTop5フィルタを重ね、5,000〜30,000円帯の中穴を10点に絞ります。")
+                    _sof_odds_df = st.session_state.get("sanrenpuku_odds_df", pd.DataFrame())
+                    if _sof_odds_df.empty or 'horse1' not in _sof_odds_df.columns:
+                        st.info("📡 オッズ取得後に自動表示されます。発売開始後に「推奨買い目を取得・更新」ボタンを押してください。")
+                    else:
+                        with st.expander("⚙️ 買い目フィルタ設定", expanded=False):
+                            _sof_c1, _sof_c2, _sof_c3 = st.columns(3)
+                            with _sof_c1:
+                                _sof_min_p = st.number_input("最低価格帯（円）", min_value=1000, max_value=50000, value=5000, step=1000, key="sof_min_price_sra")
+                            with _sof_c2:
+                                _sof_max_p = st.number_input("最高価格帯（円）", min_value=5000, max_value=500000, value=30000, step=5000, key="sof_max_price_sra")
+                            with _sof_c3:
+                                _sof_msh = st.selectbox("スコアTop5が何頭以上含まれる買い目を採用", options=[1, 2, 3], index=0, key="sof_min_score_sra", help="1=広め、2=絞り")
+
+                        _sof_sc = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                        _sof_top5 = df.sort_values(_sof_sc, ascending=False).head(5)
+                        st.markdown("##### 🏆 スコアTop5（このいずれかが買い目に含まれる）")
+                        _sof_top5_disp = _sof_top5[['Umaban', 'Name', 'Popularity', 'Odds', _sof_sc]].copy()
+                        _sof_top5_disp.columns = ['馬番', '馬名', '人気', '単勝オッズ', 'スコア']
+                        st.dataframe(_sof_top5_disp, width='stretch', hide_index=True)
+
+                        _sof_result = calculator.generate_sanrenpuku_from_odds(
+                            odds_df=_sof_odds_df,
+                            ranking_df=df,
+                            score_col=_sof_sc,
+                            horse_num_col='Umaban',
+                            odds_col='オッズ',
+                            horse1_col='horse1',
+                            horse2_col='horse2',
+                            horse3_col='horse3',
+                            pool_size=5,
+                            min_odds=_sof_min_p / 100,
+                            max_odds=_sof_max_p / 100,
+                            top_n=10,
+                            min_score_horses=_sof_msh,
+                        )
+                        if _sof_result.get("warning"):
+                            st.warning(_sof_result["warning"])
+                        if _sof_result["bets"]:
+                            _sof_num2name = dict(zip(df['Umaban'], df['Name']))
+                            _sof_top_h = _sof_result["top_horses"]
+                            _sof_rows = []
+                            for _si, _sbet in enumerate(_sof_result["bets"]):
+                                _sa, _sb, _sc_ = _sbet["combo"]
+                                _sof_rows.append({
+                                    "#": _si + 1,
+                                    "買い目（馬番）": f"{_sa}-{_sb}-{_sc_}",
+                                    "馬名": " - ".join(_sof_num2name.get(_n, str(_n)) for _n in [_sa, _sb, _sc_]),
+                                    "想定オッズ": f"{_sbet['odds']:.1f}倍",
+                                    "Top5含む": f"{_sbet['top5_count']}頭 " + " ".join(f"★{_sof_num2name.get(_n, str(_n))}" for _n in [_sa, _sb, _sc_] if _n in _sof_top_h),
+                                })
+                            st.markdown(
+                                f"#### 🎫 3連複買い目（{_sof_result['bet_count']}点）"
+                                f"　価格帯：{_sof_result['price_range']}"
+                                f"　候補数：{_sof_result['filtered_count']}件中上位10点"
+                            )
+                            st.dataframe(pd.DataFrame(_sof_rows), width='stretch', hide_index=True)
+                        else:
+                            st.error("条件に合う買い目が見つかりませんでした。価格帯の設定を変えてみてください。")
+
+                    st.divider()
+
+                    # --- [NEW] AI UNIFIED SNIPER ANALYSIS ---
+                    st.subheader("🤖 中穴スナイパー分析 (詳細配分)")
+                    
+                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
+                    c_rank = chaos_data['rank']
+                    pop_ranges = {'S': '15〜45', 'A': '12〜35', 'B': '10〜30', 'C': '10〜30'}
+                    current_pop_range = pop_ranges.get(c_rank, '10〜30')
+                    
+                    if c_rank in ['B', 'C']:
+                        st.caption(f"3頭の人気合計が{current_pop_range}の組み合わせに絞り、波乱度に応じた中穴ゾーンをピンポイントで抽出します。")
+                    else:
+                        st.caption(f"波乱度{c_rank}に基づき、人気合計が{current_pop_range}の広範な組み合わせから期待値を最大化します。")
+                    
+                    bet_budget = st.number_input("買い目生成用 予算 (円)", min_value=1000, value=10000, step=1000, key="ai_bet_budget_unified")
+                    
+                    # ロジック呼び出し
+                    # 波乱度ランクを取得 (1201行付近で定義された chaos_data から)
+                    c_rank = chaos_data['rank']
+                    unified_pool = calculator.generate_unified_sniper_pool(df, c_rank)
+                    
+                    if 'error' in unified_pool:
+                        st.error(f"分析プール生成エラー: {unified_pool['error']}")
+                    else:
+                        # 予算配分を実行
+                        allocated_res = calculator.allocate_unified_budget(unified_pool, bet_budget)
+                        
+                        rank_color = {"S": "#E63946", "A": "#F4A261", "B": "#2A9D8F", "C": "#457B9D"}.get(c_rank, "#333")
+                        
+                        # ステータス表示
+                        f1, f2, f3 = st.columns([1, 1, 1])
+                        with f1:
+                            st.markdown(f"""
+                                <div style="background-color: {rank_color}; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+                                    <div style="font-size: 12px;">波乱度判定</div>
+                                    <div style="font-size: 28px; font-weight: bold;">{c_rank}</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        with f2:
+                            min_o, max_o = unified_pool['odds_range']
+                            st.metric("適用オッズレンジ", f"{min_o:.1f}〜{max_o:.1f}倍")
+                        with f3:
+                            st.metric("母集団頭数", f"{unified_pool['base_count']}頭")
+
+                        st.write(f"### 🎯 推奨買い目一覧 ({allocated_res.get('main_count', 0)}点 + ボーナス)")
+                        
+                        if allocated_res.get('tickets'):
+                            # パターン別に分離
+                            tickets_a = [t for t in allocated_res['tickets'] if t.get('type') == 'A']
+                            tickets_b = [t for t in allocated_res['tickets'] if t.get('type') == 'B']
+                            bonus_t = [t for t in allocated_res['tickets'] if t.get('is_bonus')]
+                            
+                            # 2カラム表示 (スクリーンショットのデザインを再現)
+                            col_pa, col_pb = st.columns(2)
+                            
+                            with col_pa:
+                                st.markdown("#### 🟦 パターンA (上位5頭から2頭)")
+                                if tickets_a:
+                                    rows_a = []
+                                    for t in tickets_a:
+                                        rows_a.append({
+                                            "組合せ": ", ".join(map(str, t['horses'])),
+                                            "想定オッズ": f"{t['est_odds']:.1f}倍",
+                                            "スコア計": round(t['total_score'], 1)
+                                        })
+                                    st.table(pd.DataFrame(rows_a))
+                                else:
+                                    st.caption("該当なし")
+                                    
+                            with col_pb:
+                                st.markdown("#### 🟧 パターンB (上位5頭から1頭)")
+                                if tickets_b:
+                                    rows_b = []
+                                    for t in tickets_b:
+                                        rows_b.append({
+                                            "組合せ": ", ".join(map(str, t['horses'])),
+                                            "想定オッズ": f"{t['est_odds']}倍",
+                                            "スコア計": round(t['total_score'], 1)
+                                        })
+                                    st.table(pd.DataFrame(rows_b))
+                                else:
+                                    st.caption("該当なし")
+
+                            # ボーナスと詳細
+                            if bonus_t:
+                                st.info(f"🎁 **ボーナス枠**: {', '.join(map(str, bonus_t[0]['horses']))} ({bonus_t[0]['est_odds']:.1f}倍) / スコア計: {round(bonus_t[0]['total_score'], 1)}")
+
+                            # 予算配分の詳細は表の下に
+                            st.success(f"合計購入金額: **{allocated_res.get('actual_total', 0):,}円** / 予算: {bet_budget:,}円 (単価: {allocated_res.get('unit_price', 0):,}円)")
+                            
+                            with st.expander("📝 買い目詳細 (金額・馬名付)", expanded=False):
+                                full_rows = []
+                                for t in allocated_res['tickets']:
+                                    full_rows.append({
+                                        "種別": "ボーナス" if t.get('is_bonus') else f"パターン{t['type']}",
+                                        "組合せ": ", ".join(map(str, t['horses'])),
+                                        "馬名": " - ".join(t['names']),
+                                        "購入金額": f"{t['amount']}円",
+                                        "想定払戻": f"{t['est_payout']:,}円"
+                                    })
+                                st.dataframe(pd.DataFrame(full_rows), width='stretch')
+                        else:
+                            st.warning("条件に合う買い目が見つかりませんでした。")
+
+                        # 除外ログ
+                        with st.expander("🕵️ 除外ログ (フィルタリング詳細)", expanded=False):
+                            st.caption("以下の組み合わせは、オッズまたは人気の条件により除外されました。")
+                            for log in unified_pool['exclusion_log']:
+                                st.write(f"- {log}")
+
+                    st.divider()
+
             except Exception as e:
                 import traceback
                 st.error(f"An error occurred: {e}")
