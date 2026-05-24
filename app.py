@@ -2648,6 +2648,10 @@ if nav == "🏠 Single Race Analysis":
 
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
+                    try:
+                        df.to_csv(os.path.join(os.path.dirname(__file__), "debug_app_bonus.csv"), encoding="utf-8-sig", index=False)
+                    except:
+                        pass
                             
                     st.divider()
 

@@ -1247,11 +1247,12 @@ def calculate_battle_score(df):
     
     # 2. Statistics Collection for Bonuses
     current_dist = 1600
-    # Try to get distance from first row or common value if possible, 
-    # but here we process row by row or vectorised.
-    # It's better to assume single race per DF usually.
+    current_surf = "芝"
     if 'CurrentDistance' in df.columns and not df.empty:
         try: current_dist = int(df['CurrentDistance'].iloc[0])
+        except: pass
+    if 'CurrentSurface' in df.columns and not df.empty:
+        try: current_surf = str(df['CurrentSurface'].iloc[0])
         except: pass
     
     # Prepare lists for ranking Agari
@@ -1280,15 +1281,46 @@ def calculate_battle_score(df):
             
             # Date filter (1 year)
             r_date_str = run.get('Date', '2000.01.01')
+            is_recent = False
             try:
                 # Approximate check
                 if '202' in r_date_str: # Simple check for recent years
-                   valid_runs.append(run)
+                   is_recent = True
             except:
                 pass
-        
-        # If no valid runs found by date, take all runs
-        if not valid_runs: valid_runs = past
+                
+            # Surface filter
+            run_surf = str(run.get('Surface', ''))
+            surface_match = False
+            if "芝" in current_surf and "芝" in run_surf:
+                surface_match = True
+            elif "ダ" in current_surf and "ダ" in run_surf:
+                surface_match = True
+                
+            if is_recent and surface_match:
+                valid_runs.append(run)
+                
+        # Fallback 1: If no recent runs matching surface, take all runs matching surface
+        if not valid_runs:
+            for run in past:
+                if run.get('Time', 0) == 0: continue
+                run_surf = str(run.get('Surface', ''))
+                if ("芝" in current_surf and "芝" in run_surf) or ("ダ" in current_surf and "ダ" in run_surf):
+                    valid_runs.append(run)
+                    
+        # Fallback 2: If still no runs (e.g. first time on this surface), take recent runs on any surface
+        if not valid_runs:
+            for run in past:
+                if run.get('Time', 0) == 0: continue
+                r_date_str = run.get('Date', '2000.01.01')
+                try:
+                    if '202' in r_date_str:
+                        valid_runs.append(run)
+                except: pass
+                
+        # Fallback 3: Take all valid runs
+        if not valid_runs:
+            valid_runs = [r for r in past if r.get('Time', 0) != 0]
         
         agari_real_count = 0
         
