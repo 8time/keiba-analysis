@@ -2723,6 +2723,17 @@ if nav == "🏠 Single Race Analysis":
                         st.caption("📝 **[予測スコア計算式]** ＝ BattleScore(基礎戦闘力) × 基本% ＋ Σ(各ボーナス素点[0-100] × 各影響率%)")
 
                         st.session_state['score_weights_main'] = sw
+                        # 🔄 自動保存: 影響率を変更したら即ファイルへ書き込み（手動保存ボタン不要・次回起動時に自動復元）
+                        try:
+                            import json as _json_auto
+                            _sw_sig = _json_auto.dumps(sw, sort_keys=True)
+                            if st.session_state.get('_sw_saved_sig') != _sw_sig:
+                                with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf:
+                                    _json_auto.dump(sw, _wf, ensure_ascii=False, indent=2)
+                                st.session_state['_sw_saved_sig'] = _sw_sig
+                        except Exception:
+                            pass
+                        st.caption("💾 影響率は変更すると自動保存され、次回起動時に復元されます（血統7.00等もそのまま）。")
                         _sc1, _sc2 = st.columns([1, 1])
                         with _sc1:
                             if st.button("💾 影響率を保存（全レースに適用）", key="btn_save_weights_main_sp"):
@@ -2730,6 +2741,7 @@ if nav == "🏠 Single Race Analysis":
                                 try:
                                     with open(_WEIGHTS_FILE, 'w', encoding='utf-8') as _wf:
                                         _json.dump(sw, _wf, ensure_ascii=False, indent=2)
+                                    st.session_state['_sw_saved_sig'] = _json.dumps(sw, sort_keys=True)
                                     st.success("✅ 保存しました。次回以降自動適用されます。")
                                 except Exception as _e:
                                     st.error(f"保存に失敗しました: {_e}")
