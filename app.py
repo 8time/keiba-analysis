@@ -1537,9 +1537,71 @@ if nav == "🏠 Single Race Analysis":
                         </div>
                     """, unsafe_allow_html=True)
                     
+                    # ── トラックバイアス強化（Phase1: 当日逆算/コース×馬場 ・ Phase2: クッション値/含水率）──
+                    from core import track_bias as _tb
+                    from core import pace_map as _tb_pm
+                    _tb_venue = _tb_pm.venue_from_race_id(race_id_input)
+                    _tb_surf = '芝'
+                    try:
+                        if 'CurrentSurface' in df.columns and not df.empty:
+                            _tb_surf = 'ダ' if 'ダ' in str(df['CurrentSurface'].iloc[0]) else '芝'
+                        elif 'ダ' in str(meta.get('surface', '')):
+                            _tb_surf = 'ダ'
+                    except Exception:
+                        pass
+                    # 当日逆算バイアス: jravan.db に当該レースがあれば同日同場の既走Rから集計（無ければNone）
+                    _tb_emp = None
+                    try:
+                        import sqlite3 as _tb_sq
+                        _tb_con = _tb_sq.connect('data/jravan.db')
+                        _tb_rr = _tb_con.execute(
+                            "SELECT year,monthday,jyo,surface,race_num FROM races WHERE race_id=?",
+                            (race_id_input,)).fetchone()
+                        _tb_con.close()
+                        if _tb_rr:
+                            _tb_emp = _tb.empirical_bias_from_db(*_tb_rr)
+                    except Exception:
+                        _tb_emp = None
+                    st.session_state['_tb_emp_bias'] = _tb_emp  # Vエリアbaba自動化で参照
+
                     # Evidence Table
                     with st.expander("📊 判定根拠エビデンス表", expanded=True):
+                        # クッション値・含水率（JV-Dataに無いためJRA公式「馬場情報」を手動入力。前日昼/当日9:30公表）
+                        _cm1, _cm2 = st.columns(2)
+                        with _cm1:
+                            _tb_cushion = st.number_input(
+                                "クッション値（芝・JRA馬場情報より手入力／0=未入力）",
+                                min_value=0.0, max_value=15.0, value=0.0, step=0.1,
+                                key=f"tb_cushion_{race_id_input}",
+                                help="JV-Dataには無い。JRA公式の馬場情報（前日昼・当日9:30頃公表）を手入力。7以下=軟/12以上=硬。")
+                        with _cm2:
+                            _tb_moist = st.number_input(
+                                "含水率 %（JRA馬場情報より手入力／0=未入力）",
+                                min_value=0.0, max_value=30.0, value=0.0, step=0.1,
+                                key=f"tb_moist_{race_id_input}",
+                                help="芝=高いほど時計遅／ダート=高いほど締まって速い（芝と逆）。")
+                        _cv = _tb_cushion if _tb_cushion > 0 else None
+                        _mv = _tb_moist if _tb_moist > 0 else None
+                        st.session_state['_tb_cushion_style'] = _tb.cushion_style_bias(_tb_surf, _cv, _mv)
+
+                        # エビデンス行を追記（Phase2: 馬場メトリクス / Phase1: 当日バイアス・コース×馬場）
+                        evidence_list.extend(_tb.cushion_evidence(_tb_surf, _cv, _mv))
+                        if _tb_emp:
+                            evidence_list.append({"項目": "当日逆算バイアス",
+                                                  "値": f"{_tb_emp['pace_label']}/{_tb_emp['lane_label']}",
+                                                  "ステータス": f"🔁 {_tb_emp['evidence']}"})
+                        _tb_fast = None
+                        if _cv is not None:
+                            _tb_fast = _cv >= 10.0
+                        elif _tb_emp:
+                            _tb_fast = _tb_emp['front_rate'] >= 0.55
+                        evidence_list.append({"項目": "コース×馬場傾向",
+                                              "値": _tb_venue or '-',
+                                              "ステータス": "🏟 " + _tb.course_bias_text(_tb_venue, _tb_fast)})
                         st.table(pd.DataFrame(evidence_list))
+                        if _tb_emp is None:
+                            st.caption("※当日逆算バイアスは未表示＝このレースの当日先行レース結果がJV-VAN（jravan.db）に未取り込み。"
+                                       "未来のレースや体験版の当日反映前はVエリアのバイアスで手動指定してください。")
 
                     # --- [NEW v2] PCI & 馬群密度分析（RPCI数値・展開適合率付き）---
                     with st.expander("⚡ PCI（ペースチェンジ指数）& 展開適合分析", expanded=True):
@@ -1614,8 +1676,17 @@ if nav == "🏠 Single Race Analysis":
                                     return ['color:#2A9D8F; font-weight:bold' if '◎' in str(v) else
                                             'color:#F4A261' if '○' in str(v) else
                                             'color:#aaa' for v in s]
+                                # フィールド平均PCI ±2.0 以内の馬は行全体を薄い黄色に
+                                def _highlight_near_avg(row):
+                                    try:
+                                        near = abs(float(row['AvgPCI']) - avg_pci_val) <= 2.0
+                                    except Exception:
+                                        near = False
+                                    return ['background-color:#FFF9C4' if near else '' for _ in row]
                                 st.dataframe(
-                                    _mh_df.style.apply(_highlight_match, subset=['適合度']),
+                                    _mh_df.style
+                                        .apply(_highlight_near_avg, axis=1)
+                                        .apply(_highlight_match, subset=['適合度']),
                                     column_config=_match_cfg, use_container_width=True, hide_index=True
                                 )
 
@@ -1911,6 +1982,364 @@ if nav == "🏠 Single Race Analysis":
                         return res
                     
                     df = calc_derived_cols(df)
+
+                    st.divider()
+
+                    # --- 🗺️ コーナー別 想定展開マップ ---
+                    with st.expander("🗺️ 展開マップ（コーナー別 想定位置取り）", expanded=False):
+                        try:
+                            from core import pace_map as _pmap
+                            _pm_psm = _pace.get('position_score_map', {}) if '_pace' in dir() else {}
+                            _pm_plm = _pace.get('positional_map', {}) if '_pace' in dir() else {}
+                            _pm_horses = []
+                            for _, _pm_r in df.iterrows():
+                                try:
+                                    _pm_u = int(_pm_r['Umaban'])
+                                except Exception:
+                                    continue
+                                _pm_sc = _pm_psm.get(_pm_u)
+                                if _pm_sc is None:
+                                    _pm_sc = _pmap.score_from_pastruns(_pm_r.get('PastRuns', []))
+                                _pm_horses.append({
+                                    'umaban': _pm_u,
+                                    'name': str(_pm_r.get('Name', '')),
+                                    'score': float(_pm_sc),
+                                    'style': _pm_plm.get(_pm_u) or _pmap.style_from_score(float(_pm_sc)),
+                                })
+                            # 距離: metadata → CurrentDistance 列の順でフォールバック
+                            _pm_dist = meta.get('distance')
+                            if not _pm_dist and 'CurrentDistance' in df.columns and not df.empty:
+                                try:
+                                    import re as _pm_re
+                                    _pm_m = _pm_re.search(r'(\d{3,4})', str(df['CurrentDistance'].iloc[0]))
+                                    _pm_dist = int(_pm_m.group(1)) if _pm_m else None
+                                except Exception:
+                                    _pm_dist = None
+                            _pm_venue = _pmap.venue_from_race_id(race_id_input)
+                            _pm_turn = _pmap.infer_turn(_pm_venue)
+                            # コースレイアウト諸元（1角までの距離・直線長）による補正
+                            _pm_surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
+                            _pm_layout = _pmap.get_course_layout(_pm_venue, _pm_surf, _pm_dist)
+                            # JRA-VAN実データをDBから取得（同馬場・距離近接の過去8走を条件・直近重みで集計。レース単位でキャッシュ）
+                            _pm_prof_key = f"jv_pace_prof_{race_id_input}_{_pm_surf}_{_pm_dist}"
+                            if _pm_prof_key not in st.session_state:
+                                st.session_state[_pm_prof_key] = _pmap.fetch_jv_profiles(
+                                    [h['name'] for h in _pm_horses], max_runs=8,
+                                    surface=_pm_surf, distance=_pm_dist,
+                                )
+                            _pm_profiles = st.session_state[_pm_prof_key]
+
+                            # 直線の風補正（任意・5m/s以上＆向かい/追い風で発火）。
+                            # 自動取得=Open-Meteo（無料・APIキー不要）。風向°と各場の直線方位から
+                            # 追い風/向かい風/横風を自動判定。手動入力にも対応。
+                            _pm_wind = None
+                            _pw_auto_key = f"pace_wind_auto_{race_id_input}"
+                            _pw_method = st.radio(
+                                "💨 直線の風（任意）",
+                                ["補正なし", "自動取得（無料）", "手動入力"],
+                                key="pace_wind_method", horizontal=True,
+                                help="自動取得=Open-Meteo（無料・キー不要）で競馬場の現在の風を取得し、"
+                                     "風向と各場の直線方位から追い風/向かい風/横風を自動判定。"
+                                     "5m/s以上の向かい/追い風で展開補正が発火（風データはDBに無く"
+                                     "精度未検証のため、控えめな補助補正です）。",
+                            )
+                            if _pw_method == "自動取得（無料）":
+                                _pw_ca, _pw_cb = st.columns([1, 2])
+                                with _pw_ca:
+                                    if st.button("🌤 現在の風を取得", key="pace_wind_fetch"):
+                                        st.session_state[_pw_auto_key] = _pmap.fetch_wind(_pm_venue)
+                                _auto = st.session_state.get(_pw_auto_key)
+                                if _auto and _auto.get('speed') is not None:
+                                    _pm_wind = dict(_auto)
+                                    _pm_wind['venue'] = _pm_venue
+                                    _we_tmp = _pmap.wind_effect(_pm_wind)
+                                    _kindjp = {'head': '向かい風', 'tail': '追い風',
+                                               'none': '横風/微風（影響小）'}.get(
+                                                   _we_tmp['kind'] if _we_tmp else 'none', '-')
+                                    with _pw_cb:
+                                        st.metric(
+                                            f"{_pm_venue} の現在の風",
+                                            f"{float(_auto.get('speed') or 0):.1f} m/s",
+                                            f"{float(_auto.get('dir_deg') or 0):.0f}° → 直線{_kindjp}")
+                                elif _auto is not None:
+                                    st.warning("風データを取得できませんでした（オフライン等）。「手動入力」をご利用ください。")
+                                else:
+                                    st.caption("「🌤 現在の風を取得」を押すとOpen-Meteo（無料）から取得します。")
+                            elif _pw_method == "手動入力":
+                                _pw_c1, _pw_c2 = st.columns([1, 1])
+                                with _pw_c1:
+                                    _pw_mode = st.selectbox(
+                                        "直線の風向き", ["追い風", "向かい風"], key="pace_wind_mode")
+                                with _pw_c2:
+                                    _pw_spd = st.number_input(
+                                        "風速 (m/s)", min_value=0.0, max_value=25.0,
+                                        value=0.0, step=1.0, key="pace_wind_spd")
+                                if _pw_spd >= 5.0:
+                                    _pm_wind = {'mode': 'tail' if _pw_mode == "追い風" else 'head',
+                                                'speed': float(_pw_spd), 'venue': _pm_venue}
+
+                            # 強適Ranking Table由来の決め手・適性・総合力を直線(到達=着順)位置へ反映
+                            def _pm_num(v):
+                                try:
+                                    f = float(v)
+                                    return f if f == f else None  # NaN除外
+                                except (TypeError, ValueError):
+                                    return None
+                            _pm_extras = {}
+                            for _, _er in df.iterrows():
+                                try:
+                                    _eu = int(_er['Umaban'])
+                                except Exception:
+                                    continue
+                                _ex = {}
+                                _av = _pm_num(_er.get('AvgAgari')) if 'AvgAgari' in df.columns else None
+                                if _av is not None and _av > 0:
+                                    _ex['kick'] = _av                # 上がり3F: 小さいほど速い=良い
+                                _sv = _pm_num(_er.get('Suitability (Y)')) if 'Suitability (Y)' in df.columns else None
+                                if _sv is not None:
+                                    _ex['apt'] = -_sv                # 適性: 大きいほど良い→反転で0=最良
+                                _bv = _pm_num(_er.get('BattleScore')) if 'BattleScore' in df.columns else None
+                                if _bv is not None:
+                                    _ex['power'] = -_bv              # 総合戦闘力: 大きいほど良い→反転
+                                # 人気/単勝オッズ: 市場の総意（最強の単一指標）。小さいほど上位人気=良い
+                                _pv = _pm_num(_er.get('Popularity')) if 'Popularity' in df.columns else None
+                                if _pv is None or _pv >= 99:
+                                    _ov = _pm_num(_er.get('Odds')) if 'Odds' in df.columns else None
+                                    _pv = _ov if (_ov is not None and _ov > 0 and _ov < 999) else None
+                                if _pv is not None:
+                                    _ex['pop'] = _pv
+                                if _ex:
+                                    _pm_extras[_eu] = _ex
+
+                            _pm_ctx = _pmap.build_pace_context(
+                                _pm_horses, _pm_profiles, _pm_dist, _pm_surf,
+                                _pm_layout, _pm_wind)
+                            _pm_data = _pmap.estimate_pace_map(
+                                _pm_horses, distance=_pm_dist, profiles=_pm_profiles,
+                                layout=_pm_layout, surface=_pm_surf, wind=_pm_wind,
+                                extras=_pm_extras,
+                            )
+                            if _pm_data:
+                                _pm_title = f"{_pm_venue} {_pm_dist}m" if _pm_venue and _pm_dist else "想定展開マップ"
+                                _pm_fig = _pmap.build_figure(_pm_data, turn=_pm_turn, title=_pm_title)
+                                st.plotly_chart(_pm_fig, use_container_width=True, key="pace_map_fig")
+                                _pm_n_jv = sum(1 for h in _pm_horses if h['name'] in _pm_profiles)
+                                st.caption(
+                                    f"📊 JRA-VAN実データ使用: {_pm_n_jv}/{len(_pm_horses)}頭"
+                                    "（同馬場・近距離の過去8走を条件＆直近重みで集計。テン速力＝(走破タイム−上がり3F)/(距離−600)×600 を"
+                                    "メンバー内z-score化し、コーナー履歴と合成して局面別ポジションを推定）｜ "
+                                    "🔴逃げ 🟠先行 🔵差し 🟣追込 ｜ 下=内ラチ・右=前方。"
+                                    "**【直線】は4角位置に強適Ranking Tableの〈決め手(上がり3F)・適性・総合戦闘力〉を合成した"
+                                    "到達(着順)イメージ＝後方一気の差し馬も前方に描画**します。"
+                                    "スライダーで局面を切替。想定であり実際の隊列を保証するものではありません。"
+                                )
+                                # ペース文脈サマリ（ハナ・ペース判定・風）
+                                _pm_lead_h = next((h for h in _pm_horses if h['umaban'] == _pm_ctx.get('leader')), None)
+                                _pm_lead_txt = f"{_pm_lead_h['umaban']}番 {_pm_lead_h['name']}" if _pm_lead_h else "不明"
+                                _pm_chips = [
+                                    f"想定ペース: **{_pm_ctx.get('pace', '—')}**",
+                                    f"ハナ予想: **{_pm_lead_txt}**",
+                                    f"前向き率: **{_pm_ctx.get('front_ratio', 0)*100:.0f}%**",
+                                ]
+                                _pm_we = _pmap.wind_effect(_pm_wind) if _pm_wind else None
+                                if _pm_we and _pm_we.get('kind') != 'none':
+                                    _pm_chips.append(f"💨 {_pm_we['note']}")
+                                st.info("　｜　".join(_pm_chips))
+                                _pm_comment = _pmap.describe_pace(
+                                    _pm_horses, profiles=_pm_profiles, layout=_pm_layout,
+                                    pace_ctx=_pm_ctx,
+                                )
+                                if _pm_comment:
+                                    st.markdown(
+                                        f"<div style='background:#1a1a2e; color:#eee; padding:10px 14px; "
+                                        f"border-radius:8px; border-left:6px solid #2A9D8F; font-size:13px;'>"
+                                        f"💬 {_pm_comment}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                                # ── 🔄 バイアス巻き返し候補（Phase3: 直近走でバイアスに逆らって好走）──
+                                try:
+                                    from core import track_bias as _cb_tb
+                                    _cb_key = f"comeback_{race_id_input}"
+                                    if _cb_key not in st.session_state:
+                                        _cb = []
+                                        for _h in _pm_horses:
+                                            _f = _cb_tb.comeback_flag(_h['name'], before_key=None)
+                                            if _f:
+                                                _cb.append((_h['umaban'], _h['name'], _f['reason']))
+                                        st.session_state[_cb_key] = _cb
+                                    _cb_list = st.session_state[_cb_key]
+                                    if _cb_list:
+                                        _cb_html = "".join(
+                                            f"<div style='background:rgba(0,0,0,0.18);border-radius:8px;"
+                                            f"padding:7px 12px;margin:5px 0;'>"
+                                            f"<b style='font-size:16px;color:#fff;'>{u}番 {nm}</b>"
+                                            f"<span style='font-size:12px;color:#cde;margin-left:10px;'>{r}</span></div>"
+                                            for u, nm, r in _cb_list)
+                                        st.markdown(
+                                            "<div style='background:linear-gradient(135deg,#1565c0,#2a9d8f);"
+                                            "border:2px solid #8be9fd;border-radius:12px;padding:14px 16px;margin:12px 0;'>"
+                                            "<div style='font-size:18px;font-weight:900;color:#fff;'>🔄 バイアス巻き返し候補</div>"
+                                            "<div style='font-size:12px;color:#e8f7ff;margin:3px 0 8px;'>"
+                                            "直近走で当日の馬場バイアスに<b>逆らって好走</b>＝展開不利を能力で覆した馬。次走の妙味。</div>"
+                                            f"{_cb_html}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                except Exception as _cb_e:
+                                    st.caption(f"巻き返し判定: {_cb_e}")
+
+                                # ── 🎯 差し切り限界ライン（1秒≒6馬身） ──
+                                _sk_rows = _pmap.sashikiri_table(_pm_data, _pm_profiles)
+                                if _sk_rows:
+                                    st.markdown("**🎯 差し切り限界ライン**（1秒≒6馬身・1馬身≒0.17秒）")
+                                    _sk_verdict_label = {
+                                        'reach': '◎ 平均上がりで届く',
+                                        'best_only': '△ 自己ベストなら届く',
+                                        'no': '✕ ベストでも届かない',
+                                    }
+                                    _sk_disp = [{
+                                        "馬番": _s['umaban'],
+                                        "馬名": _s['name'],
+                                        "4角想定": f"{_s['rank4']}番手",
+                                        "先頭との差": f"約{_s['gap_len']}馬身",
+                                        "平均上がり": f"{_s['my_agari']:.2f}",
+                                        "自己ベスト": f"{_s['my_best']:.2f}",
+                                        "必要上がり": f"{_s['need_agari']:.2f}",
+                                        "判定": f"{_sk_verdict_label.get(_s['verdict'], '-')} ({_s['margin']:+.2f}秒)",
+                                    } for _s in _sk_rows]
+                                    st.dataframe(pd.DataFrame(_sk_disp), hide_index=True, use_container_width=True)
+                                    st.caption(
+                                        "4角想定隊列の先頭馬（の平均上がり3F）を物理的に差し切れるかの目安。"
+                                        "馬身差は順位差×1.4馬身で推定。◎=平常運転で届く / △=自己ベスト必須（過信禁物） / "
+                                        "✕=どれだけ脚を使っても物理的に届かない＝消し候補。"
+                                    )
+
+                                # ── 🧭 Vエリア・マトリクス（馬場 × 展開） ──
+                                st.markdown("---")
+                                st.markdown("**🧭 Vエリア・マトリクス**（馬場バイアス × 想定ペースで最も恵まれるポジションを可視化）")
+                                # ペース初期値: 展開マップのペース文脈→展開分析の順で自動セット
+                                _vm_pace_auto = _pm_ctx.get('pace') if _pm_ctx.get('pace') in _pmap.V_PACE_PATTERNS else 'ミドル'
+                                if _vm_pace_auto == 'ミドル':
+                                    try:
+                                        _vm_pl = str(_pace.get('pace_label', '')) if '_pace' in dir() else ''
+                                        if 'ハイ' in _vm_pl:
+                                            _vm_pace_auto = 'ハイ'
+                                        elif 'スロー' in _vm_pl:
+                                            _vm_pace_auto = 'スロー'
+                                    except Exception:
+                                        pass
+                                # 馬場バイアス初期値: ①当日逆算バイアス(実測・最優先) → ②開催日数/馬場(静的) の順で自動推定
+                                _vm_baba_auto_idx = 0
+                                _vm_baba_src = "開催日数/馬場"
+                                _vm_emp = st.session_state.get('_tb_emp_bias')
+                                if _vm_emp and _vm_emp.get('baba_for_v') in _pmap.V_BABA_PATTERNS:
+                                    _vm_baba_auto_idx = _pmap.V_BABA_PATTERNS.index(_vm_emp['baba_for_v'])
+                                    _vm_baba_src = f"当日逆算({_vm_emp['lane_label']})"
+                                else:
+                                    try:
+                                        import re as _vm_re
+                                        _vm_hd_m = _vm_re.search(r'\d+', str(meta.get('holding_days', '') or ''))
+                                        _vm_hd_n = int(_vm_hd_m.group()) if _vm_hd_m else 0
+                                        _vm_cond = str(meta.get('condition', '') or '')
+                                        if _vm_cond in ('重', '不良') or _vm_hd_n >= 7:
+                                            _vm_baba_auto_idx = 2   # 外有利
+                                        elif _vm_hd_n >= 5:
+                                            _vm_baba_auto_idx = 1   # 中有利
+                                    except Exception:
+                                        _vm_baba_auto_idx = 0
+                                _vm_c1, _vm_c2 = st.columns(2)
+                                with _vm_c1:
+                                    _vm_baba = st.radio(
+                                        f"馬場バイアス（自動推定:{_vm_baba_src}・変更可）",
+                                        _pmap.V_BABA_PATTERNS, horizontal=True, key="vm_baba",
+                                        index=_vm_baba_auto_idx,
+                                        help="初期値は①当日の前半レース結果からの逆算バイアス（あれば最優先）、"
+                                             "②無ければ開催日数・馬場状態（1〜4日目=フラット/5〜6日目=内2/7日目以上 or 道悪=内4）。"
+                                             "前レースの体感と違えば手動で変更。",
+                                    )
+                                with _vm_c2:
+                                    _vm_pace = st.radio(
+                                        "想定ペース（展開分析から自動判定済み・変更可）",
+                                        _pmap.V_PACE_PATTERNS,
+                                        index=_pmap.V_PACE_PATTERNS.index(_vm_pace_auto),
+                                        horizontal=True, key="vm_pace",
+                                    )
+                                _vm_fig, _vm_list = _pmap.build_v_matrix(
+                                    _pm_horses, profiles=_pm_profiles,
+                                    pace=_vm_pace, baba=_vm_baba,
+                                )
+                                if _vm_fig is not None:
+                                    st.plotly_chart(_vm_fig, use_container_width=True, key="v_matrix_fig")
+                                    if _vm_list:
+                                        _vm_names = "・".join(
+                                            f"{v['umaban']}番{v['name']}({v['style']})" for v in _vm_list
+                                        )
+                                        st.success(f"🏆 Vエリア該当馬: {_vm_names}")
+
+                                        # ── 🔍 展開妙味アラート ──
+                                        # Vエリア該当（展開は向く）なのに、着順予想が後方 or 人気薄
+                                        # ＝アプリ自身が実力・人気で消している前残り穴候補を目立つ形で抽出
+                                        try:
+                                            _fin = _pmap.predict_finish(
+                                                _pm_horses, _pm_profiles, _pm_ctx, extras=_pm_extras)
+                                            _n_h = len(_pm_horses)
+                                            _fin_rank = {u: i + 1 for i, (u, _) in enumerate(
+                                                sorted(_fin.items(), key=lambda kv: (kv[1], kv[0])))}
+                                            _pop_map = {}
+                                            for _, _pr in df.iterrows():
+                                                try:
+                                                    _pop_map[int(_pr['Umaban'])] = _pm_num(_pr.get('Popularity'))
+                                                except Exception:
+                                                    pass
+                                            _myumi = []
+                                            for _v in _vm_list:
+                                                _u = _v['umaban']
+                                                _fr = _fin_rank.get(_u, _n_h)
+                                                _pop = _pop_map.get(_u)
+                                                _is_back = _fr > _n_h * 0.5          # 着順予想が後ろ半分
+                                                _is_unpop = _pop is not None and _pop >= 5  # 5番人気以下
+                                                if _is_back or _is_unpop:
+                                                    _myumi.append((_u, _v['name'], _v['style'], _fr, _pop))
+                                            if _myumi:
+                                                _chips = ""
+                                                for _u, _nm, _sty, _fr, _pop in sorted(_myumi, key=lambda m: (m[4] or 99), reverse=True):
+                                                    _poptxt = f"{int(_pop)}番人気" if _pop else "人気－"
+                                                    _chips += (
+                                                        f"<div style='display:flex;align-items:center;gap:10px;"
+                                                        f"background:rgba(0,0,0,0.22);border-radius:8px;"
+                                                        f"padding:8px 12px;margin:6px 0;'>"
+                                                        f"<span style='font-size:22px;font-weight:900;color:#fff;'>{_u}</span>"
+                                                        f"<span style='font-size:17px;font-weight:800;color:#fff;'>{_nm}</span>"
+                                                        f"<span style='font-size:13px;color:#ffe9a8;'>{_sty}</span>"
+                                                        f"<span style='margin-left:auto;font-size:13px;color:#ffd9d9;'>"
+                                                        f"着順予想 {_fr}番手 ｜ {_poptxt}</span></div>")
+                                                st.markdown(
+                                                    "<div style='background:linear-gradient(135deg,#6a1b9a,#e63946);"
+                                                    "border:3px solid #ffd700;border-radius:14px;padding:16px 18px;"
+                                                    "margin:14px 0;box-shadow:0 0 22px rgba(255,215,0,0.55);'>"
+                                                    "<div style='font-size:22px;font-weight:900;color:#fff;"
+                                                    "letter-spacing:1px;'>🔍 展開妙味アラート</div>"
+                                                    "<div style='font-size:13px;color:#ffe;margin:4px 0 10px;'>"
+                                                    "Vエリア該当（展開は向く）なのに、アプリは実力・人気で低評価 "
+                                                    "＝<b>前残り穴候補</b>。複勝・ワイド向きの押さえ。</div>"
+                                                    f"{_chips}"
+                                                    "<div style='font-size:11px;color:#ffd;margin-top:8px;'>"
+                                                    "※過去検証では『スロー＋前＋人気薄』の3着内率は約9%。"
+                                                    "確信の本命ではなく、安く広く拾う穴印です。</div></div>",
+                                                    unsafe_allow_html=True,
+                                                )
+                                        except Exception as _my_e:
+                                            st.caption(f"展開妙味判定: {_my_e}")
+                                    else:
+                                        st.info("Vエリア（赤枠）にすっぽり収まる馬は不在。半端なポジションの馬が多く波乱の余地あり。")
+                                    st.caption(
+                                        "縦=隊列位置（テンの位置取り実データ）、横=想定の通り（枠順＋脚質から推定）。"
+                                        "金縁の馬がVエリア該当。スロー→前有利 / ハイ→後方有利、馬場が荒れるほど外有利。"
+                                    )
+                            else:
+                                st.caption("出走馬データが不足しているため展開マップを描画できません。")
+                        except Exception as _pm_e:
+                            st.caption(f"展開マップ: {_pm_e}")
 
                     st.divider()
 
@@ -2899,38 +3328,59 @@ if nav == "🏠 Single Race Analysis":
                     _all_display = [_col_to_display[c] for c in _all_cols]
                     _default_display = [_col_to_display[c] for c in _default_cols]
 
-                    # ── 展開フィルター（v2.02追加） ──────────────────────── #
-                    _filter_row = st.columns([1.5, 1.5, 3])
+                    # ── 展開フィルター（検証済みエンジン版 v3）──────────────── #
+                    # 旧版(DeployScore/前崩れ理論)はバックテストで市場に勝てず廃止。
+                    # 検証済み build_pace_context(pace+pos4) の「展開恩恵」で再構築。
+                    # 知見: ペース有利な極端ポジ(前残り馬等)は人気で買われ妙味なし(残差マイナス)。
+                    #       好位〜中団(恩恵スコア中)だけが複勝残差 +2.4pp と過小評価＝狙い目。
+                    _dep_benefit = {}
+                    _pace_lbl_f = None
+                    try:
+                        if '_pm_ctx' in dir() and _pm_ctx and _pm_ctx.get('pos4'):
+                            _pace_lbl_f = _pm_ctx.get('pace')
+                            for _bu, _bp in _pm_ctx['pos4'].items():
+                                if _pace_lbl_f == 'スロー':
+                                    _bv = 1.0 - _bp          # 前が恵まれる
+                                elif _pace_lbl_f == 'ハイ':
+                                    _bv = _bp                # 差しが恵まれる
+                                else:
+                                    _bv = 1.0 - abs(_bp - 0.45)
+                                _dep_benefit[_bu] = _bv
+                    except Exception:
+                        _dep_benefit = {}
+
+                    _filter_row = st.columns([2, 3])
                     _deploy_filter = '全て'
+                    _dep_opts = ['全て']
+                    if _dep_benefit:
+                        _dep_opts += ['🎯 好位妙味ゾーンのみ（検証:複勝+2.4pp）',
+                                      '▲ 展開有利だが人気先行ゾーンを除外']
                     with _filter_row[0]:
                         _deploy_filter = st.selectbox(
-                            '🚦 展開フィルター',
-                            options=['全て', '◎恩恵大のみ', '▲不利除外', '展開適合85+のみ'],
-                            key='deploy_filter_sra',
-                            help=(
-                                "・◎恩恵大のみ: 前崩れやスローなどの展開利がある馬に絞り込み。\n"
-                                "・▲不利除外: 逆に展開が不向き（不利）な馬をリストから消去。\n"
-                                "・展開適合85+のみ: 総合的な展開適合スコアが極めて高い(85点以上)馬のみを表示します。"
-                            )
-                        )
+                            '🚦 展開フィルター（検証済みエンジン版）',
+                            options=_dep_opts, key='deploy_filter_sra',
+                            help=("バックテスト(jravan)で『人気以上に3着内へ来る』と確認できた展開ゾーンに絞ります。\n"
+                                  "・好位妙味ゾーン: ペース上恵まれる『極端でない好位〜中団』。市場が過小評価しがちで複勝+2.4pp。\n"
+                                  "・人気先行ゾーン除外: 前残り馬場の逃げ馬など『展開有利だが既に人気で買われている』妙味薄の馬を消去。\n"
+                                  "※旧版(展開適合度/前崩れ理論)は市場に勝てなかったため廃止しました。"))
                     with _filter_row[1]:
-                        _avg_deploy_val = float(df['DeployScore'].mean()) if 'DeployScore' in df.columns else 0.0
-                        _deploy_rank_label = ['低', '中', '高', '最高'][min(3, int(_avg_deploy_val // 25))]
-                        st.markdown(
-                            f"<div style='font-size:0.8em;color:#888;margin-bottom:2px;'>強適上位馬 展開適合度</div>"
-                            f"<div style='font-size:1.2em;font-weight:700;white-space:nowrap;'>平均{_avg_deploy_val:.1f}（{_deploy_rank_label}）</div>",
-                            unsafe_allow_html=True
-                        )
-                    # フィルター適用
+                        if _pace_lbl_f:
+                            st.markdown(
+                                f"<div style='font-size:0.8em;color:#888;margin-bottom:2px;'>想定ペース（検証済みエンジン）</div>"
+                                f"<div style='font-size:1.1em;font-weight:700;'>【{_pace_lbl_f}】"
+                                f"<span style='font-size:0.75em;color:#888;'> ＝ "
+                                f"{'前・好位が展開利' if _pace_lbl_f=='スロー' else '差し・追込が展開利' if _pace_lbl_f=='ハイ' else '好位中心'}</span></div>",
+                                unsafe_allow_html=True)
+                        else:
+                            st.caption("展開マップ未計算のため『全て』のみ。展開マップを開くと有効化されます。")
+                    # フィルター適用（umaban基準）
                     _view_df_filtered = view_df.copy()
-                    if _deploy_filter == '◎恩恵大のみ' and 'FrontCollapseEffect' in _view_df_filtered.columns:
-                        _view_df_filtered = _view_df_filtered[_view_df_filtered['FrontCollapseEffect'].str.contains('◎', na=False)]
-                    elif _deploy_filter == '▲不利除外' and 'FrontCollapseEffect' in _view_df_filtered.columns:
-                        _view_df_filtered = _view_df_filtered[~_view_df_filtered['FrontCollapseEffect'].str.contains('▲', na=False)]
-                    elif _deploy_filter == '展開適合85+のみ' and 'DeployScore' in df.columns:
-                        _umas_85 = set(df[df['DeployScore'] >= 85]['Umaban'].astype(str).tolist())
-                        if 'Umaban' in _view_df_filtered.columns:
-                            _view_df_filtered = _view_df_filtered[_view_df_filtered['Umaban'].astype(str).isin(_umas_85)]
+                    if _dep_benefit and 'Umaban' in _view_df_filtered.columns and _deploy_filter != '全て':
+                        if '好位妙味' in _deploy_filter:
+                            _keep = {str(u) for u, b in _dep_benefit.items() if 0.40 <= b <= 0.62}
+                        else:  # 人気先行ゾーン除外: 恩恵が極端に高い(=人気で買われる)馬を消す
+                            _keep = {str(u) for u, b in _dep_benefit.items() if b <= 0.62}
+                        _view_df_filtered = _view_df_filtered[_view_df_filtered['Umaban'].astype(str).isin(_keep)]
                     view_df = _view_df_filtered
                     # ─────────────────────────────────────────────────────── #
 
@@ -3318,71 +3768,82 @@ if nav == "🏠 Single Race Analysis":
                         st.warning(f"Display Error: {e}")
                         st.dataframe(view_df, hide_index=True)
 
-                    # --- RESURRECTED: Composite Chart (Dual-Axis with Altair) ---
-                    st.subheader("✨ Index Analysis Chart")
+                    # ── 🏇 騎手係数込み 総合スコア（J5・JRA-VAN検証ベース）──
+                    try:
+                        from core import jockey_jv as _j5
+                        with st.expander("🏇 騎手係数込み 総合スコア（J5・黄金ライン/USMで補正）", expanded=False):
+                            st.caption("強適スコア（馬の能力）に、JRA-VANで『人気以上に来る』と検証できた騎手要素"
+                                       "（黄金ライン=騎手×調教師・USM=実力・場相性）を掛け合わせます。"
+                                       "連敗・調子は予測力ゼロのため不使用。")
+                            _j5_w = st.slider("騎手影響率（0=馬のみ / 100=検証値どおり / 150=強調）",
+                                              0, 150, 100, 10, key=f"j5_weight_{race_id_input}") / 100.0
+                            # 期待値テーブル（USM較正用）をキャッシュ共有
+                            if '_jj_expected' not in st.session_state:
+                                st.session_state['_jj_expected'] = _j5.calibrate_odds_expectation()
+                            _j5_exp = st.session_state['_jj_expected']
+                            _j5_venue = _j5._venue_name(str(race_id_input)[4:6])
+                            _j5_dist = meta.get('distance')
+                            # 騎手係数(重み非依存)はレース単位でキャッシュ。スライダー操作を高速化。
+                            _j5_key = f"_j5_mults_{race_id_input}"
+                            if _j5_key not in st.session_state:
+                                _mults = {}
+                                for _, _r5 in df.iterrows():
+                                    try:
+                                        _u5 = int(_r5['Umaban'])
+                                    except Exception:
+                                        continue
+                                    _fac = _j5.jockey_factor_by_name(
+                                        str(_r5.get('Jockey', '')), str(_r5.get('Name', '')),
+                                        venue=_j5_venue, distance=_j5_dist, expected=_j5_exp)
+                                    _gold = _fac.get('gold')
+                                    _gmk = ''
+                                    if _gold:
+                                        _gmk = "🥇🥇" if _gold['top2'] >= 0.40 else "🥇"
+                                    _mults[_u5] = {'mult': _fac['mult'], 'note': _fac['note'], 'gold': _gmk}
+                                st.session_state[_j5_key] = _mults
+                            _mults = st.session_state[_j5_key]
+
+                            _j5_rows = []
+                            _base_rank = {}
+                            _df_sorted = df.sort_values('Projected Score', ascending=False).reset_index(drop=True)
+                            for _i, _rr in _df_sorted.iterrows():
+                                _base_rank[int(_rr['Umaban'])] = _i + 1
+                            for _, _rr in df.iterrows():
+                                try:
+                                    _u5 = int(_rr['Umaban'])
+                                except Exception:
+                                    continue
+                                _ps = float(pd.to_numeric(_rr.get('Projected Score'), errors='coerce') or 0)
+                                _mi = _mults.get(_u5, {'mult': 1.0, 'note': '-', 'gold': ''})
+                                _adj = 1.0 + _j5_w * (_mi['mult'] - 1.0)
+                                _j5_rows.append({
+                                    '馬番': _u5, '馬名': str(_rr.get('Name', '')),
+                                    '騎手': str(_rr.get('Jockey', '')),
+                                    '強適スコア': round(_ps, 1),
+                                    '騎手係数': round(_adj, 3),
+                                    '黄金ライン': _mi['gold'] or '-',
+                                    '騎手込みスコア': round(_ps * _adj, 1),
+                                    '内訳': _mi['note'],
+                                    '_base': _base_rank.get(_u5, 99),
+                                })
+                            _j5_df = pd.DataFrame(_j5_rows).sort_values('騎手込みスコア', ascending=False).reset_index(drop=True)
+                            _j5_df.insert(0, '騎手込み順位', range(1, len(_j5_df) + 1))
+                            _j5_df['順位変動'] = _j5_df.apply(
+                                lambda r: ('↑' + str(int(r['_base'] - r['騎手込み順位'])))
+                                if r['_base'] - r['騎手込み順位'] > 0
+                                else ('↓' + str(int(r['騎手込み順位'] - r['_base'])))
+                                if r['_base'] - r['騎手込み順位'] < 0 else '→', axis=1)
+                            _j5_df = _j5_df.drop(columns=['_base'])
+                            st.dataframe(_j5_df, hide_index=True, use_container_width=True)
+                            st.caption("『順位変動』は強適スコア順位からの変化（↑＝騎手で評価UP）。"
+                                       "黄金ライン🥇🥇(連対40%+)の馬が騎手込みで上がってきたら妙味。"
+                                       "騎手係数は検証で測ったエッジ強度に合わせた保守的設定（影響率100%が既定）。")
+                    except Exception as _j5e:
+                        st.caption(f"騎手係数込みスコア: {_j5e}")
+
+                    # （✨ Index Analysis Chart は削除済み。altは後続の強適シートで使用）
                     import altair as alt
-                    
-                    # TotalScore_For_Chart がなければ BattleScore で代替
-                    chart_src = df.copy()
-                    if 'TotalScore_For_Chart' not in chart_src.columns:
-                        score_col_fallback = 'BattleScore' if 'BattleScore' in chart_src.columns else 'OguraIndex'
-                        chart_src['TotalScore_For_Chart'] = chart_src.get(score_col_fallback, 0)
-                    
-                    # OguraIndex / SpeedIndex がなければ 0 で補完
-                    for _c in ['OguraIndex', 'SpeedIndex']:
-                        if _c not in chart_src.columns:
-                            chart_src[_c] = 0.0
-                    
-                    cols_to_keep = ['Name', 'OguraIndex', 'SpeedIndex', 'TotalScore_For_Chart']
-                    if 'Odds' in chart_src.columns:
-                        cols_to_keep.append('Odds')
-                    
-                    chart_df = chart_src[[c for c in cols_to_keep if c in chart_src.columns]].copy()
-                    
-                    if 'Odds' in chart_df.columns:
-                        chart_df['Odds'] = pd.to_numeric(chart_df['Odds'], errors='coerce').fillna(0)
-                    
-                    # Melt dataframe for stacked bar chart
-                    id_vars = ['Name', 'TotalScore_For_Chart']
-                    if 'Odds' in chart_df.columns:
-                        id_vars.append('Odds')
-                    
-                    melted_df = chart_df.melt(id_vars=[v for v in id_vars if v in chart_df.columns],
-                                              value_vars=[v for v in ['OguraIndex', 'SpeedIndex'] if v in chart_df.columns],
-                                              var_name='IndexType', value_name='Score')
-                    
-                    # Define X-axis sort order based on dataframe index
-                    sort_order = chart_df['Name'].tolist()
-                    
-                    # Create base stacked bar chart
-                    bars = alt.Chart(melted_df).mark_bar().encode(
-                        x=alt.X('Name:N', sort=sort_order, title='Horse Name'),
-                        y=alt.Y('Score:Q', title='Index Score (Total)'),
-                        color=alt.Color('IndexType:N', legend=alt.Legend(title="Index Type", orient='top-left')),
-                        tooltip=['Name', 'TotalScore_For_Chart']
-                    )
-                    
-                    # Add line chart for Odds if available
-                    if 'Odds' in chart_df.columns:
-                        line = alt.Chart(chart_df).mark_line(color='#ff2a2a', strokeWidth=3).encode(
-                            x=alt.X('Name:N', sort=sort_order),
-                            y=alt.Y('Odds:Q', axis=alt.Axis(orient='right', title='Win Odds (Red Line)', titleColor='#ff2a2a', labelColor='#ff2a2a'))
-                        )
-                    
-                        points = alt.Chart(chart_df).mark_circle(color='#FFD700', size=90, stroke='#ff2a2a', strokeWidth=2).encode(
-                            x=alt.X('Name:N', sort=sort_order),
-                            y=alt.Y('Odds:Q'),
-                            tooltip=['Name', 'Odds', 'TotalScore_For_Chart']
-                        )
-                    
-                        # Layer them and resolve Y axis to be independent
-                        composite_chart = alt.layer(bars, line, points).resolve_scale(y='independent').properties(height=450)
-                    else:
-                        composite_chart = bars.properties(height=450)
-                    
-                    st.altair_chart(composite_chart, width='stretch')
-                    # --------------------------
-                    
+
                     # --- 強適マップ 散布図 (Main Feature) ---
                     st.subheader("📊 強適シート (Strength × Suitability)")
                     st.caption("右上ゾーン（強い×合う）の馬が注目馬。対角線より上の馬が買い目の中心候補。")
@@ -4311,6 +4772,490 @@ if nav == "🏠 Single Race Analysis":
                 st.error(f"An error occurred: {e}")
                 st.exception(e)
                 logger.error(f"Analysis Failed: {traceback.format_exc()}")
+
+    # ============================================================
+    # 💱 オッズ歪みスキャナー & 資金配分最適化 (β)
+    # ============================================================
+    st.divider()
+    st.subheader("💱 オッズ歪みスキャナー & 資金配分最適化（β）")
+    st.caption("全券種オッズを直前に取得し、券種間の歪み（馬連 vs 3連複 等）・最適資金配分・タテ目の抑えを自動提案します。オッズは締切直前に大きく動くため、発走5〜10分前の再取得を推奨。")
+
+    from core import odds_arbitrage as _oarb
+
+    _arb_key = f"all_odds_{race_id_input}"
+    _arb_c1, _arb_c2 = st.columns([1, 2])
+    with _arb_c1:
+        if st.button("📡 全券種オッズを取得", key="btn_arb_fetch"):
+            with st.spinner("単勝・複勝・馬連・ワイド・馬単・3連複・3連単を取得中..."):
+                st.session_state[_arb_key] = _oarb.fetch_all_odds(race_id_input)
+                st.session_state[_arb_key + "_at"] = pd.Timestamp.now().strftime("%H:%M:%S")
+    with _arb_c2:
+        if _arb_key in st.session_state:
+            _ao = st.session_state[_arb_key]
+            _cnt_txt = " / ".join(
+                f"{_oarb.KIND_LABELS[k]}:{len(v)}" for k, v in _ao.items()
+            )
+            st.caption(f"取得時刻 {st.session_state.get(_arb_key + '_at', '-')} ｜ {_cnt_txt}")
+
+    if _arb_key in st.session_state and not any(st.session_state[_arb_key].values()):
+        st.info("⏳ オッズが取得できませんでした。発売中レース・確定済み過去レースは取得可能です。**発売前のレース**は発売開始後に再取得してください。")
+
+    if _arb_key in st.session_state and any(st.session_state[_arb_key].values()):
+        _ao = st.session_state[_arb_key]
+
+        # 馬番→馬名マップ（解析済みdfがあれば使う）
+        _arb_names = {}
+        _df_arb = st.session_state.get('df')
+        if _df_arb is not None and 'Umaban' in _df_arb.columns and 'Name' in _df_arb.columns:
+            for _, _r in _df_arb.iterrows():
+                try:
+                    _arb_names[int(_r['Umaban'])] = str(_r['Name'])
+                except Exception:
+                    continue
+
+        def _arb_nm(u):
+            return f"{u} {_arb_names.get(u, '')}".strip()
+
+        def _arb_combo_str(combo):
+            return "-".join(str(x) for x in combo)
+
+        # 出走馬番リスト（単勝オッズから）
+        _arb_umas = sorted(c[0] for c in _ao.get('win', {}).keys())
+        if not _arb_umas and _arb_names:
+            _arb_umas = sorted(_arb_names.keys())
+
+        _win_probs = _oarb.estimate_win_probs(_ao)
+
+        _tab_dist, _tab_alloc, _tab_cover = st.tabs(["🔍 歪み検知", "💰 資金配分", "🛡️ 抑え提案"])
+
+        # ───────── 歪み検知 ─────────
+        with _tab_dist:
+            # 全自動スキャン: 人気上位馬の全ペア×全比較を一括実行し歪みランキング表示
+            st.markdown("**🔎 全自動歪みスキャン**（人気上位8頭の全組み合わせを一括チェック）")
+            if st.button("🔎 歪みランキングを生成", key="btn_arb_autoscan"):
+                st.session_state['arb_scan_result'] = _oarb.scan_all_distortions(_ao, top_k=8, min_advantage=0.10)
+            _scan_res = st.session_state.get('arb_scan_result')
+            if _scan_res is not None:
+                if _scan_res:
+                    _sc_rows = [
+                        {"順位": _i + 1, "種別": _f_['category'],
+                         "内容": _f_['description'],
+                         "優位度": f"{_f_['advantage']:.0%}"}
+                        for _i, _f_ in enumerate(_scan_res[:15])
+                    ]
+                    st.dataframe(pd.DataFrame(_sc_rows), hide_index=True, use_container_width=True)
+                    _top_f = _scan_res[0]
+                    st.success(f"🏆 **最大の歪み**: [{_top_f['category']}] {_top_f['description']}")
+                else:
+                    st.caption("10%以上の優位がある歪みは検出されませんでした（市場が効率的な状態）。")
+            st.divider()
+
+            if len(_arb_umas) >= 2:
+                # デフォルト軸 = 人気上位2頭
+                _pop_sorted = sorted(
+                    _arb_umas,
+                    key=lambda u: _ao['win'].get((u,), {}).get('odds', 9999.0)
+                )
+                _ax_sel = st.multiselect(
+                    "軸2頭を選択（馬連 vs 3連複2頭軸 比較）",
+                    _arb_umas, default=_pop_sorted[:2],
+                    format_func=_arb_nm, key="arb_axis_pair", max_selections=2,
+                )
+                if len(_ax_sel) == 2:
+                    _cmp = _oarb.compare_quinella_vs_trio_axis(_ao, _ax_sel[0], _ax_sel[1])
+                    _m1, _m2, _m3 = st.columns(3)
+                    _m1.metric(f"馬連 {_arb_combo_str(_cmp['pair'])}", f"{_cmp['quinella_odds']:.1f}倍" if _cmp['quinella_odds'] else "-")
+                    _m2.metric(f"3連複2頭軸 合成 ({_cmp['trio_count']}点)", f"{_cmp['trio_synthetic']:.1f}倍" if _cmp['trio_synthetic'] else "-")
+                    _m3.metric("ワイド（参考）", f"{_cmp['wide_odds']:.1f}倍" if _cmp['wide_odds'] else "-")
+                    if _cmp['verdict'] == 'quinella':
+                        st.warning(
+                            f"💡 **馬連の方が得**: 3連複2頭軸総流し（合成 {_cmp['trio_synthetic']:.1f}倍）より "
+                            f"馬連 {_arb_combo_str(_cmp['pair'])}（{_cmp['quinella_odds']:.1f}倍）の方が高効率です。"
+                            f"相手を絞らないなら馬連1点が優位。"
+                        )
+                    elif _cmp['verdict'] == 'trio':
+                        st.success(
+                            f"💡 **3連複が優位**: 馬連（{_cmp['quinella_odds']:.1f}倍）より 3連複2頭軸の合成オッズ"
+                            f"（{_cmp['trio_synthetic']:.1f}倍）が上回っています。総流しでも3連複に妙味。"
+                        )
+                    if _cmp['trio_sub']:
+                        with st.expander("3連複2頭軸の内訳（相手別オッズ）", expanded=False):
+                            _t_rows = [
+                                {"組合せ": _arb_combo_str(c), "オッズ": f"{o:.1f}",
+                                 "相手": _arb_nm([x for x in c if x not in _cmp['pair']][0])}
+                                for c, o in sorted(_cmp['trio_sub'].items(), key=lambda x: x[1])
+                            ]
+                            st.dataframe(pd.DataFrame(_t_rows), hide_index=True, use_container_width=True)
+
+                st.divider()
+                # 単勝 vs 馬単
+                _ax1 = st.selectbox(
+                    "1着固定の軸（単勝 vs 馬単1着固定総流し 比較）",
+                    _arb_umas, format_func=_arb_nm, key="arb_axis_single",
+                )
+                if _ax1:
+                    _cw = _oarb.compare_win_vs_exacta_first(_ao, _ax1)
+                    _n1, _n2 = st.columns(2)
+                    _n1.metric("単勝", f"{_cw['win_odds']:.1f}倍" if _cw['win_odds'] else "-")
+                    _n2.metric(f"馬単1着固定 合成 ({_cw['exacta_count']}点)", f"{_cw['exacta_synthetic']:.1f}倍" if _cw['exacta_synthetic'] else "-")
+                    if _cw['verdict'] == 'win':
+                        st.warning(f"💡 **単勝の方が得**: 馬単総流し合成（{_cw['exacta_synthetic']:.1f}倍）＜ 単勝（{_cw['win_odds']:.1f}倍）。2着を絞れないなら単勝1点。")
+                    elif _cw['verdict'] == 'exacta':
+                        st.success(f"💡 **馬単に妙味**: 馬単1着固定の合成（{_cw['exacta_synthetic']:.1f}倍）が単勝（{_cw['win_odds']:.1f}倍）を上回っています。")
+
+                st.divider()
+                # ───── 3連複 vs 3連単マルチ ─────
+                st.markdown("**🎯 3連複 vs 3連単マルチ**（同じ3頭・同じ的中条件で、最も効率の良い1つの形を推奨。点数は増やしません）")
+                _t3_pop_sorted = sorted(
+                    _arb_umas,
+                    key=lambda u: _ao['win'].get((u,), {}).get('odds', 9999.0)
+                )
+                _t3_sel = st.multiselect(
+                    "3頭を選択", _arb_umas, default=_t3_pop_sorted[:3],
+                    format_func=_arb_nm, key="arb_trio3", max_selections=3,
+                )
+                _t3_budget = st.number_input(
+                    "資金（円・任意）", min_value=0, max_value=1000000, value=0, step=500,
+                    key="arb_trio3_budget",
+                    help="未入力（0）でもオッズ比較は動きます。入力すると推奨形での具体的な配分額を表示。",
+                )
+                if len(_t3_sel) == 3:
+                    # 強適テーブル由来のモデル勝率（あれば）。なければ市場確率
+                    _t3_score_col = None
+                    _t3_probs = _win_probs
+                    _t3_prob_src_label = "市場オッズ"
+                    if _df_arb is not None:
+                        for _cand in ['Projected Score', 'BattleScore', 'OguraIndex']:
+                            if _cand in _df_arb.columns:
+                                _t3_score_col = _cand
+                                break
+                    if _t3_score_col:
+                        _t3_sc_map = {}
+                        for _, _r in _df_arb.iterrows():
+                            try:
+                                _t3_sc_map[int(_r['Umaban'])] = float(_r[_t3_score_col])
+                            except Exception:
+                                continue
+                        _t3_model = _oarb.estimate_win_probs_from_scores(_t3_sc_map, gamma=2.0)
+                        if _t3_model:
+                            _t3_probs = _t3_model
+                            _t3_prob_src_label = f"強適テーブル（{_t3_score_col}）"
+
+                    # 強適コンテキスト表（判断材料）
+                    if _df_arb is not None and not _df_arb.empty:
+                        _ctx_rows = []
+                        for _u in sorted(_t3_sel):
+                            _hit = _df_arb[pd.to_numeric(_df_arb.get('Umaban'), errors='coerce') == _u]
+                            if _hit.empty:
+                                continue
+                            _h = _hit.iloc[0]
+                            _ctx_rows.append({
+                                "馬番": _u, "馬名": str(_h.get('Name', '')),
+                                "人気": _h.get('Popularity', '-'),
+                                "単勝": _ao['win'].get((_u,), {}).get('odds', '-'),
+                                "💪強さX": round(float(_h.get('Strength (X)', 0)), 1) if 'Strength (X)' in _df_arb.columns else '-',
+                                "🎯適性Y": round(float(_h.get('Suitability (Y)', 0)), 1) if 'Suitability (Y)' in _df_arb.columns else '-',
+                                "スコア": round(float(_h.get(_t3_score_col, 0)), 1) if _t3_score_col else '-',
+                                "モデル勝率": f"{_t3_probs.get(_u, 0):.0%}",
+                            })
+                        if _ctx_rows:
+                            _ctx_cap = ""
+                            if 'CurrentSurface' in _df_arb.columns and 'CurrentDistance' in _df_arb.columns:
+                                try:
+                                    _ctx_cap = f"コース: {_df_arb['CurrentSurface'].iloc[0]}{int(_df_arb['CurrentDistance'].iloc[0])}m ｜ "
+                                except Exception:
+                                    pass
+                            st.caption(f"{_ctx_cap}確率根拠: {_t3_prob_src_label}")
+                            st.dataframe(pd.DataFrame(_ctx_rows), hide_index=True, use_container_width=True)
+
+                    _t3 = _oarb.compare_trio_vs_trifecta_multi(_ao, _t3_sel[0], _t3_sel[1], _t3_sel[2], win_probs=_t3_probs)
+                    _t3m1, _t3m2, _t3m3 = st.columns(3)
+                    _t3m1.metric("3連複 1点", f"{_t3['trio_odds']:.1f}倍" if _t3['trio_odds'] else "-")
+                    _t3m2.metric("3連単マルチ 6点 合成", f"{_t3['multi_synthetic']:.1f}倍" if _t3['multi_synthetic'] else "-")
+                    _t3_fx = _t3.get('fixed_best')
+                    _t3m3.metric(
+                        f"1着固定 2点 合成" + (f"（{_t3_fx['first']}番頭）" if _t3_fx else ""),
+                        f"{_t3_fx['synthetic']:.1f}倍" if _t3_fx else "-",
+                        f"モデル確信度 {_t3_fx['prob_share']:.0%}" if _t3_fx else None,
+                    )
+                    if _t3['verdict'] == 'trio':
+                        st.warning(f"💡 **3連複1点を推奨**: {_t3['reasons'][0]}")
+                    elif _t3['verdict'] == 'multi':
+                        st.success(f"💡 **3連単マルチに歪み**: {_t3['reasons'][0]}")
+                    elif _t3['verdict'] == 'fixed':
+                        st.success(f"💡 **1着固定2点に絞るのが最効率**: {_t3['reasons'][0]}")
+                    for _rs in _t3['reasons'][1:]:
+                        st.caption(f"｜{_rs}")
+
+                    # 資金入力時: 推奨形での具体的配分
+                    if _t3_budget > 0 and _t3['verdict']:
+                        if _t3['verdict'] == 'trio':
+                            _t3_alloc = {_t3['combo']: _t3['trio_odds']}
+                            _t3_kind_lbl = '3連複'
+                        elif _t3['verdict'] == 'multi':
+                            _t3_alloc = _t3['multi_perms']
+                            _t3_kind_lbl = '3連単'
+                        else:
+                            _t3_alloc = _t3_fx['perms']
+                            _t3_kind_lbl = '3連単'
+                        _t3_rows, _t3_summ = _oarb.allocate_equal_payout(_t3_alloc, int(_t3_budget))
+                        if _t3_rows:
+                            st.markdown(f"**推奨形（{_t3_kind_lbl}）への配分** — 払戻均等:")
+                            _t3_disp = [
+                                {"買い目": ("-" if _t3['verdict'] == 'trio' else "→").join(str(x) for x in _r['combo']),
+                                 "オッズ": f"{_r['odds']:.1f}",
+                                 "購入額": f"{_r['stake']:,}円",
+                                 "払戻": f"{_r['payout']:,}円",
+                                 "損益": f"{_r['profit']:+,}円"}
+                                for _r in _t3_rows
+                            ]
+                            st.dataframe(pd.DataFrame(_t3_disp), hide_index=True, use_container_width=True)
+                            if _t3_summ.get('min_profit', 0) < 0:
+                                st.warning("⚠️ この予算だと的中してもマイナスの目があります。予算を増やすか3連複1点へ。")
+                elif _t3_sel:
+                    st.caption("3頭ちょうど選択してください。")
+
+                st.divider()
+                # ワイド/馬連 逆転スキャン
+                st.markdown("**📡 ワイド≒馬連 接近ペア自動スキャン**（ワイドが過剰においしいペア）")
+                _inv = _oarb.scan_quinella_wide_inversion(_ao, min_ratio=0.80)
+                if _inv:
+                    _inv_rows = [
+                        {"ペア": f"{_arb_nm(p['pair'][0])} × {_arb_nm(p['pair'][1])}",
+                         "馬連": f"{p['quinella_odds']:.1f}", "ワイド": f"{p['wide_odds']:.1f}",
+                         "ワイド/馬連比": f"{p['ratio']:.2f}"}
+                        for p in _inv[:10]
+                    ]
+                    st.dataframe(pd.DataFrame(_inv_rows), hide_index=True, use_container_width=True)
+                    st.caption("比率0.8以上＝3着内2頭でOKのワイドが、1-2着限定の馬連並みの配当。ワイド優位の歪み。")
+                else:
+                    st.caption("接近ペアなし（比率0.8以上が存在しません）")
+            else:
+                st.info("単勝オッズが取得できていません。再取得してください。")
+
+        # ───────── 資金配分 ─────────
+        with _tab_alloc:
+            _al_c1, _al_c2, _al_c3 = st.columns(3)
+            with _al_c1:
+                _al_kind = st.selectbox(
+                    "券種", ['quinella', 'wide', 'exacta', 'trio', 'win', 'place'],
+                    format_func=lambda k: _oarb.KIND_LABELS[k], key="arb_alloc_kind",
+                )
+            with _al_c2:
+                _al_budget = st.number_input("予算（円）", min_value=500, max_value=1000000, value=5000, step=500, key="arb_alloc_budget")
+            with _al_c3:
+                _al_mode = st.radio("配分ロジック", ["払戻均等（ガミり防止）", "期待値傾斜（簡易ケリー）"], key="arb_alloc_mode")
+
+            # 確率ソース: アプリのスコア列があればモデル確率を使える
+            # （市場オッズ由来の確率だとEV≒払戻率で一定になり期待値傾斜が機能しないため）
+            _score_col = None
+            if _df_arb is not None:
+                for _cand in ['Projected Score', 'BattleScore', 'OguraIndex']:
+                    if _cand in _df_arb.columns:
+                        _score_col = _cand
+                        break
+            _prob_src = "市場オッズ（Harville）"
+            if _al_mode.startswith("期待値傾斜"):
+                _ps_opts = ["市場オッズ（Harville）"]
+                if _score_col:
+                    _ps_opts.insert(0, f"アプリスコア（{_score_col}）★推奨")
+                _prob_src = st.radio(
+                    "確率の根拠", _ps_opts, key="arb_prob_src", horizontal=True,
+                    help="市場オッズ由来の確率は期待値がほぼ一定（=払戻率）になるため歪み検出に不向き。自前スコア由来の確率なら「市場とモデルの乖離=妙味」を突けます。",
+                )
+
+            _al_horses = st.multiselect(
+                "対象馬を選択（選択馬同士の全組み合わせを生成）",
+                _arb_umas, default=[], format_func=_arb_nm, key="arb_alloc_horses",
+            )
+            _need_n = {'win': 1, 'place': 1, 'quinella': 2, 'wide': 2, 'exacta': 2, 'trio': 3}[_al_kind]
+            if len(_al_horses) >= _need_n:
+                from itertools import combinations as _icomb, permutations as _iperm
+                _kind_odds = _ao.get(_al_kind, {})
+                if _need_n == 1:
+                    _combos = [(u,) for u in _al_horses]
+                elif _al_kind == 'exacta':
+                    _combos = [tuple(c) for c in _iperm(_al_horses, 2)]
+                else:
+                    _combos = [tuple(sorted(c)) for c in _icomb(_al_horses, _need_n)]
+                _sel_odds = {c: _kind_odds[c]['odds'] for c in _combos if c in _kind_odds and _kind_odds[c]['odds'] > 0}
+                if _sel_odds:
+                    if _al_mode.startswith("払戻均等"):
+                        _rows, _summ = _oarb.allocate_equal_payout(_sel_odds, int(_al_budget))
+                    else:
+                        # 確率ソースに応じてベース勝率を切替
+                        _base_probs = _win_probs
+                        if _prob_src.startswith("アプリスコア") and _score_col and _df_arb is not None:
+                            _sc_map = {}
+                            for _, _r in _df_arb.iterrows():
+                                try:
+                                    _sc_map[int(_r['Umaban'])] = float(_r[_score_col])
+                                except Exception:
+                                    continue
+                            _model_probs = _oarb.estimate_win_probs_from_scores(_sc_map, gamma=2.0)
+                            if _model_probs:
+                                _base_probs = _model_probs
+                                st.caption(f"📐 {_score_col} 由来のモデル勝率を使用中（市場と乖離した買い目ほどEVが立ちます）")
+                        _probs = {c: _oarb.combo_prob(_base_probs, c, _al_kind) for c in _sel_odds}
+                        _rows, _summ = _oarb.allocate_ev_weighted(_sel_odds, _probs, int(_al_budget))
+                    if _rows:
+                        # EV列: モデル確率があれば払戻均等モードでも計算して常時表示
+                        # (combos → probs は concierge用に後で計算するが、ここでは _rev_probs はまだない。
+                        #  代わりに _rev_src を先に確定させる)
+                        _ev_probs_pre = {}
+                        if _score_col and _df_arb is not None:
+                            _pre_sc_map = {}
+                            for _, _rv in _df_arb.iterrows():
+                                try:
+                                    _pre_sc_map[int(_rv['Umaban'])] = float(_rv[_score_col])
+                                except Exception:
+                                    continue
+                            _pre_mp = _oarb.estimate_win_probs_from_scores(_pre_sc_map, gamma=2.0)
+                            if _pre_mp:
+                                _ev_probs_pre = {c: _oarb.combo_prob(_pre_mp, c, _al_kind) for c in _sel_odds}
+                        elif _win_probs:
+                            _ev_probs_pre = {c: _oarb.combo_prob(_win_probs, c, _al_kind) for c in _sel_odds}
+
+                        _disp = []
+                        for _r in _rows:
+                            _ev_val = _r['ev'] if 'ev' in _r else (
+                                _ev_probs_pre.get(_r['combo'], 0) * _r['odds']
+                                if _ev_probs_pre else None
+                            )
+                            _row_d = {
+                                "買い目": _arb_combo_str(_r['combo']),
+                                "オッズ": f"{_r['odds']:.1f}",
+                                "購入額": f"{_r['stake']:,}円",
+                                "払戻": f"{_r['payout']:,}円",
+                                "損益": f"{_r['profit']:+,}円",
+                            }
+                            if _ev_val is not None:
+                                _ev_str = f"{_ev_val:.2f}"
+                                _row_d["期待値"] = f"⚠️{_ev_str}" if _ev_val < 1.0 else f"✅{_ev_str}"
+                            _disp.append(_row_d)
+                        _disp_df = pd.DataFrame(_disp)
+                        st.dataframe(_disp_df, hide_index=True, use_container_width=True)
+                        if any("⚠️" in str(r.get("期待値", "")) for r in _disp):
+                            st.caption("⚠️=期待値1.0未満（モデルスコア基準）。長期回収率を下げる買い目です。")
+                        _s1, _s2, _s3 = st.columns(3)
+                        _s1.metric("合計投資", f"{_summ.get('total', 0):,}円")
+                        _s2.metric("合成オッズ", f"{_summ.get('synthetic', 0):.2f}倍")
+                        if 'min_profit' in _summ:
+                            _s3.metric("最低損益（的中時）", f"{_summ['min_profit']:+,}円")
+                        if _summ.get('synthetic', 0) and _summ['synthetic'] < 1.0:
+                            st.error("⚠️ 合成オッズが1.0倍未満＝全的中でもマイナス（トリガミ確定）。点数を絞ってください。")
+                        elif _summ.get('min_profit', 0) < 0 and 'min_profit' in _summ:
+                            st.warning("⚠️ 一部の買い目はガミります（的中しても損益マイナス）。")
+                        # 買い目シート出力（投票メモ用）
+                        _sheet_txt = _oarb.build_bet_sheet_text(_rows, _al_kind)
+                        _dl1, _dl2 = st.columns(2)
+                        with _dl1:
+                            st.download_button(
+                                "📝 買い目シート (テキスト)", _sheet_txt,
+                                file_name=f"bets_{race_id_input}_{_al_kind}.txt",
+                                mime="text/plain", key="arb_dl_txt",
+                            )
+                        with _dl2:
+                            _csv_df = pd.DataFrame([
+                                {"券種": _oarb.KIND_LABELS[_al_kind],
+                                 "買い目": "-".join(str(x) for x in _r['combo']),
+                                 "オッズ": _r['odds'], "購入額": _r['stake'],
+                                 "想定払戻": _r['payout']}
+                                for _r in _rows
+                            ])
+                            st.download_button(
+                                "📊 買い目CSV", _csv_df.to_csv(index=False).encode('utf-8-sig'),
+                                file_name=f"bets_{race_id_input}_{_al_kind}.csv",
+                                mime="text/csv", key="arb_dl_csv",
+                            )
+
+                        # ───── 🎩 コンシェルジュ診断 ─────
+                        st.markdown("---")
+                        st.markdown("**🎩 コンシェルジュ診断**（成功者の型: 点数を絞る・期待値プラスのみ・資金管理・見送りも戦略）")
+                        _bk_in = st.number_input(
+                            "総資金（円・任意）", min_value=0, max_value=100000000, value=0, step=10000,
+                            key="arb_bankroll",
+                            help="入力すると「1レースに資金の何%を投じているか」の資金管理診断が有効になります。",
+                        )
+                        # 診断用確率: モデルスコアがあれば常にモデル確率で評価
+                        _rev_src = _win_probs
+                        if _score_col and _df_arb is not None:
+                            _rev_sc_map = {}
+                            for _, _r in _df_arb.iterrows():
+                                try:
+                                    _rev_sc_map[int(_r['Umaban'])] = float(_r[_score_col])
+                                except Exception:
+                                    continue
+                            _rev_mp = _oarb.estimate_win_probs_from_scores(_rev_sc_map, gamma=2.0)
+                            if _rev_mp:
+                                _rev_src = _rev_mp
+                        _rev_probs = {c: _oarb.combo_prob(_rev_src, c, _al_kind) for c in _sel_odds}
+                        _rev = _oarb.concierge_review(
+                            _rows, _al_kind, combo_probs=_rev_probs,
+                            budget=int(_al_budget), bankroll=int(_bk_in) if _bk_in else None,
+                        )
+                        _gr_color = {'S': '#FFD700', 'A': '#4CAF50', 'B': '#FF9800', 'C': '#F44336'}.get(_rev['grade'], '#888')
+                        _gr_label = _rev.get('label', _rev['grade'])
+                        st.markdown(
+                            f"<div style='display:inline-block;padding:4px 16px;border-radius:8px;"
+                            f"background:{_gr_color}22;border:2px solid {_gr_color};"
+                            f"font-size:1.4em;font-weight:bold;color:{_gr_color};'>判定: {_gr_label}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        for _ad in _rev['advice']:
+                            if _ad['level'] == 'bad':
+                                st.error(f"{_ad['icon']} {_ad['msg']}")
+                            elif _ad['level'] == 'warn':
+                                st.warning(f"{_ad['icon']} {_ad['msg']}")
+                            else:
+                                st.success(f"{_ad['icon']} {_ad['msg']}")
+                    else:
+                        st.warning("予算が少なすぎて配分できません。")
+                else:
+                    st.warning(f"選択された組み合わせの{_oarb.KIND_LABELS[_al_kind]}オッズが取得できていません。")
+            else:
+                st.caption(f"{_oarb.KIND_LABELS[_al_kind]}には最低{_need_n}頭の選択が必要です。")
+
+        # ───────── 抑え提案 ─────────
+        with _tab_cover:
+            st.markdown("**本線=軸2頭** が崩れた時（軸の片方が4着以下→相手同士で決着）のタテ目を、**元返し**（本線投資の回収）最小コストで提案します。")
+            _cv_c1, _cv_c2 = st.columns(2)
+            with _cv_c1:
+                _cv_axis = st.multiselect(
+                    "本線の軸2頭", _arb_umas,
+                    default=st.session_state.get("arb_axis_pair", [])[:2],
+                    format_func=_arb_nm, key="arb_cover_axis", max_selections=2,
+                )
+            with _cv_c2:
+                _cv_total = st.number_input("本線の投資総額（円）", min_value=100, max_value=1000000, value=3000, step=100, key="arb_cover_total")
+            _cv_partners = st.multiselect(
+                "相手馬（この中の2頭で決着するケースを抑える）",
+                [u for u in _arb_umas if u not in _cv_axis],
+                format_func=_arb_nm, key="arb_cover_partners",
+            )
+            if len(_cv_axis) == 2 and len(_cv_partners) >= 2:
+                _cv_rows = _oarb.suggest_protection(_ao, int(_cv_total), _cv_axis[0], _cv_axis[1], _cv_partners)
+                if _cv_rows:
+                    _cv_disp = [
+                        {"タテ目（馬連）": f"{_arb_nm(_r['pair'][0])} × {_arb_nm(_r['pair'][1])}",
+                         "オッズ": f"{_r['odds']:.1f}",
+                         "必要購入額": f"{_r['stake']:,}円",
+                         "払戻": f"{_r['payout']:,}円",
+                         "本線比コスト": f"{_r['cost_ratio']:.0%}"}
+                        for _r in _cv_rows
+                    ]
+                    st.dataframe(pd.DataFrame(_cv_disp), hide_index=True, use_container_width=True)
+                    _best = _cv_rows[0]
+                    st.info(
+                        f"🛡️ 最安の抑え: 馬連 **{_arb_combo_str(_best['pair'])}** に **{_best['stake']:,}円** "
+                        f"→ 的中時 {_best['payout']:,}円 払戻で本線investment（{_cv_total:,}円＋抑え分）を回収。"
+                    )
+                    _tot_cover = sum(_r['stake'] for _r in _cv_rows)
+                    st.caption(f"全タテ目を抑える場合の合計: {_tot_cover:,}円（本線の{_tot_cover / max(_cv_total, 1):.0%}）。コストが本線の50%を超えるなら、本線の自信度を再考するサインです。")
+                else:
+                    st.warning("相手馬同士の馬連オッズが取得できていません。")
+            else:
+                st.caption("軸2頭と相手2頭以上を選択してください。")
 
 # Tab 2 placeholder logic
 if nav == "🧹 消去フィルター":
@@ -9138,12 +10083,116 @@ if nav == "🏇 騎手分析Pro":
     """, unsafe_allow_html=True)
 
     # --- メインUI: 1ページ完結体験（出馬表ビューを先頭に） ---
-    jpro_tab3, jpro_tab1, jpro_tab2, jpro_tab4 = st.tabs([
+    jpro_tabJV, jpro_tab3, jpro_tab1, jpro_tab2, jpro_tab4 = st.tabs([
+        "🔥 JRA-VAN版 (調子・コンビ・黄金ライン)",
         "✅ 最強予想ビュー (One-Push)",
         "🔍 詳細データ (コンビ/脚質)",
         "🚦 フラグ手動入力",
         "⚙️ 設定・データ管理",
     ])
+
+    # =============================================
+    # タブ(新): JRA-VAN実データ版 — J1〜J5＋調子/連敗
+    # =============================================
+    with jpro_tabJV:
+        from core import jockey_jv as _jj
+        import sqlite3 as _jjsq
+        st.caption("netkeibaスクレイピング不使用。jravan.db（30年・283万走）から騎手の実力・相性・調子を直接集計。")
+
+        # オッズ期待値テーブル（USM較正用）はレース横断で共通。セッションにキャッシュ。
+        if '_jj_expected' not in st.session_state:
+            with st.spinner("オッズ期待値テーブルを較正中（初回のみ）..."):
+                st.session_state['_jj_expected'] = _jj.calibrate_odds_expectation()
+        _jj_exp = st.session_state['_jj_expected']
+
+        # ── 📉 連敗中の騎手ピックアップ（オンカジ的パターン・正直ラベル付き）──
+        with st.expander("📉 連敗中の騎手ピックアップ（現在の連敗・勝ち間隔パターン）", expanded=True):
+            st.markdown(
+                "<div style='background:#3a1c1c;border-left:6px solid #e63946;border-radius:8px;"
+                "padding:10px 14px;font-size:12px;color:#ffd9d9;'>"
+                "⚠️ <b>重要</b>：283万走のバックテストで、<b>連続して勝てない/3着以内に入れない長さは、次走で『勝つ・3着以内に来る』確率を上げも下げもしませんでした</b>"
+                "（オッズ補正後の残差が連続0〜10+で平坦〜微マイナス＝『そろそろ来る』はギャンブラーの誤謬）。"
+                "下表は<b>参考・話のタネ</b>で予測指標ではありません。騎手で本当に効くのは『コース相性・黄金ライン・実力(USM)』です。</div>",
+                unsafe_allow_html=True)
+            if st.button("🔄 連敗ランキングを更新", key="jj_streak_refresh") or '_jj_streaks' not in st.session_state:
+                with st.spinner("直近騎乗騎手の連敗を集計中..."):
+                    st.session_state['_jj_streaks'] = _jj.losing_streak_leaders(top=15)
+            _streaks = st.session_state.get('_jj_streaks', [])
+            if _streaks:
+                _sdf = pd.DataFrame([{
+                    "騎手": s['name'], "現在の連敗(未勝利)": s['lose_streak'],
+                    "連続圏外(3着内なし)": s['no_top3'],
+                    "最後の勝ちから": f"{s['cur_dry']}走",
+                    "平均勝ち間隔": f"{s['win_gap_avg']}走に1勝",
+                    "due比(>1=平均より長く未勝利)": s['due_ratio'],
+                    "直近20複勝率": f"{s['recent_top3']*100:.0f}%",
+                } for s in _streaks])
+                st.dataframe(_sdf, hide_index=True, use_container_width=True)
+                st.caption("「平均◯走に1勝」＝最近のパターン。due比が大きいほど『平均より長く勝っていない』"
+                           "（が、それで次に勝ちやすくなる訳ではない点に注意）。")
+
+        # ── レース単位の騎手指標（jravan.db に取り込み済みの過去レース）──
+        st.markdown("---")
+        _jj_rid = st.text_input("レースIDを入力（jravan.db取り込み済みの過去レース）",
+                                value=str(st.session_state.get('_jj_last_rid', '')),
+                                key="jj_race_id", placeholder="例: 202509030411")
+        if _jj_rid:
+            st.session_state['_jj_last_rid'] = _jj_rid
+            try:
+                _jc = _jjsq.connect('data/jravan.db')
+                _jrow = _jc.execute(
+                    "SELECT race_key, jyo, kyori, surface, race_name FROM races WHERE race_id=?",
+                    (_jj_rid,)).fetchone()
+                _jentries = []
+                if _jrow:
+                    _jentries = _jc.execute(
+                        "SELECT umaban, jockey_name, bamei, trainer_code, ketto_num, ninki, chakujun "
+                        "FROM results WHERE race_key=? ORDER BY umaban", (_jrow[0],)).fetchall()
+                _jc.close()
+            except Exception as _je:
+                _jrow, _jentries = None, []
+                st.caption(f"DB参照エラー: {_je}")
+
+            if not _jrow:
+                st.info("このレースIDは jravan.db に未取り込みです（未来のレースや体験版の反映前）。"
+                        "過去のレースIDでお試しください。連敗ピックアップは上の表で確認できます。")
+            elif _jentries:
+                _rk, _jyo, _kyori, _surf, _rname = _jrow
+                _venue = _jj._venue_name(_jyo)
+                st.markdown(f"**{_rname or ''} {_venue}{_surf}{_kyori}m**（{len(_jentries)}頭）"
+                            "　騎手指標はこのレース直前までの実績で算出（リーク無し）")
+                _jrows = []
+                for um, jk, bamei, tr, ketto, ninki, chaku in _jentries:
+                    base = _jj.jockey_base_stats(jk, venue=_venue, distance=_kyori, before_key=_rk)
+                    ov = base['overall']; vstat = base['venue'] or {}
+                    tcombo = _jj.jockey_trainer_combo(jk, tr, before_key=_rk)
+                    hcombo = _jj.jockey_horse_combo(jk, ketto, before_key=_rk)
+                    mom = _jj.momentum(jk, before_key=_rk)
+                    fac = _jj.jockey_factor(jk, venue=_venue, distance=_kyori,
+                                            trainer_code=tr, expected=_jj_exp, before_key=_rk)
+                    usm = _jj.jockey_usm(jk, _jj_exp, before_key=_rk)
+                    # 🥇🥇=連対40%以上(検証で勝ち+2pp/連対+3pp の最強)・🥇=30-40%
+                    _gmark = ("🥇🥇" if tcombo['rides'] >= 15 and tcombo['top2'] >= 0.40
+                              else "🥇" if tcombo['rides'] >= 15 and tcombo['top2'] >= 0.30 else "")
+                    _gold = f"{tcombo['top2']*100:.0f}%/{tcombo['rides']}走{_gmark}"
+                    _combo = (f"{hcombo['top3']*100:.0f}%/{hcombo['rides']}走" if hcombo['rides'] > 0 else "初")
+                    _jrows.append({
+                        "馬番": um, "騎手": jk, "馬": bamei, "人気": ninki,
+                        "全体勝率": f"{ov['win']*100:.0f}%", "全体複勝": f"{ov['top3']*100:.0f}%",
+                        f"{_venue}連対": f"{vstat.get('top2',0)*100:.0f}%/{vstat.get('rides',0)}走",
+                        "黄金ライン(対調教師)": _gold,
+                        "コンビ(この馬)": _combo,
+                        "USM複勝(100=平均)": usm['top3_usm'] if usm['top3_usm'] else "-",
+                        "騎手係数": fac['mult'],
+                        "調子(連敗/hot)": f"連{mom.get('lose_streak','-')}/{mom.get('hot',0):+.2f}",
+                        "_sort": fac['mult'],
+                    })
+                _jdf = pd.DataFrame(_jrows).sort_values('_sort', ascending=False).drop(columns=['_sort'])
+                st.dataframe(_jdf, hide_index=True, use_container_width=True)
+                st.caption("USM=人気(オッズ期待値)に対し実際の複勝率が何%か（100超=人気以上に走らせる＝騎手の実力）。"
+                           "🥇🥇=黄金ライン最強(対調教師15走以上・連対40%以上＝検証で勝ち+2pp/連対+3pp人気以上)・🥇=30-40%。"
+                           "騎手係数=検証で『人気以上に来る』と確認できたUSM・場相性・黄金ラインのみで構成"
+                           "（連敗/調子は予測力ゼロのため不採用）。")
 
     # =============================================
     # タブ1: コンビネーション分析

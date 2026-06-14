@@ -7,3 +7,16 @@ saved_logic_notes.json
 .streamlit/secrets.toml
 data/
 race_history.csv
+labo_session.json
+
+# 開発用の一時ファイル・ログ・スクラッチ（コミット不要）
+*.log
+scratch/
+sandbox/
+debug_*.py
+debug_*.txt
+debug_*.csv
+tmp_*.py
+result.txt
+*_raw.txt
+*_debug.txt
