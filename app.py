@@ -112,7 +112,38 @@ except Exception:
     pass
 
 
-st.set_page_config(page_title="Keiba Analysis - Modified Ogura Index", layout="wide")
+# ── 公開(push)版 / ローカル(フル)版 の出し分け ─────────────────────
+# git で文字を消すのではなく実行時に判定して切替（壊れにくい）。
+# 判定: 環境変数 KEIBA_PUBLIC があれば優先、無ければ jravan.db(1.2GB・gitignore)の
+#       有無で判定 → 無料サーバーにはDBが無い＝自動的に「公開(限定)版」になる。
+def _detect_public():
+    _ev = os.environ.get('KEIBA_PUBLIC')
+    if _ev is not None:
+        return _ev not in ('0', '', 'false', 'False')
+    return not os.path.exists(os.path.join(os.path.dirname(__file__), 'data', 'jravan.db'))
+
+
+IS_PUBLIC = _detect_public()
+
+_PUB_REPL = [('JRA-VAN版', '限定版'), ('JRA-VAN実データ', '内部データ'),
+             ('JRA-VANで', '内部データで'), ('JRA-VAN/JRA', 'JRA'),
+             ('JRA-VAN', ''), ('JV-VAN', ''), ('JV-Data', '公式データ'),
+             ('jravan.db', '内部DB')]
+
+
+def _pub(s):
+    """公開(限定)版では JRA-VAN 等の表記を中立語へ置換。ローカルではそのまま返す。"""
+    if not IS_PUBLIC or not isinstance(s, str):
+        return s
+    for _a, _b in _PUB_REPL:
+        s = s.replace(_a, _b)
+    return s.replace('  ', ' ')
+
+
+_APP_TITLE = "🐎 Keiba Analysis -限定版" if IS_PUBLIC else "🐎 Keiba Analysis - Modified Ogura Index"
+_PAGE_TITLE = "Keiba Analysis -限定版" if IS_PUBLIC else "Keiba Analysis - Modified Ogura Index"
+
+st.set_page_config(page_title=_PAGE_TITLE, layout="wide")
 
 # --- Shared Constants & Helpers ---
 
@@ -310,7 +341,7 @@ with st.sidebar:
     )
 
 
-st.title("🐎 Keiba Analysis - Modified Ogura Index")
+st.title(_APP_TITLE)
 st.markdown("""
 **Modified Ogura Flat Index (Speed Index Based + Deviation)**
 - **SS Rank**: High Outlier (Top Class, Fixed 1st).
@@ -1592,7 +1623,7 @@ if nav == "🏠 Single Race Analysis":
                         for _ik in (_ck, _mk, _mck):
                             st.session_state.setdefault(_ik, 0.0)
                         _tb_paste = st.text_area(
-                            "📋 JRA-VANの馬場情報を貼り付け（任意・下のボタンで自動入力）",
+                            _pub("📋 JRA-VANの馬場情報を貼り付け（任意・下のボタンで自動入力）"),
                             height=70, key=f"tb_paste_{race_id_input}",
                             placeholder="例: 芝クッション値(7時30分測定)：9.9　含水率：芝 ゴール前 11.4%、4コーナー 10.2%")
                         if st.button("📥 貼り付けから自動入力", key=f"tb_parse_{race_id_input}"):
@@ -1612,7 +1643,7 @@ if nav == "🏠 Single Race Analysis":
                         with _cm1:
                             _tb_cushion = st.number_input(
                                 "クッション値(芝)", min_value=0.0, max_value=15.0, step=0.1, key=_ck,
-                                help="JV-Dataには無い。JRA-VAN/JRA馬場情報を手入力or貼付。7以下=軟/12以上=硬。")
+                                help=_pub("JV-Dataには無い。JRA-VAN/JRA馬場情報を手入力or貼付。7以下=軟/12以上=硬。"))
                         with _cm2:
                             _tb_moist = st.number_input(
                                 "含水率% ゴール前", min_value=0.0, max_value=30.0, step=0.1, key=_mk,
@@ -2176,7 +2207,7 @@ if nav == "🏠 Single Race Analysis":
                                 _pm_fig = _pmap.build_figure(_pm_data, turn=_pm_turn, title=_pm_title)
                                 st.plotly_chart(_pm_fig, use_container_width=True, key="pace_map_fig")
                                 _pm_n_jv = sum(1 for h in _pm_horses if h['name'] in _pm_profiles)
-                                st.caption(
+                                st.caption(_pub(
                                     f"📊 JRA-VAN実データ使用: {_pm_n_jv}/{len(_pm_horses)}頭"
                                     "（同馬場・近距離の過去8走を条件＆直近重みで集計。テン速力＝(走破タイム−上がり3F)/(距離−600)×600 を"
                                     "メンバー内z-score化し、コーナー履歴と合成して局面別ポジションを推定）｜ "
@@ -2184,7 +2215,7 @@ if nav == "🏠 Single Race Analysis":
                                     "**【直線】は4角位置に強適Ranking Tableの〈決め手(上がり3F)・適性・総合戦闘力〉を合成した"
                                     "到達(着順)イメージ＝後方一気の差し馬も前方に描画**します。"
                                     "スライダーで局面を切替。想定であり実際の隊列を保証するものではありません。"
-                                )
+                                ))
                                 # ペース文脈サマリ（ハナ・ペース判定・風）
                                 _pm_lead_h = next((h for h in _pm_horses if h['umaban'] == _pm_ctx.get('leader')), None)
                                 _pm_lead_txt = f"{_pm_lead_h['umaban']}番 {_pm_lead_h['name']}" if _pm_lead_h else "不明"
@@ -2305,6 +2336,11 @@ if nav == "🏠 Single Race Analysis":
                                         f"馬場バイアス（自動推定:{_vm_baba_src}・変更可）",
                                         _pmap.V_BABA_PATTERNS, horizontal=True, key="vm_baba",
                                         index=_vm_baba_auto_idx,
+                                        captions=[
+                                            "内有利：芝が傷んでおらず最短距離の内枠・先行が恵まれる（開幕週・コース替り直後）",
+                                            "中有利：内2頭ぶんが荒れて遅い→そこを避けた中を通る馬が浮上（開催中盤）",
+                                            "外有利：内4頭ぶんまで荒れ→外を回す差し・外枠が台頭（開催後半・雨後）",
+                                        ],
                                         help="初期値は①当日の前半レース結果からの逆算バイアス（あれば最優先）、"
                                              "②無ければ開催日数・馬場状態（1〜4日目=フラット/5〜6日目=内2/7日目以上 or 道悪=内4）。"
                                              "前レースの体感と違えば手動で変更。",
@@ -3836,9 +3872,9 @@ if nav == "🏠 Single Race Analysis":
                     try:
                         from core import jockey_jv as _j5
                         with st.expander("🏇 騎手係数込み 総合スコア（J5・黄金ライン/USMで補正）", expanded=False):
-                            st.caption("強適スコア（馬の能力）に、JRA-VANで『人気以上に来る』と検証できた騎手要素"
+                            st.caption(_pub("強適スコア（馬の能力）に、JRA-VANで『人気以上に来る』と検証できた騎手要素"
                                        "（黄金ライン=騎手×調教師・USM=実力・場相性）を掛け合わせます。"
-                                       "連敗・調子は予測力ゼロのため不使用。")
+                                       "連敗・調子は予測力ゼロのため不使用。"))
                             _j5_w = st.slider("騎手影響率（0=馬のみ / 100=検証値どおり / 150=強調）",
                                               0, 150, 100, 10, key=f"j5_weight_{race_id_input}") / 100.0
                             # 期待値テーブル（USM較正用）をキャッシュ共有
@@ -10148,7 +10184,7 @@ if nav == "🏇 騎手分析Pro":
 
     # --- メインUI: 1ページ完結体験（出馬表ビューを先頭に） ---
     jpro_tabJV, jpro_tab3, jpro_tab1, jpro_tab2, jpro_tab4 = st.tabs([
-        "🔥 JRA-VAN版 (調子・コンビ・黄金ライン)",
+        _pub("🔥 JRA-VAN版 (調子・コンビ・黄金ライン)"),
         "✅ 最強予想ビュー (One-Push)",
         "🔍 詳細データ (コンビ/脚質)",
         "🚦 フラグ手動入力",
@@ -10161,7 +10197,7 @@ if nav == "🏇 騎手分析Pro":
     with jpro_tabJV:
         from core import jockey_jv as _jj
         import sqlite3 as _jjsq
-        st.caption("netkeibaスクレイピング不使用。jravan.db（30年・283万走）から騎手の実力・相性・調子を直接集計。")
+        st.caption(_pub("netkeibaスクレイピング不使用。jravan.db（30年・283万走）から騎手の実力・相性・調子を直接集計。"))
 
         # オッズ期待値テーブル（USM較正用）はレース横断で共通。セッションにキャッシュ。
         if '_jj_expected' not in st.session_state:
