@@ -2433,6 +2433,82 @@ if nav == "🏠 Single Race Analysis":
 
                     st.divider()
 
+                    # --- ⏱️ 調教（追い切り）分析 ---
+                    with st.expander("⏱️ 調教（追い切り）分析", expanded=False):
+                        # 全頭の調教評価ランク＋短評を netkeiba(type=3)から1発取得しキャッシュ
+                        _oik_key = f"oikiri_rev_{race_id_input}"
+                        _oc1, _oc2 = st.columns([3, 1])
+                        with _oc1:
+                            st.caption("netkeiba 調教ページから全頭の評価ランク＋短評を取得（木・金更新）。")
+                        with _oc2:
+                            if st.button("🔄 全頭の短評を取得", key=f"btn_oik_{race_id_input}"):
+                                with st.spinner("調教短評を取得中..."):
+                                    try:
+                                        from core import oikiri as _oik
+                                        st.session_state[_oik_key] = _oik.fetch_oikiri_reviews(race_id_input)
+                                    except Exception as _e:
+                                        st.session_state[_oik_key] = {}
+                                        st.warning(f"取得失敗: {_e}")
+                                st.rerun()
+                        _rev_map = st.session_state.get(_oik_key, {}) or {}
+                        _cy_sort = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
+                        _has_train = (('TrainingScore' in df.columns and
+                                       pd.to_numeric(df['TrainingScore'], errors='coerce').fillna(0).abs().sum() > 0)
+                                      or ('TrainingEval' in df.columns and
+                                          df['TrainingEval'].astype(str).str.strip().ne('').any()))
+                        if not _has_train and not _rev_map:
+                            st.info("調教データ未取得です。上の『🔄 全頭の短評を取得』を押すか、netkeiba の調教（追い切り）ページから取得します。"
+                                    "調教は週後半（木・金）に更新されるため、発走が近づいてから取得すると評価が入ります。")
+                        else:
+                            st.caption("netkeiba の調教ページ（追い切り）より取得。評価A〜D＝netkeiba 調教評価、"
+                                       "調教スコアは予測スコアの『⏱️ 調教%』ボーナスに連動しています。")
+                            _grade_from = {100.0: 'A', 70.0: 'B', 40.0: 'C', 10.0: 'D'}
+                            _cy_rows = []
+                            for _, _r in df.sort_values(_cy_sort, ascending=False).iterrows():
+                                try:
+                                    _u = int(_r['Umaban'])
+                                except Exception:
+                                    continue
+                                _ts = pd.to_numeric(_r.get('TrainingScore'), errors='coerce')
+                                _ev = str(_r.get('TrainingEval', '') or '').strip()
+                                if not _ev and pd.notnull(_ts):
+                                    _ev = _grade_from.get(float(_ts), '')
+                                _rev = _rev_map.get(_u, {})
+                                if (not _ev) and _rev.get('rank'):
+                                    _ev = _rev['rank']
+                                _row = {
+                                    '馬番': _u, '馬名': str(_r.get('Name', '')),
+                                    '人気': _r.get('Popularity', '-'),
+                                    '調教評価': _ev or '-',
+                                    '短評': _rev.get('critic', '') or '-',
+                                    '調教スコア': round(float(_ts), 1) if pd.notnull(_ts) else '-',
+                                }
+                                for _col, _lbl in (('TrainingCourse', 'コース'),
+                                                   ('TrainingTime', '時計(ラップ)'),
+                                                   ('TrainingStrength', '脚色')):
+                                    if _col in df.columns:
+                                        _row[_lbl] = str(_r.get(_col, '') or '') or '-'
+                                _cy_rows.append(_row)
+                            _cy_df = pd.DataFrame(_cy_rows)
+
+                            def _cy_color(v):
+                                return ('background-color:#2b8a3e;color:white;font-weight:bold' if v == 'A'
+                                        else 'background-color:#f4a261;font-weight:bold' if v == 'B'
+                                        else 'color:#999' if v in ('C', 'D') else '')
+                            try:
+                                st.dataframe(_cy_df.style.applymap(_cy_color, subset=['調教評価']),
+                                             hide_index=True, use_container_width=True)
+                            except Exception:
+                                st.dataframe(_cy_df, hide_index=True, use_container_width=True)
+                            _cy_good = [r for r in _cy_rows if r['調教評価'] in ('A', 'B')]
+                            if _cy_good:
+                                st.success("🔥 調教好評価(A/B): "
+                                           + " / ".join(f"{r['馬番']}{r['馬名']}({r['調教評価']})" for r in _cy_good))
+                            st.caption("※調教の過去蓄積はjravan.dbに無いため、現状は『表示＋既存の調教評価ボーナス』まで。"
+                                       "時計・脚色・偏差値化・加速ラップ等の高度な数値化は、調教タイムの取得を確認してから段階実装します。")
+
+                    st.divider()
+
                     # --- RESTORED ODDS MONITORING SECTIONS ---
                     with st.expander("📈 時系列オッズ・詳細分析 (高度な監視機能)", expanded=False):
                         try:
