@@ -32,9 +32,55 @@ def _match_pattern(n_pop, n_ana, pattern):
     return (n_pop + n_ana) >= 2   # おまかせ: 鉄板/全穴に寄りすぎない程度
 
 
+def deploy_bonus_from_ctx(pace_ctx):
+    """展開コンテキスト(build_pace_context)から各馬の展開ボーナス {umaban: pts} を作る。
+    検証済の『好位妙味ゾーン』(ペース有利な極端でない好位〜中団・複勝残差+2.4pp)に加点。
+    pace=スロー→前(pos4小)有利 / ハイ→差し(pos4大) / ミドル→好位。極端は加点しない。"""
+    out = {}
+    if not pace_ctx or not pace_ctx.get('pos4'):
+        return out
+    pace = pace_ctx.get('pace')
+    for u, p in pace_ctx['pos4'].items():
+        if pace == 'スロー':
+            b = 1.0 - p
+        elif pace == 'ハイ':
+            b = p
+        else:
+            b = 1.0 - abs(p - 0.45)
+        # 好位妙味ゾーン(0.40-0.62)=過小評価でプラス。極端(前残り人気/超後方)は加点しない。
+        out[u] = 12.0 if 0.40 <= b <= 0.62 else 0.0
+    return out
+
+
+def allocate_budget(bets, budget, mode='均等買い', unit=100):
+    """買い目に予算を配分し、各点の購入額・的中時払戻・トリガミ可否を付与する。
+    mode='均等買い'(等額) / '払戻均等'(オッズ逆比＝どれが当たっても回収額が近い)。"""
+    n = len(bets)
+    if not budget or n == 0:
+        for b in bets:
+            b['stake'] = 0
+            b['payout_if_hit'] = round(b['odds'] * 0) if b.get('odds') else None
+            b['toriga'] = False
+        return {'total': 0, 'mode': mode}
+    budget = int(budget)
+    if mode == '払戻均等' and all(b.get('odds') for b in bets):
+        w = [1.0 / b['odds'] for b in bets]
+        sw = sum(w)
+        stakes = [max(unit, int(round(budget * wi / sw / unit)) * unit) for wi in w]
+    else:
+        per = max(unit, budget // n // unit * unit)
+        stakes = [per] * n
+    total = sum(stakes)
+    for b, s in zip(bets, stakes):
+        b['stake'] = s
+        b['payout_if_hit'] = int(round(b['odds'] * s)) if b.get('odds') else None
+        b['toriga'] = (b['payout_if_hit'] is not None and b['payout_if_hit'] < total)
+    return {'total': total, 'mode': mode}
+
+
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                    pattern='①', n_points=10, pop_th=5, ana_lo=6, ana_hi=12,
-                   pool_cap=12):
+                   pool_cap=12, deploy_map=None):
     """
     horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
     odds_map: {frozenset({u1,u2,u3}): float} ライブ3連複オッズ（任意）
@@ -80,12 +126,14 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         if not _match_pattern(n_pop, n_ana, pattern):
             continue
         base = sum(by[u].get('score', 0) for u in trio)
-        # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)があれば加点
+        # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
         bonus = 0.0
         for u in trio:
             al = str(by[u].get('alert', '') or '')
             if u in ana_set and any(s in al for s in ('🔥', '🎯', '🚀')):
                 bonus += 8.0
+            if deploy_map:
+                bonus += float(deploy_map.get(u, 0.0))   # 展開マップ(好位妙味)連携
         odds = None
         in_band = False
         if odds_map:

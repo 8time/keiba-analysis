@@ -2197,6 +2197,8 @@ if nav == "🏠 Single Race Analysis":
                             _pm_ctx = _pmap.build_pace_context(
                                 _pm_horses, _pm_profiles, _pm_dist, _pm_surf,
                                 _pm_layout, _pm_wind)
+                            # 3連複エンジン等から参照するため展開コンテキストを保存
+                            st.session_state[f'_pace_ctx_{race_id_input}'] = _pm_ctx
                             _pm_data = _pmap.estimate_pace_map(
                                 _pm_horses, distance=_pm_dist, profiles=_pm_profiles,
                                 layout=_pm_layout, surface=_pm_surf, wind=_pm_wind,
@@ -4171,36 +4173,53 @@ if nav == "🏠 Single Race Analysis":
                             'pop': int(_pv) if pd.notnull(_pv) and _pv < 99 else None,
                             'alert': str(_r.get('Alert', '') or ''),
                         })
+                    # 展開マップ連携: 保存済み展開コンテキストから好位妙味ボーナス
+                    _pace_ctx = st.session_state.get(f'_pace_ctx_{race_id_input}')
+                    _deploy_map = _te.deploy_bonus_from_ctx(_pace_ctx) if _pace_ctx else None
+                    if _deploy_map and any(v > 0 for v in _deploy_map.values()):
+                        _hb = [u for u, v in _deploy_map.items() if v > 0]
+                        st.caption(f"🗺️ 展開マップ連携ON（想定ペース{_pace_ctx.get('pace', '-')}・好位妙味馬 {_hb} に加点）")
                     _pat_key = {'①人気-人気-穴': '①', '②人気-穴-穴': '②', 'おまかせ': 'おまかせ'}[_pattern]
                     _mode_key = {'軸なし(自動)': 'auto', '1軸': '1軸', '2軸': '2軸'}[_axis_mode]
                     _te_res = _te.recommend_trio(_te_horses, odds_map=_odds_map,
                                                  axis_umaban=_axis_umaban, axis_mode=_mode_key,
-                                                 pattern=_pat_key, n_points=_n_points)
+                                                 pattern=_pat_key, n_points=_n_points,
+                                                 deploy_map=_deploy_map)
                     if _te_res['warning']:
                         st.warning(_te_res['warning'])
                     if _te_res['bets']:
-                        _per = (int(_budget) // len(_te_res['bets']) // 100 * 100) if _budget else 0
+                        _alloc_mode = '均等買い'
+                        if _budget:
+                            _alloc_mode = st.radio("予算配分モード", ['均等買い', '払戻均等'], horizontal=True,
+                                                   key='te_alloc',
+                                                   help="均等買い=全点同額。払戻均等=オッズ逆比配分でどれが当たっても回収額が近づく。")
+                        _alloc = _te.allocate_budget(_te_res['bets'], _budget, mode=_alloc_mode)
                         _te_rows = []
                         for _b in _te_res['bets']:
                             _od = _b['odds']
-                            _te_rows.append({
+                            _row = {
                                 '買い目': '-'.join(str(x) for x in _b['combo']),
                                 '馬名': ' / '.join(_b['names']),
                                 '人気構成': f"人{_b['pop_ana'][0]}穴{_b['pop_ana'][1]}",
                                 'オッズ': f"{_od:.1f}倍" if _od else '-',
                                 '狙い目': '🎯' if _b['in_band'] else '',
                                 'スコア': _b['score'],
-                                '配分': f"¥{_per:,}" if _per else '-',
-                            })
+                            }
+                            if _budget:
+                                _row['購入額'] = f"¥{_b.get('stake', 0):,}"
+                                _row['的中時払戻'] = f"¥{_b['payout_if_hit']:,}" if _b.get('payout_if_hit') else '-'
+                                _row['トリガミ'] = '⚠️' if _b.get('toriga') else ''
+                            _te_rows.append(_row)
                         st.dataframe(pd.DataFrame(_te_rows), hide_index=True, use_container_width=True)
                         _syn = _te_res['meta'].get('synthetic_odds')
                         _te_msg = f"計 {len(_te_res['bets'])}点"
                         if _syn:
                             _te_msg += f" / 合成オッズ約{_syn}倍"
-                        if _budget and _per:
-                            _te_msg += f" / 1点¥{_per:,}×{len(_te_res['bets'])}=¥{_per*len(_te_res['bets']):,}"
-                            if _syn and _per * _syn < int(_budget):
-                                _te_msg += "（⚠️合成<予算＝トリガミ目あり）"
+                        if _budget:
+                            _te_msg += f" / 投資¥{_alloc['total']:,}（{_alloc_mode}）"
+                            _ntg = sum(1 for _b in _te_res['bets'] if _b.get('toriga'))
+                            if _ntg:
+                                _te_msg += f" ⚠️トリガミ目{_ntg}点(的中しても投資割れ)"
                         st.success(_te_msg)
 
                     st.divider()
