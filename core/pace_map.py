@@ -122,6 +122,24 @@ def venue_from_race_id(race_id):
         return ''
 
 
+def course_profile_label(venue, surface, distance):
+    """
+    競馬場×芝ダ×距離（内/外回りは距離で近似）から、適性カテゴリ3種のラベルを返す。
+    get_course_layout の実測直線長ベースなので、東京ダ短距離と東京芝長距離、
+    京都/阪神の内回り/外回りを正しく区別できる（従来の競馬場コード単独判定より精緻）。
+    calculate_strength_suitability が見る『直線が長い』『小回り』の語を含む。
+    """
+    lay = get_course_layout(venue, surface, distance)
+    s = lay.get('straight')
+    if s is None:
+        return '✨ 標準 (バランス)'
+    if s >= 400:
+        return '✨ 直線が長い・差し有利 (東京/外回り 等)'
+    if s <= 335:
+        return '✨ 小回り・先行有利 (中山/小倉/札幌 等)'
+    return '✨ 標準 (バランス)'
+
+
 def infer_turn(venue):
     """開催場名から回り方向（'右' / '左'）を返す。"""
     return '左' if venue in LEFT_TURN_VENUES else '右'

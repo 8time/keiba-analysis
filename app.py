@@ -1564,28 +1564,70 @@ if nav == "🏠 Single Race Analysis":
                         _tb_emp = None
                     st.session_state['_tb_emp_bias'] = _tb_emp  # Vエリアbaba自動化で参照
 
+                    # コース特性: 距離・馬場を考慮した自動判定（従来の競馬場コード単独より精緻）
+                    _tb_dist = meta.get('distance')
+                    if not _tb_dist:
+                        try:
+                            import re as _tb_re2
+                            if 'CurrentDistance' in df.columns and not df.empty:
+                                _mm = _tb_re2.search(r'(\d{3,4})', str(df['CurrentDistance'].iloc[0]))
+                                _tb_dist = int(_mm.group(1)) if _mm else None
+                        except Exception:
+                            _tb_dist = None
+                    _course_profile_auto = _tb_pm.course_profile_label(_tb_venue, _tb_surf, _tb_dist)
+                    st.session_state['_course_profile_auto'] = _course_profile_auto
+                    # コース固有の経験的バイアス（jravan・静的・コースの性質）
+                    _tb_cb = None
+                    try:
+                        _tb_cb = _tb.course_empirical_bias(str(race_id_input)[4:6], _tb_surf, _tb_dist)
+                    except Exception:
+                        _tb_cb = None
+
                     # Evidence Table
                     with st.expander("📊 判定根拠エビデンス表", expanded=True):
-                        # クッション値・含水率（JV-Dataに無いためJRA公式「馬場情報」を手動入力。前日昼/当日9:30公表）
-                        _cm1, _cm2 = st.columns(2)
+                        # クッション値・含水率（JV-Dataに無いためJRA公式/JRA-VAN発表を手入力 or 貼り付け自動入力）
+                        _ck = f"tb_cushion_{race_id_input}"
+                        _mk = f"tb_moist_{race_id_input}"
+                        _mck = f"tb_moist_c4_{race_id_input}"
+                        for _ik in (_ck, _mk, _mck):
+                            st.session_state.setdefault(_ik, 0.0)
+                        _tb_paste = st.text_area(
+                            "📋 JRA-VANの馬場情報を貼り付け（任意・下のボタンで自動入力）",
+                            height=70, key=f"tb_paste_{race_id_input}",
+                            placeholder="例: 芝クッション値(7時30分測定)：9.9　含水率：芝 ゴール前 11.4%、4コーナー 10.2%")
+                        if st.button("📥 貼り付けから自動入力", key=f"tb_parse_{race_id_input}"):
+                            _pp = _tb.parse_baba_announcement(_tb_paste)
+                            if _pp.get('cushion') is not None:
+                                st.session_state[_ck] = float(_pp['cushion'])
+                            if _pp.get('moist_goal') is not None:
+                                st.session_state[_mk] = float(_pp['moist_goal'])
+                            if _pp.get('moist_corner') is not None:
+                                st.session_state[_mck] = float(_pp['moist_corner'])
+                            if any(_pp.get(k) is not None for k in ('cushion', 'moist_goal', 'moist_corner')):
+                                st.success(f"自動入力: クッション{_pp.get('cushion')} / 含水ゴール前{_pp.get('moist_goal')} / 4角{_pp.get('moist_corner')}")
+                                st.rerun()
+                            else:
+                                st.warning("数値を抽出できませんでした。手入力してください。")
+                        _cm1, _cm2, _cm3 = st.columns(3)
                         with _cm1:
                             _tb_cushion = st.number_input(
-                                "クッション値（芝・JRA馬場情報より手入力／0=未入力）",
-                                min_value=0.0, max_value=15.0, value=0.0, step=0.1,
-                                key=f"tb_cushion_{race_id_input}",
-                                help="JV-Dataには無い。JRA公式の馬場情報（前日昼・当日9:30頃公表）を手入力。7以下=軟/12以上=硬。")
+                                "クッション値(芝)", min_value=0.0, max_value=15.0, step=0.1, key=_ck,
+                                help="JV-Dataには無い。JRA-VAN/JRA馬場情報を手入力or貼付。7以下=軟/12以上=硬。")
                         with _cm2:
                             _tb_moist = st.number_input(
-                                "含水率 %（JRA馬場情報より手入力／0=未入力）",
-                                min_value=0.0, max_value=30.0, value=0.0, step=0.1,
-                                key=f"tb_moist_{race_id_input}",
+                                "含水率% ゴール前", min_value=0.0, max_value=30.0, step=0.1, key=_mk,
                                 help="芝=高いほど時計遅／ダート=高いほど締まって速い（芝と逆）。")
+                        with _cm3:
+                            _tb_moist_c4 = st.number_input(
+                                "含水率% 4コーナー", min_value=0.0, max_value=30.0, step=0.1, key=_mck,
+                                help="ゴール前との差でコース内の部分的な荒れ・重さを判定（参考）。")
                         _cv = _tb_cushion if _tb_cushion > 0 else None
                         _mv = _tb_moist if _tb_moist > 0 else None
+                        _mc = _tb_moist_c4 if _tb_moist_c4 > 0 else None
                         st.session_state['_tb_cushion_style'] = _tb.cushion_style_bias(_tb_surf, _cv, _mv)
 
                         # エビデンス行を追記（Phase2: 馬場メトリクス / Phase1: 当日バイアス・コース×馬場）
-                        evidence_list.extend(_tb.cushion_evidence(_tb_surf, _cv, _mv))
+                        evidence_list.extend(_tb.cushion_evidence(_tb_surf, _cv, _mv, moisture_corner=_mc))
                         if _tb_emp:
                             evidence_list.append({"項目": "当日逆算バイアス",
                                                   "値": f"{_tb_emp['pace_label']}/{_tb_emp['lane_label']}",
@@ -1598,6 +1640,15 @@ if nav == "🏠 Single Race Analysis":
                         evidence_list.append({"項目": "コース×馬場傾向",
                                               "値": _tb_venue or '-',
                                               "ステータス": "🏟 " + _tb.course_bias_text(_tb_venue, _tb_fast)})
+                        # コース特性プロファイル（距離・馬場考慮の自動判定）
+                        evidence_list.append({"項目": "コース特性(自動判定)",
+                                              "値": f"{_tb_venue}{_tb_surf}{_tb_dist or '?'}m",
+                                              "ステータス": "✨ " + _course_profile_auto.replace('✨ ', '')})
+                        # コース固有の経験的バイアス（jravan・過去実績）
+                        if _tb_cb:
+                            evidence_list.append({"項目": "コース実績バイアス",
+                                                  "値": f"{_tb_cb['front_rate']*100:.0f}%先行",
+                                                  "ステータス": "📚 " + _tb_cb['label']})
                         st.table(pd.DataFrame(evidence_list))
                         if _tb_emp is None:
                             st.caption("※当日逆算バイアスは未表示＝このレースの当日先行レース結果がJV-VAN（jravan.db）に未取り込み。"
@@ -1847,7 +1898,8 @@ if nav == "🏠 Single Race Analysis":
                     # --- [PRE-CALCULATE SCORES & DERIVED COLUMNS] ---
                     # Move this up so Sniper Logic can use Projected Score
                     import numpy as _np_main
-                    course_profile_main = meta.get('course_profile', '')
+                    # コース特性: 距離・馬場考慮の自動判定を優先（meta明示があればそれを尊重）
+                    course_profile_main = meta.get('course_profile') or st.session_state.get('_course_profile_auto', '')
                     df = calculator.calculate_strength_suitability(df, course_profile_main)
                     
                     def calc_derived_cols(target_df):

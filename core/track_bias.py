@@ -103,6 +103,49 @@ def empirical_bias_from_db(year, monthday, jyo, surface, before_race_num,
 # ──────────────────────────────────────────────
 # Phase 1: コース × 馬場 マトリクス
 # ──────────────────────────────────────────────
+def course_empirical_bias(jyo, surface, distance, db_path=None, years_back=10):
+    """
+    jravan.db から、その『コース（場×芝ダ×距離）』の実際の決着傾向を集計する（静的・コース固有）。
+    日替わりバイアスと違いコースの性質は安定なので信頼できる（実績そのもの）。
+    戻り値: {'n','front_rate','inner_rate','avg_pos','label'} or None。
+      front_rate: 勝ち馬の4角3番手以内率（高い=先行有利コース）
+      inner_rate: 勝ち馬の内1/3枠率（高い=内枠有利コース）
+    """
+    db = db_path or JV_DB_PATH
+    if not os.path.exists(db) or not distance:
+        return None
+    surf = 'ダ' if 'ダ' in str(surface) else '芝'
+    try:
+        con = sqlite3.connect(db)
+        cutoff = str(int(__import__('datetime').datetime.now().year) - years_back)
+        rows = con.execute(
+            """SELECT r.corner4, r.umaban, ra.shusso_tosu
+               FROM races ra JOIN results r ON r.race_key=ra.race_key
+               WHERE ra.jyo=? AND ra.surface LIKE ? AND ra.kyori=? AND ra.year>=?
+                 AND r.chakujun=1 AND r.corner4>0""",
+            (str(jyo).zfill(2), surf + '%', int(distance), cutoff)).fetchall()
+        con.close()
+    except Exception:
+        return None
+    rows = [(c, u, t) for c, u, t in rows if t and t >= 2]
+    n = len(rows)
+    if n < 20:
+        return None
+    front = sum(1 for c, _, _ in rows if c <= 3) / n
+    inner = sum(1 for _, u, t in rows if u <= max(1, t / 3)) / n
+    avg_pos = sum((c - 1) / max(t - 1, 1) for c, _, t in rows) / n
+    if front >= 0.55:
+        pl = '先行有利'
+    elif front <= 0.40:
+        pl = '差し台頭'
+    else:
+        pl = '中立'
+    il = '内枠有利' if inner >= 0.45 else '外枠も来る' if inner <= 0.28 else '枠フラット'
+    return {'n': n, 'front_rate': round(front, 3), 'inner_rate': round(inner, 3),
+            'avg_pos': round(avg_pos, 3),
+            'label': f"過去{n}R: 逃げ先行決着{front*100:.0f}%({pl})・内枠勝ち{inner*100:.0f}%({il})"}
+
+
 def course_bias_text(venue, fast_track):
     """大箱/小回り × 高速/時計かかる の4象限から有利傾向の一言を返す。
     fast_track: True=高速馬場 / False=時計かかる / None=不明。"""
@@ -121,10 +164,45 @@ def course_bias_text(venue, fast_track):
 # ──────────────────────────────────────────────
 # Phase 2: クッション値・含水率（JRA公式値を手動/外部供給）
 # ──────────────────────────────────────────────
-def cushion_evidence(surface, cushion=None, moisture=None):
+_Z2H = str.maketrans('０１２３４５６７８９．％（）：　',
+                     '0123456789.%():' + ' ')
+
+
+def parse_baba_announcement(text):
+    """
+    JRA-VANのX投稿等の「馬場情報」テキストから数値を抽出する。
+    例: 芝クッション値(7時30分測定)：9.9 / 含水率(5時30分測定)：芝 ゴール前 11.4%、4コーナー 10.2%
+        馬場状態 芝：良
+    戻り値: {'cushion','moist_goal','moist_corner','baba_shiba'}（無い項目は None）
+    """
+    import re
+    out = {'cushion': None, 'moist_goal': None, 'moist_corner': None, 'baba_shiba': None}
+    if not text:
+        return out
+    t = str(text).translate(_Z2H)
+    # クッション値（測定時刻の括弧をスキップ）
+    m = re.search(r'クッション値\s*(?:\([^)]*\))?\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)', t)
+    if m:
+        out['cushion'] = float(m.group(1))
+    # 含水率: ゴール前 / 4コーナー
+    m = re.search(r'ゴール前[^0-9]*([0-9]+(?:\.[0-9]+)?)', t)
+    if m:
+        out['moist_goal'] = float(m.group(1))
+    m = re.search(r'4\s*コーナー[^0-9]*([0-9]+(?:\.[0-9]+)?)', t)
+    if m:
+        out['moist_corner'] = float(m.group(1))
+    # 馬場状態 芝：良/稍重/重/不良
+    m = re.search(r'芝\s*[:：]\s*(良|稍重|重|不良)', t)
+    if m:
+        out['baba_shiba'] = m.group(1)
+    return out
+
+
+def cushion_evidence(surface, cushion=None, moisture=None, moisture_corner=None):
     """
     クッション値・含水率からエビデンス行のステータス文を返す。芝/ダで評価が逆。
-    cushion: 芝のクッション値（7以下=軟, 12以上=硬）/ moisture: 含水率(%)。
+    cushion: 芝クッション値（7以下=軟,12以上=硬）/ moisture: 含水率(%)（=ゴール前を代表値に）/
+    moisture_corner: 4コーナー含水率(%)。ゴール前との差で直線/コーナーの部分荒れを示す。
     戻り値: [{'項目','値','ステータス'}, ...]（無い項目はスキップ）
     """
     surf = 'ダ' if 'ダ' in str(surface) else '芝'
@@ -150,7 +228,20 @@ def cushion_evidence(surface, cushion=None, moisture=None):
             else:  # ダートは芝と逆: 湿ると締まって速い・前
                 s = ("🚩 高含水＝締まって高速・前有利" if mv >= 10.0
                      else "⚠️ 乾燥＝砂逃げてタフ・差し届く" if mv <= 4.0 else "✅ 標準")
-            out.append({"項目": f"含水率({surf})", "値": f"{mv:.1f}%", "ステータス": s})
+            _lbl = f"含水率({surf}ゴール前)" if moisture_corner is not None else f"含水率({surf})"
+            out.append({"項目": _lbl, "値": f"{mv:.1f}%", "ステータス": s})
+            # 地点差（ゴール前 − 4コーナー）: コース内の部分的な荒れ・重さの手がかり（※参考）
+            if moisture_corner is not None:
+                mc = float(moisture_corner)
+                diff = mv - mc
+                if abs(diff) < 0.8:
+                    ds = "✅ ほぼ均一"
+                elif diff > 0:
+                    ds = "⚠️ 直線(ゴール前)が湿って重い＝前残り寄り・差し届きにくい（参考）"
+                else:
+                    ds = "⚠️ 4コーナーが湿＝コーナーで脚を取られやすい（参考）"
+                out.append({"項目": "含水率 地点差(ゴール前−4角)",
+                            "値": f"{diff:+.1f}% (4角{mc:.1f}%)", "ステータス": ds})
         except Exception:
             pass
     return out
