@@ -2485,36 +2485,59 @@ if nav == "🏠 Single Race Analysis":
                                     '人気': _r.get('Popularity', '-'),
                                     '調教評価': _ev or '-',
                                     '短評': _rev.get('critic', '') or '-',
-                                    '調教スコア': round(float(_ts), 1) if pd.notnull(_ts) else '-',
                                 }
-                                if _det_map:
-                                    _d = _det_map.get(_u, {})
-                                    _crs = (str(_d.get('course', '') or '') + ' '
-                                            + str(_d.get('baba', '') or '')).strip()
-                                    _row['コース'] = _crs or '-'
-                                    _row['時計(ラップ)'] = _d.get('time_str', '') or '-'
-                                    _row['分所'] = _d.get('ichi', '') or '-'
-                                    _row['脚色'] = _d.get('load', '') or '-'
                                 _cy_rows.append(_row)
                             _cy_df = pd.DataFrame(_cy_rows)
+                            # 全頭が空(未取得)の列は落としてスカスカ表示を防ぐ
+                            for _c in list(_cy_df.columns):
+                                if _c not in ('馬番', '馬名', '人気') and \
+                                   _cy_df[_c].astype(str).str.strip().isin(['', '-']).all():
+                                    _cy_df = _cy_df.drop(columns=[_c])
 
                             def _cy_color(v):
                                 return ('background-color:#2b8a3e;color:white;font-weight:bold' if v == 'A'
                                         else 'background-color:#f4a261;font-weight:bold' if v == 'B'
                                         else 'color:#999' if v in ('C', 'D') else '')
                             try:
-                                st.dataframe(_cy_df.style.applymap(_cy_color, subset=['調教評価']),
-                                             hide_index=True, use_container_width=True)
+                                _sty = _cy_df.style
+                                if '調教評価' in _cy_df.columns:
+                                    _sty = _sty.applymap(_cy_color, subset=['調教評価'])
+                                st.dataframe(_sty, hide_index=True, use_container_width=True)
                             except Exception:
                                 st.dataframe(_cy_df, hide_index=True, use_container_width=True)
+                            if '短評' not in _cy_df.columns and not _rev_map:
+                                st.caption("↑『🔄 調教を取得』を押すと全頭の評価ランク＋短評が入ります。")
                             _cy_a = [r for r in _cy_rows if r['調教評価'] == 'A']
                             if _cy_a:
                                 st.info("調教評価A(参考): "
                                         + " / ".join(f"{r['馬番']}{r['馬名']}" for r in _cy_a)
                                         + "　※Aは検証で有意な妙味なし・買い材料ではありません")
+                            # 追い切り時計(netkeiba無料公開分=数頭のみ)を別表で表示
                             if _det_map:
-                                st.caption("コース/時計/分所/脚色はnetkeiba無料公開分の馬のみ表示（残りは非公開）。"
-                                           "※調教時計は検証で『速い時計＝過剰人気（ROIマイナス）』のため表示・参考用です。")
+                                _t_rows = []
+                                for _, _r2 in df.sort_values(_cy_sort, ascending=False).iterrows():
+                                    try:
+                                        _u2 = int(_r2['Umaban'])
+                                    except Exception:
+                                        continue
+                                    _d = _det_map.get(_u2)
+                                    if not _d or not (_d.get('time_str') or _d.get('course')):
+                                        continue
+                                    _t_rows.append({
+                                        '馬番': _u2, '馬名': str(_r2.get('Name', '')),
+                                        '日付': _d.get('date', '') or '-',
+                                        'コース': (str(_d.get('course', '') or '') + ' '
+                                                  + str(_d.get('baba', '') or '')).strip() or '-',
+                                        '乗り役': _d.get('rider', '') or '-',
+                                        '時計(ラップ)': _d.get('time_str', '') or '-',
+                                        '分所': _d.get('ichi', '') or '-',
+                                        '脚色': _d.get('load', '') or '-',
+                                    })
+                                if _t_rows:
+                                    st.markdown("**🕐 追い切り時計（netkeiba無料公開分のみ）**")
+                                    st.dataframe(pd.DataFrame(_t_rows), hide_index=True, use_container_width=True)
+                                    st.caption("netkeibaは無料では上位数頭の時計のみ公開（残りは非公開）。"
+                                               "※調教時計は検証で『速い時計＝過剰人気』のため参考用です。")
                             st.caption("※検証(中央重賞2021–2025・9,092頭): 調教評価の3着内残差は A=+0.009(z+0.55, 有意でない)、"
                                        "B=−0.016(z−3.6), C=−0.023(z−3.3)＝B/Cは有意に過剰人気。よって調教評価の予測ボーナスは0に降格（表示・参考用）。")
 
@@ -3428,6 +3451,100 @@ if nav == "🏠 Single Race Analysis":
                             lambda x: '-' if (pd.isna(x) or (isinstance(x, (int, float)) and (x >= 9999.0 or x < 0))) else f'{float(x):.1f}'
                         )
 
+                    # --- 厩舎: ランク(全体3年勝率)＋当コース3年勝率 を Trainer列に追記 ---
+                    # 検証(scripts/trainer_backtest.py): 全体勝率は市場織込み済=妙味薄、
+                    # 当コース(場×馬場)の高勝率(🔴≥20%/🟠≥14%)のみオッズ超の妙味あり。
+                    _trc_key = f"trainer_course_{race_id_input}"
+                    if _trc_key not in st.session_state:
+                        _trc_map = {}
+                        try:
+                            from core import jockey_jv as _jjt
+                            _trc_jyo = str(race_id_input)[4:6]
+                            _trc_surf = '芝'
+                            if 'CurrentSurface' in df.columns and not df.empty:
+                                _trc_surf = str(df['CurrentSurface'].iloc[0])
+                            try:
+                                _min_year = str(int(str(race_id_input)[:4]) - 3)
+                            except Exception:
+                                _min_year = None
+                            # 現走ブリンカー(出馬表B印) name->1/0
+                            _bl_now = {}
+                            if 'Blinker' in df.columns:
+                                for _, _br in df.iterrows():
+                                    try:
+                                        if int(_br.get('Blinker', 0) or 0) == 1:
+                                            _bl_now[str(_br.get('Name', ''))] = 1
+                                    except Exception:
+                                        pass
+                            # 性別(SexAge) name->牝/牡/セ と 今回の月(RaceDate)
+                            _sex_now = {}
+                            if 'SexAge' in df.columns:
+                                for _, _sr in df.iterrows():
+                                    _sa = str(_sr.get('SexAge', '') or '')
+                                    _sex_now[str(_sr.get('Name', ''))] = (
+                                        '牝' if '牝' in _sa else '牡' if '牡' in _sa else 'セ')
+                            _race_mo = 0
+                            try:
+                                _rd = re.sub(r'[^\d]', '', str(df['RaceDate'].iloc[0]))[:8] \
+                                    if 'RaceDate' in df.columns and not df.empty else ''
+                                if len(_rd) >= 6:
+                                    _race_mo = int(_rd[4:6])
+                            except Exception:
+                                _race_mo = 0
+                            for _nm in df['Name'].astype(str).unique():
+                                _kt, _tc = _jjt.resolve_horse(_nm)
+                                # 初ブリンカー: 現走B印かつ過去ブリンカー着用0回
+                                _buri = False
+                                if _bl_now.get(_nm) and _kt:
+                                    _bh = _jjt.horse_blinker_history(_kt)
+                                    if _bh and _bh.get('blinker_runs', 0) == 0:
+                                        _buri = True
+                                # 季節フェード(検証: 牝×冬 z-4.6 / 牝×春 z-3.8 で有意に過剰人気)
+                                _fade = ''
+                                if _sex_now.get(_nm) == '牝':
+                                    if _race_mo in (12, 1, 2):
+                                        _fade = '♀冬'
+                                    elif _race_mo in (3, 4, 5):
+                                        _fade = '♀春'
+                                if not _tc:
+                                    _trc_map[_nm] = {'suffix': '', 'rank': '', 'buri': _buri, 'fade': _fade}
+                                    continue
+                                _ov = _jjt.trainer_overall_winrate(_tc, min_year=_min_year)
+                                _cs = _jjt.trainer_course_winrate(_tc, _trc_jyo, _trc_surf, min_year=_min_year)
+                                _owr = _ov['win_rate'] if _ov and _ov.get('runs', 0) >= 30 else None
+                                _rank = ('' if _owr is None else
+                                         'A' if _owr >= 0.14 else 'B' if _owr >= 0.10
+                                         else 'C' if _owr >= 0.07 else 'D')
+                                if _cs and _cs.get('runs', 0) > 0:
+                                    _cwr = _cs['win_rate']; _rn = _cs['runs']
+                                    _mk = '🔴' if _cwr >= 0.20 else '🟠' if _cwr >= 0.14 else ''
+                                    _cw_txt = f"{_cwr:.0%}{_mk}" + (f"({_rn})" if _rn >= 10 else f"({_rn}少)")
+                                else:
+                                    _cw_txt = '当ｺｰｽ-'
+                                _suffix = f" {_rank or '?'}-{_cw_txt}"
+                                _trc_map[_nm] = {'suffix': _suffix, 'rank': _rank,
+                                                 'buri': _buri, 'fade': _fade}
+                        except Exception:
+                            _trc_map = {}
+                        st.session_state[_trc_key] = _trc_map
+                    _tm = st.session_state.get(_trc_key, {})
+                    if 'Trainer' in view_df.columns and _tm:
+                        view_df['Trainer'] = view_df.apply(
+                            lambda _r: str(_r.get('Trainer', '') or '')
+                            + _tm.get(str(_r.get('Name', '')), {}).get('suffix', ''), axis=1)
+                    # Alert列に注意フラグ追記(検証で過剰人気=妙味でなく注意材料)
+                    #  ・初ブリ: 軽い過剰人気  ・牝×冬/春: 有意に過剰人気(フェード)
+                    if 'Alert' in view_df.columns and _tm:
+                        def _add_flags(_r):
+                            _a = str(_r.get('Alert', '') or '')
+                            _e = _tm.get(str(_r.get('Name', '')), {})
+                            if _e.get('buri'):
+                                _a = (_a + ' 🅑初ブリ').strip()
+                            if _e.get('fade'):
+                                _a = (_a + f" {_e['fade']}ﾌｪｰﾄﾞ").strip()
+                            return _a
+                        view_df['Alert'] = view_df.apply(_add_flags, axis=1)
+
                     # Merge previous screenshot columns with latest advanced columns
                     # --- v2.02: 展開データ列を追加 ---
                     cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'Jockey', 'Signal',
@@ -3463,7 +3580,7 @@ if nav == "🏠 Single Race Analysis":
                         "Rank": "順位", "Umaban": "馬番", "Popularity": "人気",
                         "Odds": "単勝オッズ", "OddsGap": "オッズ断層",
                         "SexAge": "性別/年齢", "WeightHistory": "当日馬体重(増減)",
-                        "WeightCarried": "斤量", "Trainer": "厩舎",
+                        "WeightCarried": "斤量", "Trainer": "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
                         "Bloodline": "血統(父/母父)", "Jockey": "騎手",
                         "JockeyChange": "乗替", "Name": "馬名",
                         "Signal": "🔬シグナル",
@@ -3620,7 +3737,10 @@ if nav == "🏠 Single Race Analysis":
                         "SexAge": st.column_config.TextColumn("性別/年齢"),
                         "WeightHistory": st.column_config.TextColumn("当日馬体重(増減)"),
                         "WeightCarried": st.column_config.TextColumn("斤量"),
-                        "Trainer": st.column_config.TextColumn("Trainer"),
+                        "Trainer": st.column_config.TextColumn(
+                            "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
+                            help="ﾗﾝｸ=全体3年勝率(A≥14%/B≥10%/C≥7%/D)。"
+                                 "当ｺｰｽ=今回の競馬場×馬場の3年勝率。🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。"),
                         "Bloodline": st.column_config.TextColumn("血統(父/母父)"),
                         "Jockey": st.column_config.TextColumn("騎手"),
                         "JockeyChange": st.column_config.TextColumn("乗替"),
@@ -3703,6 +3823,8 @@ if nav == "🏠 Single Race Analysis":
                                 elif "💀" in str(val): colors.append("font-weight: bold; color: yellow")
                                 elif "◎" in str(val): colors.append("font-weight: bold; color: red")
                                 elif "⏱️" in str(val): colors.append("font-weight: bold; color: gray")
+                                elif "初ブリ" in str(val): colors.append("font-weight: bold; color: #e8590c")
+                                elif "ﾌｪｰﾄﾞ" in str(val): colors.append("font-weight: bold; color: #1971c2")
                                 else: colors.append("")
                             return colors
 
@@ -3745,6 +3867,22 @@ if nav == "🏠 Single Race Analysis":
                         
                         if 'Alert' in view_df.columns:
                             styled_df = styled_df.apply(color_alert, axis=0, subset=['Alert'])
+
+                        def color_trainer(s):
+                            """厩舎ランク(A-D)で文字色を変える。テキスト末尾の ' A-..' から判定。"""
+                            _cmap = {
+                                'A': "background-color:#e6f4ea; color:#1b5e20; font-weight:bold",
+                                'B': "background-color:#fff8e1; color:#e65100; font-weight:bold",
+                                'C': "color:#555",
+                                'D': "color:#aaa",
+                            }
+                            out = []
+                            for v in s:
+                                m = re.search(r' ([A-D])-', str(v))
+                                out.append(_cmap.get(m.group(1), '') if m else '')
+                            return out
+                        if 'Trainer' in view_df.columns:
+                            styled_df = styled_df.apply(color_trainer, axis=0, subset=['Trainer'])
                         
                         if 'AvgPCI' in view_df.columns:
                             styled_df = styled_df.apply(color_pci, axis=0, subset=['AvgPCI'])

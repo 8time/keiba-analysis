@@ -357,6 +357,70 @@ def resolve_horse(bamei, db_path=None, before_key=None):
     return (row[0], row[1]) if row else (None, None)
 
 
+def _trainer_rows(where, params, db_path=None):
+    con = _con(db_path)
+    rows = con.execute(
+        f"SELECT r.chakujun FROM results r JOIN races ra ON r.race_key=ra.race_key "
+        f"WHERE {where}", params).fetchall()
+    con.close()
+    n = len(rows)
+    if n == 0:
+        return {'runs': 0, 'wins': 0, 'win_rate': None, 'top3_rate': None}
+    wins = sum(1 for (c,) in rows if c == 1)
+    t3 = sum(1 for (c,) in rows if c <= 3)
+    return {'runs': n, 'wins': wins, 'win_rate': wins / n, 'top3_rate': t3 / n}
+
+
+def trainer_course_winrate(trainer_code, jyo, surface, before_key=None,
+                           min_year=None, db_path=None):
+    """調教師の『当コース(競馬場×馬場)』成績。検証(scripts/trainer_backtest.py)で
+    当場×馬場の高勝率(特に>20%)はオッズ超の妙味あり/全体勝率は市場織込み済。
+    min_year='2023'等で期間(過去N年)を限定。戻り値: {'runs','wins','win_rate','top3_rate'}。"""
+    if not trainer_code or not jyo or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    surf = 'ダート' if 'ダ' in str(surface) else '芝'
+    where = ("r.trainer_code=? AND ra.jyo=? AND ra.surface=? AND r.chakujun>0 "
+             "AND ra.surface IN ('芝','ダート')")
+    params = [str(trainer_code), str(jyo)[:2], surf]
+    if before_key:
+        where += " AND r.race_key<?"; params.append(str(before_key))
+    if min_year:
+        where += " AND ra.year>=?"; params.append(str(min_year))
+    return _trainer_rows(where, params, db_path)
+
+
+def trainer_overall_winrate(trainer_code, before_key=None, min_year=None, db_path=None):
+    """調教師の全体(JRA平地)勝率。厩舎ランク表示用(検証では市場織込み済=妙味は薄い)。"""
+    if not trainer_code or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    where = ("r.trainer_code=? AND r.chakujun>0 AND ra.surface IN ('芝','ダート') "
+             "AND CAST(substr(ra.race_id,5,2) AS INTEGER) BETWEEN 1 AND 10")
+    params = [str(trainer_code)]
+    if before_key:
+        where += " AND r.race_key<?"; params.append(str(before_key))
+    if min_year:
+        where += " AND ra.year>=?"; params.append(str(min_year))
+    return _trainer_rows(where, params, db_path)
+
+
+def horse_blinker_history(ketto_num, before_key=None, db_path=None):
+    """馬の過去ブリンカー着用履歴。戻り: {'runs','blinker_runs'}。
+    現走ブリンカー(出馬表B印)＋ blinker_runs==0 → 初ブリンカー。"""
+    if not ketto_num or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    con = _con(db_path)
+    where = "ketto_num=? AND chakujun>0"
+    params = [str(ketto_num)]
+    if before_key:
+        where += " AND race_key<?"; params.append(str(before_key))
+    rows = con.execute(
+        f"SELECT blinker FROM results WHERE {where}", params).fetchall()
+    con.close()
+    runs = len(rows)
+    bl = sum(1 for (b,) in rows if str(b) == '1')
+    return {'runs': runs, 'blinker_runs': bl}
+
+
 def jockey_factor_by_name(jockey_name, horse_name=None, venue=None, distance=None,
                           expected=None, db_path=None, before_key=None):
     """ライブ表用: 騎手名＋馬名から騎手係数を算出（trainer_code/ketto_numは馬名で解決）。"""

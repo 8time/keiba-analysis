@@ -1500,7 +1500,15 @@ def get_race_data(race_id, use_storage=True):
         name_tag = h_info.find('a', href=re.compile(r'/horse/'))
         if not name_tag: continue
         h_data['Name'] = name_tag.text.strip()
-        
+
+        # Blinker (馬具B印): Horse_Info 内の <span class="Mark">B</span>
+        try:
+            h_data['Blinker'] = 1 if any(
+                e.get_text(strip=True) == 'B' for e in h_info.find_all('span', class_='Mark')
+            ) else 0
+        except Exception:
+            h_data['Blinker'] = 0
+
         # Jockey
         j_td = row.find('td', class_=re.compile(r'Jockey|jockey'))
         h_data['Jockey'] = j_td.find('a').text.strip() if j_td and j_td.find('a') else ""
