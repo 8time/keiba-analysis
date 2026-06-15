@@ -2439,18 +2439,22 @@ if nav == "🏠 Single Race Analysis":
                         _oik_key = f"oikiri_rev_{race_id_input}"
                         _oc1, _oc2 = st.columns([3, 1])
                         with _oc1:
-                            st.caption("netkeiba 調教ページから全頭の評価ランク＋短評を取得（木・金更新）。")
+                            st.caption("netkeiba 調教ページから全頭の評価ランク＋短評を取得（木・金更新）。"
+                                       "時計（ラップ/コース/分所/脚色）はnetkeiba無料公開分の馬のみ表示されます。")
                         with _oc2:
-                            if st.button("🔄 全頭の短評を取得", key=f"btn_oik_{race_id_input}"):
-                                with st.spinner("調教短評を取得中..."):
+                            if st.button("🔄 調教を取得", key=f"btn_oik_{race_id_input}"):
+                                with st.spinner("調教（評価・短評・時計）を取得中..."):
                                     try:
                                         from core import oikiri as _oik
                                         st.session_state[_oik_key] = _oik.fetch_oikiri_reviews(race_id_input)
+                                        st.session_state[_oik_key + '_det'] = _oik.fetch_oikiri_detail(race_id_input)
                                     except Exception as _e:
                                         st.session_state[_oik_key] = {}
+                                        st.session_state[_oik_key + '_det'] = {}
                                         st.warning(f"取得失敗: {_e}")
                                 st.rerun()
                         _rev_map = st.session_state.get(_oik_key, {}) or {}
+                        _det_map = st.session_state.get(_oik_key + '_det', {}) or {}
                         _cy_sort = 'Projected Score' if 'Projected Score' in df.columns else 'BattleScore'
                         _has_train = (('TrainingScore' in df.columns and
                                        pd.to_numeric(df['TrainingScore'], errors='coerce').fillna(0).abs().sum() > 0)
@@ -2460,8 +2464,8 @@ if nav == "🏠 Single Race Analysis":
                             st.info("調教データ未取得です。上の『🔄 全頭の短評を取得』を押すか、netkeiba の調教（追い切り）ページから取得します。"
                                     "調教は週後半（木・金）に更新されるため、発走が近づいてから取得すると評価が入ります。")
                         else:
-                            st.caption("netkeiba の調教ページ（追い切り）より取得。評価A〜D＝netkeiba 調教評価、"
-                                       "調教スコアは予測スコアの『⏱️ 調教%』ボーナスに連動しています。")
+                            st.caption("netkeiba の調教ページ（追い切り）より取得。評価A〜D＝netkeiba 調教評価。"
+                                       "検証(下記)の結果、調教評価の予測ボーナスは既定で0（表示・参考用）にしています。")
                             _grade_from = {100.0: 'A', 70.0: 'B', 40.0: 'C', 10.0: 'D'}
                             _cy_rows = []
                             for _, _r in df.sort_values(_cy_sort, ascending=False).iterrows():
@@ -2483,11 +2487,14 @@ if nav == "🏠 Single Race Analysis":
                                     '短評': _rev.get('critic', '') or '-',
                                     '調教スコア': round(float(_ts), 1) if pd.notnull(_ts) else '-',
                                 }
-                                for _col, _lbl in (('TrainingCourse', 'コース'),
-                                                   ('TrainingTime', '時計(ラップ)'),
-                                                   ('TrainingStrength', '脚色')):
-                                    if _col in df.columns:
-                                        _row[_lbl] = str(_r.get(_col, '') or '') or '-'
+                                if _det_map:
+                                    _d = _det_map.get(_u, {})
+                                    _crs = (str(_d.get('course', '') or '') + ' '
+                                            + str(_d.get('baba', '') or '')).strip()
+                                    _row['コース'] = _crs or '-'
+                                    _row['時計(ラップ)'] = _d.get('time_str', '') or '-'
+                                    _row['分所'] = _d.get('ichi', '') or '-'
+                                    _row['脚色'] = _d.get('load', '') or '-'
                                 _cy_rows.append(_row)
                             _cy_df = pd.DataFrame(_cy_rows)
 
@@ -2500,12 +2507,16 @@ if nav == "🏠 Single Race Analysis":
                                              hide_index=True, use_container_width=True)
                             except Exception:
                                 st.dataframe(_cy_df, hide_index=True, use_container_width=True)
-                            _cy_good = [r for r in _cy_rows if r['調教評価'] in ('A', 'B')]
-                            if _cy_good:
-                                st.success("🔥 調教好評価(A/B): "
-                                           + " / ".join(f"{r['馬番']}{r['馬名']}({r['調教評価']})" for r in _cy_good))
-                            st.caption("※調教の過去蓄積はjravan.dbに無いため、現状は『表示＋既存の調教評価ボーナス』まで。"
-                                       "時計・脚色・偏差値化・加速ラップ等の高度な数値化は、調教タイムの取得を確認してから段階実装します。")
+                            _cy_a = [r for r in _cy_rows if r['調教評価'] == 'A']
+                            if _cy_a:
+                                st.info("調教評価A(参考): "
+                                        + " / ".join(f"{r['馬番']}{r['馬名']}" for r in _cy_a)
+                                        + "　※Aは検証で有意な妙味なし・買い材料ではありません")
+                            if _det_map:
+                                st.caption("コース/時計/分所/脚色はnetkeiba無料公開分の馬のみ表示（残りは非公開）。"
+                                           "※調教時計は検証で『速い時計＝過剰人気（ROIマイナス）』のため表示・参考用です。")
+                            st.caption("※検証(中央重賞2021–2025・9,092頭): 調教評価の3着内残差は A=+0.009(z+0.55, 有意でない)、"
+                                       "B=−0.016(z−3.6), C=−0.023(z−3.3)＝B/Cは有意に過剰人気。よって調教評価の予測ボーナスは0に降格（表示・参考用）。")
 
                     st.divider()
 
@@ -2705,7 +2716,7 @@ if nav == "🏠 Single Race Analysis":
                                    ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
                                    ("🔥 人気%",       "Popularity",  "pop")]
                     _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
-                                   ("⏱️ 調教%",       "Training",    "trn"),
+                                   ("⏱️ 調教%(検証=予測力なし)", "Training", "trn"),
                                    ("⚖️ 馬体重%",     "Weight",      "wgt"),
                                    ("⚖️ 馬体増減ペナルティ", "WeightPenalty", "wgtp"),
                                    ("🏋️ 斤量%",       "WeightCarried","wgtc")]
@@ -6486,7 +6497,7 @@ if nav == "🧪 新ロジックテスト(FEW+マクリ)":
                        ("🏎️ ｽﾋﾟｰﾄﾞ指数%", "SpeedIndex",   "spd"),
                        ("🔥 人気%",       "Popularity",  "pop")]
         _W_GROUP2   = [("🏇 騎手(10走)%", "Jockey",      "jky"),
-                       ("⏱️ 調教%",       "Training",    "trn"),
+                       ("⏱️ 調教%(検証=予測力なし)", "Training", "trn"),
                        ("⚖️ 馬体重%",     "Weight",      "wgt"),
                        ("⚖️ 馬体増減ペナルティ", "WeightPenalty", "wgtp"),
                        ("🏋️ 斤量%",       "WeightCarried","wgtc")]
