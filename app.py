@@ -5350,9 +5350,15 @@ if nav == "🧹 消去フィルター":
                 _unit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
                                         value=100, step=100, key="kf_form_unit")
                 st.success(f"買い目 {len(_trios)}点 × {int(_unit)}円 = 合計 {len(_trios) * int(_unit):,}円")
-                _bl = pd.DataFrame(
-                    [{'買い目': '-'.join(f"{u}{_name_of.get(u, '')}" for u in t)} for t in _trios])
-                st.dataframe(_bl, hide_index=True, use_container_width=True, height=240)
+                _bl = pd.DataFrame([{
+                    '馬番': '-'.join(str(u) for u in t),
+                    '馬名': ' '.join(f"({u}){_name_of.get(u, '')}" for u in t),
+                } for t in _trios])
+                st.dataframe(_bl, hide_index=True, use_container_width=True, height=240,
+                             column_config={
+                                 '馬番': st.column_config.TextColumn('馬番', width='small'),
+                                 '馬名': st.column_config.TextColumn('馬名'),
+                             })
             else:
                 st.info("各列に馬を選ぶと3連複の買い目が生成されます（3頭が相異なる組合せ）。")
         st.divider()
