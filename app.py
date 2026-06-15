@@ -5157,7 +5157,116 @@ if nav == "🧹 消去フィルター":
     if st.session_state['kf_race_data'] is not None:
         df = st.session_state['kf_race_data']
         metadata = df.attrs.get('metadata', {})
-        
+
+        # ===== 🎯 強適消去エンジン（検証済み）=====
+        st.markdown("### 🎯 強適消去エンジン（検証済み）")
+        st.caption("市場順位±検証済みファクター（黄金ライン/厩舎当コース＝＋、牝冬春/大幅距離変更/初ダート/前走フロック＝−）"
+                   "で強適消去スコアを算出→下位半分を消去。消した中から妙味の穴1頭を救出し、危険な人気馬も検知します。"
+                   "※俗説条件(前走着順/年齢/ローテ/血統等)は検証で過剰人気=非採用。必要なら下のAIフィルタで任意追加。")
+        _ekey = f"kf_elim_{race_id_input}"
+        if st.button("▶ 強適消去エンジンを実行", key="kf_elim_run"):
+            st.session_state.pop(_ekey, None)
+        if _ekey not in st.session_state:
+            with st.spinner("検証ファクターを照合中..."):
+                try:
+                    from core import jockey_jv as _jj
+                    _jyo = str(race_id_input)[4:6]
+                    _surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
+                    try:
+                        _dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                    except Exception:
+                        _dist = None
+                    _dv = str(metadata.get('date_val', '') or '')
+                    _mo = int(_dv[4:6]) if len(_dv) >= 6 and _dv[4:6].isdigit() else 0
+                    _miny = str(int(_dv[:4]) - 3) if _dv[:4].isdigit() else None
+                    _erows = []
+                    for _, _r in df.iterrows():
+                        _nm = str(_r.get('Name', ''))
+                        try:
+                            _um = int(_r.get('Umaban'))
+                        except Exception:
+                            _um = 0
+                        _pop = pd.to_numeric(_r.get('Popularity'), errors='coerce')
+                        _odds = pd.to_numeric(_r.get('Odds'), errors='coerce')
+                        _jky = str(_r.get('Jockey', '') or '')
+                        _sa = str(_r.get('SexAge', '') or '')
+                        _kt, _tc = _jj.resolve_horse(_nm)
+                        _g = _jj.jockey_trainer_combo(_jky, _tc) if _tc else None
+                        _gold = bool(_g and _g.get('rides', 0) >= 10 and _g.get('top2', 0) >= 0.40)
+                        _cs = _jj.trainer_course_winrate(_tc, _jyo, _surf, min_year=_miny) if _tc else None
+                        _tcok = bool(_cs and _cs.get('runs', 0) >= 10 and (_cs.get('win_rate') or 0) >= 0.20)
+                        _ctx = _jj.horse_recent_context(_kt) if _kt else None
+                        _fade = ('牝' in _sa) and _mo in (12, 1, 2, 3, 4, 5)
+                        _distchg = bool(_ctx and _ctx.get('prev_dist') and _dist and abs(_dist - _ctx['prev_dist']) >= 400)
+                        _hatsud = ('ダ' in _surf) and bool(_ctx) and _ctx.get('dirt_runs', 0) == 0
+                        _fluke = bool(_ctx and _ctx.get('prev_ninki') and _ctx.get('prev_chaku')
+                                      and _ctx['prev_ninki'] >= 6 and _ctx['prev_chaku'] <= 3)
+                        _posr = []
+                        if _gold:
+                            _posr.append(f"黄金ライン(連対{_g['top2']:.0%}/{_g['rides']})")
+                        if _tcok:
+                            _posr.append(f"厩舎当ｺｰｽ{_cs['win_rate']:.0%}")
+                        _negr = []
+                        if _fade:
+                            _negr.append('牝' + ('冬' if _mo in (12, 1, 2) else '春') + 'ﾌｪｰﾄﾞ')
+                        if _distchg:
+                            _negr.append('大幅距離変更')
+                        if _hatsud:
+                            _negr.append('初ダート')
+                        if _fluke:
+                            _negr.append('前走フロック')
+                        _pos = bool(_posr)
+                        _neg = bool(_negr)
+                        _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
+                        _erows.append({'馬番': _um, '馬名': _nm,
+                                       '人気': int(_pop) if pd.notnull(_pop) else None,
+                                       'オッズ': float(_odds) if pd.notnull(_odds) else None,
+                                       'score': _score, 'pos': _pos, 'neg': _neg,
+                                       '妙味材料': ' / '.join(_posr) or '-',
+                                       '危険材料': ' / '.join(_negr) or '-'})
+                    st.session_state[_ekey] = _erows
+                except Exception as _e:
+                    st.session_state[_ekey] = []
+                    st.warning(f"エンジン実行エラー: {_e}")
+        _erows = st.session_state.get(_ekey, [])
+        if _erows:
+            _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
+            _n = len(_edf)
+            _keep = (_n + 1) // 2
+            _edf['判定'] = ['✅残し' if i < _keep else '🧹消し' for i in range(_n)]
+            _cut = _edf[_edf['判定'] == '🧹消し']
+            _ana = _cut[(_cut['pos']) & (_cut['人気'].fillna(99) >= 8)].sort_values('オッズ', ascending=False)
+            _anauma = _ana.iloc[0] if not _ana.empty else None
+            _dgr = _edf[(_edf['人気'].fillna(99) <= 3) & (_edf['neg'])]
+            _show = _edf[['判定', '馬番', '馬名', '人気', 'オッズ', '妙味材料', '危険材料']]
+
+            def _row_color(s):
+                return ['background-color:#f1f3f5;color:#adb5bd' if v == '🧹消し'
+                        else 'background-color:#e6f4ea;font-weight:bold' for v in s]
+            try:
+                st.dataframe(_show.style.apply(_row_color, subset=['判定']),
+                             hide_index=True, use_container_width=True)
+            except Exception:
+                st.dataframe(_show, hide_index=True, use_container_width=True)
+            st.caption(f"全{_n}頭 → ✅残し{_keep}頭 / 🧹消し{_n - _keep}頭（強適消去スコア＝市場順位±検証ファクター）")
+            _ec1, _ec2 = st.columns(2)
+            with _ec1:
+                if _anauma is not None:
+                    st.success(f"🎯 妙味の穴（消去ゾーンから救出）: **{int(_anauma['馬番'])} {_anauma['馬名']}** "
+                               f"／ {_anauma['人気']}人気・{_anauma['オッズ']}倍\n\n材料: {_anauma['妙味材料']}")
+                    st.caption("検証: 人気薄(≥8番)×この＋ファクターは単勝回収率108.8%(無印63.7%)")
+                else:
+                    st.info("🎯 妙味の穴: 該当なし（消去ゾーンに＋ファクターの人気薄馬なし）")
+            with _ec2:
+                if not _dgr.empty:
+                    st.error("⚠️ 危険な人気馬（人気≫実力の乖離）:\n"
+                             + "\n".join(f"- {int(r['馬番'])} {r['馬名']}（{r['人気']}人気）: {r['危険材料']}"
+                                         for _, r in _dgr.iterrows()))
+                    st.caption("検証: −ファクター人気馬は他の人気馬より3着内 約-2.6pp(z有意)")
+                else:
+                    st.info("⚠️ 危険な人気馬: 該当なし")
+        st.divider()
+
         col_left, col_right = st.columns([1, 3])
         
         with col_left:

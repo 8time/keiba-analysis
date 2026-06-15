@@ -403,6 +403,31 @@ def trainer_overall_winrate(trainer_code, before_key=None, min_year=None, db_pat
     return _trainer_rows(where, params, db_path)
 
 
+def horse_recent_context(ketto_num, before_key=None, db_path=None):
+    """馬の直近コンテキスト(消去エンジン用)。戻り:
+    {'prev_dist','prev_surf','prev_ninki','prev_chaku','dirt_runs','runs'}。
+    前走フロック/大幅距離変更/初ダート判定に使う。"""
+    if not ketto_num or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    con = _con(db_path)
+    where = "r.ketto_num=? AND r.chakujun>0"
+    params = [str(ketto_num)]
+    if before_key:
+        where += " AND r.race_key<?"; params.append(str(before_key))
+    rows = con.execute(
+        f"SELECT ra.kyori, ra.surface, r.ninki, r.chakujun, r.race_key "
+        f"FROM results r JOIN races ra ON r.race_key=ra.race_key "
+        f"WHERE {where} ORDER BY r.race_key DESC", params).fetchall()
+    con.close()
+    if not rows:
+        return {'prev_dist': None, 'prev_surf': None, 'prev_ninki': None,
+                'prev_chaku': None, 'dirt_runs': 0, 'runs': 0}
+    pk, ps, pn, pc, _ = rows[0]
+    dirt = sum(1 for (_, s, _, _, _) in rows if s == 'ダート')
+    return {'prev_dist': pk, 'prev_surf': ps, 'prev_ninki': pn, 'prev_chaku': pc,
+            'dirt_runs': dirt, 'runs': len(rows)}
+
+
 def horse_blinker_history(ketto_num, before_key=None, db_path=None):
     """馬の過去ブリンカー着用履歴。戻り: {'runs','blinker_runs'}。
     現走ブリンカー(出馬表B印)＋ blinker_runs==0 → 初ブリンカー。"""
