@@ -169,6 +169,29 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
             'warning': None}
 
 
+def build_formation(col1, col2, col3):
+    """3連複フォーメーション。1列目(軸)/2列目(対抗)/3列目(押さえ)の馬番リストから、
+    各列1頭ずつ・3頭が相異なる組合せを生成(3連複=順不同なので重複排除)。
+    戻り値: ソート済みtuple(3 umaban)のリスト。例『2-4-7型』=len(col1)=2,col2=4,col3=7。"""
+    c1 = [int(x) for x in (col1 or [])]
+    c2 = [int(x) for x in (col2 or [])]
+    c3 = [int(x) for x in (col3 or [])]
+    seen = set()
+    out = []
+    for a in c1:
+        for b in c2:
+            for c in c3:
+                if len({a, b, c}) != 3:
+                    continue
+                key = frozenset((a, b, c))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(tuple(sorted((a, b, c))))
+    out.sort()
+    return out
+
+
 def build_odds_map(odds_list):
     """scraper.fetch_sanrenpuku_odds の出力 → {frozenset(3 umaban): odds}。"""
     m = {}

@@ -415,17 +415,41 @@ def horse_recent_context(ketto_num, before_key=None, db_path=None):
     if before_key:
         where += " AND r.race_key<?"; params.append(str(before_key))
     rows = con.execute(
-        f"SELECT ra.kyori, ra.surface, r.ninki, r.chakujun, r.race_key "
+        f"SELECT ra.kyori, ra.surface, r.ninki, r.chakujun, r.race_key, "
+        f"r.jockey_name, r.kyakushitsu "
         f"FROM results r JOIN races ra ON r.race_key=ra.race_key "
         f"WHERE {where} ORDER BY r.race_key DESC", params).fetchall()
     con.close()
     if not rows:
         return {'prev_dist': None, 'prev_surf': None, 'prev_ninki': None,
-                'prev_chaku': None, 'dirt_runs': 0, 'runs': 0}
-    pk, ps, pn, pc, _ = rows[0]
-    dirt = sum(1 for (_, s, _, _, _) in rows if s == 'ダート')
+                'prev_chaku': None, 'dirt_runs': 0, 'runs': 0,
+                'prev_jockey': None, 'prev_date': None, 'prev_kyaku': None}
+    pk, ps, pn, pc, prk, pj, pky = rows[0]
+    dirt = sum(1 for r in rows if r[1] == 'ダート')
     return {'prev_dist': pk, 'prev_surf': ps, 'prev_ninki': pn, 'prev_chaku': pc,
-            'dirt_runs': dirt, 'runs': len(rows)}
+            'dirt_runs': dirt, 'runs': len(rows),
+            'prev_jockey': pj, 'prev_date': str(prk)[:8], 'prev_kyaku': str(pky)}
+
+
+_TOPJ_CACHE = {}
+
+
+def jockey_is_top(jockey_name, db_path=None):
+    """トップ騎手判定(全期間 騎乗500以上・勝率15%以上)。乗り替わり危険検知用。"""
+    name = _norm(jockey_name)
+    if not name or not os.path.exists(db_path or JV_DB_PATH):
+        return False
+    if name in _TOPJ_CACHE:
+        return _TOPJ_CACHE[name]
+    con = _con(db_path)
+    row = con.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN chakujun=1 THEN 1 ELSE 0 END) "
+        "FROM results WHERE jockey_name=? AND chakujun>0", (name,)).fetchone()
+    con.close()
+    n, w = (row[0] or 0), (row[1] or 0)
+    res = n >= 500 and (w / n) >= 0.15
+    _TOPJ_CACHE[name] = res
+    return res
 
 
 def horse_blinker_history(ketto_num, before_key=None, db_path=None):

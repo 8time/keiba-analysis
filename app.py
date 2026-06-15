@@ -5201,6 +5201,36 @@ if nav == "🧹 消去フィルター":
                         _hatsud = ('ダ' in _surf) and bool(_ctx) and _ctx.get('dirt_runs', 0) == 0
                         _fluke = bool(_ctx and _ctx.get('prev_ninki') and _ctx.get('prev_chaku')
                                       and _ctx['prev_ninki'] >= 6 and _ctx['prev_chaku'] <= 3)
+                        # --- 追加検証済み危険シグナル(scripts/dangerfav_backtest.py) ---
+                        def _njk(s):
+                            return ''.join(str(s or '').split())
+
+                        def _same_jk(a, b):
+                            return bool(a and b and (a == b or (len(a) >= 2 and len(b) >= 2
+                                       and (a.startswith(b) or b.startswith(a)))))
+                        _curj = _njk(_r.get('Jockey', ''))
+                        _pvj = (_ctx or {}).get('prev_jockey')
+                        _topswap = bool(_ctx and _pvj and _jj.jockey_is_top(_pvj)
+                                        and not _same_jk(_curj, _njk(_pvj)))
+                        _kinratio = False
+                        try:
+                            _fk = float(_r.get('WeightCarried'))
+                            _bwm = re.match(r'(\d+)', str(_r.get('Weight', '')))
+                            if _bwm and int(_bwm.group(1)) > 0 and _fk / int(_bwm.group(1)) >= 0.126:
+                                _kinratio = True
+                        except Exception:
+                            pass
+                        _rest = False
+                        try:
+                            _pdt = (_ctx or {}).get('prev_date')
+                            if _pdt and len(_dv) >= 8:
+                                _gap = (datetime.strptime(_dv[:8], '%Y%m%d')
+                                        - datetime.strptime(_pdt, '%Y%m%d')).days
+                                if _gap >= 180:
+                                    _rest = True
+                        except Exception:
+                            pass
+                        _nige = bool(_ctx and _ctx.get('prev_kyaku') == '1')
                         _posr = []
                         if _gold:
                             _posr.append(f"黄金ライン(連対{_g['top2']:.0%}/{_g['rides']})")
@@ -5215,6 +5245,14 @@ if nav == "🧹 消去フィルター":
                             _negr.append('初ダート')
                         if _fluke:
                             _negr.append('前走フロック')
+                        if _topswap:
+                            _negr.append('トップ騎手乗替')
+                        if _kinratio:
+                            _negr.append('斤量比≥12.6%')
+                        if _rest:
+                            _negr.append('半年休み明け')
+                        if _nige:
+                            _negr.append('前走逃げ')
                         _pos = bool(_posr)
                         _neg = bool(_negr)
                         _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
@@ -5265,6 +5303,58 @@ if nav == "🧹 消去フィルター":
                     st.caption("検証: −ファクター人気馬は他の人気馬より3着内 約-2.6pp(z有意)")
                 else:
                     st.info("⚠️ 危険な人気馬: 該当なし")
+
+            # ===== 🎯 3連複フォーメーション（消去エンジン連携）=====
+            st.markdown("#### 🎯 3連複フォーメーション（消去エンジン連携）")
+            st.caption("✅残し上位を軸/対抗に、🎯穴を押さえに自動配置。役割分担で無駄を省きます。"
+                       "（買い目構造は予測エッジでなく点数最適化。検証済み①人気-人気-穴の方針と併用）")
+            _keepdf = _edf[_edf['判定'] == '✅残し']
+            _keep_um = [int(x) for x in _keepdf['馬番'].tolist()]
+            _ana_um = int(_anauma['馬番']) if _anauma is not None else None
+            _name_of = {int(r['馬番']): str(r['馬名']) for _, r in _edf.iterrows()}
+
+            def _lab(u):
+                return f"{u} {_name_of.get(u, '')}"
+            _tmpl = st.radio("フォーメーション型", ["2-4-7型(推奨)", "1-3-5型(少点)", "カスタム"],
+                             horizontal=True, key="kf_form_tmpl")
+            if _tmpl == "2-4-7型(推奨)":
+                _na, _nb, _nc = 2, 4, 7
+            elif _tmpl == "1-3-5型(少点)":
+                _na, _nb, _nc = 1, 3, 5
+            else:
+                _na, _nb, _nc = 2, 4, 7
+            # デフォルト配置: 軸=残し上位、対抗=その次、押さえ=残り残し+穴
+            _def1 = _keep_um[:_na]
+            _def2 = _keep_um[_na:_na + _nb]
+            _def3 = _keep_um[_na + _nb:_na + _nb + _nc]
+            if _ana_um is not None and _ana_um not in _def3:
+                _def3 = (_def3 + [_ana_um])[:_nc + 1]
+            _all_um = [int(x) for x in _edf['馬番'].tolist()]
+            _fc1, _fc2, _fc3 = st.columns(3)
+            with _fc1:
+                _c1 = st.multiselect("1列目 軸", _all_um, default=_def1,
+                                     format_func=_lab, key="kf_form_c1")
+            with _fc2:
+                _c2 = st.multiselect("2列目 対抗", _all_um, default=_def2,
+                                     format_func=_lab, key="kf_form_c2")
+            with _fc3:
+                _c3 = st.multiselect("3列目 押さえ(穴含む)", _all_um, default=_def3,
+                                     format_func=_lab, key="kf_form_c3")
+            try:
+                from core import trio_engine as _te
+                _trios = _te.build_formation(_c1, _c2, _c3)
+            except Exception as _fe:
+                _trios = []
+                st.warning(f"フォーメーション生成エラー: {_fe}")
+            if _trios:
+                _unit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
+                                        value=100, step=100, key="kf_form_unit")
+                st.success(f"買い目 {len(_trios)}点 × {int(_unit)}円 = 合計 {len(_trios) * int(_unit):,}円")
+                _bl = pd.DataFrame(
+                    [{'買い目': '-'.join(f"{u}{_name_of.get(u, '')}" for u in t)} for t in _trios])
+                st.dataframe(_bl, hide_index=True, use_container_width=True, height=240)
+            else:
+                st.info("各列に馬を選ぶと3連複の買い目が生成されます（3頭が相異なる組合せ）。")
         st.divider()
 
         col_left, col_right = st.columns([1, 3])
