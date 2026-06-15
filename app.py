@@ -5612,13 +5612,23 @@ if nav == "🔍 Race Scanner (Batch)":
 
     col_input, col_filter = st.columns([3, 2])
     with col_filter:
-        st.markdown("**レース評価フィルター**")
-        selected_options = st.multiselect(
-            "予測難易度フィルター（未選択＝全表示）",
-            options=['D（超固い）', 'C（固い）', 'B（通常）', 'A（荒れ）', 'S（大荒れ）'],
-            default=[],
-            key="scanner_pattern_filter"
+        st.markdown("**🎯 妙味スキャン設定**")
+        min_value_score = st.slider(
+            "妙味度しきい値（これ未満のレースは下げる）", 0, 80, 25, 5,
+            key="scanner_min_value",
+            help="頭数/1番人気オッズ/上位拮抗/構造条件から算出。高いほど荒れ＝中穴妙味が出やすい。"
         )
+        min_value_horses = st.slider(
+            "妙味馬が何頭以上のレースを上位表示", 0, 4, 1, 1,
+            key="scanner_min_vhorses",
+            help="単複乖離 or 黄金ライン/厩舎当コース🔴 を持つ過小評価馬の頭数。"
+        )
+        hide_skip = st.checkbox("見送りレースを隠す", value=False, key="scanner_hide_skip",
+                                help="新馬/未勝利/2歳/障害/少頭数/単勝1倍台大本命を除外")
+        do_factor = st.checkbox("妙味馬ファクター照合（やや重い）", value=True, key="scanner_do_factor",
+                                help="各馬の黄金ライン/厩舎当コース/危険材料をDB照合。OFFなら単複乖離のみで高速。")
+        do_place = st.checkbox("複勝オッズ取得（単複乖離判定）", value=True, key="scanner_do_place",
+                               help="ライブ複勝オッズを取得し『単勝≥10×複勝≤3』の妙味馬を検知。")
 
     with col_input:
         if scan_mode == "✨ 日付指定で自動取得":
@@ -5709,32 +5719,10 @@ if nav == "🔍 Race Scanner (Batch)":
         if not race_ids:
             st.warning("有効なレースIDが見つかりませんでした。12桁の数字またはURLを入力してください。")
         else:
+            from core import value_scanner as vs
+            from core import jockey_jv as jj_scan
             progress_bar = st.progress(0)
             status_text = st.empty()
-
-            # Pattern detection helper (same logic as Single Race tab)
-            def _detect_pattern(scores):
-                GAP_VERY_LARGE, GAP_LARGE, GAP_FLAT, GAP_MIDDLE_SMALL = 50, 30, 15, 20
-                s = scores
-                if len(s) < 2: return 3
-                g12 = s[0] - s[1]
-                g13 = s[0] - s[2] if len(s) >= 3 else g12
-                g_last = s[0] - s[-1]
-                g_mid = (s[2] - s[6]) if len(s) >= 7 else 0
-                if g12 >= GAP_VERY_LARGE: return 1
-                elif g13 >= GAP_LARGE and g12 < GAP_VERY_LARGE: return 2
-                elif g_last < GAP_FLAT: return 5
-                elif len(s) >= 7 and g_mid < GAP_MIDDLE_SMALL: return 4
-                else: return 3
-
-            PATTERN_LABELS = {
-                1: ("超固い",     "#FF4500", "#2D0000"),
-                2: ("固い",       "#00C8FF", "#001A2D"),
-                3: ("通常",       "#FFD700", "#1A1400"),
-                4: ("荒れ",       "#7FFF00", "#0B1F00"),
-                5: ("大荒れ",     "#FF4500", "#2D0000"),
-            }
-
             results = []   # list of dicts
 
             for i, rid in enumerate(race_ids):
@@ -5743,128 +5731,193 @@ if nav == "🔍 Race Scanner (Batch)":
                     df_r = scraper.get_race_data(rid)
                     if df_r is None or df_r.empty:
                         raise ValueError("データなし")
-                    # 単独分析と全く同じアルゴリズムに統合
-                    prof_idx = 2
-                    if len(rid) >= 6:
-                        vc = rid[4:6]
-                        if vc in ['04', '05', '07']: prof_idx = 0
-                        elif vc in ['01', '02', '03', '06', '10']: prof_idx = 1
-                    prof_text = ["✨ 直線が長い・差し有利 (東京/外回り 等)", "✨ 小回り・先行有利 (中山/小倉/札幌 等)", "✨ 標準 (バランス)"][prof_idx]
+                    meta = dict(getattr(df_r, 'attrs', {}).get('metadata', {}) or {})
+                    jyo = str(rid)[4:6]
+                    surf = str(df_r['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df_r.columns and not df_r.empty else '芝'
+                    try:
+                        dist = int(pd.to_numeric(df_r['CurrentDistance'].iloc[0], errors='coerce'))
+                    except Exception:
+                        dist = None
+                    dv = str(meta.get('date_val', '') or '')
+                    month = int(dv[4:6]) if len(dv) >= 6 and dv[4:6].isdigit() else 0
+                    miny = str(int(dv[:4]) - 3) if dv[:4].isdigit() else None
 
-                    df_r = calculator.calculate_battle_score(df_r)
-                    df_r = calculator.calculate_n_index(df_r)
-                    df_r = calculator.calculate_strength_suitability(df_r, prof_text)
+                    odds_list = [o for o in (pd.to_numeric(df_r['Odds'], errors='coerce').dropna().tolist()
+                                             if 'Odds' in df_r.columns else []) if o > 0]
+                    n_h = len(df_r)
+                    min_win = min(odds_list) if odds_list else None
 
-                    # Compute scores the exact same way as tab1
-                    tmp = df_r.copy()
-                    score_col = 'Projected Score' if 'Projected Score' in tmp.columns else 'BattleScore'
-                    tmp['_score'] = pd.to_numeric(tmp[score_col], errors='coerce').fillna(0)
-                    tmp = tmp.sort_values('_score', ascending=False).reset_index(drop=True)
-                    scores_sorted = tmp['_score'].tolist()
-                    pattern = _detect_pattern(scores_sorted)
-
-                    difficulty_map = {1: 'D', 2: 'C', 3: 'B', 4: 'A', 5: 'S'}
-                    diff_val = difficulty_map.get(pattern, 'Unknown')
-                    tmp['Difficulty'] = diff_val
-
-                    # 1st: pre-fetched name map (from date auto-fetch)
+                    # race name
                     race_title = st.session_state.get('scanner_name_map', {}).get(rid, "")
-                    # 2nd: from df columns
                     if not race_title or race_title == rid:
-                        for col in ['RaceName', 'RaceTitle', 'Title']:
-                            if col in df_r.columns:
-                                v = str(df_r.iloc[0][col]).strip()
-                                SKIP_VALS = {"unknown race", rid, "", "nan"}
-                                if v and v.lower() not in SKIP_VALS:
-                                    race_title = v
-                                    break
-                    if not race_title or race_title.lower() == "unknown race":
-                        race_title = f"Race {rid[-4:]}"   # last 4 digits as fallback label
+                        race_title = str(meta.get('RaceName', '') or '')
+                    if not race_title or race_title.lower() in ("unknown race", "nan"):
+                        race_title = f"Race {rid[-4:]}"
 
-                    top3 = tmp['Name'].head(3).tolist()
+                    rv = vs.race_value_score(odds_list, meta, jyo, surf, dist, n_h)
+                    skips = vs.race_skip_reasons(meta, n_h, surf, race_title, min_win)
 
+                    # live place odds (単複乖離用)
+                    place_map = {}
+                    if do_place:
+                        try:
+                            place_map = scraper.fetch_place_odds_api(rid) or {}
+                        except Exception:
+                            place_map = {}
+
+                    # オッズ断層(強グループ末端の堅め妙味・90s検証+3.9pp)
+                    odds_by_um = {}
+                    if 'Umaban' in df_r.columns and 'Odds' in df_r.columns:
+                        for _, _hr in df_r.iterrows():
+                            try:
+                                _u = int(pd.to_numeric(_hr.get('Umaban'), errors='coerce'))
+                                _o = float(pd.to_numeric(_hr.get('Odds'), errors='coerce'))
+                                if _u and _o > 0:
+                                    odds_by_um[_u] = _o
+                            except Exception:
+                                pass
+                    gap_anchors = vs.odds_gap_anchors(odds_by_um)
+
+                    value_horses, danger_horses = [], []
+                    for _, hr in df_r.iterrows():
+                        try:
+                            um = int(pd.to_numeric(hr.get('Umaban'), errors='coerce'))
+                        except Exception:
+                            um = 0
+                        nm = str(hr.get('Name', '') or '')
+                        pm = (place_map.get(um) or {}).get('Mid') if place_map else None
+                        if do_factor:
+                            f = vs.horse_value_factors(hr, jj_scan, jyo, surf, dist, month, miny,
+                                                       place_mid=pm, date_val=dv,
+                                                       gap_anchor=(um in gap_anchors))
+                        else:
+                            lvl, txt = vs.tanpuku_divergence(hr.get('Odds'), pm) if pm else (0, '')
+                            _pop = pd.to_numeric(hr.get('Popularity'), errors='coerce')
+                            _od = pd.to_numeric(hr.get('Odds'), errors='coerce')
+                            _ga = um in gap_anchors
+                            _pos = ([txt] if txt else []) + (['オッズ断層上位'] if _ga else [])
+                            f = {'pos': _pos, 'neg': [], 'has_pos': bool(_pos),
+                                 'has_neg': False, 'div_level': lvl, 'anchor': _ga,
+                                 'pop': int(_pop) if pd.notnull(_pop) else None,
+                                 'odds': float(_od) if pd.notnull(_od) else None}
+                        pop = f['pop']
+                        od = f['odds']
+                        # オッズ未確定/出走取消(オッズ≤0・人気9999等の番兵)は判定対象外
+                        valid = bool(od and od > 0 and pop and pop < 90)
+                        if not valid:
+                            continue
+                        # 妙味馬: 単複乖離 or 断層上位(堅め) or (＋ファクター × 人気薄≥6)  ← 検証済の妙味定義
+                        if f['div_level'] >= 1 or f.get('anchor') or (f['has_pos'] and pop >= 6):
+                            value_horses.append({'um': um, 'name': nm, 'pop': pop,
+                                                 'odds': od, 'why': ' / '.join(f['pos']) or '-',
+                                                 'div': f['div_level'], 'anchor': bool(f.get('anchor'))})
+                        # 危険な人気馬: −ファクター × 人気≤3
+                        if f['has_neg'] and pop <= 3:
+                            danger_horses.append({'um': um, 'name': nm, 'pop': pop,
+                                                  'why': ' / '.join(f['neg'])})
+
+                    # ランキング指標: 妙味馬数 と 妙味度
                     results.append({
-                        "id": rid,
-                        "title": str(race_title),
-                        "pattern": pattern,
-                        "difficulty": diff_val,
-                        "top3": top3,
-                        "df": tmp,
-                        "error": None,
+                        "id": rid, "title": str(race_title), "error": None,
+                        "vscore": rv['score'], "vlabel": rv['label'], "breakdown": rv['breakdown'],
+                        "fav_odds": rv['fav_odds'], "skips": skips,
+                        "value_horses": sorted(value_horses, key=lambda x: (-x['div'], -(x['odds'] or 0))),
+                        "danger_horses": danger_horses, "n_h": n_h, "surf": surf, "dist": dist,
                     })
                 except Exception as e:
                     import traceback
                     err_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
                     logger.error(f"Scanner error for {rid}: {err_msg}")
-                    results.append({
-                        "id": rid,
-                        "title": rid,
-                        "pattern": None,
-                        "top3": [],
-                        "df": None,
-                        "error": str(e),
-                        "traceback": err_msg
-                    })
+                    results.append({"id": rid, "title": rid, "error": str(e), "traceback": err_msg})
 
                 progress_bar.progress((i + 1) / len(race_ids))
 
             status_text.text(f"✅ スキャン完了！ {len(race_ids)}件処理しました。")
 
-            # Apply filter
-            display = []
-            for r in results:
-                if r['error']: continue
-                df_scan = r.get('df')
-                if df_scan is not None and not df_scan.empty:
-                    if selected_options:
-                        filter_diffs = [opt[0] for opt in selected_options]
-                        df_filtered = df_scan[df_scan['Difficulty'].isin(filter_diffs)]
-                        if df_filtered.empty:
-                            continue
-                        r['df'] = df_filtered
-                    display.append(r)
+            errors = [r for r in results if r.get('error')]
+            valid = [r for r in results if not r.get('error')]
+            if hide_skip:
+                valid = [r for r in valid if not r['skips']]
 
-            errors = [r for r in results if r['error']]
+            # 並び替え: ①見送りでない ②妙味馬がしきい値以上 ③妙味度しきい値以上 ④妙味馬数 ⑤妙味度
+            def _rank_key(r):
+                n_v = len(r['value_horses'])
+                return (
+                    0 if r['skips'] else 1,
+                    1 if n_v >= min_value_horses and min_value_horses > 0 else 0,
+                    1 if r['vscore'] >= min_value_score else 0,
+                    n_v, r['vscore'],
+                )
+            valid.sort(key=_rank_key, reverse=True)
+
             if errors:
-                with st.expander(f"✨ スキップされたレース {len(errors)}件", expanded=False):
+                with st.expander(f"✨ スキップ(取得エラー) {len(errors)}件", expanded=False):
                     for r in errors:
                         st.markdown(f"- `{r['id']}` : {r['error']}")
                         if 'traceback' in r:
                             st.code(r['traceback'], language="python")
 
-            st.markdown(f"### 💡 結果 {len(display)} 件 {'（フィルター適用中）' if selected_options else ''}")
+            n_hot = sum(1 for r in valid if len(r['value_horses']) >= max(1, min_value_horses)
+                        and r['vscore'] >= min_value_score and not r['skips'])
+            st.markdown(f"### 💡 スキャン結果 {len(valid)} 件　／　🎯 妙味レース候補 {n_hot} 件")
+            st.caption("妙味度＝頭数/1番人気オッズ/上位拮抗/構造条件の集約（荒れ＝中穴妙味）。"
+                       "妙味馬＝単複乖離(単≥10×複≤3) or 黄金ライン/厩舎当コース🔴の過小評価馬。")
 
-            if not display:
-                st.info("条件に合致するレースが見つかりませんでした。フィルターを変更してみてください。")
+            if not valid:
+                st.info("条件に合致するレースが見つかりませんでした。")
             else:
-                for r in display:
-                    p = r['pattern']
-                    label, color, bg = PATTERN_LABELS.get(p, ("不明", "#888", "#111"))
-                    badge = f'<span style="background:{bg};color:{color};border:1px solid {color};border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;">{label}</span>'
-                    race_name = r["title"] if r["title"] != r["id"] else "(レース名不明)"
-                    diff_str = r.get("difficulty", "?")
+                _VL_COLOR = {'S': ('#FF4500', '#2D0000'), 'A': ('#7FFF00', '#0B1F00'),
+                             'B': ('#FFD700', '#1A1400'), 'C': ('#00C8FF', '#001A2D'),
+                             'D': ('#888', '#111')}
+                for r in valid:
+                    n_v = len(r['value_horses'])
+                    _lk = r['vlabel'][0]
+                    color, bg = _VL_COLOR.get(_lk, ('#888', '#111'))
+                    badge = (f'<span style="background:{bg};color:{color};border:1px solid {color};'
+                             f'border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;">'
+                             f'妙味度 {r["vscore"]:.0f}・{r["vlabel"]}</span>')
+                    vh_badge = ''
+                    if n_v:
+                        vh_badge = (f'&nbsp;<span style="background:#0B1F00;color:#7FFF00;border:1px solid #7FFF00;'
+                                    f'border-radius:6px;padding:3px 8px;font-size:0.82em;font-weight:bold;">🎯妙味馬 {n_v}</span>')
+                    dg_badge = ''
+                    if r['danger_horses']:
+                        dg_badge = (f'&nbsp;<span style="background:#2D0000;color:#FF7777;border:1px solid #FF7777;'
+                                    f'border-radius:6px;padding:3px 8px;font-size:0.82em;">⚠️危険人気 {len(r["danger_horses"])}</span>')
+                    skip_badge = ''
+                    if r['skips']:
+                        skip_badge = (f'&nbsp;<span style="background:#222;color:#aaa;border:1px solid #555;'
+                                      f'border-radius:6px;padding:3px 8px;font-size:0.8em;">🚫見送り: {"・".join(r["skips"])}</span>')
+                    dim = 'opacity:0.5;' if r['skips'] else ''
+                    rn = r["title"] if r["title"] != r["id"] else "(レース名不明)"
                     header_html = (
-                        f'<span style="font-size:1.15em;font-weight:bold;color:inherit;">{race_name}</span>'
-                        f'&nbsp;&nbsp;{badge}&nbsp;[難易度: {diff_str}]&nbsp;'
-                        f'<span style="color:#888;font-size:0.82em;">{r["id"]}</span>'
+                        f'<span style="font-size:1.12em;font-weight:bold;color:inherit;">{rn}</span>'
+                        f'&nbsp;&nbsp;{badge}{vh_badge}{dg_badge}{skip_badge}&nbsp;'
+                        f'<span style="color:#888;font-size:0.8em;">{r["id"]}</span>'
                     )
-                    st.html(f'<div style="margin-top:18px;padding:10px 0 4px;border-top:1px solid #333;">{header_html}</div>')
-
+                    st.html(f'<div style="margin-top:14px;padding:10px 0 4px;border-top:1px solid #333;{dim}">{header_html}</div>')
 
                     with st.expander("🔍 詳細を見る", expanded=False):
-                        if r['df'] is not None:
-                            tmp_df = r['df']
-                            # Show top 10 horses
-                            cols_show = [c for c in ['Umaban', 'Name', 'Jockey', 'Difficulty', 'OguraIndex', 'SpeedIndex', '_score'] if c in tmp_df.columns]
-                            display_df = tmp_df[cols_show].head(10).copy()
-                            rename_map = {'Umaban': '馬番', 'Name': '馬名', 'Jockey': '騎手', 'Difficulty': '難易度', 'OguraIndex': 'OguraIdx', 'SpeedIndex': 'SpeedIdx', '_score': 'TotalScore'}
-                            display_df.columns = [rename_map.get(c, c) for c in display_df.columns]
-                            st.dataframe(display_df, width='stretch', hide_index=True)
-
-                            # Link to Single Race
-                            st.markdown(f"✨ [このレースをシングルタブで詳細分析する](/?race_id={r['id']})")
+                        if r['value_horses']:
+                            st.markdown("**🎯 妙味馬（過小評価）**")
+                            for h in r['value_horses']:
+                                mark = '★★' if h['div'] >= 2 else ('★' if h['div'] == 1 else '')
+                                if h.get('anchor'):
+                                    mark = (mark + '🛡️').strip()
+                                od = f"{h['odds']:.1f}倍" if h['odds'] else '-'
+                                pp = f"{h['pop']}人気" if h['pop'] else '-'
+                                st.markdown(f"- {mark} **{h['um']} {h['name']}**（{pp}・{od}）… {h['why']}")
+                            st.caption("★単複乖離=単勝が長いのに複勝が短い→単勝過小評価(検証:勝率2.5→7%)。"
+                                       "🛡️オッズ断層上位=強グループ末端の堅め妙味(90s検証:3着内+3.9pp/単勝回収81%)。"
+                                       "＋ファクター×人気薄=単勝回収108.8%(無印63.7%)。連系の軸/紐に妙味。")
                         else:
-                            st.error(f"データ取得エラー: {r['error']}")
+                            st.caption("🎯 妙味馬: 該当なし")
+                        if r['danger_horses']:
+                            st.error("⚠️ 危険な人気馬:\n" + "\n".join(
+                                f"- {h['um']} {h['name']}（{h['pop']}人気）: {h['why']}" for h in r['danger_horses']))
+                        if r['breakdown']:
+                            st.caption("妙味度内訳: " + " / ".join(r['breakdown']))
+                        st.markdown(f"✨ [このレースをシングルタブで詳細分析する](/?race_id={r['id']})")
 
 
 

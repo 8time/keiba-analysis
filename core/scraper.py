@@ -816,6 +816,90 @@ def fetch_realtime_odds_api(race_id):
     
     return odds_map
 
+def fetch_place_odds_api(race_id):
+    """複勝(Place)オッズを netkeiba JSON API(type=2)から best-effort で取得する。
+    戻り値: {umaban(int): {'Min': float, 'Max': float, 'Mid': float}}。取得失敗時は {}。
+    単複乖離(単勝が長いのに複勝が短い妙味馬)の判定に使用。既存関数は変更しない追加実装。"""
+    import json, base64, zlib
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    prefix = "nar" if is_nar else "jra"
+
+    def _decode(body):
+        if isinstance(body, bytes):
+            body = body.decode('utf-8', errors='ignore')
+        d = json.loads(body)
+        ary = d.get('ary_odds', {})
+        if not ary:
+            raw = d.get('data', '')
+            inner = {}
+            if isinstance(raw, str) and len(raw) > 10:
+                try:
+                    dec = base64.b64decode(raw)
+                    try: dec = zlib.decompress(dec, -zlib.MAX_WBITS)
+                    except: dec = zlib.decompress(dec)
+                    inner = json.loads(dec.decode('utf-8'))
+                except Exception:
+                    if raw.strip().startswith('{'):
+                        inner = json.loads(raw)
+            elif isinstance(raw, dict):
+                inner = raw
+            else:
+                inner = d
+            ary = inner.get('ary_odds', {})
+            if not ary and 'odds' in inner:
+                o_root = inner['odds']
+                ary = o_root.get('2', o_root) if isinstance(o_root, dict) else {}
+            if not ary:
+                ary = {k: v for k, v in inner.items() if str(k).isdigit()}
+        out = {}
+        for u_str, val in ary.items():
+            if not str(u_str).isdigit():
+                continue
+            mn = mx = 0.0
+            try:
+                if isinstance(val, dict):
+                    mn = float(val.get('OddsMin', val.get('odds_min', val.get('Odds', 0)) or 0) or 0)
+                    mx = float(val.get('OddsMax', val.get('odds_max', mn) or mn) or mn)
+                elif isinstance(val, (list, tuple)) and len(val) >= 2:
+                    def _f(x):
+                        try: return float(str(x).replace(',', ''))
+                        except Exception: return 0.0
+                    mn, mx = _f(val[0]), _f(val[1])
+            except Exception:
+                continue
+            if mn > 0:
+                if mx <= 0:
+                    mx = mn
+                out[int(u_str)] = {'Min': mn, 'Max': mx, 'Mid': round((mn + mx) / 2.0, 2)}
+        return out
+
+    for c_flag in ["0", "1"]:
+        for t in ["2", "b1"]:
+            api_url = (f"https://{domain}/api/api_get_{prefix}_odds.html?pid=api_get_{prefix}_odds"
+                       f"&race_id={race_id}&type={t}&action=init&compress={c_flag}&output=json")
+            headers = {
+                "Referer": f"https://{domain}/odds/index.html?race_id={race_id}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            }
+            try:
+                fetcher = get_shared_fetcher()
+                if fetcher:
+                    resp = fetcher.get(api_url, headers=headers, timeout=12)
+                else:
+                    import requests as _req
+                    resp = _req.get(api_url, headers=headers, timeout=12)
+                    resp.body = resp.content
+                if resp and resp.body:
+                    m = _decode(resp.body)
+                    if m:
+                        logger.info(f"[PlaceOdds] Success: {len(m)} horses (type={t})")
+                        return m
+            except Exception as e:
+                logger.debug(f"[PlaceOdds] fetch failed type={t}: {e}")
+    return {}
+
 def fetch_popularity(race_id):
     """
     リアルタイム人気を取得。
