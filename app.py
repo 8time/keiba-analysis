@@ -1806,15 +1806,17 @@ if nav == "🏠 Single Race Analysis":
                         pass
                     # 当日逆算バイアス: jravan.db に当該レースがあれば同日同場の既走Rから集計（無ければNone）
                     _tb_emp = None
+                    _tb_rr = None  # jravan.db未配置(Streamlit Cloud等)でも後段で参照できるよう初期化
                     try:
                         import sqlite3 as _tb_sq
-                        _tb_con = _tb_sq.connect('data/jravan.db')
-                        _tb_rr = _tb_con.execute(
-                            "SELECT year,monthday,jyo,surface,race_num FROM races WHERE race_id=?",
-                            (race_id_input,)).fetchone()
-                        _tb_con.close()
-                        if _tb_rr:
-                            _tb_emp = _tb.empirical_bias_from_db(*_tb_rr)
+                        if os.path.exists('data/jravan.db'):
+                            _tb_con = _tb_sq.connect('data/jravan.db')
+                            _tb_rr = _tb_con.execute(
+                                "SELECT year,monthday,jyo,surface,race_num FROM races WHERE race_id=?",
+                                (race_id_input,)).fetchone()
+                            _tb_con.close()
+                            if _tb_rr:
+                                _tb_emp = _tb.empirical_bias_from_db(*_tb_rr)
                     except Exception:
                         _tb_emp = None
                     st.session_state['_tb_emp_bias'] = _tb_emp  # Vエリアbaba自動化で参照
