@@ -511,6 +511,71 @@ def horse_blinker_history(ketto_num, before_key=None, db_path=None):
     return {'runs': runs, 'blinker_runs': bl}
 
 
+def _parse_time_msst(s):
+    """JVの走破タイム '1330' → 93.0（秒）。'MSSt'形式。失敗時 None。"""
+    s = str(s or '').strip()
+    if not s.isdigit() or int(s) == 0:
+        return None
+    tenths = int(s[-1]); secs = int(s[-3:-1] or 0); mins = int(s[:-3] or 0)
+    return mins * 60 + secs + tenths / 10.0
+
+
+def horse_prev_win_margin(ketto_num, before_key=None, db_path=None):
+    """馬の前走(直近)が『勝ち』なら、その着差(2着とのタイム差・秒)を返す。
+    勝ち以外/データ無しは None。圧勝の罠検証(verified_ohtani_trap)用＝軸選定の加点。
+    検証(scripts/ohtani_trap_backtest.py): 前走着差>=1.0秒で勝った人気馬は
+    今回複勝率72.3%(同人気帯+15.7pp)＝最良の軸。"""
+    if not ketto_num or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    con = _con(db_path)
+    where = "ketto_num=? AND chakujun>0"
+    params = [str(ketto_num)]
+    if before_key:
+        where += " AND race_key<?"; params.append(str(before_key))
+    row = con.execute(
+        f"SELECT race_key, chakujun FROM results WHERE {where} "
+        f"ORDER BY race_key DESC LIMIT 1", params).fetchone()
+    if not row or int(row[1] or 0) != 1:
+        con.close(); return None
+    prk = row[0]
+    times = con.execute(
+        "SELECT chakujun, time FROM results WHERE race_key=? AND chakujun IN (1,2)",
+        (prk,)).fetchall()
+    con.close()
+    t = {int(c): _parse_time_msst(tm) for (c, tm) in times if c in (1, 2)}
+    if 1 in t and 2 in t and t[1] is not None and t[2] is not None:
+        return round(t[2] - t[1], 1)
+    return None
+
+
+def horse_elim_stats(ketto_num, before_key=None, db_path=None):
+    """消去クロステーブル用の過去走サマリ。直近5走から:
+      {'last5_top3':[1/0...新→古], 'avg_c4ratio':float|None, 'c4_n':int, 'runs':int}
+    - last5_top3: 各走が3着内(1)/着外(0)。近3走着外/過去5走複勝0の判定に使う。
+    - avg_c4ratio: 直近3走の(4角通過/出走頭数)平均=後方脚質の判定(0=先頭,1=最後方)。
+    検証(scripts/elim_cross_backtest.py): これら下位フラグは単体では人気に織込み済
+    (残差≈0)。重複数が増えるほど絶対複勝率は単調低下(0個31.5%→4個13.7%→7個10.3%)。"""
+    if not ketto_num or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    con = _con(db_path)
+    where = "r.ketto_num=? AND r.chakujun>0"
+    params = [str(ketto_num)]
+    if before_key:
+        where += " AND r.race_key<?"; params.append(str(before_key))
+    rows = con.execute(
+        f"SELECT r.chakujun, r.corner4, ra.shusso_tosu "
+        f"FROM results r JOIN races ra ON r.race_key=ra.race_key "
+        f"WHERE {where} ORDER BY r.race_key DESC LIMIT 5", params).fetchall()
+    con.close()
+    if not rows:
+        return {'last5_top3': [], 'avg_c4ratio': None, 'c4_n': 0, 'runs': 0}
+    last5 = [1 if (c and c <= 3) else 0 for (c, _, _) in rows]
+    ratios = [c4 / st for (_, c4, st) in rows[:3] if c4 and st]
+    avg_c4 = (sum(ratios) / len(ratios)) if ratios else None
+    return {'last5_top3': last5, 'avg_c4ratio': avg_c4,
+            'c4_n': len(ratios), 'runs': len(rows)}
+
+
 def jockey_factor_by_name(jockey_name, horse_name=None, venue=None, distance=None,
                           expected=None, db_path=None, before_key=None):
     """ライブ表用: 騎手名＋馬名から騎手係数を算出（trainer_code/ketto_numは馬名で解決）。"""
