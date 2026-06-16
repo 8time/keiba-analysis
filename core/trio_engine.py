@@ -14,7 +14,10 @@ from_odds/sniper)を1つに統合する中核ロジック。
 from itertools import combinations
 
 # パターン別の狙い目オッズ価格帯（倍）
-_TARGET_BAND = {'①': (10.0, 100.0), '②': (80.0, 1000.0), 'おまかせ': (10.0, 300.0)}
+# 本線=人気上位2頭以上を必ず含む形＝鉄板(37%)+①(46%)を同時カバー=83%(検証 trio_selector_backtest.py)。
+# 帯は鉄板(中央値~15倍)〜①(~71倍)を覆いつつ、安すぎ(<10)は軽く減点して①寄りの配当を取りにいく。
+_TARGET_BAND = {'本線': (10.0, 150.0), '①': (10.0, 100.0),
+                '②': (80.0, 1000.0), 'おまかせ': (10.0, 300.0)}
 
 
 def _classify(trio, pop_set, ana_set):
@@ -25,6 +28,8 @@ def _classify(trio, pop_set, ana_set):
 
 
 def _match_pattern(n_pop, n_ana, pattern):
+    if pattern == '本線':     # 人気上位2頭以上＝鉄板(人気3)と①(人気2穴1)を両取り(検証83%)
+        return n_pop >= 2
     if pattern == '①':       # 人気2-穴1
         return n_pop == 2 and n_ana >= 1
     if pattern == '②':       # 人気1-穴2
@@ -203,3 +208,131 @@ def build_odds_map(odds_list):
         except Exception:
             continue
     return m
+
+
+# ──────────────────────────────────────────────
+# 馬連 / 馬単 おすすめ（3連複の代替・高配当検知）
+#   人気馬が3頭目に絡むと3連複は配当が伸びない。そんな時は2頭勝負の
+#   馬連/馬単のほうが高配当になりやすい。それを検知して提案する。
+# ──────────────────────────────────────────────
+def _pop_label(pop):
+    """人気 → 簡易区分。人=1〜5 / 中=6〜9 / 穴=10番人気〜。不明は'?'。"""
+    if pop is None:
+        return '?'
+    if pop <= 5:
+        return '人'
+    if pop <= 9:
+        return '中'
+    return '穴'
+
+
+def recommend_quinella_exacta(horses, q_odds=None, e_odds=None, axis_umaban=None,
+                              n_opp=6, band_q=(10.0, 120.0), band_e=(20.0, 250.0),
+                              both_dir=False):
+    """
+    軸1頭 × 相手(スコア順 n_opp頭) の馬連/馬単おすすめ買い目。
+    horses : [{'umaban','name','score','pop','alert'}]（recommend_trio と同形）
+    q_odds : 馬連 {tuple(sorted(a,b)): odds(float)}
+    e_odds : 馬単 {tuple(a,b): odds(float)}  a=1着,b=2着
+    axis_umaban : 軸馬番。None ならスコア最上位を軸に。
+    band_q/band_e : 狙い目価格帯（この帯の買い目に🎯）。
+    both_dir : True なら馬単の裏(相手→軸)も提案に含める。
+    戻り : {'axis':u, 'opp':[u..], 'quinella':[row..], 'exacta':[row..]}
+        row = {'combo','names','pop_ana','odds','in_band','score'}
+    """
+    hs = [h for h in horses if h.get('umaban')]
+    if not hs:
+        return {'axis': None, 'opp': [], 'quinella': [], 'exacta': []}
+    by_um = {h['umaban']: h for h in hs}
+    ranked = sorted(hs, key=lambda h: h.get('score', 0) or 0, reverse=True)
+    axis = axis_umaban if axis_umaban in by_um else ranked[0]['umaban']
+    opp = [h['umaban'] for h in ranked if h['umaban'] != axis][:n_opp]
+    q_odds = q_odds or {}
+    e_odds = e_odds or {}
+
+    def _name(u):
+        return (by_um.get(u) or {}).get('name', '')
+
+    def _pa(combo):
+        return ''.join(_pop_label((by_um.get(u) or {}).get('pop')) for u in combo)
+
+    def _sc(a, b):
+        return round(((by_um.get(a) or {}).get('score', 0) +
+                      (by_um.get(b) or {}).get('score', 0)) / 2, 1)
+
+    q_rows = []
+    for o in opp:
+        pair = tuple(sorted((axis, o)))
+        od = q_odds.get(pair)
+        q_rows.append({'combo': pair, 'names': [_name(pair[0]), _name(pair[1])],
+                       'pop_ana': _pa(pair), 'odds': od,
+                       'in_band': bool(od and band_q[0] <= od <= band_q[1]),
+                       'score': _sc(*pair)})
+    q_rows.sort(key=lambda r: (-int(r['in_band']), -(r['odds'] or 0)))
+
+    e_rows = []
+    dirs = [(axis, o) for o in opp]
+    if both_dir:
+        dirs += [(o, axis) for o in opp]
+    for a, b in dirs:
+        od = e_odds.get((a, b))
+        e_rows.append({'combo': (a, b), 'names': [_name(a), _name(b)],
+                       'pop_ana': _pa((a, b)), 'odds': od,
+                       'in_band': bool(od and band_e[0] <= od <= band_e[1]),
+                       'score': _sc(a, b)})
+    e_rows.sort(key=lambda r: (-int(r['in_band']), -(r['odds'] or 0)))
+    return {'axis': axis, 'opp': opp, 'quinella': q_rows, 'exacta': e_rows}
+
+
+def trio_vs_pair(trio_combos, t_odds, q_odds, e_odds, pop_by_um=None):
+    """
+    各3連複買い目について、構成3頭のうち『人気薄2頭』の馬連/馬単と配当を比較。
+    人気の3頭目が配当を押し下げ、2頭流しのほうが高配当になるケースを検知する。
+    trio_combos : [tuple(3 umaban)]
+    t_odds : {frozenset(3)|tuple(3): odds} 3連複
+    q_odds : {tuple(sorted 2): odds} 馬連
+    e_odds : {tuple(2): odds} 馬単(a→b)
+    pop_by_um : {umaban: 人気}。人気薄2頭の選定に使用。None なら3ペア中ベストを採用。
+    戻り : [{'trio','trio_odds','pair','q_odds','e_best','better','ratio'}]（高配当順）
+        better = '馬連'|'馬単'|None（None=3連複が同等以上）
+    """
+    out = []
+    seen = set()
+    for combo in trio_combos:
+        try:
+            c = tuple(sorted(int(x) for x in combo))
+        except Exception:
+            continue
+        if len(c) != 3 or c in seen:
+            continue
+        seen.add(c)
+        to = t_odds.get(frozenset(c)) or t_odds.get(c)
+        if not to:
+            continue
+        if pop_by_um:
+            ranked = sorted(c, key=lambda u: (pop_by_um.get(u) or 999), reverse=True)
+            cand_pairs = [tuple(sorted(ranked[:2]))]
+        else:
+            cand_pairs = [tuple(sorted(p)) for p in
+                          ((c[0], c[1]), (c[0], c[2]), (c[1], c[2]))]
+        best = None
+        for pr in cand_pairs:
+            qo = q_odds.get(pr) or 0
+            eo = max((e_odds.get((pr[0], pr[1])) or 0),
+                     (e_odds.get((pr[1], pr[0])) or 0)) or 0
+            val = max(qo, eo)
+            if best is None or val > best['_val']:
+                better = None
+                if qo >= to and qo >= eo:
+                    better = '馬連'
+                elif eo >= to:
+                    better = '馬単'
+                best = {'pair': pr, 'q_odds': qo or None, 'e_best': eo or None,
+                        'better': better, '_val': val}
+        if best:
+            out.append({'trio': c, 'trio_odds': to, 'pair': best['pair'],
+                        'q_odds': best['q_odds'], 'e_best': best['e_best'],
+                        'better': best['better'],
+                        'ratio': round(best['_val'] / to, 2) if to else None})
+    out.sort(key=lambda r: -(r['ratio'] or 0))
+    return out

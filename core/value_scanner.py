@@ -207,6 +207,14 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     if ctx and ctx.get('prev_kyaku') == '1':
         neg.append('前走逃げ')
 
+    # 🔥末脚救出(独立シグナル): 人気薄(6番人気以下)×末脚指数≥0.8×2走以上。
+    # 検証(scripts/spurt_index_backtest.py 2021-25): 6番人気以下×末脚指数≥0.8で
+    # 複勝率13.2%/単ROI69%(ベース9.4%/66.4%)。単複乖離とはANDで掛けない独立救出。
+    si = (ctx or {}).get('spurt_index')
+    sr = (ctx or {}).get('spurt_runs', 0)
+    if pop and pop >= 6 and si is not None and si >= 0.8 and sr >= 2:
+        pos.append(f"🔥末脚救出(指数{si:.1f})")
+
     # 単複乖離(妙味)
     div_level, div_text = (0, '')
     if place_mid is not None:

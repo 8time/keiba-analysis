@@ -403,10 +403,47 @@ def trainer_overall_winrate(trainer_code, before_key=None, min_year=None, db_pat
     return _trainer_rows(where, params, db_path)
 
 
+def _spurt_index(con, ketto_num, race_keys, k=3):
+    """直近k走のレース内標準化上がり3F平均(末脚指数)。速い(小さいato3f)ほど正。
+    検証(scripts/spurt_index_backtest.py): 人気薄×末脚指数>=0.8で勝率/複勝率/ROIがベース超。
+    戻り: (spurt_index|None, spurt_runs)。"""
+    # 馬がato3fを持つ直近k走を特定
+    qs = ",".join("?" for _ in race_keys)
+    own = con.execute(
+        f"SELECT race_key, ato3f FROM results WHERE ketto_num=? AND ato3f IS NOT NULL "
+        f"AND ato3f>0 AND race_key IN ({qs}) ORDER BY race_key DESC",
+        [str(ketto_num)] + list(race_keys)).fetchall()
+    own = own[:k]
+    if not own:
+        return None, 0
+    rks = [r[0] for r in own]
+    qs2 = ",".join("?" for _ in rks)
+    field = {}
+    for rk, a in con.execute(
+            f"SELECT race_key, ato3f FROM results WHERE race_key IN ({qs2}) "
+            f"AND ato3f IS NOT NULL AND ato3f>0", rks):
+        field.setdefault(rk, []).append(a)
+    devs = []
+    for rk, a in own:
+        vals = field.get(rk, [])
+        if len(vals) < 5:
+            continue
+        m = sum(vals) / len(vals)
+        var = sum((x - m) ** 2 for x in vals) / len(vals)
+        sd = var ** 0.5
+        if sd <= 0:
+            continue
+        devs.append((m - a) / sd)        # 速い=正
+    if not devs:
+        return None, 0
+    return sum(devs) / len(devs), len(devs)
+
+
 def horse_recent_context(ketto_num, before_key=None, db_path=None):
     """馬の直近コンテキスト(消去エンジン用)。戻り:
-    {'prev_dist','prev_surf','prev_ninki','prev_chaku','dirt_runs','runs'}。
-    前走フロック/大幅距離変更/初ダート判定に使う。"""
+    {'prev_dist','prev_surf','prev_ninki','prev_chaku','dirt_runs','runs',
+     'spurt_index','spurt_runs'}。
+    前走フロック/大幅距離変更/初ダート/🔥末脚救出 判定に使う。"""
     if not ketto_num or not os.path.exists(db_path or JV_DB_PATH):
         return None
     con = _con(db_path)
@@ -419,16 +456,20 @@ def horse_recent_context(ketto_num, before_key=None, db_path=None):
         f"r.jockey_name, r.kyakushitsu "
         f"FROM results r JOIN races ra ON r.race_key=ra.race_key "
         f"WHERE {where} ORDER BY r.race_key DESC", params).fetchall()
-    con.close()
     if not rows:
+        con.close()
         return {'prev_dist': None, 'prev_surf': None, 'prev_ninki': None,
                 'prev_chaku': None, 'dirt_runs': 0, 'runs': 0,
-                'prev_jockey': None, 'prev_date': None, 'prev_kyaku': None}
+                'prev_jockey': None, 'prev_date': None, 'prev_kyaku': None,
+                'spurt_index': None, 'spurt_runs': 0}
     pk, ps, pn, pc, prk, pj, pky = rows[0]
     dirt = sum(1 for r in rows if r[1] == 'ダート')
+    si, sr = _spurt_index(con, ketto_num, [r[4] for r in rows[:8]])
+    con.close()
     return {'prev_dist': pk, 'prev_surf': ps, 'prev_ninki': pn, 'prev_chaku': pc,
             'dirt_runs': dirt, 'runs': len(rows),
-            'prev_jockey': pj, 'prev_date': str(prk)[:8], 'prev_kyaku': str(pky)}
+            'prev_jockey': pj, 'prev_date': str(prk)[:8], 'prev_kyaku': str(pky),
+            'spurt_index': si, 'spurt_runs': sr}
 
 
 _TOPJ_CACHE = {}
