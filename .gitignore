@@ -20,3 +20,6 @@ tmp_*.py
 result.txt
 *_raw.txt
 *_debug.txt
+
+# 消去理由ラーニング台帳(ユーザー個人データ)
+elim_reasons.json

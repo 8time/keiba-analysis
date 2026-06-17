@@ -3746,15 +3746,25 @@ if nav == "🏠 Single Race Analysis":
                                 if _df:
                                     base += f" {_df['flag']}"
 
-                        # 血統辞書: 父×条件の複勝率/回収率（短縮表示）
-                        _ss = _bl.lookup_sire_stats(sire, _tb_surf, _tb_dist)
-                        if _ss:
-                            _roi_i = '🔥' if _ss['win_roi'] >= 100 else ('💰' if _ss['win_roi'] >= 85 else '')
-                            base += f" [複{_ss['place_rate']:.0f}%/回{_ss['win_roi']:.0f}%{_roi_i}]"
-
+                        # 血統辞書の複勝率/回収率は別列(BloodStats)へ分離(緑色表示するため)
                         return base
 
+                    def fmt_blood_stats(row):
+                        """父×条件の複勝率/回収率を別列に短縮表示（緑色用）。"""
+                        def _clean(v):
+                            s = str(v) if v is not None else '-'
+                            return '-' if s in ('nan', 'NaN', 'None', '不明', '', '-') else s
+                        sire = _clean(row.get('sire'))
+                        if sire == '-':
+                            return ''
+                        _ss = _bl.lookup_sire_stats(sire, _tb_surf, _tb_dist)
+                        if not _ss:
+                            return ''
+                        _roi_i = '🔥' if _ss['win_roi'] >= 100 else ('💰' if _ss['win_roi'] >= 85 else '')
+                        return f"複{_ss['place_rate']:.0f}%/回{_ss['win_roi']:.0f}%{_roi_i}"
+
                     view_df['Bloodline'] = view_df.apply(fmt_blood, axis=1)
+                    view_df['BloodStats'] = view_df.apply(fmt_blood_stats, axis=1)
                     # 表示後に内部列を削除
                     view_df = view_df.drop(columns=['_DirtBloodlineRank', '_DirtBloodlineBonus'], errors='ignore')
 
@@ -3929,7 +3939,7 @@ if nav == "🏠 Single Race Analysis":
                             'DeployScoreLabel', 'PCILabel', 'Pos600m', 'FrontCollapseEffect',
                             'DensityPenaltyLabel',
                             'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried',
-                            'Trainer', 'Bloodline', 'JockeyChange',
+                            'Trainer', 'Bloodline', 'BloodStats', 'JockeyChange',
                             'ボーナス詳細', 'AvgPCI', 'PCIType', 'DensityScore',
                             'NIndex', 'Strength (X)', 'Suitability (Y)',
                             'SpeedIndex', 'AvgAgari', 'Alert', 'RiskFlags']
@@ -3955,7 +3965,8 @@ if nav == "🏠 Single Race Analysis":
                         "Odds": "単勝オッズ", "OddsGap": "オッズ断層",
                         "SexAge": "性別/年齢", "WeightHistory": "当日馬体重(増減)",
                         "WeightCarried": "斤量", "Trainer": "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
-                        "Bloodline": "血統(父/母父)", "Jockey": "騎手",
+                        "Bloodline": "血統(父/母父)", "BloodStats": "🧬血統実績(複/回)",
+                        "Jockey": "騎手",
                         "JockeyChange": "乗替", "Name": "馬名",
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
@@ -4077,7 +4088,19 @@ if nav == "🏠 Single Race Analysis":
                         # 後から増えた新列はチェック状態未設定 → 既定OFF（保存済み設定を壊さない）
                         for c in _all_cols:
                             if _ck(c) not in st.session_state:
-                                st.session_state[_ck(c)] = False
+                                # BloodStatsは旧Bloodline内の表示を分離した列。Bloodlineが表示中なら
+                                # 情報欠落を防ぐため自動でその隣に表示する。
+                                if c == 'BloodStats' and st.session_state.get(_ck('Bloodline')):
+                                    st.session_state[_ck(c)] = True
+                                    _ord = st.session_state.get(_order_key, [])
+                                    if 'BloodStats' not in _ord:
+                                        if 'Bloodline' in _ord:
+                                            _ord.insert(_ord.index('Bloodline') + 1, 'BloodStats')
+                                        else:
+                                            _ord.append('BloodStats')
+                                        st.session_state[_order_key] = _ord
+                                else:
+                                    st.session_state[_ck(c)] = False
 
                     _tl_col1, _tl_col2 = st.columns([1, 4])
                     with _tl_col1:
@@ -4156,6 +4179,8 @@ if nav == "🏠 Single Race Analysis":
                             help="ﾗﾝｸ=全体3年勝率(A≥14%/B≥10%/C≥7%/D)。"
                                  "当ｺｰｽ=今回の競馬場×馬場の3年勝率。🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。"),
                         "Bloodline": st.column_config.TextColumn("血統(父/母父)", width="large"),
+                        "BloodStats": st.column_config.TextColumn("🧬血統実績(複/回)", width="small",
+                                 help="父×今回条件(馬場/距離)の複勝率/単勝回収率(blood_dict.db)。🔥=回収率≥100% 💰=≥85%"),
                         "Jockey": st.column_config.TextColumn("騎手"),
                         "JockeyChange": st.column_config.TextColumn("乗替"),
                         "Name": st.column_config.TextColumn("馬名"),
@@ -4304,6 +4329,12 @@ if nav == "🏠 Single Race Analysis":
                             return out
                         if 'Trainer' in view_df.columns:
                             styled_df = styled_df.apply(color_trainer, axis=0, subset=['Trainer'])
+
+                        def color_bloodstats(s):
+                            """血統実績(複/回)は緑文字で表示。空欄は無装飾。"""
+                            return ["color:#2e7d32; font-weight:bold" if str(v).strip() else "" for v in s]
+                        if 'BloodStats' in view_df.columns:
+                            styled_df = styled_df.apply(color_bloodstats, axis=0, subset=['BloodStats'])
                         
                         if 'AvgPCI' in view_df.columns:
                             styled_df = styled_df.apply(color_pci, axis=0, subset=['AvgPCI'])
@@ -5908,7 +5939,7 @@ if nav == "🧹 消去フィルター":
         st.markdown("### 🎯 強適消去エンジン（検証済み）")
         st.caption("市場順位±検証済みファクター（黄金ライン/厩舎当コース＝＋、牝冬春/大幅距離変更/初ダート/前走フロック＝−）"
                    "で強適消去スコアを算出→下位半分を消去。消した中から妙味の穴1頭を救出し、危険な人気馬も検知します。"
-                   "※俗説条件(前走着順/年齢/ローテ/血統等)は検証で過剰人気=非採用。必要なら下のAIフィルタで任意追加。")
+                   "※俗説条件(前走着順/年齢/ローテ/血統等)は検証で過剰人気=非採用。回顧時は下の📝消去理由で残し学習を蓄積できます。")
         _ekey = f"kf_elim_{race_id_input}"
         _elim_clicked = st.button("▶ 強適消去エンジンを実行", key="kf_elim_run", type="primary")
         if _elim_clicked:
@@ -5918,6 +5949,7 @@ if nav == "🧹 消去フィルター":
             with st.spinner("検証ファクターを照合中..."):
                 try:
                     from core import jockey_jv as _jj
+                    from core import elim_reasons as _er
                     _jyo = str(race_id_input)[4:6]
                     _surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
                     try:
@@ -5969,15 +6001,25 @@ if nav == "🧹 消去フィルター":
                         except Exception:
                             pass
                         _rest = False
+                        _gap_days = None
                         try:
                             _pdt = (_ctx or {}).get('prev_date')
                             if _pdt and len(_dv) >= 8:
                                 _gap = (datetime.strptime(_dv[:8], '%Y%m%d')
                                         - datetime.strptime(_pdt, '%Y%m%d')).days
+                                _gap_days = _gap
                                 if _gap >= 180:
                                     _rest = True
                         except Exception:
                             pass
+                        # 馬体重増減(タグ用)
+                        _zg_e = None
+                        _mzg_e = re.search(r'\(([-+]?\d+)\)', str(_r.get('Weight', '') or ''))
+                        if _mzg_e:
+                            try:
+                                _zg_e = int(_mzg_e.group(1))
+                            except Exception:
+                                _zg_e = None
                         _nige = bool(_ctx and _ctx.get('prev_kyaku') == '1')
                         # 🔥末脚救出(独立): 人気薄≥6×末脚指数≥0.8×2走以上(scripts/spurt_index_backtest.py検証)
                         _si = (_ctx or {}).get('spurt_index')
@@ -6011,12 +6053,21 @@ if nav == "🧹 消去フィルター":
                         _pos = bool(_posr)
                         _neg = bool(_negr)
                         _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
+                        # 消去理由ラーニング用の構造タグ
+                        _tags = sorted(_er.compute_tags(
+                            ninki=(float(_pop) if pd.notnull(_pop) else None),
+                            prev_dist=(_ctx or {}).get('prev_dist'), cur_dist=_dist,
+                            layoff_days=_gap_days, spurt_index=_si, spurt_runs=_sr,
+                            zogen=_zg_e, sex_age=_sa, prev_kyaku=(_ctx or {}).get('prev_kyaku'),
+                            surface=_surf, dirt_runs=(_ctx or {}).get('dirt_runs'),
+                            topswap=_topswap))
                         _erows.append({'馬番': _um, '馬名': _nm,
                                        '人気': int(_pop) if pd.notnull(_pop) else None,
                                        'オッズ': float(_odds) if pd.notnull(_odds) else None,
                                        'score': _score, 'pos': _pos, 'neg': _neg,
                                        '妙味材料': ' / '.join(_posr) or '-',
-                                       '危険材料': ' / '.join(_negr) or '-'})
+                                       '危険材料': ' / '.join(_negr) or '-',
+                                       '_tags': _tags})
                     st.session_state[_ekey] = _erows
                 except Exception as _e:
                     st.session_state[_ekey] = []
@@ -6025,15 +6076,31 @@ if nav == "🧹 消去フィルター":
         if not _erows and _ekey not in st.session_state:
             st.info("👆「▶ 強適消去エンジンを実行」を押すと、検証ファクター照合と消去判定を行います。")
         if _erows:
+            from core import elim_reasons as _er
             _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
             _n = len(_edf)
             _keep = (_n + 1) // 2
             _edf['判定'] = ['✅残し' if i < _keep else '🧹消し' for i in range(_n)]
+            # --- 消去理由ラーニング: 学習済みタグに合致する消し馬を自動で残しに昇格 ---
+            _ledger = _er.load_ledger()
+            _learned = _er.learned_tags(_ledger)   # 3回以上たまったタグ
+            _edf['学習残し'] = ''
+            if _learned:
+                for _ix, _rr in _edf.iterrows():
+                    if _edf.at[_ix, '判定'] == '🧹消し':
+                        _hit = sorted(set(_rr.get('_tags') or []) & _learned)
+                        if _hit:
+                            _edf.at[_ix, '判定'] = '✅残し'
+                            _edf.at[_ix, '学習残し'] = '♻️' + '/'.join(_er.TAG_LABEL.get(k, k) for k in _hit)
             _cut = _edf[_edf['判定'] == '🧹消し']
             _ana = _cut[(_cut['pos']) & (_cut['人気'].fillna(99) >= 8)].sort_values('オッズ', ascending=False)
             _anauma = _ana.iloc[0] if not _ana.empty else None
             _dgr = _edf[(_edf['人気'].fillna(99) <= 3) & (_edf['neg'])]
-            _show = _edf[['判定', '馬番', '馬名', '人気', 'オッズ', '妙味材料', '危険材料']]
+            _has_learn = (_edf['学習残し'].astype(str).str.len() > 0).any()
+            _show_cols = ['判定', '馬番', '馬名', '人気', 'オッズ', '妙味材料', '危険材料']
+            if _has_learn:
+                _show_cols.append('学習残し')
+            _show = _edf[_show_cols]
 
             def _row_color(s):
                 return ['background-color:#f1f3f5;color:#adb5bd' if v == '🧹消し'
@@ -6044,7 +6111,11 @@ if nav == "🧹 消去フィルター":
                              hide_index=True, use_container_width=True, column_config=_elim_colcfg)
             except Exception:
                 st.dataframe(_show, hide_index=True, use_container_width=True, column_config=_elim_colcfg)
-            st.caption(f"全{_n}頭 → ✅残し{_keep}頭 / 🧹消し{_n - _keep}頭（強適消去スコア＝市場順位±検証ファクター）")
+            _keep_n = int((_edf['判定'] == '✅残し').sum())
+            _learn_n = int((_edf['学習残し'].astype(str).str.len() > 0).sum())
+            st.caption(f"全{_n}頭 → ✅残し{_keep_n}頭 / 🧹消し{_n - _keep_n}頭"
+                       + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
+                       + "（強適消去スコア＝市場順位±検証ファクター）")
             _ec1, _ec2 = st.columns(2)
             with _ec1:
                 if _anauma is not None:
@@ -6064,6 +6135,55 @@ if nav == "🧹 消去フィルター":
                     st.caption("検証: −ファクター人気馬は他の人気馬より3着内 約-2.6pp(z有意)")
                 else:
                     st.info("⚠️ 危険な人気馬: 該当なし")
+
+            # ===== 📝 消去理由ラーニング（消し→残しの学習台帳）=====
+            with st.expander("📝 消去理由を記録（消し→残しの学習）", expanded=False):
+                st.caption("終了レースの回顧用。3着以内に来た馬が『🧹消し』に入っていたら、その馬を残しに変更し"
+                           "理由（自由文・空欄可）と条件タグを記録します。同じタグが"
+                           f"**{_er.PROMOTE_THRESHOLD}回**たまると、以後そのタグに合致する消し馬を自動で『✅残し』に昇格します。")
+                st.caption("⚠️ これは検証済みエッジではなく個人の実観測台帳。人気薄/牝馬等の広いタグは多くの馬を残してしまう"
+                           "ので、できるだけ具体的な状況タグを選んでください。")
+                _cut_now = _edf[_edf['判定'] == '🧹消し']
+                _nameof_e = {int(r['馬番']): str(r['馬名']) for _, r in _edf.iterrows()}
+                _tagsof_e = {int(r['馬番']): list(r.get('_tags') or []) for _, r in _edf.iterrows()}
+                if _cut_now.empty:
+                    st.info("現在『🧹消し』の馬はいません（全頭残し）。")
+                else:
+                    _cut_ums = [int(x) for x in _cut_now['馬番'].tolist()]
+                    _sel_um = st.selectbox(
+                        "残しに変更する馬（消しの中から）", _cut_ums,
+                        format_func=lambda u: f"{u} {_nameof_e.get(u, '')}", key=f"er_sel_{race_id_input}")
+                    _auto = [k for k in _er.TAG_ORDER if k in set(_tagsof_e.get(_sel_um, []))]
+                    _picked = st.multiselect(
+                        "条件タグ（この馬を残す根拠。自動判定を初期選択。追加・削除可）",
+                        _er.TAG_ORDER, default=_auto,
+                        format_func=lambda k: _er.TAG_LABEL.get(k, k), key=f"er_tags_{race_id_input}_{_sel_um}")
+                    _reason_txt = st.text_input(
+                        "消去理由（自由文・空欄可）", placeholder="例: 雨で道悪替わり身／前走は不利",
+                        key=f"er_reason_{race_id_input}_{_sel_um}")
+                    if st.button("💾 残しに変更して学習に記録", key=f"er_save_{race_id_input}", type="primary"):
+                        _row_e = _edf[_edf['馬番'] == _sel_um].iloc[0]
+                        _ok = _er.add_entry(_er.make_entry(
+                            race_id=race_id_input, umaban=_sel_um, name=_nameof_e.get(_sel_um, ''),
+                            ninki=(int(_row_e['人気']) if pd.notnull(_row_e['人気']) else None),
+                            odds=(float(_row_e['オッズ']) if pd.notnull(_row_e['オッズ']) else None),
+                            reason=_reason_txt, tags=_picked))
+                        if _ok:
+                            st.toast(f"{_sel_um} {_nameof_e.get(_sel_um, '')} を学習台帳に記録しました", icon="📝")
+                            st.rerun()
+                        else:
+                            st.toast("記録に失敗しました", icon="⚠️")
+                # 学習状況の表示
+                _counts = _er.tag_counts(_ledger)
+                if _counts:
+                    st.markdown("**📚 タグ学習状況**（台帳 {} 件）".format(len(_ledger)))
+                    _crows = [{'条件タグ': _er.TAG_LABEL.get(k, k), '記録回数': n,
+                               '状態': f'✅学習済み(自動残し)' if n >= _er.PROMOTE_THRESHOLD
+                                       else f'あと{_er.PROMOTE_THRESHOLD - n}回で有効'}
+                              for k, n in sorted(_counts.items(), key=lambda x: -x[1])]
+                    st.dataframe(pd.DataFrame(_crows), hide_index=True, use_container_width=True)
+                else:
+                    st.caption("まだ記録がありません。")
 
             # ===== 🎯 3連複フォーメーション（消去エンジン連携）=====
             st.markdown("#### 🎯 3連複フォーメーション（消去エンジン連携）")
@@ -6283,224 +6403,6 @@ if nav == "🧹 消去フィルター":
                                    "特に人気薄でEVが極端に高い馬はモデルの過大評価の可能性が高い。"
                                    "実証エッジは✨Scannerの妙味シグナル(単複乖離/断層/黄金ライン)側にある。"
                                    "この画面は券種比較と配分(合成オッズ/ﾄﾘｶﾞﾐ/ケリー)の構造づくりに使うのが安全。")
-        st.divider()
-
-        col_left, col_right = st.columns([1, 3])
-        
-        with col_left:
-            st.markdown("### 🧠 AIフィルタリング")
-            st.caption("自然言語で条件を追加できます。")
-            st.caption("例: 「オッズ10倍未満」「ルメール騎手」「3歳馬」「馬番が奇数」")
-            
-            col_cond_input, col_cond_add = st.columns([4, 1])
-            with col_cond_input:
-                new_cond = st.text_input(
-                    "条件を入力してEnter",
-                    placeholder="ルメール騎手",
-                    label_visibility="collapsed",
-                    key="kf_new_cond_input"
-                )
-            with col_cond_add:
-                add_cond_clicked = st.button("➕", key="kf_add_cond_btn")
-                
-            if add_cond_clicked or (new_cond and new_cond != st.session_state.get('last_processed_cond', '')):
-                if new_cond:
-                    st.session_state['last_processed_cond'] = new_cond
-                    with st.spinner("AIが条件を解析中..."):
-                        rule = convert_natural_language_to_rule(new_cond)
-                        if rule not in st.session_state['kf_rules']:
-                            st.session_state['kf_rules'].append(rule)
-                            st.rerun()
-                            
-            st.write("---")
-            st.write("**追加された条件:**")
-            
-            if not st.session_state['kf_rules']:
-                st.info("条件は追加されていません。")
-            else:
-                rules_to_delete = []
-                for idx, rule in enumerate(st.session_state['kf_rules']):
-                    explanation = rule.get("explanation", "不明な条件")
-                    
-                    r_col_chk, r_col_del = st.columns([4, 1])
-                    with r_col_chk:
-                        is_checked = st.checkbox(
-                            explanation,
-                            value=st.session_state['kf_selected_rules'].get(idx, True),
-                            key=f"kf_rule_chk_{idx}"
-                        )
-                        st.session_state['kf_selected_rules'][idx] = is_checked
-                    with r_col_del:
-                        if st.button("🗑️", key=f"kf_rule_del_{idx}"):
-                            rules_to_delete.append(idx)
-                            
-                if rules_to_delete:
-                    for idx in sorted(rules_to_delete, reverse=True):
-                        st.session_state['kf_rules'].pop(idx)
-                        if idx in st.session_state['kf_selected_rules']:
-                            del st.session_state['kf_selected_rules'][idx]
-                    st.rerun()
-                    
-                st.write("---")
-                st.write("**📁 フィルターパックとして保存**")
-                pack_name = st.text_input("パック名（例: １次選抜）", placeholder="１次選抜", key="kf_pack_name")
-                if st.button("💾 選択した条件をパックとして保存", use_container_width=True):
-                    if pack_name:
-                        selected_rules = [
-                            st.session_state['kf_rules'][idx]
-                            for idx, checked in st.session_state['kf_selected_rules'].items()
-                            if checked and idx < len(st.session_state['kf_rules'])
-                        ]
-                        if selected_rules:
-                            packs[pack_name] = selected_rules
-                            save_filter_packs(packs)
-                            st.success(f"パック『{pack_name}』を保存しました！")
-                            st.rerun()
-                        else:
-                            st.warning("保存する条件が選択されていません。")
-                    else:
-                        st.warning("パック名を入力してください。")
-                        
-            if packs:
-                st.write("---")
-                st.write("**📂 保存済みパックを読み込む**")
-                selected_pack = st.selectbox("パックを選択", ["選択してください..."] + list(packs.keys()), key="kf_pack_select")
-                if selected_pack != "選択してください...":
-                    if st.button("⚡ パックを適用する", use_container_width=True):
-                        st.session_state['kf_rules'] = list(packs[selected_pack])
-                        st.session_state['kf_selected_rules'] = {i: True for i in range(len(packs[selected_pack]))}
-                        st.success(f"パック『{selected_pack}』を適用しました！")
-                        st.rerun()
-                    if st.button("🗑️ パックを削除する", use_container_width=True):
-                        del packs[selected_pack]
-                        save_filter_packs(packs)
-                        st.success(f"パック『{selected_pack}』を削除しました。")
-                        st.rerun()
-                        
-        with col_right:
-            race_name = metadata.get('RaceName', metadata.get('RaceTitle', ''))
-            if not race_name and 'RaceName' in df.columns and not df.empty:
-                race_name = str(df['RaceName'].iloc[0]) if pd.notna(df['RaceName'].iloc[0]) else ''
-            if not race_name:
-                race_name = 'Unknown Race'
-            race_date = df.iloc[0]['RaceDate'] if not df.empty else datetime.now().strftime("%Y/%m/%d")
-            venue = df.iloc[0]['Venue'] if not df.empty else 'Unknown'
-            dist = df.iloc[0]['CurrentDistance'] if not df.empty else 1600
-            surf = df.iloc[0]['CurrentSurface'] if not df.empty else '芝'
-            weather = metadata.get('weather', '-')
-            condition = metadata.get('condition', '-')
-            class_val = metadata.get('class', '-')
-            weight_rule = metadata.get('weight_rule', '-')
-            
-            header_detail = f"{race_date} | {venue} {class_val} {weight_rule} / {surf}{dist}m | 天候:{weather} 馬場:{condition}"
-            
-            active_rules = [
-                st.session_state['kf_rules'][idx]
-                for idx, checked in st.session_state['kf_selected_rules'].items()
-                if checked and idx < len(st.session_state['kf_rules'])
-            ]
-            
-            eliminated_umaban = []
-            display_rows = []
-            
-            for _, row in df.iterrows():
-                row_dict = row.to_dict()
-                
-                is_eliminated = False
-                matched_rule_explanation = ""
-                for rule in active_rules:
-                    if apply_rule_to_row(row_dict, rule):
-                        is_eliminated = True
-                        matched_rule_explanation = rule.get("explanation", "")
-                        break
-                        
-                row_data = {
-                    'Status': '❌ 消去' if is_eliminated else '✅ 残存',
-                    'MatchReason': matched_rule_explanation if is_eliminated else '',
-                    'Umaban': int(row['Umaban']) if pd.notna(row['Umaban']) else 0,
-                    'Name': row['Name'],
-                    'SexAge': row.get('SexAge', '-'),
-                    'Jockey': row['Jockey'],
-                    'WeightCarried': row.get('WeightCarried', '-'),
-                    'Odds': row.get('Odds', 0.0),
-                    'Popularity': int(row['Popularity']) if pd.notna(row['Popularity']) else 99,
-                    'Weight': row.get('Weight', '-'),
-                    'Trainer': row.get('Trainer', '-')
-                }
-                
-                if is_eliminated:
-                    eliminated_umaban.append(row_data['Umaban'])
-                    
-                display_rows.append(row_data)
-                
-            total_horses = len(df)
-            eliminated_count = len(eliminated_umaban)
-            
-            col_h_left, col_h_right = st.columns([3, 1])
-            with col_h_left:
-                st.markdown(f"## {race_name}")
-                st.markdown(f"*{header_detail}*")
-            with col_h_right:
-                st.html(f"""
-                <div style="background-color: #1e1e1e; border: 2px solid #FF3333; border-radius: 20px; padding: 10px 20px; text-align: center; color: white; font-weight: bold; font-size: 1.1em; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    消去対象: <span style="color: #FF3333; font-size: 1.3em;">{eliminated_count}</span> / {total_horses} 頭
-                </div>
-                """)
-                
-            st.write("---")
-            
-            hide_eliminated = st.checkbox("❌ 消去対象の馬を非表示にする", value=False)
-            
-            df_display = pd.DataFrame(display_rows)
-            
-            if hide_eliminated:
-                df_display = df_display[df_display['Status'] == '✅ 残存']
-                
-            df_display = df_display.rename(columns={
-                'Status': '状態',
-                'MatchReason': '消去理由',
-                'Umaban': '馬番',
-                'Name': '馬名',
-                'SexAge': '性齢',
-                'Jockey': '騎手',
-                'WeightCarried': '斤量',
-                'Odds': '単勝オッズ',
-                'Popularity': '人気',
-                'Weight': '馬体重',
-                'Trainer': '厩舎'
-            })
-            
-            col_order = ['状態', '馬番', '馬名', '性齢', '騎手', '斤量', '単勝オッズ', '人気', '馬体重', '厩舎', '消去理由']
-            df_display = df_display[[c for c in col_order if c in df_display.columns]]
-            
-            def style_dataframe(df_in):
-                styler = df_in.style.format({
-                    '単勝オッズ': '{:.1f}'
-                })
-                
-                def apply_row_styles(row):
-                    if row['状態'] == '❌ 消去':
-                        # グレー背景 + 赤打ち消し線
-                        return [
-                            'background-color: #2e2e2e; color: #aaaaaa; '
-                            'text-decoration: line-through; text-decoration-color: #ff4444; '
-                            'text-decoration-thickness: 2px;'
-                        ] * len(row)
-                    return [''] * len(row)
-                    
-                styler = styler.apply(apply_row_styles, axis=1)
-                return styler
-                
-            st.write("**📊 出馬データ表**")
-            # 全頭スクロールなし表示: 1行あたり約35px + ヘッダー38px
-            n_rows = len(df_display)
-            table_height = 38 + n_rows * 35
-            st.dataframe(
-                style_dataframe(df_display),
-                use_container_width=True,
-                hide_index=True,
-                height=table_height
-            )
 
 # Tab 2 placeholder logic
 if nav == "🔍 Race Scanner (Batch)":
