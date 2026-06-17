@@ -5682,6 +5682,51 @@ if nav == "🧹 消去フィルター":
                    "(0個31.5%→3個14.9%→4個13.7%→7個10.3%)。3連複フォーメーションの『相手から外す』点数削減と軸の不安可視化に使う。")
         from core import elim_cross as _exc
         try:
+            # --- 🏠 Single Race Analysis の採点テーブル(総合戦闘力/予測スコア)を取得し下位30%を判定 ---
+            _score_df = st.session_state.get('current_bonus_df')
+            if _score_df is None:
+                _score_df = st.session_state.get('df')
+            _battle_low = {}   # 馬番 -> True(総合戦闘力 下位30%)
+            _proj_low = {}     # 馬番 -> True(予測スコア 下位30%)
+            _score_match = 0   # この消去ページのレースと採点テーブルの馬番一致数
+            _score_avail = False
+            try:
+                if _score_df is not None and not _score_df.empty and 'Umaban' in _score_df.columns:
+                    _sd = _score_df.copy()
+                    _sd['_um'] = pd.to_numeric(_sd['Umaban'], errors='coerce')
+                    _kf_ums = set(pd.to_numeric(df['Umaban'], errors='coerce').dropna().astype(int).tolist()) if 'Umaban' in df.columns else set()
+                    _sd_ums = set(_sd['_um'].dropna().astype(int).tolist())
+                    _score_match = len(_kf_ums & _sd_ums)
+                    # 同一レース判定: 馬番集合が十分に重なる(別レースの採点を誤適用しない)
+                    if _kf_ums and _score_match >= max(3, int(0.6 * len(_kf_ums))):
+                        _score_avail = True
+                        if 'BattleScore' in _sd.columns:
+                            _bs = pd.to_numeric(_sd['BattleScore'], errors='coerce')
+                            _bth = _bs.quantile(0.30)  # 下位30%=小さい方
+                            for _, _sr in _sd.iterrows():
+                                _u = _sr['_um']
+                                if pd.notnull(_u) and pd.notnull(_bs.loc[_sr.name]) and _bs.loc[_sr.name] <= _bth:
+                                    _battle_low[int(_u)] = True
+                        _pcol = 'Projected Score' if 'Projected Score' in _sd.columns else None
+                        if _pcol:
+                            _ps = pd.to_numeric(_sd[_pcol], errors='coerce')
+                            _pth = _ps.quantile(0.30)
+                            for _, _sr in _sd.iterrows():
+                                _u = _sr['_um']
+                                if pd.notnull(_u) and pd.notnull(_ps.loc[_sr.name]) and _ps.loc[_sr.name] <= _pth:
+                                    _proj_low[int(_u)] = True
+            except Exception:
+                _score_avail = False
+            if _score_avail:
+                _use_score = st.checkbox(
+                    "🏠 Single Race Analysisの『総合戦闘力／予測スコア』下位30%も加味する",
+                    value=True, key=f"kf_excross_usescore_{race_id_input}",
+                    help="🏠で採点済みのテーブルから、総合戦闘力・予測スコアが下位30%の馬に弱点フラグを追加します。"
+                         "※これらは人気/オッズを内包し検証(backtest)不可のため、推定複勝率(検証値)には算入せず『参考の重ね』として表示します。")
+            else:
+                _use_score = False
+                st.caption("ℹ️ 総合戦闘力／予測スコアを加味するには、先に🏠 Single Race Analysisで**同じレースを採点**してください"
+                           "（採点テーブルの馬番がこのレースと一致すると自動で取り込みます）。")
             _tg_default = []
             _all_names_ec = df['Name'].astype(str).tolist() if 'Name' in df.columns else []
             _tg_sel = st.multiselect(
@@ -5730,13 +5775,17 @@ if nav == "🧹 消去フィルター":
                             cur_dist=_cdist,
                             zogen=_zg, age=_age,
                             training_grade='C' if _nm in _tg_sel else None,
+                            battle_low=bool(_use_score and _battle_low.get(_um)),
+                            proj_low=bool(_use_score and _proj_low.get(_um)),
                         )
-                        _cnt = len(_fl)
+                        _cnt = len(_fl)                       # 総重複(検証+実観測/score)
+                        _vcnt = _exc.verified_count(_fl)      # 検証済みのみ(推定複勝率の根拠)
                         _xrows.append({
                             '馬番': _um, '馬名': _nm,
                             '人気': int(_pop) if pd.notnull(_pop) else None,
                             'フラグ数': _cnt,
-                            '推定複勝率': _exc.band_fukusho(_cnt),
+                            '検証数': _vcnt,
+                            '推定複勝率': _exc.band_fukusho(_vcnt),
                             '点灯フラグ': ' / '.join(_exc.FLAG_LABEL[k] for k in _exc.FLAG_DEFS_ORDER if k in _fl) or '-',
                         })
                     st.session_state[_xkey] = _xrows
@@ -5757,29 +5806,31 @@ if nav == "🧹 消去フィルター":
                         else:
                             out.append('')
                     return out
+                _disp_cols = ['馬番', '馬名', '人気', 'フラグ数', '検証数', '推定複勝率', '点灯フラグ']
                 try:
                     st.dataframe(
-                        _xdf[['馬番', '馬名', '人気', 'フラグ数', '推定複勝率', '点灯フラグ']].style.apply(_xcolor, subset=['フラグ数']),
+                        _xdf[_disp_cols].style.apply(_xcolor, subset=['フラグ数']),
                         hide_index=True, use_container_width=True,
                         column_config={
                             '馬番': st.column_config.NumberColumn('馬番', width='small'),
-                            'フラグ数': st.column_config.NumberColumn('🚩重複数', help="点灯した来にくさフラグの数。多いほど3着内率が下がる"),
-                            '推定複勝率': st.column_config.TextColumn('推定複勝率', help="重複数→絶対複勝率(検証値)。人気と相関＝妙味判定ではない"),
+                            'フラグ数': st.column_config.NumberColumn('🚩重複数', help="点灯した来にくさフラグの総数(検証済+調教/総合力/予測スコア)。多いほど3着内率が下がる"),
+                            '検証数': st.column_config.NumberColumn('検証数', width='small', help="うちjravan.dbで検証済みのフラグ数。推定複勝率はこの数だけで算定(score/調教は人気内包・検証不可のため除外)"),
+                            '推定複勝率': st.column_config.TextColumn('推定複勝率', help="検証数→絶対複勝率(検証値)。人気と相関＝妙味判定ではない"),
                             '点灯フラグ': st.column_config.TextColumn('点灯した弱点', width='large'),
                         })
                 except Exception:
-                    st.dataframe(_xdf[['馬番', '馬名', '人気', 'フラグ数', '推定複勝率', '点灯フラグ']],
-                                 hide_index=True, use_container_width=True)
+                    st.dataframe(_xdf[_disp_cols], hide_index=True, use_container_width=True)
                 _heavy = _xdf[_xdf['フラグ数'] >= 4]
                 if not _heavy.empty:
-                    st.error("🧹 消去推奨（弱点4つ以上＝推定複勝率≦14%）: "
-                             + " / ".join(f"{int(r['馬番'])}{r['馬名']}({int(r['フラグ数'])}個)" for _, r in _heavy.iterrows()))
-                _hpop = _xdf[(_xdf['人気'].fillna(99) <= 5) & (_xdf['フラグ数'] >= 4)]
+                    st.error("🧹 消去候補（弱点重複4つ以上）: "
+                             + " / ".join(f"{int(r['馬番'])}{r['馬名']}(計{int(r['フラグ数'])}個/検証{int(r['検証数'])}個)" for _, r in _heavy.iterrows()))
+                _hpop = _xdf[(_xdf['人気'].fillna(99) <= 5) & (_xdf['検証数'] >= 4)]
                 if not _hpop.empty:
-                    st.warning("⚠️ 人気なのに弱点多数（過剰人気の兆候・検証残差-1.8〜): "
-                               + " / ".join(f"{int(r['馬番'])}{r['馬名']}({r['人気']}人気/{int(r['フラグ数'])}個)" for _, r in _hpop.iterrows()))
+                    st.warning("⚠️ 人気なのに検証弱点多数（過剰人気の兆候・検証残差-1.8〜): "
+                               + " / ".join(f"{int(r['馬番'])}{r['馬名']}({r['人気']}人気/検証{int(r['検証数'])}個)" for _, r in _hpop.iterrows()))
                 st.caption("※各フラグは単体では人気に織込み済(妙味ではない)。重複数による絶対複勝率の低下を『相手絞り/軸の不安』として使う。"
-                           "調教C以下は検証不可の実観測フラグ。")
+                           "**推定複勝率は『検証数』のみで算定**。調教C以下・総合力下位・予測下位の3つは検証不可(人気/オッズ内包)のため"
+                           "『重複数(参考の重ね)』には乗るが推定複勝率には算入しない。")
         except Exception as _xe:
             st.warning(f"消去クロステーブル エラー: {_xe}")
         st.divider()

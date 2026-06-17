@@ -30,12 +30,23 @@ FLAG_DEFS = [
     ('zogen',   '体重±16k',    '当日馬体重の増減が±16kg以上'),
     ('age8',    '8歳上',       '8歳以上の高齢'),
     ('train',   '調教C以下',   '調教評価がC以下(検証不可・実観測フラグ)'),
+    ('battle',  '総合力下位',  '🏠Single Race Analysisの総合戦闘力が下位30%(検証不可・人気内包)'),
+    ('proj',    '予測下位',    '🏠Single Race Analysisの予測スコアが下位30%(検証不可・人気内包)'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
 FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
-# 検証DBに無い=歴史的バックテスト不可のフラグ
-UNVERIFIED = {'train'}
+# 検証DBに無い=歴史的バックテスト不可のフラグ。これらは推定複勝率(BAND)の算定から除外する。
+#  ・train: 調教評価(過去データがDBに無い)
+#  ・battle/proj: ライブ生成スコアで再構築不可、かつ人気/オッズを内包し他フラグと相関
+UNVERIFIED = {'train', 'battle', 'proj'}
+# BAND(推定複勝率)の根拠となる検証済みフラグのみ
+VERIFIED_ORDER = [k for k in FLAG_DEFS_ORDER if k not in UNVERIFIED]
+
+
+def verified_count(flag_set):
+    """検証済みフラグの点灯数(BANDの入力)。実観測/score系は数えない。"""
+    return len([k for k in flag_set if k not in UNVERIFIED])
 
 SLOW3F_TH = 0.30        # spurt_index(0-1, 高=好末脚)がこれ以下=末脚下位
 SLOW3F_MIN_RUNS = 2
@@ -72,7 +83,8 @@ def _daygap(prev_date, race_date):
 def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
                   avg_c4ratio=None, prev_date=None, race_date=None,
                   prev_dist=None, cur_dist=None, zogen=None, age=None,
-                  training_grade=None, include_train=True):
+                  training_grade=None, include_train=True,
+                  battle_low=False, proj_low=False):
     """1頭の点灯フラグ集合(set of key)を返す。すべて pre-race 情報のみ。
     引数は app 側で ctx/horse_elim_stats/出馬表から渡す。"""
     f = set()
@@ -104,4 +116,9 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
         g = str(training_grade).strip().upper()[:1]
         if g in ('C', 'D', 'E', 'F'):
             f.add('train')
+    # 🏠 Single Race Analysis の総合戦闘力/予測スコア下位(検証不可・任意加味)
+    if battle_low:
+        f.add('battle')
+    if proj_low:
+        f.add('proj')
     return f
