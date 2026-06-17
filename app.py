@@ -2085,13 +2085,19 @@ if nav == "🏠 Single Race Analysis":
                                     return ['color:#2A9D8F; font-weight:bold' if '◎' in str(v) else
                                             'color:#F4A261' if '○' in str(v) else
                                             'color:#aaa' for v in s]
-                                # フィールド平均PCI ±2.0 以内の馬は行全体を薄い黄色に
+                                # フィールド平均PCI: ±1.0以内=黄緑(#ADFF2F)、±2.0以内=薄黄(#FFF9C4)
                                 def _highlight_near_avg(row):
                                     try:
-                                        near = abs(float(row['AvgPCI']) - avg_pci_val) <= 2.0
+                                        _d = abs(float(row['AvgPCI']) - avg_pci_val)
                                     except Exception:
-                                        near = False
-                                    return ['background-color:#FFF9C4' if near else '' for _ in row]
+                                        _d = None
+                                    if _d is not None and _d <= 1.0:
+                                        _bg = 'background-color:#ADFF2F'
+                                    elif _d is not None and _d <= 2.0:
+                                        _bg = 'background-color:#FFF9C4'
+                                    else:
+                                        _bg = ''
+                                    return [_bg for _ in row]
                                 st.dataframe(
                                     _mh_df.style
                                         .apply(_highlight_near_avg, axis=1)
@@ -4237,7 +4243,13 @@ if nav == "🏠 Single Race Analysis":
                         "SpeedIndex": st.column_config.NumberColumn("スピード指数 (旧)", format="%.1f"),
                         "AvgAgari": st.column_config.TextColumn("上がり3F (順位)"),
                         "AvgPosition": st.column_config.TextColumn("平均位置取り"),
-                        "Alert": st.column_config.TextColumn("Alert"),
+                        "Alert": st.column_config.TextColumn(
+                            "Alert",
+                            help="💣/💀=危険人気馬(軸外し推奨) ／ ◎=軸候補 ／ ⏱️=時計注意 ／ "
+                                 "🅑初ブリ=初ブリンカーで軽い過剰人気 ／ "
+                                 "♀冬ﾌｪｰﾄﾞ=牝馬×12〜2月、♀春ﾌｪｰﾄﾞ=牝馬×3〜5月。"
+                                 "牝馬は冬春に実力以上の人気を集めやすく(検証:牝×冬z-4.6/牝×春z-3.8)、"
+                                 "人気のわりに走らない＝買うと損になりやすい注意フラグ(妙味なし・軸非推奨)。"),
                         "RiskFlags": st.column_config.TextColumn("不安要素"),
                         "AxisMark": st.column_config.TextColumn(
                             "🎯軸馬候補",
@@ -4286,7 +4298,7 @@ if nav == "🏠 Single Race Analysis":
                             colors = []
                             for val in s:
                                 if "💣" in str(val): colors.append("background-color: #444444; color: white; font-weight: bold")
-                                elif "💀" in str(val): colors.append("font-weight: bold; color: yellow")
+                                elif "💀" in str(val): colors.append("background-color: #343a40; color: #ffd43b; font-weight: bold")
                                 elif "◎" in str(val): colors.append("font-weight: bold; color: red")
                                 elif "⏱️" in str(val): colors.append("font-weight: bold; color: gray")
                                 elif "初ブリ" in str(val): colors.append("font-weight: bold; color: #e8590c")
@@ -6348,6 +6360,15 @@ if nav == "🧹 消去フィルター":
 
             # ===== 🎯 3連複フォーメーション（消去エンジン連携）=====
             st.markdown("#### 🎯 3連複フォーメーション（消去エンジン連携）")
+            # 列ごとに選択pill(タグ)の色を変える: 1列目=既定(赤系)/2列目=#008080/3列目=#0000ff
+            st.markdown(
+                "<style>"
+                ".st-key-kf_form_c2 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
+                ".st-key-kf_form_c3 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
+                ".st-key-kf_form_c2 span[data-baseweb=\"tag\"] *,"
+                ".st-key-kf_form_c3 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
+                "</style>",
+                unsafe_allow_html=True)
             st.caption("✅残し上位を軸/対抗に、🎯穴・🛟ボーダー残しを押さえに自動配置。役割分担で無駄を省きます。"
                        "（買い目構造は予測エッジでなく点数最適化。検証済み①人気-人気-穴の方針と併用）")
             _keepdf = _edf[_edf['判定'] == '✅残し']
@@ -6377,6 +6398,14 @@ if nav == "🧹 消去フィルター":
                 if _bu not in _def1 and _bu not in _def2 and _bu not in _def3:
                     _def3 = _def3 + [_bu]
             _all_um = [int(x) for x in _edf['馬番'].tolist()]
+            # 型・ボーダー残し頭数・レースが変わったら3列を消去エンジンの初期配置に作り直す。
+            # (multiselectのdefaultは初回描画しか効かないStreamlit仕様への対処。手動編集中は維持)
+            _form_sig = (str(race_id_input), _tmpl, tuple(_def1), tuple(_def2), tuple(_def3))
+            if st.session_state.get('kf_form_sig') != _form_sig:
+                st.session_state['kf_form_c1'] = _def1
+                st.session_state['kf_form_c2'] = _def2
+                st.session_state['kf_form_c3'] = _def3
+                st.session_state['kf_form_sig'] = _form_sig
             _fc1, _fc2, _fc3 = st.columns(3)
             with _fc1:
                 _c1 = st.multiselect("1列目 軸", _all_um, default=_def1,
@@ -6569,6 +6598,83 @@ if nav == "🧹 消去フィルター":
                                    "特に人気薄でEVが極端に高い馬はモデルの過大評価の可能性が高い。"
                                    "実証エッジは✨Scannerの妙味シグナル(単複乖離/断層/黄金ライン)側にある。"
                                    "この画面は券種比較と配分(合成オッズ/ﾄﾘｶﾞﾐ/ケリー)の構造づくりに使うのが安全。")
+
+            # ===== 🎯 3連単フォーメーション（消去エンジン連携）=====
+            try:
+                _edf_tri = _edf  # 消去エンジンの判定テーブル(同ページ上部で生成済)
+            except NameError:
+                _edf_tri = None
+            if _edf_tri is not None and not _edf_tri.empty:
+                st.markdown("---")
+                st.markdown("#### 🎯 3連単フォーメーション（消去エンジン連携）")
+                # 列ごとに選択pillの色を変える: 1着=既定(赤系)/2着=#008080/3着=#0000ff
+                st.markdown(
+                    "<style>"
+                    ".st-key-kf_tri_c2 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
+                    ".st-key-kf_tri_c3 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
+                    ".st-key-kf_tri_c2 span[data-baseweb=\"tag\"] *,"
+                    ".st-key-kf_tri_c3 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
+                    "</style>",
+                    unsafe_allow_html=True)
+                st.caption("3連複と同じ消去エンジン配置を初期値に、着順あり(1着-2着-3着)で組みます。"
+                           "✅残し上位を1着/2着、🎯穴・🛟ボーダー残しを3着候補に自動配置。"
+                           "（着順固定の分だけ点数は増えます。検証済みの妙味は相手選びの方針と併用）")
+                _tri_tmpl = st.radio("フォーメーション型", ["1着流し(1-4-7)", "2-4-7型", "カスタム"],
+                                     horizontal=True, key="kf_tri_tmpl")
+                if _tri_tmpl == "2-4-7型":
+                    _ta, _tb, _tcn = 2, 4, 7
+                else:
+                    _ta, _tb, _tcn = 1, 4, 7
+                _tdef1 = _keep_um[:_ta]
+                _tdef2 = _keep_um[_ta:_ta + _tb]
+                _tdef3 = _keep_um[_ta + _tb:_ta + _tb + _tcn]
+                if _ana_um is not None and _ana_um not in _tdef3:
+                    _tdef3 = (_tdef3 + [_ana_um])[:_tcn + 1]
+                for _bu in _border_um:
+                    if _bu not in _tdef1 and _bu not in _tdef2 and _bu not in _tdef3:
+                        _tdef3 = _tdef3 + [_bu]
+                # 型・ボーダー残し・レースが変わったら初期配置に作り直す(3連複と同じ仕組み)
+                _tri_sig = (str(race_id_input), _tri_tmpl,
+                            tuple(_tdef1), tuple(_tdef2), tuple(_tdef3))
+                if st.session_state.get('kf_tri_sig') != _tri_sig:
+                    st.session_state['kf_tri_c1'] = _tdef1
+                    st.session_state['kf_tri_c2'] = _tdef2
+                    st.session_state['kf_tri_c3'] = _tdef3
+                    st.session_state['kf_tri_sig'] = _tri_sig
+                _tcol1, _tcol2, _tcol3 = st.columns(3)
+                with _tcol1:
+                    _ti1 = st.multiselect("1着", _all_um, default=_tdef1,
+                                          format_func=_lab, key="kf_tri_c1")
+                with _tcol2:
+                    _ti2 = st.multiselect("2着", _all_um, default=_tdef2,
+                                          format_func=_lab, key="kf_tri_c2")
+                with _tcol3:
+                    _ti3 = st.multiselect("3着", _all_um, default=_tdef3,
+                                          format_func=_lab, key="kf_tri_c3")
+                try:
+                    from core import trio_engine as _te2
+                    import importlib as _il_te3; _il_te3.reload(_te2)
+                    _tris = _te2.build_trifecta_formation(_ti1, _ti2, _ti3)
+                except Exception as _tfe:
+                    _tris = []
+                    st.warning(f"3連単フォーメーション生成エラー: {_tfe}")
+                if _tris:
+                    _tunit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
+                                             value=100, step=100, key="kf_tri_unit")
+                    st.success(f"買い目 {len(_tris)}点 × {int(_tunit)}円 = "
+                               f"合計 {len(_tris) * int(_tunit):,}円")
+                    _tbl = pd.DataFrame([{
+                        '馬番': '→'.join(str(u) for u in t),
+                        '馬名': ' → '.join(f"({u}){_name_of.get(u, '')}" for u in t),
+                    } for t in _tris])
+                    st.dataframe(_tbl, hide_index=True, use_container_width=True, height=240,
+                                 column_config={
+                                     '馬番': st.column_config.TextColumn('馬番(1→2→3着)', width='small'),
+                                     '馬名': st.column_config.TextColumn('馬名(1着→2着→3着)'),
+                                 })
+                else:
+                    st.info("各列(1着/2着/3着)に馬を選ぶと3連単の買い目が生成されます"
+                            "（着順あり・3頭が相異なる組合せ）。")
 
 # Tab 2 placeholder logic
 if nav == "🔍 Race Scanner (Batch)":
@@ -7215,7 +7321,7 @@ if nav == "📊 History & Review":
                             colors = []
                             for val in s:
                                 if "💣" in val: colors.append("background-color: #444444; color: white; font-weight: bold")
-                                elif "💀" in val: colors.append("font-weight: bold; color: yellow")
+                                elif "💀" in val: colors.append("background-color: #343a40; color: #ffd43b; font-weight: bold")
                                 elif "◎" in val: colors.append("font-weight: bold; color: red")
                                 elif "⏱️" in val: colors.append("font-weight: bold; color: gray")
                                 else: colors.append("")

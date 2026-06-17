@@ -207,6 +207,28 @@ def build_formation(col1, col2, col3):
     return out
 
 
+def build_trifecta_formation(col1, col2, col3):
+    """3連単フォーメーション。1列目(1着)/2列目(2着)/3列目(3着)の馬番リストから、
+    各列1頭ずつ・3頭が相異なる『順序付き』組合せを生成(3連単=着順あり)。
+    戻り値: 順序付きtuple(1着,2着,3着)のリスト。3連複と違い順序ごとに別の買い目。"""
+    c1 = [int(x) for x in (col1 or [])]
+    c2 = [int(x) for x in (col2 or [])]
+    c3 = [int(x) for x in (col3 or [])]
+    seen = set()
+    out = []
+    for a in c1:
+        for b in c2:
+            for c in c3:
+                if len({a, b, c}) != 3:
+                    continue
+                key = (a, b, c)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(key)
+    return out
+
+
 def build_odds_map(odds_list):
     """scraper.fetch_sanrenpuku_odds の出力 → {frozenset(3 umaban): odds}。"""
     m = {}
