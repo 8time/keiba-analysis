@@ -6097,16 +6097,27 @@ if nav == "🧹 消去フィルター":
             _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
             _n = len(_edf)
             _keep = (_n + 1) // 2
-            # 🛟ボーダー残し(=半分カットのあと1頭だけ戻す): 消去ゾーン最上位(score最大の消され馬)。
-            # scripts/keepone_backtest.py 検証(2023-25,9519R): 3着内取りこぼし14.9→10.2%、
-            # この1頭の3着内残差+0.83pt(z=+1.97)＝複勝/3連複の相手として僅かに過小評価。
-            # ※単勝ROI79%・勝利残差≒0なので単勝軸にはしない(相手専用)。6頭以上で適用。
-            _use_border = _n >= 6
+            # 🛟ボーダー残し(=半分カットのあとN頭だけ戻す): 消去ゾーン上位(score上位の消され馬)。
+            # scripts/keepmore_backtest.py 検証(2023-25,9519R) 各戻し馬の3着内人気補正残差:
+            #   +1頭目 +0.83pt(z=1.97) / +2頭目 +1.35pt(z=3.19・最強) / +3頭目 +0.78pt(z=1.84) /
+            #   +4頭目 -0.36pt(z=-0.85=人気どおり以下=損)。→ 戻す価値は+3頭目まで、+4で打ち止め。
+            #   累積3着内取りこぼし: 現行14.9% → +1:10.2% → +2:6.6% → +3:4.1%。
+            # ※どれも単勝ROI70%台=相手(複勝/3連複の押さえ)専用、単勝軸(✅残し上位)には入れない。
+            _cut_zone = _n - _keep   # 消去ゾーンの頭数
+            _border_max = max(0, min(3, _cut_zone - 1)) if _n >= 6 else 0  # 最低1頭は消しを残す
+            if _border_max > 0:
+                _border_cnt = st.slider(
+                    "🛟 ボーダー残し（半分カット後に戻す頭数）", 0, _border_max,
+                    min(2, _border_max), key=f"kf_border_n_{race_id_input}",
+                    help="消去ゾーン上位を相手(押さえ)に戻す。検証スイートスポット=2頭(z=3.19)。"
+                         "+3まで過小評価、+4で人気どおり以下=損。単勝軸には入れない。")
+            else:
+                _border_cnt = 0
 
             def _verdict(i):
                 if i < _keep:
                     return '✅残し'
-                if _use_border and i == _keep:
+                if _border_cnt and _keep <= i < _keep + _border_cnt:
                     return '🛟ボーダー残し'
                 return '🧹消し'
             _edf['判定'] = [_verdict(i) for i in range(_n)]
@@ -6156,6 +6167,92 @@ if nav == "🧹 消去フィルター":
                        + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
                        + "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）")
+
+            # ===== 📊 残った馬の期待値・回収率・連対率（jravan.db実測ベース）=====
+            st.markdown("#### 📊 残った馬の期待値・回収率・連対率")
+            from core import jockey_jv as _jjv
+            _RKEEP = _edf[_edf['判定'] != '🧹消し'].copy()
+            # オッズ帯別の実測 勝率/連対率/複勝率(2022-25)を session にキャッシュ。
+            # 期待値=回収率=勝率×オッズ(単勝は同義)。
+            if '_odds_exp_fine' not in st.session_state:
+                _ef = {}
+                try:
+                    import sqlite3 as _sq3
+                    _edges = [1.5, 2.5, 4.0, 7.0, 15.0, 30.0, 60.0]
+
+                    def _fband(o):
+                        for _i, _e in enumerate(_edges):
+                            if o <= _e:
+                                return _i
+                        return len(_edges)
+                    _con2 = _sq3.connect(_jjv.JV_DB_PATH)
+                    _rws = _con2.execute(
+                        "SELECT win_odds, chakujun FROM results "
+                        "WHERE year IN ('2022','2023','2024','2025') "
+                        "AND chakujun>0 AND win_odds>0").fetchall()
+                    _con2.close()
+                    _bk = {}
+                    for _o2, _c2 in _rws:
+                        _b = _fband(_o2)
+                        _d = _bk.setdefault(_b, [0, 0, 0, 0])
+                        _d[0] += 1
+                        _d[1] += 1 if _c2 == 1 else 0
+                        _d[2] += 1 if _c2 <= 2 else 0
+                        _d[3] += 1 if _c2 <= 3 else 0
+                    _ef = {_b: {'win': _d[1] / _d[0], 'top2': _d[2] / _d[0],
+                                'top3': _d[3] / _d[0], 'n': _d[0]} for _b, _d in _bk.items()}
+                    _ef['_edges'] = _edges
+                except Exception:
+                    _ef = {}
+                st.session_state['_odds_exp_fine'] = _ef
+            _ef = st.session_state.get('_odds_exp_fine', {})
+            if not _ef:
+                st.info("期待値・回収率の実測較正には jravan.db が必要です（公開版では非表示）。")
+            else:
+                _vedges = _ef.get('_edges', [])
+
+                def _fb2(o):
+                    for _i, _e in enumerate(_vedges):
+                        if o <= _e:
+                            return _i
+                    return len(_vedges)
+                _vrows = []
+                for _, _rr in _RKEEP.iterrows():
+                    _o = _rr.get('オッズ')
+                    _pop = _rr.get('人気')
+                    if pd.isnull(_o) or _o <= 0:
+                        continue
+                    _e = _ef.get(_fb2(float(_o)))
+                    if not _e:
+                        continue
+                    _roi = float(_o) * _e['win']   # 単勝期待値=回収率
+                    _ana_fac = bool(_rr.get('pos')) and pd.notnull(_pop) and _pop >= 8
+                    _myo = ('🔥+ファクター(人気薄・実測ROI108.8%帯)' if _ana_fac
+                            else ('✨EV>1' if _roi >= 1.0 else '-'))
+                    _vrows.append({'判定': _rr['判定'], '馬番': int(_rr['馬番']), '馬名': _rr['馬名'],
+                                   '人気': (int(_pop) if pd.notnull(_pop) else None),
+                                   'オッズ': float(_o), '単勝回収率': _roi * 100,
+                                   '連対率': _e['top2'] * 100, '複勝率': _e['top3'] * 100,
+                                   '妙味': _myo})
+                if _vrows:
+                    _vdf = pd.DataFrame(_vrows)
+                    _vcfg = {
+                        'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f"),
+                        '単勝回収率': st.column_config.NumberColumn(
+                            '単勝期待値(回収率)', format="%.0f%%",
+                            help="勝率(オッズ帯実測)×オッズ。100%=損益分岐。控除率のため大半は75-85%で横並び。"),
+                        '連対率': st.column_config.NumberColumn('連対率', format="%.0f%%",
+                                                            help="そのオッズ帯の実測2着内率(2022-25)"),
+                        '複勝率': st.column_config.NumberColumn('複勝率', format="%.0f%%",
+                                                            help="そのオッズ帯の実測3着内率(2022-25)"),
+                    }
+                    st.dataframe(_vdf, hide_index=True, use_container_width=True, column_config=_vcfg)
+                    st.caption("⚠️ 期待値＝回収率＝勝率×オッズ（単勝は同義の数字）。値はオッズ帯の母集団平均なので"
+                               "大半が控除率ぶん(~75-85%)で横並び＝単純なオッズだけでは+妙味は出ない。"
+                               "100%超の妙味は実測で平均を超える🔥+ファクター（人気薄×黄金/厩舎/末脚＝単勝ROI108.8%）持ちに限る。"
+                               "連対率/複勝率もオッズ帯の実測値。最終判断は強適Ranking Tableと併用。")
+                else:
+                    st.info("残った馬にオッズ情報がありません。")
             _ec1, _ec2 = st.columns(2)
             with _ec1:
                 if _anauma is not None:
