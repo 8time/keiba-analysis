@@ -5959,6 +5959,22 @@ if nav == "🧹 消去フィルター":
                     _dv = str(metadata.get('date_val', '') or '')
                     _mo = int(_dv[4:6]) if len(_dv) >= 6 and _dv[4:6].isdigit() else 0
                     _miny = str(int(_dv[:4]) - 3) if _dv[:4].isdigit() else None
+                    # 🔥末脚救出の検証定義(scripts/spurt_index_backtest.py): 末脚指数の
+                    # 『レース内top3(順位)』×人気≥6 → 複勝13.4%/ROI77.7%(ベース9.4%/66.4%)。
+                    # 旧版は絶対値0.8で実質発火せず(実測の末脚指数は概ね-0.7〜+0.6で0.8未到達)。
+                    # → 事前にフィールド内で末脚指数を順位付けし top3 の馬番集合を作る。
+                    _spurt_rank = []
+                    for _, _r0 in df.iterrows():
+                        _kt0, _ = _jj.resolve_horse(str(_r0.get('Name', '')))
+                        _c0 = _jj.horse_recent_context(_kt0) if _kt0 else None
+                        _si0 = (_c0 or {}).get('spurt_index')
+                        _sr0 = (_c0 or {}).get('spurt_runs', 0)
+                        if _si0 is not None and _sr0 >= 2:
+                            try:
+                                _spurt_rank.append((int(_r0.get('Umaban')), float(_si0)))
+                            except Exception:
+                                pass
+                    _spurt_top3 = {u for u, _ in sorted(_spurt_rank, key=lambda x: -x[1])[:3]}
                     _erows = []
                     for _, _r in df.iterrows():
                         _nm = str(_r.get('Name', ''))
@@ -6021,10 +6037,11 @@ if nav == "🧹 消去フィルター":
                             except Exception:
                                 _zg_e = None
                         _nige = bool(_ctx and _ctx.get('prev_kyaku') == '1')
-                        # 🔥末脚救出(独立): 人気薄≥6×末脚指数≥0.8×2走以上(scripts/spurt_index_backtest.py検証)
+                        # 🔥末脚救出(独立): レース内 末脚指数top3 × 人気≥6 × 2走以上
+                        # (scripts/spurt_index_backtest.py 検証: 複勝13.4%/ROI77.7% ＞ ベース9.4%/66.4%)
                         _si = (_ctx or {}).get('spurt_index')
                         _sr = (_ctx or {}).get('spurt_runs', 0)
-                        _spurt = bool(_si is not None and _si >= 0.8 and _sr >= 2
+                        _spurt = bool(_um in _spurt_top3 and _sr >= 2
                                       and pd.notnull(_pop) and _pop >= 6)
                         _posr = []
                         if _gold:
@@ -6080,7 +6097,19 @@ if nav == "🧹 消去フィルター":
             _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
             _n = len(_edf)
             _keep = (_n + 1) // 2
-            _edf['判定'] = ['✅残し' if i < _keep else '🧹消し' for i in range(_n)]
+            # 🛟ボーダー残し(=半分カットのあと1頭だけ戻す): 消去ゾーン最上位(score最大の消され馬)。
+            # scripts/keepone_backtest.py 検証(2023-25,9519R): 3着内取りこぼし14.9→10.2%、
+            # この1頭の3着内残差+0.83pt(z=+1.97)＝複勝/3連複の相手として僅かに過小評価。
+            # ※単勝ROI79%・勝利残差≒0なので単勝軸にはしない(相手専用)。6頭以上で適用。
+            _use_border = _n >= 6
+
+            def _verdict(i):
+                if i < _keep:
+                    return '✅残し'
+                if _use_border and i == _keep:
+                    return '🛟ボーダー残し'
+                return '🧹消し'
+            _edf['判定'] = [_verdict(i) for i in range(_n)]
             # --- 消去理由ラーニング: 学習済みタグに合致する消し馬を自動で残しに昇格 ---
             _ledger = _er.load_ledger()
             _learned = _er.learned_tags(_ledger)   # 3回以上たまったタグ
@@ -6103,8 +6132,15 @@ if nav == "🧹 消去フィルター":
             _show = _edf[_show_cols]
 
             def _row_color(s):
-                return ['background-color:#f1f3f5;color:#adb5bd' if v == '🧹消し'
-                        else 'background-color:#e6f4ea;font-weight:bold' for v in s]
+                _out = []
+                for v in s:
+                    if v == '🧹消し':
+                        _out.append('background-color:#f1f3f5;color:#adb5bd')
+                    elif v == '🛟ボーダー残し':
+                        _out.append('background-color:#e3f0fb;color:#1565c0;font-weight:bold')
+                    else:
+                        _out.append('background-color:#e6f4ea;font-weight:bold')
+                return _out
             _elim_colcfg = {'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")}
             try:
                 st.dataframe(_show.style.apply(_row_color, subset=['判定']),
@@ -6112,10 +6148,14 @@ if nav == "🧹 消去フィルター":
             except Exception:
                 st.dataframe(_show, hide_index=True, use_container_width=True, column_config=_elim_colcfg)
             _keep_n = int((_edf['判定'] == '✅残し').sum())
+            _border_n = int((_edf['判定'] == '🛟ボーダー残し').sum())
+            _cut_n = int((_edf['判定'] == '🧹消し').sum())
             _learn_n = int((_edf['学習残し'].astype(str).str.len() > 0).sum())
-            st.caption(f"全{_n}頭 → ✅残し{_keep_n}頭 / 🧹消し{_n - _keep_n}頭"
+            st.caption(f"全{_n}頭 → ✅残し{_keep_n}頭"
+                       + (f" / 🛟ボーダー残し{_border_n}頭" if _border_n else "")
+                       + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
-                       + "（強適消去スコア＝市場順位±検証ファクター）")
+                       + "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）")
             _ec1, _ec2 = st.columns(2)
             with _ec1:
                 if _anauma is not None:
@@ -6187,10 +6227,11 @@ if nav == "🧹 消去フィルター":
 
             # ===== 🎯 3連複フォーメーション（消去エンジン連携）=====
             st.markdown("#### 🎯 3連複フォーメーション（消去エンジン連携）")
-            st.caption("✅残し上位を軸/対抗に、🎯穴を押さえに自動配置。役割分担で無駄を省きます。"
+            st.caption("✅残し上位を軸/対抗に、🎯穴・🛟ボーダー残しを押さえに自動配置。役割分担で無駄を省きます。"
                        "（買い目構造は予測エッジでなく点数最適化。検証済み①人気-人気-穴の方針と併用）")
             _keepdf = _edf[_edf['判定'] == '✅残し']
             _keep_um = [int(x) for x in _keepdf['馬番'].tolist()]
+            _border_um = [int(x) for x in _edf[_edf['判定'] == '🛟ボーダー残し']['馬番'].tolist()]
             _ana_um = int(_anauma['馬番']) if _anauma is not None else None
             _name_of = {int(r['馬番']): str(r['馬名']) for _, r in _edf.iterrows()}
 
@@ -6210,6 +6251,10 @@ if nav == "🧹 消去フィルター":
             _def3 = _keep_um[_na + _nb:_na + _nb + _nc]
             if _ana_um is not None and _ana_um not in _def3:
                 _def3 = (_def3 + [_ana_um])[:_nc + 1]
+            # 🛟ボーダー残しは押さえ(相手)に追加（単勝軸=1列目には入れない）
+            for _bu in _border_um:
+                if _bu not in _def1 and _bu not in _def2 and _bu not in _def3:
+                    _def3 = _def3 + [_bu]
             _all_um = [int(x) for x in _edf['馬番'].tolist()]
             _fc1, _fc2, _fc3 = st.columns(3)
             with _fc1:
