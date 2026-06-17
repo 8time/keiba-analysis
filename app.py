@@ -4016,13 +4016,22 @@ if nav == "🏠 Single Race Analysis":
                     view_df = view_df[[c for c in cols if c in view_df.columns]]
 
                     # --- Column order persistence (user_prefs.json) ---
+                    # 注意: 保存先は必ずアプリ本体と同じフォルダに固定する。
+                    # 以前は os.getcwd() を使っていたため、Streamlitを別ディレクトリから
+                    # 起動すると保存ファイルを読めず「設定しても全列に戻る」不具合が出ていた。
                     import json as _json_sra
-                    _prefs_path_sra = os.path.join(os.getcwd(), "user_prefs.json")
+                    _prefs_path_sra = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), "user_prefs.json")
                     _saved_sra = []
+                    _has_saved_sra = False  # キーが存在するか（空保存=全解除 と 未保存 を区別）
                     try:
                         with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
-                            _saved_sra = _json_sra.load(_f).get('single_race_col_order', [])
-                    except: pass
+                            _prefs_loaded_sra = _json_sra.load(_f)
+                        if 'single_race_col_order' in _prefs_loaded_sra:
+                            _has_saved_sra = True
+                            _saved_sra = _prefs_loaded_sra.get('single_race_col_order') or []
+                    except Exception:
+                        pass
                     
                     # 注: 以前はStress/Waku/Signal等の新列を保存済み順に強制再挿入していたが、
                     # 「外したはずの列が復活する＝保存されていない」と誤認される原因だったため廃止。
@@ -4058,12 +4067,12 @@ if nav == "🏠 Single Race Analysis":
 
                     # アプリ本来の既定列順（「デフォルト」ボタンの戻し先）
                     _canonical_default = _all_cols[:]
-                    # 初期表示に使う列順 = 保存済みがあればそれを尊重、無ければ既定
-                    _default_cols = _canonical_default[:]
-                    if _saved_sra:
-                        _valid_saved = [c for c in _saved_sra if c in _all_cols]
-                        if _valid_saved:
-                            _default_cols = _valid_saved
+                    # 初期表示に使う列順 = 保存があればそれを尊重（空保存=全解除も尊重）、
+                    # 未保存(キー無し)のときだけアプリ既定（全列）。
+                    if _has_saved_sra:
+                        _default_cols = [c for c in _saved_sra if c in _all_cols]
+                    else:
+                        _default_cols = _canonical_default[:]
 
                     _display_to_col = {_col_label_map.get(c, c): c for c in _all_cols}
                     _col_to_display = {c: _col_label_map.get(c, c) for c in _all_cols}
@@ -4155,12 +4164,27 @@ if nav == "🏠 Single Race Analysis":
                         for c in _all_cols:
                             st.session_state[_ck(c)] = (c in _init_order)
                     else:
-                        # 後から増えた新列はチェック状態未設定 → 既定OFF（保存済み設定を壊さない）
+                        # 後から登場した列のチェック状態を補完する。
+                        # ・保存済み設定に含まれる列が後から現れた場合は復元してON（取りこぼし防止）。
+                        # ・保存に無い純粋な新列は既定OFF（保存済み設定を壊さない）。
                         for c in _all_cols:
                             if _ck(c) not in st.session_state:
+                                if _has_saved_sra and c in _saved_sra:
+                                    # 保存順に沿って正しい位置へ挿入してON
+                                    st.session_state[_ck(c)] = True
+                                    _ord = st.session_state.get(_order_key, [])
+                                    if c not in _ord:
+                                        _pos = _saved_sra.index(c)
+                                        _ins = len(_ord)
+                                        for _j, _ec in enumerate(_ord):
+                                            if _ec in _saved_sra and _saved_sra.index(_ec) > _pos:
+                                                _ins = _j
+                                                break
+                                        _ord.insert(_ins, c)
+                                        st.session_state[_order_key] = _ord
                                 # BloodStatsは旧Bloodline内の表示を分離した列。Bloodlineが表示中なら
                                 # 情報欠落を防ぐため自動でその隣に表示する。
-                                if c == 'BloodStats' and st.session_state.get(_ck('Bloodline')):
+                                elif c == 'BloodStats' and st.session_state.get(_ck('Bloodline')):
                                     st.session_state[_ck(c)] = True
                                     _ord = st.session_state.get(_order_key, [])
                                     if 'BloodStats' not in _ord:
@@ -4230,6 +4254,11 @@ if nav == "🏠 Single Race Analysis":
 
                     if _col_sel:
                         view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
+                    else:
+                        # チェック0列＝意図的な全解除。全列に戻さず明示メッセージのみ。
+                        st.info("⚙ 列順設定で表示する列が選ばれていません。"
+                                "「⚙ 列順設定」→「デフォルト」で全列に戻せます。")
+                        view_df = view_df.iloc[:, 0:0]
 
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
@@ -7957,10 +7986,17 @@ if nav == "📊 History & Review":
 # 🧪 テスト タブ (🐎 Stress Analyst - 乗算デバフ検証)
 # ──────────────────────────────────────────────
 if nav == "🧪 テスト":
-    st.header("🐎 Stress Analyst (乗算デバフ検証)")
+    st.header("🐎 Stress Analyst (乗算デバフ・リーク無し検証版)")
     st.markdown("""
-    **「能力が低いのではなく、リミッターが掛かっている状態」を数値化します。**
-    基礎能力（スピード指数＋血統）に対し、当日の環境ストレスを「掛け算（％カット）」で適用し、危険な人気馬をあぶり出します。
+    **基礎能力（戦闘力＋血統）に、当日の環境ストレスを「掛け算」で小さく反映し、危険な人気馬をあぶり出します。**
+
+    条件は **jravan(2023–25)で『リーク無し（事前に分かるデータのみ）』に再検証** して作り直しました。
+    人気(オッズ)補正後の残差で『本当に人気のわりに走らない』条件だけを、実測値に合わせた**小さい減点**で採用します。
+
+    - 🟧🟨 **採用デバフ**（事前確定・過剰評価）: 小柄馬×馬体減(複勝残差-2.0pp)・芝×後方ぐせ(-1.5pp)・馬体増+8kg(-1.0pp)
+    - ❌ **廃止（リークと判明）**: 逃げ+13pp／ダ×後方-5.6pp／大型×追込-7.7pp は、いずれも“結果の脚質”で測った見せかけ。
+      事前に分かる習性ではほぼ0になり妙味なし（[逃げ激走は「逃げ切れた後」の結果論]）。
+    - ℹ️ 実エッジは小さい（±1〜2pp）ため係数は0.85〜1.00。劇的な操作はできません（それが正直な検証結果です）。
     """)
 
     # 入力エリア
@@ -8008,76 +8044,81 @@ if nav == "🧪 テスト":
                     
                     umaban = int(row.get('Umaban', 0))
                     waku = int(row.get('Waku', 1))
-                    avg_pos = float(row.get('AvgPosition', 9.9))
+                    avg_pos = float(row.get('AvgPosition', 9.9) or 9.9)
                     surface = str(row.get('CurrentSurface', ''))
                     dist = float(row.get('CurrentDistance', 1600) or 1600)
-                    
-                    # 条件A：キックバック・ストレス (ダート内枠+後方脚質)
-                    if "ダ" in surface and waku <= 3 and avg_pos >= 8.0:
-                        m -= 0.08
-                        reasons.append("ダート内枠の砂かぶり(精神ストレス)")
 
-                    # 条件D：ダート長距離の内枠 (1800m以上のダート1〜3枠)
-                    if "ダ" in surface and dist >= 1800 and waku <= 3:
-                        m -= 0.10
-                        reasons.append("長距離ダートの内枠(距離ストレス)")
+                    # AvgPosition(過去走平均位置取り)＝事前に分かる習性脚質
+                    is_back = avg_pos >= 7.5    # 差し・追込タイプ
 
-                    # 条件B：待機・出遅れストレス (奇数枠+逃げ脚質)
-                    if umaban % 2 != 0 and avg_pos <= 2.5:
-                        m -= 0.05
-                        reasons.append("奇数枠の逃げ馬(待機ストレス)")
+                    # ── 検証済みデバフ（jravan 2023-25・リーク無しの事前データのみで再検証）──
+                    # 重要: 旧版の「逃げ+13pp / ダ×後方-5.6pp / 大型×追込-7.7pp」は
+                    #   結果の脚質(kyakushitsu)で測ったリーク値で、事前にはほぼ消える(検証で否定)。
+                    #   事前確定データ(馬体重/増減/習性脚質)で残差が残るものだけを小さく減点する。
+                    # ① 小柄馬×大幅馬体減：肉体ストレス(事前確定・複勝残差 -2.0pp z=-3.0)
+                    if 0 < curr_w < 440 and w_diff_val <= -6:
+                        m -= 0.04
+                        reasons.append("🟧小柄馬(440kg未満)×馬体減6kg超(検証-2.0pp)")
+                    # ② 習性後方ぐせ×芝：揉まれ・展開待ち(複勝残差 -1.5pp z=-3.0。ダートは非有意)
+                    if "芝" in surface and is_back:
+                        m -= 0.03
+                        reasons.append("🟨芝×後方ぐせ(検証-1.5pp)")
+                    # ③ 大幅馬体増：仕上がり/余分(事前確定・複勝残差 -1.0pp z=-3.1・軽微)
+                    if w_diff_val >= 8:
+                        m -= 0.02
+                        reasons.append("🟨馬体増+8kg超(軽微-1.0pp)")
 
-                    # 条件C：過剰消耗ストレス (小柄馬+大幅馬体減)
-                    if curr_w > 0 and curr_w < 440 and w_diff_val <= -6:
-                        m -= 0.15
-                        reasons.append("小柄馬の大幅馬体減(肉体ストレス)")
+                    # ※ボーナスは無し: 事前に分かる「逃げ・前々」習性は残差≈0(検証)で妙味なし。
+                    #   逃げ馬の激走は『実際に逃げ切れた後』の結果論であり予想段階では織込み済み。
+                    multiplier = min(max(m, 0.85), 1.0)
 
-                    multiplier = max(m, 0.70)
-                    
                     # 仮の基礎スコア計算 (BattleScore + Bloodline)
                     base = float(row.get('BattleScore', 0))
                     blood = float(row.get('bonus', 0))
                     pre_score = base + blood
                     final_score = pre_score * multiplier
-                    
+
                     results.append({
                         "枠番": waku,
                         "馬番": umaban,
                         "馬名": row.get('Name', ''),
+                        "脚質傾向": "差し/追込" if is_back else ("逃げ/前" if avg_pos <= 2.5 else "好位/中団"),
                         "基礎評価": round(pre_score, 1),
-                        "ストレス係数": f"{multiplier:.1f}",
-                        "ストレス要因": " / ".join(reasons) if reasons else "良好 ✅",
+                        "ストレス係数": f"{multiplier:.2f}",
+                        "ストレス/ボーナス要因": " / ".join(reasons) if reasons else "標準 ✅",
                         "最終予測": round(final_score, 1),
-                        "減衰量": round(final_score - pre_score, 1)
+                        "増減量": round(final_score - pre_score, 1)
                     })
                 
                 res_df = pd.DataFrame(results).sort_values("最終予測", ascending=False)
                 
                 st.subheader(f"🛡️ ストレス解析結果: {test_race_id_input}")
                 
-                # スタイル適用
+                # スタイル適用（<0.85=危険赤 / <1.0=注意黄 / =1.0標準 / >1.0=ボーナス緑）
                 def style_stress(val):
                     f_val = float(val)
-                    if f_val < 0.85: return 'background-color: #ffebee; color: #c62828; font-weight: bold;'
+                    if f_val < 0.92: return 'background-color: #ffebee; color: #c62828; font-weight: bold;'
                     if f_val < 1.0: return 'background-color: #fff8e1; color: #f57f17;'
-                    return 'color: #2e7d32;'
+                    return 'color: #555;'
 
                 st.dataframe(
                     res_df.style.map(style_stress, subset=['ストレス係数']),
                     column_config={
                         "基礎評価": st.column_config.NumberColumn(format="%.1f"),
                         "最終予測": st.column_config.NumberColumn(format="%.1f"),
-                        "減衰量": st.column_config.NumberColumn(format="%.1f"),
+                        "増減量": st.column_config.NumberColumn(format="%+.1f"),
                     },
                     hide_index=True,
                     use_container_width=True
                 )
-                
-                # エピッククイーン・トラップ警報
-                trap_horses = res_df[res_df['ストレス係数'].astype(float) <= 0.85]
+
+                # 過剰評価トラップ警報（係数<0.92＝事前確定ストレスが複数該当）
+                trap_horses = res_df[res_df['ストレス係数'].astype(float) < 0.92]
                 if not trap_horses.empty:
-                    st.error(f"⚠️ **過剰評価トラップ警告**: 以下の馬はストレスにより能力リミッターが強く掛かっています！\n\n" + 
-                             "\n".join([f"- {h['馬名']} (係数: {h['ストレス係数']})" for _, h in trap_horses.iterrows()]))
+                    st.warning("⚠️ **過剰評価トラップ（危険人気の候補）**: 事前確定の検証済みストレスが該当。"
+                               "ただし効果は小さい（±1〜2pp）ので、軸を消すより相手の優先度を下げる用途です。\n\n" +
+                               "\n".join([f"- {h['馬名']} (係数 {h['ストレス係数']})：{h['ストレス/ボーナス要因']}"
+                                          for _, h in trap_horses.iterrows()]))
             else:
                 st.error("データの取得に失敗しました。")
 
