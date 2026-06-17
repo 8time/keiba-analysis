@@ -46,10 +46,15 @@ def race_skip_reasons(meta, n_horses, surface='', race_name='', min_win_odds=Non
 
 
 # ───────────────────────── 妙味度スコア(race-level) ─────────────────────────
-def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_horses=None):
+def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_horses=None,
+                     pace_z=None):
     """1レースの妙味度(0-100目安)とラベル/内訳を返す。
     odds_list: 単勝オッズの list[float]（人気順に並んでなくてよい）。
-    高いほど『荒れ＝1番人気が信頼しにくく中穴妙味が出やすい』。"""
+    高いほど『荒れ＝1番人気が信頼しにくく中穴妙味が出やすい』。
+    pace_z: 事前ペース強度z(pace_map.predict_pace_intensity の z・高い=ハイ想定)。
+            検証(pace_predict_backtest 2021-25): ハイ想定は1番人気オッズ層を固定しても
+            荒れ率を押す(中層リフト1.11・事後ペース天井1.15に肉薄)。中程度のエッジゆえ
+            加点も中程度に留める。スロー想定は前残りで堅め=減点。"""
     meta = meta or {}
     odds = sorted([float(o) for o in (odds_list or []) if o and float(o) > 0])
     breakdown = []
@@ -106,6 +111,15 @@ def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_hors
             score += 5; breakdown.append('ダート長距離(+5)')
     except Exception:
         pass
+
+    # --- 事前ペース強度(テン速力ベース・検証済の荒れ寄与) ---
+    if pace_z is not None:
+        if pace_z >= 0.7:
+            score += 9; breakdown.append(f'🌀ハイペース想定(z{pace_z:+.1f}・差し台頭で荒れ寄り+9)')
+        elif pace_z >= 0.2:
+            score += 4; breakdown.append(f'ややハイペース想定(z{pace_z:+.1f}・+4)')
+        elif pace_z <= -0.5:
+            score -= 6; breakdown.append(f'🏁スローペース想定(z{pace_z:+.1f}・前残り堅め-6)')
 
     score = max(0.0, min(100.0, score))
     if score >= 55:

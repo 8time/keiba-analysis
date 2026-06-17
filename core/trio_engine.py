@@ -16,8 +16,9 @@ from itertools import combinations
 # パターン別の狙い目オッズ価格帯（倍）
 # 本線=人気上位2頭以上を必ず含む形＝鉄板(37%)+①(46%)を同時カバー=83%(検証 trio_selector_backtest.py)。
 # 帯は鉄板(中央値~15倍)〜①(~71倍)を覆いつつ、安すぎ(<10)は軽く減点して①寄りの配当を取りにいく。
-_TARGET_BAND = {'本線': (10.0, 150.0), '①': (10.0, 100.0),
-                '②': (80.0, 1000.0), 'おまかせ': (10.0, 300.0)}
+# ②妙味=本線が取りこぼす荒れ(人気上位≤1)の高配当狙い。穴は盲目でなく検証済み妙味シグナルで選別。
+_TARGET_BAND = {'本線': (10.0, 150.0), '②妙味': (30.0, 2000.0),
+                '①': (10.0, 100.0), '②': (80.0, 1000.0), 'おまかせ': (10.0, 300.0)}
 
 
 def _classify(trio, pop_set, ana_set):
@@ -30,6 +31,8 @@ def _classify(trio, pop_set, ana_set):
 def _match_pattern(n_pop, n_ana, pattern):
     if pattern == '本線':     # 人気上位2頭以上＝鉄板(人気3)と①(人気2穴1)を両取り(検証83%)
         return n_pop >= 2
+    if pattern == '②妙味':    # 本線の補集合=荒れ(人気上位≤1)×穴2頭以上。穴は妙味シグナルで選別
+        return n_pop <= 1 and n_ana >= 2
     if pattern == '①':       # 人気2-穴1
         return n_pop == 2 and n_ana >= 1
     if pattern == '②':       # 人気1-穴2
@@ -133,12 +136,19 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         base = sum(by[u].get('score', 0) for u in trio)
         # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
         bonus = 0.0
+        # ②妙味は穴の選別を検証済みエッジに寄せる=妙味シグナル穴を強く加点(本命より穴で勝負)
+        _val_boost = 18.0 if pattern == '②妙味' else 8.0
+        _sig_ana = 0
         for u in trio:
             al = str(by[u].get('alert', '') or '')
-            if u in ana_set and any(s in al for s in ('🔥', '🎯', '🚀')):
-                bonus += 8.0
+            if u in ana_set and any(s in al for s in ('🔥', '🎯', '🚀', '妙味', '乖離')):
+                bonus += _val_boost
+                _sig_ana += 1
             if deploy_map:
                 bonus += float(deploy_map.get(u, 0.0))   # 展開マップ(好位妙味)連携
+        # ②妙味: 妙味シグナルの穴を含まないトリオは後退(盲目的な人気1-穴2を買わない=検証で最悪だった形)
+        if pattern == '②妙味' and _sig_ana == 0:
+            bonus -= 12.0
         odds = None
         in_band = False
         if odds_map:

@@ -1,0 +1,22 @@
+{
+  "1st Selection": [
+    {
+      "field": "Jockey",
+      "operator": "eq",
+      "value": "ルメール",
+      "explanation": "騎手がルメール"
+    },
+    {
+      "field": "Name",
+      "operator": "contains",
+      "value": "Horse 14",
+      "explanation": "「Horse 14」を含む馬"
+    },
+    {
+      "field": "Jockey",
+      "operator": "eq",
+      "value": "ルメール",
+      "explanation": "騎手がルメールである"
+    }
+  ]
+}

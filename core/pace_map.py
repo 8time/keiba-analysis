@@ -327,6 +327,162 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
     return out
 
 
+# ── 事前ペース予測（テン速力ベース・バックテスト検証済み） ──
+_PACE_NORMS = None      # {(surf,band): (mean,sd,n)} の遅延ロードキャッシュ
+_PACE_NORMS_META = {'k': 5, 'topk': 3}
+
+
+def _load_pace_norms(path=None):
+    """data/pace_norms.json を遅延ロード。scripts/build_pace_norms.py が生成。"""
+    global _PACE_NORMS, _PACE_NORMS_META
+    if _PACE_NORMS is not None:
+        return _PACE_NORMS
+    import json
+    p = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             'data', 'pace_norms.json')
+    norms = {}
+    try:
+        with open(p, encoding='utf-8') as f:
+            d = json.load(f)
+        _PACE_NORMS_META = {'k': d.get('k', 5), 'topk': d.get('topk', 3)}
+        for key, (m, sd, n) in d.get('norms', {}).items():
+            sn, band = key.split('|')
+            norms[(sn, int(band))] = (m, sd or 1.0, n)
+    except Exception:
+        norms = {}
+    _PACE_NORMS = norms
+    return norms
+
+
+def _surf_norm(s):
+    s = str(s or '')
+    if 'ダ' in s:
+        return 'ダ'
+    if '障' in s:
+        return '障'
+    return '芝'
+
+
+def predict_pace_intensity(profiles, distance, surface, norms_path=None):
+    """
+    出走馬の テン速力(profiles[name]['ten_speed]) から『レース前』のペース強度を予測する。
+
+    検証(scripts/pace_predict_backtest.py, 2021-25): 前方TOP3の事前テン速力z(符号反転)は
+      ・実際の前半ペース(mae3f)と相関 r=+0.226
+      ・1番人気オッズ層を固定しても荒れ率を動かす(中層リフト1.11=事後ペース天井1.15に肉薄)
+    = オッズに織り込まれていない『ハイペース→荒れ』を事前に拾える中程度のエッジ。
+    脚質コード版(crude)は中/荒層で横ばい(1.06-1.09)だったのに対し、テン速力版は有効。
+
+    profiles: fetch_jv_profiles() の戻り {name: {'ten_speed':..., ...}}。
+              ※ ノルムと履歴計算条件(max_runs=k・同馬場±400m加重)を揃えるため、
+                fetch_jv_profiles は surface/distance/before_key を渡して呼ぶこと。
+    戻り値: {'z': float|None(高い=ハイ想定), 'label': 'ハイ想定'|'ややハイ'|'標準'|'スロー想定'|None,
+             'pred_pace': 前方TOP3平均テン速力(秒,小=速い)|None, 'n': テン速力判明頭数,
+             'note': 補足}
+    """
+    norms = _load_pace_norms(norms_path)
+    topk = _PACE_NORMS_META.get('topk', 3)
+    tsps = sorted(v.get('ten_speed') for v in (profiles or {}).values()
+                  if v and v.get('ten_speed') is not None)
+    n = len(tsps)
+    out = {'z': None, 'label': None, 'pred_pace': None, 'n': n, 'note': ''}
+    if n < topk + 2:
+        out['note'] = 'テン速力データ不足'
+        return out
+    pred = sum(tsps[:topk]) / topk
+    out['pred_pace'] = round(pred, 2)
+    try:
+        band = int(distance) // 400
+    except Exception:
+        out['note'] = '距離不明'
+        return out
+    key = (_surf_norm(surface), band)
+    nm = norms.get(key)
+    if not nm:
+        out['note'] = f'基準ノルム無し({key[0]}|{band})'
+        return out
+    m, sd, _ = nm
+    z = -(pred - m) / (sd or 1.0)     # 符号反転: 高い=テン速い=ハイペース想定
+    out['z'] = round(z, 2)
+    if z >= 0.7:
+        out['label'] = 'ハイ想定'
+    elif z >= 0.2:
+        out['label'] = 'ややハイ'
+    elif z > -0.5:
+        out['label'] = '標準'
+    else:
+        out['label'] = 'スロー想定'
+    return out
+
+
+def fetch_ten_speed_profiles(names, db_path=None, surface=None, distance=None, max_runs=5,
+                             before_key=None):
+    """複数馬のテン速力(秒/600m・小=テン速い)を1クエリでまとめて取得する軽量版。
+    Race Scanner等の多レース一括処理用（fetch_jv_profilesは馬ごとSQLで重いため別実装）。
+    履歴の加重(同馬場×1.6/0.5・距離±400m×1.4/0.6・直近0.82^idx・前max_runs走)は
+    build_pace_norms.py / predict_pace_intensity と揃える。2走以上ある馬のみ採用。
+
+    before_key: race_key文字列。指定するとそれ未満の過去走のみ使う。
+      ライブ(未来レース=jravan.db未収録)では不要だが、jravan.dbに既にある過去レースを
+      再スキャンする場合は当該race_key自身を履歴に含めてしまう(リーク)ため指定すること。
+    戻り値: {name: {'ten_speed': float}}（predict_pace_intensity にそのまま渡せる形）。
+    """
+    db = db_path or JV_DB_PATH
+    clean = [str(n).strip().replace('　', '').replace(' ', '') for n in (names or [])]
+    clean = [n for n in clean if n]
+    if not clean or not os.path.exists(db):
+        return {}
+    surf = _surf_norm(surface) if surface else None
+    try:
+        dist = int(distance) if distance else None
+    except Exception:
+        dist = None
+    try:
+        con = sqlite3.connect(db)
+        cur = con.cursor()
+        ph = ','.join('?' * len(clean))
+        where = f"r.bamei IN ({ph}) AND r.chakujun > 0"
+        params = list(clean)
+        if before_key:
+            where += " AND r.race_key < ?"
+            params.append(str(before_key))
+        rows = cur.execute(
+            f"""SELECT r.bamei, r.time, r.ato3f, ra.kyori, ra.surface
+                FROM results r JOIN races ra ON ra.race_key = r.race_key
+                WHERE {where}
+                ORDER BY r.race_key DESC""", params).fetchall()
+        con.close()
+    except Exception:
+        return {}
+    per = {}   # bamei -> [(ts, rsurf, kyori), ...] 新しい順
+    for bamei, rtime, ato, kyori, rsurf in rows:
+        runs = per.setdefault(bamei, [])
+        if len(runs) >= max_runs:
+            continue
+        t = _parse_jv_time(rtime)
+        if t is None or not ato or ato <= 0 or not kyori or kyori <= 700:
+            continue
+        ts = (t - ato / 10.0) / (kyori - 600) * 600.0
+        if 25.0 < ts < 60.0:
+            runs.append((ts, rsurf, kyori))
+    out = {}
+    for bamei, runs in per.items():
+        if len(runs) < 2:
+            continue
+        num = den = 0.0
+        for idx, (ts, rsurf, kyori) in enumerate(runs):
+            cw = 1.0
+            if surf and rsurf:
+                cw *= 1.6 if surf == _surf_norm(rsurf) else 0.5
+            if dist and kyori:
+                cw *= 1.4 if abs(kyori - dist) <= 400 else 0.6
+            w = cw * (0.82 ** idx)
+            num += ts * w; den += w
+        if den:
+            out[bamei] = {'ten_speed': round(num / den, 3)}
+    return out
+
+
 def phases_for_distance(distance):
     """距離からフェーズ構成を決める。短距離はバックストレッチ発走で1-2角なし。"""
     try:

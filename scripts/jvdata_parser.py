@@ -119,11 +119,11 @@ def parse_se(buf):
     }
 
 def parse_um(buf):
-    """競走馬マスタ（血統）。3代血統グループ pos=205, 1件46バイト(繁殖番号10+馬名36)。
-    父=1件目, 母父=5件目。"""
+    """競走馬マスタ（血統）。3代血統グループ pos=205, rep14・1件44バイト(繁殖登録番号8+馬名36)。
+    父=1件目, 母=2件目, 母父=5件目。"""
     def ped_name(idx1):  # 1始まり
-        start = 205 + (idx1 - 1) * 46
-        return jp(buf, start + 10, 36)
+        start = 205 + (idx1 - 1) * 44
+        return jp(buf, start + 8, 36)
     return {
         'ketto_num': s(buf, 12, 10),
         'bamei': jp(buf, 47, 36),

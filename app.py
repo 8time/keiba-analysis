@@ -1930,7 +1930,23 @@ if nav == "🏠 Single Race Analysis":
                             evidence_list.append({"項目": "前日比クッション値",
                                 "値": f"{_sh['today']:.1f}（前日{_sh['prev']:.1f} / Δ{_sh['delta']:+.1f}）",
                                 "ステータス": f"{_sh_icon} {_sh['turf_type']}(平均{_sh['turf_avg']}) {_sh_rel}"})
-                        st.table(pd.DataFrame(evidence_list))
+                        _ev_df = pd.DataFrame(evidence_list)
+
+                        def _ev_row_style(_row):
+                            _item = str(_row.get('項目', ''))
+                            if _item == 'コース特性(自動判定)':
+                                return ['background-color:#FFEFD5'] * len(_row)  # パパイヤホイップ
+                            if _item == 'コース実績バイアス':
+                                return ['background-color:#98FB98'] * len(_row)  # ペールグリーン
+                            if _item == '先行馬密集度':
+                                # ステータス列のみ赤文字
+                                return ['color:#d00000;font-weight:bold' if _c == 'ステータス' else ''
+                                        for _c in _row.index]
+                            return [''] * len(_row)
+                        try:
+                            st.table(_ev_df.style.apply(_ev_row_style, axis=1))
+                        except Exception:
+                            st.table(_ev_df)
                         if _tb_emp is None:
                             st.caption("※当日逆算バイアスは未表示＝このレースの当日先行レース結果がJV-VAN（jravan.db）に未取り込み。"
                                        "未来のレースや体験版の当日反映前はVエリアのバイアスで手動指定してください。")
@@ -3928,12 +3944,9 @@ if nav == "🏠 Single Race Analysis":
                             _saved_sra = _json_sra.load(_f).get('single_race_col_order', [])
                     except: pass
                     
-                    if _saved_sra and 'Stress' not in _saved_sra:
-                        if 'OddsGap' in _saved_sra:
-                            _idx = _saved_sra.index('OddsGap') + 1
-                            _saved_sra.insert(_idx, 'Stress')
-                        else:
-                            _saved_sra.append('Stress')
+                    # 注: 以前はStress/Waku/Signal等の新列を保存済み順に強制再挿入していたが、
+                    # 「外したはずの列が復活する＝保存されていない」と誤認される原因だったため廃止。
+                    # 新列はデフォルト非表示とし、ユーザーが⚙列順設定で選んだものだけを尊重する。
 
                     _all_cols = list(view_df.columns)
 
@@ -3962,32 +3975,12 @@ if nav == "🏠 Single Race Analysis":
                         "RiskFlags": "不安要素",
                     }
 
-                    # Restore saved order if available
-                    # 新規列(Signal等)は保存済み順の先頭に自動挿入する
-                    _default_cols = _all_cols[:]
+                    # アプリ本来の既定列順（「デフォルト」ボタンの戻し先）
+                    _canonical_default = _all_cols[:]
+                    # 初期表示に使う列順 = 保存済みがあればそれを尊重、無ければ既定
+                    _default_cols = _canonical_default[:]
                     if _saved_sra:
                         _valid_saved = [c for c in _saved_sra if c in _all_cols]
-                        # 保存済みに含まれない新列を先頭付近(Name直後)に追加
-                        _new_cols = [c for c in _all_cols if c not in _valid_saved]
-                        
-                        # Fix: Ensure 'Waku' is forced into the display list if it's a new column
-                        if 'Waku' in _new_cols:
-                            try:
-                                _idx = _valid_saved.index('Umaban') + 1
-                                _valid_saved.insert(_idx, 'Waku')
-                            except ValueError:
-                                _valid_saved.insert(0, 'Waku')
-                            _new_cols.remove('Waku')
-
-                        if _new_cols and _valid_saved:
-                            _insert_after = 'Signal'  # Signalを必ず含める
-                            if _insert_after in _new_cols:
-                                try:
-                                    _idx = _valid_saved.index('Jockey') + 1
-                                except ValueError:
-                                    _idx = min(6, len(_valid_saved))
-                                _valid_saved.insert(_idx, _insert_after)
-                                _new_cols.remove(_insert_after)
                         if _valid_saved:
                             _default_cols = _valid_saved
 
@@ -4054,36 +4047,76 @@ if nav == "🏠 Single Race Analysis":
 
                     # ── 列順設定（チェック式）─────────────────────────── #
                     # チェックした列だけを表示。チェックした順に左から並べる。
-                    # チェック順は session_state に順序付きで保持する。
+                    # 永続化は「💾保存」「デフォルト」「全解除」を押した時だけ user_prefs.json へ書く。
+                    # （毎回保存は一時的な空状態で設定を上書きしてしまうため廃止）
                     _order_key = 'sra_col_checked_order'
                     _ck = lambda _c: f"sra_ck_{_c}"
+
+                    def _persist_sra_order(_order):
+                        """列順を user_prefs.json に保存。成功でTrue。"""
+                        try:
+                            try:
+                                with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                    _p = _json_sra.load(_f)
+                            except Exception:
+                                _p = {}
+                            _p['single_race_col_order'] = list(_order)
+                            with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                                _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
+                            return True
+                        except Exception:
+                            return False
+
                     # 初回のみ保存済み(=_default_cols)からチェック状態を初期化
                     if _order_key not in st.session_state:
                         _init_order = [c for c in _default_cols if c in _all_cols]
                         st.session_state[_order_key] = _init_order
                         for c in _all_cols:
                             st.session_state[_ck(c)] = (c in _init_order)
+                    else:
+                        # 後から増えた新列はチェック状態未設定 → 既定OFF（保存済み設定を壊さない）
+                        for c in _all_cols:
+                            if _ck(c) not in st.session_state:
+                                st.session_state[_ck(c)] = False
 
                     _tl_col1, _tl_col2 = st.columns([1, 4])
                     with _tl_col1:
                         with st.popover("⚙ 列順設定"):
-                            st.caption("チェックした列だけ表示。チェックした順に左から並びます。")
+                            st.caption("チェックした列だけ表示。チェックした順に左から並びます。"
+                                       "変更したら **💾保存** を押すとこの端末に記憶されます（次回も復元）。")
                             _btn_c = st.columns(2)
                             # ボタンはチェックボックス生成前に session_state を更新する
                             if _btn_c[0].button("全解除", key="sra_ck_clear"):
                                 for c in _all_cols:
                                     st.session_state[_ck(c)] = False
                                 st.session_state[_order_key] = []
+                                _persist_sra_order([])
+                                st.toast("全列を非表示にして保存しました", icon="🗑️")
                             if _btn_c[1].button("デフォルト", key="sra_ck_reset"):
-                                _dc = [c for c in _default_cols if c in _all_cols]
+                                _dc = [c for c in _canonical_default if c in _all_cols]
                                 for c in _all_cols:
                                     st.session_state[_ck(c)] = (c in _dc)
                                 st.session_state[_order_key] = _dc
+                                _persist_sra_order(_dc)
+                                st.toast("デフォルト列順に戻して保存しました", icon="↩️")
                             st.divider()
                             _grid = st.columns(2)
                             for _i, c in enumerate(_all_cols):
                                 with _grid[_i % 2]:
                                     st.checkbox(_col_to_display.get(c, c), key=_ck(c))
+                            st.divider()
+                            if st.button("💾 この列順を保存", key="sra_ck_save",
+                                         type="primary", use_container_width=True):
+                                _prev = st.session_state.get(_order_key, [])
+                                _sel = [c for c in _prev if st.session_state.get(_ck(c))]
+                                for c in _all_cols:
+                                    if st.session_state.get(_ck(c)) and c not in _sel:
+                                        _sel.append(c)
+                                st.session_state[_order_key] = _sel
+                                if _persist_sra_order(_sel):
+                                    st.toast(f"列順を保存しました（{len(_sel)}列）✅", icon="💾")
+                                else:
+                                    st.toast("保存に失敗しました", icon="⚠️")
                     with _tl_col2:
                         csv = view_df.to_csv(index=False).encode('utf-8-sig')
                         st.download_button(
@@ -4094,7 +4127,7 @@ if nav == "🏠 Single Race Analysis":
                             key="btn_download_ranking_csv"
                         )
 
-                    # チェック順を再構成: 既存順のうちチェック済みを保持→新規チェックを末尾に追加
+                    # チェック順を再構成（表示用・このセッション内で即反映）。保存はボタン時のみ。
                     _prev_order = st.session_state.get(_order_key, [])
                     _col_sel = [c for c in _prev_order if st.session_state.get(_ck(c))]
                     for c in _all_cols:
@@ -4104,16 +4137,6 @@ if nav == "🏠 Single Race Analysis":
 
                     if _col_sel:
                         view_df = view_df[[c for c in _col_sel if c in view_df.columns]]
-                    # Save column order
-                    try:
-                        try:
-                            with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
-                                _p = _json_sra.load(_f)
-                        except: _p = {}
-                        _p['single_race_col_order'] = _col_sel if _col_sel else _all_cols
-                        with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
-                            _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
-                    except: pass
 
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
@@ -5786,17 +5809,36 @@ if nav == "🧹 消去フィルター":
                             'フラグ数': _cnt,
                             '検証数': _vcnt,
                             '推定複勝率': _exc.band_fukusho(_vcnt),
-                            '点灯フラグ': ' / '.join(_exc.FLAG_LABEL[k] for k in _exc.FLAG_DEFS_ORDER if k in _fl) or '-',
+                            '_lit': [k for k in _exc.FLAG_DEFS_ORDER if k in _fl],  # 点灯フラグkey一覧(○マトリクス用)
                         })
                     st.session_state[_xkey] = _xrows
             _xrows = st.session_state.get(_xkey, [])
             if not _xrows and _xkey not in st.session_state:
                 st.info("👆「▶ 消去クロステーブルを作成」を押すと、各馬の来にくさフラグを集計します。")
             if _xrows:
-                _xdf = pd.DataFrame(_xrows).sort_values(['フラグ数', '人気'], ascending=[False, False]).reset_index(drop=True)
-                _xdf['推定複勝率'] = _xdf['推定複勝率'].map(lambda v: f"{v:.0f}%")
+                _xrows = sorted(_xrows, key=lambda r: (-(r.get('フラグ数') or 0), -((r.get('人気') or 0))))
+                # 1頭以上で点灯したフラグだけを列にする(空列を出さない)。なければ全フラグ。
+                _active = [k for k in _exc.FLAG_DEFS_ORDER
+                           if any(k in (r.get('_lit') or []) for r in _xrows)]
+                if not _active:
+                    _active = _exc.FLAG_DEFS_ORDER[:]
+                # ○マトリクス: 各フラグ=列、点灯セルに○
+                _mat = []
+                for r in _xrows:
+                    _lit = set(r.get('_lit') or [])
+                    _row = {'馬番': r['馬番'], '馬名': r['馬名'], '人気': r['人気']}
+                    for k in _active:
+                        _row[_exc.FLAG_LABEL[k]] = '○' if k in _lit else ''
+                    _row['重複'] = r['フラグ数']
+                    _row['検証'] = r['検証数']
+                    _row['推定複勝率'] = f"{r['推定複勝率']:.0f}%"
+                    _mat.append(_row)
+                _xdf = pd.DataFrame(_mat)
+                _flag_cols = [_exc.FLAG_LABEL[k] for k in _active]
+                # 検証不可フラグ(調教/総合力/予測)の列ヘッダは△印で区別
+                _unv_cols = {_exc.FLAG_LABEL[k] for k in _active if k in _exc.UNVERIFIED}
 
-                def _xcolor(s):
+                def _dup_color(s):  # 重複数(赤系グラデ)
                     out = []
                     for v in s:
                         if v >= 4:
@@ -5806,28 +5848,38 @@ if nav == "🧹 消去フィルター":
                         else:
                             out.append('')
                     return out
-                _disp_cols = ['馬番', '馬名', '人気', 'フラグ数', '検証数', '推定複勝率', '点灯フラグ']
+
+                def _maru_color(s):  # ○セルを赤文字で目立たせる
+                    return ['color:#c0392b;font-weight:bold;text-align:center' if v == '○' else '' for v in s]
+
+                _disp_cols = ['馬番', '馬名', '人気'] + _flag_cols + ['重複', '検証', '推定複勝率']
+                _colcfg = {
+                    '馬番': st.column_config.NumberColumn('馬番', width='small'),
+                    '人気': st.column_config.NumberColumn('人気', width='small'),
+                    '重複': st.column_config.NumberColumn('🔴重複', help="点灯した来にくさフラグの総数(○の数)。多いほど3着内率が下がる"),
+                    '検証': st.column_config.NumberColumn('検証', width='small', help="うちjravan.dbで検証済みのフラグ数。推定複勝率はこの数だけで算定"),
+                    '推定複勝率': st.column_config.TextColumn('推定複勝率', help="検証数→絶対複勝率(検証値)。人気と相関＝妙味判定ではない"),
+                }
+                for _fc in _flag_cols:
+                    _lbl = ('△' + _fc) if _fc in _unv_cols else _fc
+                    _colcfg[_fc] = st.column_config.TextColumn(_lbl, width='small')
                 try:
-                    st.dataframe(
-                        _xdf[_disp_cols].style.apply(_xcolor, subset=['フラグ数']),
-                        hide_index=True, use_container_width=True,
-                        column_config={
-                            '馬番': st.column_config.NumberColumn('馬番', width='small'),
-                            'フラグ数': st.column_config.NumberColumn('🚩重複数', help="点灯した来にくさフラグの総数(検証済+調教/総合力/予測スコア)。多いほど3着内率が下がる"),
-                            '検証数': st.column_config.NumberColumn('検証数', width='small', help="うちjravan.dbで検証済みのフラグ数。推定複勝率はこの数だけで算定(score/調教は人気内包・検証不可のため除外)"),
-                            '推定複勝率': st.column_config.TextColumn('推定複勝率', help="検証数→絶対複勝率(検証値)。人気と相関＝妙味判定ではない"),
-                            '点灯フラグ': st.column_config.TextColumn('点灯した弱点', width='large'),
-                        })
+                    _sty = _xdf[_disp_cols].style.apply(_dup_color, subset=['重複'])
+                    if _flag_cols:
+                        _sty = _sty.apply(_maru_color, subset=_flag_cols)
+                    st.dataframe(_sty, hide_index=True, use_container_width=True, column_config=_colcfg)
                 except Exception:
-                    st.dataframe(_xdf[_disp_cols], hide_index=True, use_container_width=True)
-                _heavy = _xdf[_xdf['フラグ数'] >= 4]
+                    st.dataframe(_xdf[_disp_cols], hide_index=True, use_container_width=True, column_config=_colcfg)
+                st.caption("○＝その弱点が点灯。**🔴重複**＝○の総数(多いほど来にくい)。"
+                           "△印の列(調教C以下/総合力下位/予測下位)は検証不可(人気内包)＝重複には乗るが推定複勝率には算入しない。")
+                _heavy = _xdf[_xdf['重複'] >= 4]
                 if not _heavy.empty:
                     st.error("🧹 消去候補（弱点重複4つ以上）: "
-                             + " / ".join(f"{int(r['馬番'])}{r['馬名']}(計{int(r['フラグ数'])}個/検証{int(r['検証数'])}個)" for _, r in _heavy.iterrows()))
-                _hpop = _xdf[(_xdf['人気'].fillna(99) <= 5) & (_xdf['検証数'] >= 4)]
+                             + " / ".join(f"{int(r['馬番'])}{r['馬名']}(計{int(r['重複'])}個/検証{int(r['検証'])}個)" for _, r in _heavy.iterrows()))
+                _hpop = _xdf[(_xdf['人気'].fillna(99) <= 5) & (_xdf['検証'] >= 4)]
                 if not _hpop.empty:
                     st.warning("⚠️ 人気なのに検証弱点多数（過剰人気の兆候・検証残差-1.8〜): "
-                               + " / ".join(f"{int(r['馬番'])}{r['馬名']}({r['人気']}人気/検証{int(r['検証数'])}個)" for _, r in _hpop.iterrows()))
+                               + " / ".join(f"{int(r['馬番'])}{r['馬名']}({r['人気']}人気/検証{int(r['検証'])}個)" for _, r in _hpop.iterrows()))
                 st.caption("※各フラグは単体では人気に織込み済(妙味ではない)。重複数による絶対複勝率の低下を『相手絞り/軸の不安』として使う。"
                            "**推定複勝率は『検証数』のみで算定**。調教C以下・総合力下位・予測下位の3つは検証不可(人気/オッズ内包)のため"
                            "『重複数(参考の重ね)』には乗るが推定複勝率には算入しない。")
@@ -5969,17 +6021,21 @@ if nav == "🧹 消去フィルター":
             def _row_color(s):
                 return ['background-color:#f1f3f5;color:#adb5bd' if v == '🧹消し'
                         else 'background-color:#e6f4ea;font-weight:bold' for v in s]
+            _elim_colcfg = {'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")}
             try:
                 st.dataframe(_show.style.apply(_row_color, subset=['判定']),
-                             hide_index=True, use_container_width=True)
+                             hide_index=True, use_container_width=True, column_config=_elim_colcfg)
             except Exception:
-                st.dataframe(_show, hide_index=True, use_container_width=True)
+                st.dataframe(_show, hide_index=True, use_container_width=True, column_config=_elim_colcfg)
             st.caption(f"全{_n}頭 → ✅残し{_keep}頭 / 🧹消し{_n - _keep}頭（強適消去スコア＝市場順位±検証ファクター）")
             _ec1, _ec2 = st.columns(2)
             with _ec1:
                 if _anauma is not None:
                     st.success(f"🎯 妙味の穴（消去ゾーンから救出）: **{int(_anauma['馬番'])} {_anauma['馬名']}** "
-                               f"／ {_anauma['人気']}人気・{_anauma['オッズ']}倍\n\n材料: {_anauma['妙味材料']}")
+                               f"／ {_anauma['人気']}人気・{float(_anauma['オッズ']):.1f}倍\n\n材料: {_anauma['妙味材料']}"
+                               if pd.notnull(_anauma['オッズ']) else
+                               f"🎯 妙味の穴（消去ゾーンから救出）: **{int(_anauma['馬番'])} {_anauma['馬名']}** "
+                               f"／ {_anauma['人気']}人気・-倍\n\n材料: {_anauma['妙味材料']}")
                     st.caption("検証: 人気薄(≥8番)×この＋ファクターは単勝回収率108.8%(無印63.7%)")
                 else:
                     st.info("🎯 妙味の穴: 該当なし（消去ゾーンに＋ファクターの人気薄馬なし）")
@@ -6180,11 +6236,12 @@ if nav == "🧹 消去フィルター":
 
                         def _ev_color(s):
                             return ['color:#2e7d32;font-weight:bold' if v >= 1.0 else 'color:#b71c1c' for v in s]
+                        _bo_colcfg = {'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")}
                         try:
                             st.dataframe(_sumdf.style.apply(_ev_color, subset=['EV(目安)']),
-                                         hide_index=True, use_container_width=True)
+                                         hide_index=True, use_container_width=True, column_config=_bo_colcfg)
                         except Exception:
-                            st.dataframe(_sumdf, hide_index=True, use_container_width=True)
+                            st.dataframe(_sumdf, hide_index=True, use_container_width=True, column_config=_bo_colcfg)
                         _pick = st.selectbox("配分する券種", [x[0] for x in _all_bets], key="bo_pick")
                         _sel = next((b for (lb, k, b) in _all_bets if lb == _pick), [])
                         _posev = [b for b in _sel if b['ev'] >= 1.0] or _sel[:3]
@@ -6198,7 +6255,8 @@ if nav == "🧹 消去フィルター":
                             '的中払戻': b.get('payout_if_hit', 0),
                             'ﾄﾘｶﾞﾐ': '⚠' if b.get('toriga') else '',
                         } for b in _posev])
-                        st.dataframe(_bl, hide_index=True, use_container_width=True)
+                        st.dataframe(_bl, hide_index=True, use_container_width=True,
+                                     column_config={'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")})
                         _syn = _alloc.get('synthetic_odds')
                         st.success(f"【{_pick}・{_amode}】合計 {_alloc['total']:,}円／合成オッズ "
                                    f"{(str(_syn)+'倍') if _syn else '-'}／期待回収 "

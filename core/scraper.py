@@ -641,6 +641,66 @@ def fetch_sanrenpuku_odds(race_id):
     # -------------------------------------------------------------------
     return _fetch_from_result_html()
 
+
+def fetch_combo_odds(race_id, kind):
+    """馬連(kind='umaren', type=4) / ワイド(kind='wide', type=5) の2頭オッズを取得。
+    戻り値: {frozenset({u1,u2}): odds}。発売中レースのみ(リアルタイムAPI)。失敗時 {}。
+    3連複は fetch_sanrenpuku_odds を使うこと。既存関数は変更しない追加実装。"""
+    import json, zlib, base64, re, time
+    type_code = {'umaren': '4', 'wide': '5'}.get(kind)
+    if not type_code:
+        return {}
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    api_url = f"https://{domain}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html"
+    cb = f"jQuery_{int(time.time() * 1000)}"
+    params = {"callback": cb, "pid": f"api_get_{'nar' if is_nar else 'jra'}_odds",
+              "input": "UTF-8", "output": "jsonp", "race_id": race_id,
+              "type": type_code, "action": "init", "sort": "ninki", "compress": "1"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
+               "Accept": "*/*", "Referer": f"https://{domain}/odds/index.html?race_id={race_id}"}
+    out = {}
+    try:
+        fetcher = ScraplingFetcher(impersonate='chrome120')
+        _resp = fetcher.get(api_url, params=params, headers=headers, timeout=15)
+        if not (_resp and _resp.body):
+            return {}
+        text = _resp.body.decode('utf-8', errors='ignore') if isinstance(_resp.body, bytes) else _resp.body
+        m = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
+        data = json.loads(m.group(1)) if m else json.loads(text)
+        raw = data.get('data', '')
+        if not raw or data.get('status') in ('result', 'NG'):
+            return {}
+        if isinstance(raw, str) and len(raw) > 10:
+            dec = base64.b64decode(raw)
+            try: dec = zlib.decompress(dec, -zlib.MAX_WBITS)
+            except Exception: dec = zlib.decompress(dec)
+            odds_data = json.loads(dec.decode('utf-8'))
+        elif isinstance(raw, dict):
+            odds_data = raw
+        else:
+            return {}
+        obt = odds_data.get('odds', odds_data)
+        section = obt.get(type_code, obt)
+
+        def _store(combo, oval):
+            try:
+                ov = float(str(oval).replace(',', '')) if oval not in ('', '---.-', '0', None) else 0.0
+                if ov > 0 and len(combo) == 4:
+                    out[frozenset((int(combo[0:2]), int(combo[2:4])))] = ov
+            except Exception:
+                pass
+        if isinstance(section, dict):
+            for k, val in section.items():
+                if isinstance(val, list) and len(val) >= 4:
+                    _store(str(val[3]), val[0])
+                elif len(str(k)) == 4:
+                    _store(str(k), val)
+    except Exception as e:
+        logger.warning(f"[ComboOdds] {kind} failed for {race_id}: {e}")
+    return out
+
 @retry(tries=3, delay=1)
 def fetch_win_odds(race_id):
     """Fetches Win (Tansho / 単勝) odds robustly."""

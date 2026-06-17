@@ -5,8 +5,8 @@
 - Phase 1: 当日逆算バイアス（同日同場同馬場の既走レースから前残り率・内枠率を集計）
            ＋ 3視点枠評価（馬番 / 逆馬番 / 外枠率）＋ コース×馬場マトリクス。
            ※「前半の傾向は後半も続く」は jravan.db で検証済（前残り61%vs50% / 内枠32.5%vs26.3%）。
-- Phase 2: クッション値・含水率のエビデンス化。これらは JV-Data に無く、JRA公式「馬場情報」
-           （前日昼/当日9:30頃）を手動入力・CSV・スクレイプで供給する想定。芝/ダで評価が逆。
+- Phase 2: クッション値・含水率のエビデンス化。JV-Data に無いが track_cond テーブル
+           （外部CSV取り込み: クッション値2020-09〜/ダート含水率2018-07〜）で自動供給。芝/ダで評価が逆。
 - Phase 3: バイアス恩恵の分離（恵まれ勝ち＝危険人気 / 逆らい好走＝巻き返し穴）。
 
 効果量は中程度のため、いずれも「断定」ではなく補助フラグ・ナッジとして使うこと。
@@ -20,6 +20,160 @@ JV_DB_PATH = os.path.join(
 
 # 直線が長い「大箱」コース（差しが届きやすい）。それ以外は小回り扱い。
 _BIG_COURSES = {'東京', '阪神', '新潟', '中京'}
+
+
+def lookup_track_cond(year, monthday, jyo, db_path=None):
+    """track_cond テーブルからクッション値・ダート含水率を引く。
+    戻り値: {'cushion': float|None, 'dirt_moisture': float|None}"""
+    db = db_path or JV_DB_PATH
+    out = {'cushion': None, 'dirt_moisture': None}
+    if not os.path.exists(db):
+        return out
+    try:
+        con = sqlite3.connect(db)
+        row = con.execute(
+            "SELECT cushion, dirt_moisture FROM track_cond "
+            "WHERE year=? AND monthday=? AND jyo=?",
+            (str(year), str(monthday).zfill(4), str(jyo).zfill(2))
+        ).fetchone()
+        con.close()
+        if row:
+            out['cushion'] = row[0]
+            out['dirt_moisture'] = row[1]
+    except Exception:
+        pass
+    return out
+
+
+# ── 場の信頼度: クッション値と馬場差の相関が高い場 / カオスな場
+_HIGH_CORR_VENUES = {'05', '10'}          # 東京(05)・小倉(10): クッション値が素直に馬場差と連動
+_CHAOS_VENUES = {'03', '06', '08', '09'}  # 福島(03)・中山(06)・京都(08)・阪神(09)
+
+# ── 芝種: 洋芝/野芝/オーバーシード別の平均クッション値（場間比較禁止の根拠）
+_TURF_TYPE = {
+    '01': ('洋芝', 7.6), '02': ('洋芝', 7.6),          # 札幌・函館
+    '04': ('野芝', 9.4),                                # 新潟
+    '05': ('OS', 9.4), '06': ('OS', 9.8), '07': ('OS', 9.3),  # 東京・中山・中京
+    '08': ('OS', 10.0), '09': ('OS', 9.1), '10': ('OS', 9.0),  # 京都・阪神・小倉
+    '03': ('OS', 9.2),                                  # 福島
+}
+
+# ── 種牡馬×クッション値シフト適性（PDF検証済み・2025重賞ベース）
+# shift='+' → 硬化時に活性、shift='△' → 軟化時に活性
+_SIRE_CUSHION_AFFINITY = {
+    'ディープインパクト': {'shift': '+', 'note': '硬化[+]で斬れ・スピード覚醒（複勝率21%→軟化時13%）'},
+    'キズナ':         {'shift': '+', 'note': '硬化[+]で複28.2% / 軟化[△]で8.7%。差が極端'},
+    # レイデオロ: サンプル不足(55/51走)で検証不能。除外
+    'キタサンブラック':  {'shift': '+', 'note': '硬化[+]で複31.7% / 軟化[△]で27.8%（BT検証: +が微優）'},
+    'サートゥルナーリア': {'shift': '△', 'note': '軟化[△]で複55.6%（サンプル少だが強烈）'},
+    'モーリス':        {'shift': '△', 'note': '⚠ 軟化[△]で複8.3%=危険水域。回避推奨', 'danger': True},
+    'エピファネイア':   {'shift': '+', 'note': '京都硬馬場(長距離)で複27.3%。短距離は疑問'},
+}
+# ND系（母父含む）は軟化時有利の大分類ルール
+_ND_SIRES = {'ノーザンダンサー', 'サドラーズウェルズ', 'デインヒル', 'ストームキャット',
+             'ハービンジャー', 'オルフェーヴル', 'ゴールドシップ'}
+
+# ── ダート含水率×個別種牡馬（BT検証済みのみ。US/EU大分類は否定済み）
+# 湿潤(≥8%)で回収率が顕著に上がる種牡馬
+_WET_DIRT_SIRES = {'パイロ', 'カジノドライヴ'}
+# 乾燥(≤3.5%)で回収率が顕著に上がる種牡馬
+_DRY_DIRT_SIRES = {'キングカメハメハ', 'シニスターミニスター', 'ヘニーヒューズ'}
+
+
+def cushion_day_shift(year, monthday, jyo, db_path=None):
+    """同じ場の前日（直近の開催日）のクッション値と比較して前日比シフトを算出。
+    戻り値: {'today': float, 'prev': float, 'delta': float,
+             'shift': '+'|'△'|'±0', 'venue_reliable': bool, 'turf_type': str, 'turf_avg': float}
+             or None（データ不足時）"""
+    db = db_path or JV_DB_PATH
+    if not os.path.exists(db):
+        return None
+    jyo = str(jyo).zfill(2)
+    year = str(year)
+    monthday = str(monthday).zfill(4)
+    try:
+        con = sqlite3.connect(db)
+        today_row = con.execute(
+            "SELECT cushion FROM track_cond WHERE year=? AND monthday=? AND jyo=? AND cushion IS NOT NULL",
+            (year, monthday, jyo)).fetchone()
+        if not today_row:
+            con.close()
+            return None
+        today_cv = today_row[0]
+        date_str = year + monthday
+        prev_row = con.execute(
+            "SELECT cushion FROM track_cond "
+            "WHERE jyo=? AND (year||monthday) < ? AND cushion IS NOT NULL "
+            "ORDER BY year||monthday DESC LIMIT 1",
+            (jyo, date_str)).fetchone()
+        con.close()
+        if not prev_row:
+            return None
+        prev_cv = prev_row[0]
+        delta = round(today_cv - prev_cv, 1)
+        if delta >= 0.3:
+            shift = '+'
+        elif delta <= -0.3:
+            shift = '△'
+        else:
+            shift = '±0'
+        tt = _TURF_TYPE.get(jyo, ('不明', 9.0))
+        return {
+            'today': today_cv, 'prev': prev_cv, 'delta': delta,
+            'shift': shift,
+            'venue_reliable': jyo in _HIGH_CORR_VENUES,
+            'venue_chaos': jyo in _CHAOS_VENUES,
+            'turf_type': tt[0], 'turf_avg': tt[1],
+        }
+    except Exception:
+        return None
+
+
+def sire_cushion_flag(sire_name, shift_info):
+    """種牡馬名とcushion_day_shiftの結果から、馬場シフト適性フラグを返す。
+    戻り値: {'flag': '🟢活性'|'🔴逆風'|'⚠危険'|None, 'detail': str} or None"""
+    if not shift_info or shift_info['shift'] == '±0':
+        return None
+    shift = shift_info['shift']
+    aff = _SIRE_CUSHION_AFFINITY.get(sire_name)
+    if aff:
+        matched = (aff['shift'] == shift)
+        if aff.get('danger'):
+            if matched:
+                return {'flag': '⚠危険', 'detail': f"父{sire_name}: {aff['note']}"}
+            return None
+        if matched:
+            return {'flag': '🟢活性', 'detail': f"父{sire_name}: {aff['note']}"}
+        return {'flag': '🔴逆風', 'detail': f"父{sire_name}: 今日のシフト[{shift}]と逆方向"}
+    if sire_name in _ND_SIRES:
+        if shift == '△':
+            return {'flag': '🟢活性', 'detail': f"父{sire_name}(ND系): 軟化[△]でパワー活性"}
+        else:
+            return {'flag': '🔴逆風', 'detail': f"父{sire_name}(ND系): 硬化[+]は不得手"}
+    return None
+
+
+def dirt_moisture_bloodtype(sire_name, moisture):
+    """ダート含水率と種牡馬から検証済みの適性フラグを返す（個別sireのみ）。
+    戻り値: {'flag': '🟢'|'🔴'|None, 'detail': str} or None"""
+    if moisture is None:
+        return None
+    mv = float(moisture)
+    is_wet = mv >= 8.0
+    is_dry = mv <= 3.5
+    if not is_wet and not is_dry:
+        return None
+    if sire_name in _WET_DIRT_SIRES:
+        if is_wet:
+            return {'flag': '🟢', 'detail': f"父{sire_name}: 高含水{mv:.1f}%で回収率UP(BT検証済)"}
+        elif is_dry:
+            return {'flag': '🔴', 'detail': f"父{sire_name}: 乾燥{mv:.1f}%では回収率低下"}
+    if sire_name in _DRY_DIRT_SIRES:
+        if is_dry:
+            return {'flag': '🟢', 'detail': f"父{sire_name}: 乾燥{mv:.1f}%で回収率UP(BT検証済)"}
+        elif is_wet:
+            return {'flag': '🔴', 'detail': f"父{sire_name}: 高含水{mv:.1f}%では回収率低下"}
+    return None
 
 
 # ──────────────────────────────────────────────
