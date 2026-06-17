@@ -3594,27 +3594,22 @@ if nav == "🏠 Single Race Analysis":
                         surface = str(row.get('CurrentSurface') or '')
                         dist = _safe_float(row.get('CurrentDistance'), 1600.0)
 
-                        # 条件A：キックバック・ストレス (ダート内枠+後方脚質)
-                        if "ダ" in surface and waku <= 3 and avg_pos >= 8.0:
-                            multiplier -= 0.08
-                            reasons.append("ダート内枠の砂かぶり(精神ストレス)")
-                        
-                        # 条件D：ダート長距離の内枠 (1800m以上のダート1〜3枠)
-                        if "ダ" in surface and dist >= 1800 and waku <= 3:
-                            multiplier -= 0.10
-                            reasons.append("長距離ダートの内枠(距離ストレス)")
+                        # ── 検証済みストレス（リーク無し・事前確定データのみ。🧪Stress Analystと同一基準）──
+                        # 旧条件A(ダ内枠後方)/B(奇数枠逃げ)/D(長ダ内枠)は結果脚質リーク or 織込み済みで否定→撤去。
+                        # ① 小柄馬×大幅馬体減：肉体ストレス(複勝残差-2.0pp z=-3.0・事前確定)
+                        if 0 < curr_w < 440 and w_diff_val <= -6:
+                            multiplier -= 0.04
+                            reasons.append("小柄馬×馬体減6kg超(検証-2.0pp)")
+                        # ② 習性後方ぐせ×芝：揉まれ・展開待ち(複勝残差-1.5pp z=-3.0。ダートは非有意)
+                        if "芝" in surface and avg_pos >= 7.5:
+                            multiplier -= 0.03
+                            reasons.append("芝×後方ぐせ(検証-1.5pp)")
+                        # ③ 大幅馬体増：仕上がり/余分(複勝残差-1.0pp z=-3.1・軽微)
+                        if w_diff_val >= 8:
+                            multiplier -= 0.02
+                            reasons.append("馬体増+8kg超(軽微-1.0pp)")
 
-                        # 条件B：待機・出遅れストレス (奇数枠+逃げ脚質)
-                        if umaban % 2 != 0 and avg_pos <= 2.5:
-                            multiplier -= 0.05
-                            reasons.append("奇数枠の逃げ馬(待機ストレス)")
-
-                        # 条件C：過剰消耗ストレス (小柄馬+大幅馬体減)
-                        if curr_w > 0 and curr_w < 440 and w_diff_val <= -6:
-                            multiplier -= 0.15
-                            reasons.append("小柄馬の大幅馬体減(肉体ストレス)")
-                        
-                        multiplier = max(multiplier, 0.70)
+                        multiplier = max(multiplier, 0.85)
                         
                         # 重み付き減衰量の計算 (指示書: 基礎評価に対する割合カット)
                         stress_w = sw.get('Stress', 1.0)
