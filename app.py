@@ -5766,6 +5766,21 @@ if nav == "🧹 消去フィルター":
                         _cdist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
                     except Exception:
                         _cdist = None
+                    # --- 事前平均PCI(過去走ベース)とフィールド平均からの乖離(検証済 pcidev フラグ用) ---
+                    _pci_map = {}   # 馬番 -> 事前平均PCI
+                    try:
+                        _calc_pci = race_analysis_tools.PCICalculator()
+                        for _, _pr in df.iterrows():
+                            try:
+                                _pu = int(pd.to_numeric(_pr.get('Umaban'), errors='coerce'))
+                            except Exception:
+                                continue
+                            _st = _calc_pci.analyze_horse_pci(_pr.get('PastRuns', []) or [])
+                            if _st.get('pci_list'):  # 有効な過去走PCIがある馬のみ
+                                _pci_map[_pu] = float(_st['avg_pci'])
+                        _field_pci = (sum(_pci_map.values()) / len(_pci_map)) if _pci_map else None
+                    except Exception:
+                        _field_pci = None
                     _xrows = []
                     for _, _r in df.iterrows():
                         _nm = str(_r.get('Name', ''))
@@ -5800,6 +5815,8 @@ if nav == "🧹 消去フィルター":
                             training_grade='C' if _nm in _tg_sel else None,
                             battle_low=bool(_use_score and _battle_low.get(_um)),
                             proj_low=bool(_use_score and _proj_low.get(_um)),
+                            pci_dev=((_pci_map[_um] - _field_pci)
+                                     if (_field_pci is not None and _um in _pci_map) else None),
                         )
                         _cnt = len(_fl)                       # 総重複(検証+実観測/score)
                         _vcnt = _exc.verified_count(_fl)      # 検証済みのみ(推定複勝率の根拠)

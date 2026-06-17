@@ -29,6 +29,7 @@ FLAG_DEFS = [
     ('distbig', '距離大変更',  '前走から距離が±400m以上変わる'),
     ('zogen',   '体重±16k',    '当日馬体重の増減が±16kg以上'),
     ('age8',    '8歳上',       '8歳以上の高齢'),
+    ('pcidev',  'PCI乖離',     '事前平均PCIがフィールド平均から±6以上乖離(検証済・人気内包の弱フラグ)'),
     ('train',   '調教C以下',   '調教評価がC以下(検証不可・実観測フラグ)'),
     ('battle',  '総合力下位',  '🏠Single Race Analysisの総合戦闘力が下位30%(検証不可・人気内包)'),
     ('proj',    '予測下位',    '🏠Single Race Analysisの予測スコアが下位30%(検証不可・人気内包)'),
@@ -55,6 +56,7 @@ LAYOFF_DAYS = 180
 DIST_BIG = 400          # m
 ZOGEN_BIG = 16          # kg
 AGE_OLD = 8
+PCI_DEV_BIG = 6.0       # 事前平均PCI − フィールド平均PCI の絶対乖離(検証: 6pp以上で複勝率22.4→20.0%)
 
 # 重複数 → 推定複勝率(%)。scripts/elim_cross_backtest.py の絶対複勝率(全フラグ)。
 BAND = {0: 31.5, 1: 27.1, 2: 19.1, 3: 14.9, 4: 13.7, 5: 13.6, 6: 13.1, 7: 10.3}
@@ -84,7 +86,7 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
                   avg_c4ratio=None, prev_date=None, race_date=None,
                   prev_dist=None, cur_dist=None, zogen=None, age=None,
                   training_grade=None, include_train=True,
-                  battle_low=False, proj_low=False):
+                  battle_low=False, proj_low=False, pci_dev=None):
     """1頭の点灯フラグ集合(set of key)を返す。すべて pre-race 情報のみ。
     引数は app 側で ctx/horse_elim_stats/出馬表から渡す。"""
     f = set()
@@ -110,6 +112,12 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
     try:
         if age is not None and int(age) >= AGE_OLD:
             f.add('age8')
+    except (TypeError, ValueError):
+        pass
+    # PCI乖離(検証済の弱フラグ): 事前平均PCIがフィールド平均から±PCI_DEV_BIG以上
+    try:
+        if pci_dev is not None and abs(float(pci_dev)) >= PCI_DEV_BIG:
+            f.add('pcidev')
     except (TypeError, ValueError):
         pass
     if include_train and training_grade:
