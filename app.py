@@ -120,7 +120,27 @@ def _detect_public():
     _ev = os.environ.get('KEIBA_PUBLIC')
     if _ev is not None:
         return _ev not in ('0', '', 'false', 'False')
-    return not os.path.exists(os.path.join(os.path.dirname(__file__), 'data', 'jravan.db'))
+    _db = os.path.join(os.path.dirname(__file__), 'data', 'jravan.db')
+    if not os.path.exists(_db):
+        return True
+    # ファイルはあるが results テーブルが無い＝sqlite3.connect が誤って生成した空DB。
+    # 本物の jravan.db は必ず results を持つ。空DBは公開版扱いにし、自己修復として削除する
+    # （読めた上で results 不在を確認した時だけ削除。ロック等で読めない場合は消さない）。
+    try:
+        import sqlite3 as _s
+        _c = _s.connect(f"file:{_db}?mode=ro", uri=True)
+        _has = _c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='results'").fetchone()
+        _c.close()
+        if _has:
+            return False
+        try:
+            os.remove(_db)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 IS_PUBLIC = _detect_public()
@@ -6176,34 +6196,38 @@ if nav == "🧹 消去フィルター":
             # 期待値=回収率=勝率×オッズ(単勝は同義)。
             if '_odds_exp_fine' not in st.session_state:
                 _ef = {}
-                try:
-                    import sqlite3 as _sq3
-                    _edges = [1.5, 2.5, 4.0, 7.0, 15.0, 30.0, 60.0]
+                # ※ os.path.exists ガード必須: sqlite3.connect はファイルが無いと空DBを
+                #   新規作成してしまい、以降 IS_PUBLIC 判定が壊れ engine が
+                #   「no such table: results」で落ちる(公開版バグ)。read-only でも接続する。
+                if os.path.exists(_jjv.JV_DB_PATH):
+                    try:
+                        import sqlite3 as _sq3
+                        _edges = [1.5, 2.5, 4.0, 7.0, 15.0, 30.0, 60.0]
 
-                    def _fband(o):
-                        for _i, _e in enumerate(_edges):
-                            if o <= _e:
-                                return _i
-                        return len(_edges)
-                    _con2 = _sq3.connect(_jjv.JV_DB_PATH)
-                    _rws = _con2.execute(
-                        "SELECT win_odds, chakujun FROM results "
-                        "WHERE year IN ('2022','2023','2024','2025') "
-                        "AND chakujun>0 AND win_odds>0").fetchall()
-                    _con2.close()
-                    _bk = {}
-                    for _o2, _c2 in _rws:
-                        _b = _fband(_o2)
-                        _d = _bk.setdefault(_b, [0, 0, 0, 0])
-                        _d[0] += 1
-                        _d[1] += 1 if _c2 == 1 else 0
-                        _d[2] += 1 if _c2 <= 2 else 0
-                        _d[3] += 1 if _c2 <= 3 else 0
-                    _ef = {_b: {'win': _d[1] / _d[0], 'top2': _d[2] / _d[0],
-                                'top3': _d[3] / _d[0], 'n': _d[0]} for _b, _d in _bk.items()}
-                    _ef['_edges'] = _edges
-                except Exception:
-                    _ef = {}
+                        def _fband(o):
+                            for _i, _e in enumerate(_edges):
+                                if o <= _e:
+                                    return _i
+                            return len(_edges)
+                        _con2 = _sq3.connect(f"file:{_jjv.JV_DB_PATH}?mode=ro", uri=True)
+                        _rws = _con2.execute(
+                            "SELECT win_odds, chakujun FROM results "
+                            "WHERE year IN ('2022','2023','2024','2025') "
+                            "AND chakujun>0 AND win_odds>0").fetchall()
+                        _con2.close()
+                        _bk = {}
+                        for _o2, _c2 in _rws:
+                            _b = _fband(_o2)
+                            _d = _bk.setdefault(_b, [0, 0, 0, 0])
+                            _d[0] += 1
+                            _d[1] += 1 if _c2 == 1 else 0
+                            _d[2] += 1 if _c2 <= 2 else 0
+                            _d[3] += 1 if _c2 <= 3 else 0
+                        _ef = {_b: {'win': _d[1] / _d[0], 'top2': _d[2] / _d[0],
+                                    'top3': _d[3] / _d[0], 'n': _d[0]} for _b, _d in _bk.items()}
+                        _ef['_edges'] = _edges
+                    except Exception:
+                        _ef = {}
                 st.session_state['_odds_exp_fine'] = _ef
             _ef = st.session_state.get('_odds_exp_fine', {})
             if not _ef:
@@ -10383,7 +10407,10 @@ if nav == "🏇 騎手分析Pro":
         if _jj_rid:
             st.session_state['_jj_last_rid'] = _jj_rid
             try:
-                _jc = _jjsq.connect('data/jravan.db')
+                # os.path.exists ガード必須: connect はファイルが無いと空DBを作り IS_PUBLIC 判定を壊す
+                if not os.path.exists('data/jravan.db'):
+                    raise FileNotFoundError('jravan.db')
+                _jc = _jjsq.connect('file:data/jravan.db?mode=ro', uri=True)
                 _jrow = _jc.execute(
                     "SELECT race_key, jyo, kyori, surface, race_name FROM races WHERE race_id=?",
                     (_jj_rid,)).fetchone()
