@@ -642,6 +642,151 @@ def fetch_sanrenpuku_odds(race_id):
     return _fetch_from_result_html()
 
 
+def fetch_sanrentan_odds(race_id):
+    """
+    3連単オッズ(type=8)を取得する。fetch_sanrenpuku_odds の3連単版（追加実装）。
+    3連複と違い『着順あり』なので combo は (1着,2着,3着) の順序付きで返す。
+
+    取得優先順序:
+      1. リアルタイム JSONP API (type=8) ← 発売中レース
+      2. result.html 払い戻しテーブル ← 確定済みレース（当選組み合わせのみ）
+    戻り値: [{'Combination':'a→b→c','Horses':[1着,2着,3着],'Odds':float,'Rank':int}]
+    """
+    import json, zlib, base64, re
+    import time
+
+    is_nar = _is_nar(race_id)
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    api_url = f"https://{domain}/api/api_get_{'nar' if is_nar else 'jra'}_odds.html"
+
+    def _fetch_from_result_html():
+        """確定済みレースの払い戻しテーブルから3連単当選組み合わせ(着順あり)を返す。"""
+        res_results = []
+        try:
+            res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+            res_html = fetch_robust_html(res_url)
+            if not res_html:
+                return []
+            from bs4 import BeautifulSoup
+            rsoup = BeautifulSoup(res_html, 'html.parser', from_encoding='euc-jp')
+            for table in rsoup.find_all('table', class_='Payout_Detail_Table'):
+                for tr in table.find_all('tr'):
+                    th_td = tr.find_all(['th', 'td'])
+                    if len(th_td) >= 4 and '3連単' in th_td[0].get_text(strip=True):
+                        combo_str = th_td[1].get_text(separator='-', strip=True)
+                        raw_combo = re.findall(r'\d+', combo_str)
+                        if len(raw_combo) >= 3:
+                            h1, h2, h3 = int(raw_combo[0]), int(raw_combo[1]), int(raw_combo[2])
+                            payout_str = re.sub(r'[^\d]', '', th_td[2].get_text(strip=True))
+                            payout = float(payout_str) / 100.0 if payout_str else 0.0
+                            pop_m = re.search(r'(\d+)', th_td[3].get_text(strip=True))
+                            pop = int(pop_m.group(1)) if pop_m else 1
+                            res_results.append({
+                                'Combination': f"{h1}→{h2}→{h3}",
+                                'Horses': [h1, h2, h3],
+                                'Odds': round(payout, 1),
+                                'Rank': pop,
+                                '_source': 'result_html',
+                            })
+            logger.info(f"[Sanrentan] result.html から {len(res_results)} 件の3連単払い戻しを取得")
+        except Exception as e:
+            logger.warning(f"[Sanrentan] result.html フォールバック失敗: {e}")
+        return res_results
+
+    cb = f"jQuery_{int(time.time() * 1000)}"
+    params = {
+        "callback": cb,
+        "pid": f"api_get_{'nar' if is_nar else 'jra'}_odds",
+        "input": "UTF-8",
+        "output": "jsonp",
+        "race_id": race_id,
+        "type": "8",
+        "action": "init",
+        "sort": "ninki",
+        "compress": "1",
+    }
+    api_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Referer": f"https://{domain}/odds/index.html?type=b1&race_id={race_id}",
+    }
+
+    try:
+        fetcher = ScraplingFetcher(impersonate='chrome120')
+        _resp = fetcher.get(api_url, params=params, headers=api_headers, timeout=15)
+        if _resp and _resp.body:
+            text = _resp.body.decode('utf-8', errors='ignore') if isinstance(_resp.body, bytes) else _resp.body
+            jsonp_match = re.search(r'jQuery[^(]*\((.+)\)\s*$', text, re.DOTALL)
+            data = json.loads(jsonp_match.group(1)) if jsonp_match else json.loads(text)
+        else:
+            raise ValueError("Empty response from JSONP API")
+
+        api_status = data.get('status', '')
+        raw = data.get('data', '')
+        if not raw or api_status in ('result', 'NG'):
+            logger.info(f"[Sanrentan] JSONP API status={api_status}, result.html フォールバックへ")
+            return _fetch_from_result_html()
+
+        if isinstance(raw, str) and len(raw) > 10:
+            decoded = base64.b64decode(raw)
+            try:
+                decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
+            except Exception:
+                decompressed = zlib.decompress(decoded)
+            odds_data = json.loads(decompressed.decode('utf-8'))
+        elif isinstance(raw, dict):
+            odds_data = raw
+        else:
+            return _fetch_from_result_html()
+
+        results = []
+        odds_by_type = odds_data.get('odds', odds_data)
+        tan_data = odds_by_type.get('8', odds_by_type)
+        if isinstance(tan_data, dict):
+            for rank_key, val in tan_data.items():
+                try:
+                    if isinstance(val, list) and len(val) >= 4:
+                        odds_str = str(val[0]).replace(',', '')
+                        rank_int = int(val[2])
+                        combo = str(val[3])
+                        odds_val = float(odds_str) if odds_str not in ('', '---.-', '0') else 0.0
+                        if odds_val > 0 and len(combo) == 6:
+                            h1, h2, h3 = int(combo[0:2]), int(combo[2:4]), int(combo[4:6])
+                            results.append({
+                                'Combination': f"{h1}→{h2}→{h3}",
+                                'Horses': [h1, h2, h3],
+                                'Odds': odds_val,
+                                'Rank': rank_int,
+                            })
+                except Exception:
+                    continue
+        if not results:
+            for key, val in odds_data.items():
+                if len(key) == 6:
+                    try:
+                        h1, h2, h3 = int(key[0:2]), int(key[2:4]), int(key[4:6])
+                        odds_val = float(str(val).replace(',', '')) if val not in ('', '---.-', '0') else 0.0
+                        if odds_val > 0:
+                            results.append({
+                                'Combination': f"{h1}→{h2}→{h3}",
+                                'Horses': [h1, h2, h3],
+                                'Odds': odds_val,
+                                'Rank': 0,
+                            })
+                    except Exception:
+                        continue
+        if not results:
+            return _fetch_from_result_html()
+        results.sort(key=lambda x: x['Odds'])
+        for i, item in enumerate(results):
+            if item['Rank'] == 0:
+                item['Rank'] = i + 1
+        return results
+    except Exception as e:
+        logger.warning(f"Sanrentan API failed for {race_id}: {e}")
+    return _fetch_from_result_html()
+
+
 def fetch_combo_odds(race_id, kind):
     """馬連(kind='umaren', type=4) / ワイド(kind='wide', type=5) の2頭オッズを取得。
     戻り値: {frozenset({u1,u2}): odds}。発売中レースのみ(リアルタイムAPI)。失敗時 {}。
@@ -700,6 +845,69 @@ def fetch_combo_odds(race_id, kind):
     except Exception as e:
         logger.warning(f"[ComboOdds] {kind} failed for {race_id}: {e}")
     return out
+
+
+def fetch_race_payouts(race_id):
+    """終了レースの『確定配当』を全券種取得する(回顧用)。result.html の Payout_Detail_Table
+    を解析し、各券種の当選組み合わせ・配当(倍=払戻/100)・人気を返す。
+    戻り値: {券種key: [{'combo':[馬番...], 'odds':float, 'pop':int|None}]}。失敗時 {}。
+    券種key: tan/fuku/wakuren/umaren/wide/umatan/trio/trifecta。
+    ※ 終了後は全組合せのオッズは公開されないため、ここで取れるのは当選分のみ。
+      既存の fetch_sanrenpuku_odds / fetch_combo_odds は変更しない追加実装。"""
+    import re
+    out = {}
+    # 券種ラベル → (key, 1組合せの頭数)
+    name_map = [
+        ('三連単', ('trifecta', 3)), ('3連単', ('trifecta', 3)),
+        ('三連複', ('trio', 3)), ('3連複', ('trio', 3)),
+        ('馬単', ('umatan', 2)), ('ワイド', ('wide', 2)),
+        ('馬連', ('umaren', 2)), ('枠連', ('wakuren', 2)),
+        ('複勝', ('fuku', 1)), ('単勝', ('tan', 1)),
+    ]
+    try:
+        res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+        res_html = fetch_robust_html(res_url)
+        if not res_html:
+            return {}
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(res_html, 'html.parser', from_encoding='euc-jp')
+        for table in soup.find_all('table', class_='Payout_Detail_Table'):
+            for tr in table.find_all('tr'):
+                th = tr.find('th')
+                if not th:
+                    continue
+                label = th.get_text(strip=True)
+                key = size = None
+                for nm, (k, sz) in name_map:
+                    if nm in label:
+                        key, size = k, sz
+                        break
+                if not key:
+                    continue
+                tds = tr.find_all('td')
+                if len(tds) < 2:
+                    continue
+                nums = re.findall(r'\d+', tds[0].get_text('-', strip=True))
+                pays = re.findall(r'[\d,]+', tds[1].get_text('\n', strip=True))
+                pops = re.findall(r'\d+', tds[2].get_text('\n', strip=True)) if len(tds) >= 3 else []
+                pay_vals = [float(p.replace(',', '')) / 100.0 for p in pays if p.replace(',', '').isdigit()]
+                n = len(pay_vals)
+                if n == 0 or not nums:
+                    continue
+                rows = []
+                for i in range(n):
+                    combo = nums[i * size:(i + 1) * size]
+                    if len(combo) != size:
+                        break
+                    pop = int(pops[i]) if i < len(pops) and pops[i].isdigit() else None
+                    rows.append({'combo': [int(x) for x in combo],
+                                 'odds': round(pay_vals[i], 1), 'pop': pop})
+                if rows:
+                    out.setdefault(key, []).extend(rows)
+    except Exception as e:
+        logger.warning(f"[Payouts] result.html parse failed for {race_id}: {e}")
+    return out
+
 
 @retry(tries=3, delay=1)
 def fetch_win_odds(race_id):

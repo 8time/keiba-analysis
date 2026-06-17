@@ -242,6 +242,19 @@ def build_odds_map(odds_list):
     return m
 
 
+def build_trifecta_odds_map(odds_list):
+    """scraper.fetch_sanrentan_odds の出力 → {(1着,2着,3着): odds}（着順あり=順序付きtuple）。"""
+    m = {}
+    for item in (odds_list or []):
+        try:
+            hs = [int(x) for x in item['Horses']]
+            if len(hs) == 3 and item.get('Odds'):
+                m[tuple(hs)] = float(item['Odds'])
+        except Exception:
+            continue
+    return m
+
+
 # ──────────────────────────────────────────────
 # 馬連 / 馬単 おすすめ（3連複の代替・高配当検知）
 #   人気馬が3頭目に絡むと3連複は配当が伸びない。そんな時は2頭勝負の

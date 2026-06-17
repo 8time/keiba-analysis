@@ -2581,7 +2581,10 @@ if nav == "🏠 Single Race Analysis":
                                         unsafe_allow_html=True,
                                     )
 
-                                # ── 🔄 バイアス巻き返し候補（Phase3: 直近走でバイアスに逆らって好走）──
+                                # ── 🔄 バイアス巻き返し（人気帯リフレーム版・検証反映） ──
+                                # 検証(scripts/comeback_backtest.py・2023-25)で「巻き返し穴=次走妙味」は否定。
+                                # 穴帯(6番人気〜)は複勝残差≈0〜負・単ROI66-68%で妙味ゼロ→非表示。
+                                # 1-3番人気で発火のみ複勝残差+2.1pp(z=2.2)=軸の信頼度。4-5番人気は-3.8pp(z=-3.0)=危険人気の罠。
                                 try:
                                     from core import track_bias as _cb_tb
                                     _cb_key = f"comeback_{race_id_input}"
@@ -2594,21 +2597,62 @@ if nav == "🏠 Single Race Analysis":
                                         st.session_state[_cb_key] = _cb
                                     _cb_list = st.session_state[_cb_key]
                                     if _cb_list:
-                                        _cb_html = "".join(
-                                            f"<div style='background:rgba(0,0,0,0.18);border-radius:8px;"
-                                            f"padding:7px 12px;margin:5px 0;'>"
-                                            f"<b style='font-size:16px;color:#fff;'>{u}番 {nm}</b>"
-                                            f"<span style='font-size:12px;color:#cde;margin-left:10px;'>{r}</span></div>"
-                                            for u, nm, r in _cb_list)
-                                        st.markdown(
-                                            "<div style='background:linear-gradient(135deg,#1565c0,#2a9d8f);"
-                                            "border:2px solid #8be9fd;border-radius:12px;padding:14px 16px;margin:12px 0;'>"
-                                            "<div style='font-size:18px;font-weight:900;color:#fff;'>🔄 バイアス巻き返し候補</div>"
-                                            "<div style='font-size:12px;color:#e8f7ff;margin:3px 0 8px;'>"
-                                            "直近走で当日の馬場バイアスに<b>逆らって好走</b>＝展開不利を能力で覆した馬。次走の妙味。</div>"
-                                            f"{_cb_html}</div>",
-                                            unsafe_allow_html=True,
-                                        )
+                                        _cb_ninki = {}
+                                        if 'Popularity' in df.columns:
+                                            for _, _cb_rr in df.iterrows():
+                                                try:
+                                                    _cb_ninki[int(_cb_rr['Umaban'])] = int(
+                                                        pd.to_numeric(_cb_rr.get('Popularity'), errors='coerce'))
+                                                except Exception:
+                                                    pass
+                                        _cb_axis, _cb_trap, _cb_hidden = [], [], 0
+                                        for u, nm, r in _cb_list:
+                                            p = _cb_ninki.get(u)
+                                            if not p or p <= 0:
+                                                _cb_hidden += 1            # 人気未取得=判定不可
+                                            elif p <= 3:
+                                                _cb_axis.append((u, nm, p, r))
+                                            elif p <= 5:
+                                                _cb_trap.append((u, nm, p, r))
+                                            else:
+                                                _cb_hidden += 1            # 6番人気以下=妙味ゼロ(検証)→非表示
+
+                                        def _cb_rows(items):
+                                            return "".join(
+                                                f"<div style='background:rgba(0,0,0,0.18);border-radius:8px;"
+                                                f"padding:7px 12px;margin:5px 0;'>"
+                                                f"<b style='font-size:16px;color:#fff;'>{u}番 {nm} "
+                                                f"<span style='font-size:12px;opacity:.85;'>({p}番人気)</span></b>"
+                                                f"<span style='font-size:12px;color:#e9eef5;margin-left:10px;'>{r}</span></div>"
+                                                for u, nm, p, r in items)
+                                        # ✅ 1-3番人気で発火 → 軸の複勝信頼度UP（唯一の正のエッジ）
+                                        if _cb_axis:
+                                            st.markdown(
+                                                "<div style='background:linear-gradient(135deg,#1b5e20,#2a9d8f);"
+                                                "border:2px solid #8bf5b0;border-radius:12px;padding:14px 16px;margin:12px 0;'>"
+                                                "<div style='font-size:18px;font-weight:900;color:#fff;'>"
+                                                "🔄 巻き返し→軸の複勝信頼度UP（1〜3番人気）</div>"
+                                                "<div style='font-size:12px;color:#e8fff0;margin:3px 0 8px;'>"
+                                                "直近走で馬場バイアスに<b>逆らって好走</b>＋現在も人気上位。"
+                                                "検証: この帯のみ複勝残差+2.1pp(z=2.2)＝<b>軸・相手の信頼度UP</b>"
+                                                "（単勝妙味ではない＝ROIは控除内）。</div>"
+                                                f"{_cb_rows(_cb_axis)}</div>",
+                                                unsafe_allow_html=True)
+                                        # ⚠ 4-5番人気で発火 → 危険人気の罠（過剰人気）
+                                        if _cb_trap:
+                                            st.markdown(
+                                                "<div style='background:linear-gradient(135deg,#7f1d1d,#b45309);"
+                                                "border:2px solid #fca5a5;border-radius:12px;padding:14px 16px;margin:12px 0;'>"
+                                                "<div style='font-size:18px;font-weight:900;color:#fff;'>"
+                                                "⚠ 巻き返し×4〜5番人気＝危険人気の罠</div>"
+                                                "<div style='font-size:12px;color:#fff0f0;margin:3px 0 8px;'>"
+                                                "巻き返し実績で人気を集めるが検証では複勝残差<b>-3.8pp(z=-3.0)</b>＝"
+                                                "<b>過剰人気</b>。軸から外す/消去・相手厳選の検討材料。</div>"
+                                                f"{_cb_rows(_cb_trap)}</div>",
+                                                unsafe_allow_html=True)
+                                        if not _cb_axis and not _cb_trap and _cb_hidden:
+                                            st.caption(f"🔄 巻き返し該当 {_cb_hidden}頭は6番人気以下／人気未取得のため非表示"
+                                                       "（検証で穴帯は妙味ゼロ=単ROI66-68%）。")
                                 except Exception as _cb_e:
                                     st.caption(f"巻き返し判定: {_cb_e}")
 
@@ -5811,8 +5855,12 @@ if nav == "🧹 消去フィルター":
                          "※これらは人気/オッズを内包し検証(backtest)不可のため、推定複勝率(検証値)には算入せず『参考の重ね』として表示します。")
             else:
                 _use_score = False
-                st.caption("ℹ️ 総合戦闘力／予測スコアを加味するには、先に🏠 Single Race Analysisで**同じレースを採点**してください"
-                           "（採点テーブルの馬番がこのレースと一致すると自動で取り込みます）。")
+                st.markdown(
+                    "<div style='color:#d32f2f;font-size:0.85em'>"
+                    "ℹ️ 総合戦闘力／予測スコアを加味するには、先に🏠 Single Race Analysisで"
+                    "<b>同じレースを採点</b>してください"
+                    "（採点テーブルの馬番がこのレースと一致すると自動で取り込みます）。</div>",
+                    unsafe_allow_html=True)
             _tg_default = []
             _all_names_ec = df['Name'].astype(str).tolist() if 'Name' in df.columns else []
             _tg_sel = st.multiselect(
@@ -6358,8 +6406,10 @@ if nav == "🧹 消去フィルター":
                 else:
                     st.caption("まだ記録がありません。")
 
-            # ===== 🎯 3連複フォーメーション（消去エンジン連携）=====
-            st.markdown("#### 🎯 3連複フォーメーション（消去エンジン連携）")
+            # ===== 🎯 フォーメーション（消去エンジン連携）=====
+            st.markdown("#### 🎯 フォーメーション（消去エンジン連携）")
+            _form_kind = st.radio("馬券種", ["3連複", "3連単"], horizontal=True, key="kf_form_kind")
+            _is_tri = (_form_kind == "3連単")
             # 列ごとに選択pill(タグ)の色を変える: 1列目=既定(赤系)/2列目=#008080/3列目=#0000ff
             st.markdown(
                 "<style>"
@@ -6369,8 +6419,12 @@ if nav == "🧹 消去フィルター":
                 ".st-key-kf_form_c3 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
                 "</style>",
                 unsafe_allow_html=True)
-            st.caption("✅残し上位を軸/対抗に、🎯穴・🛟ボーダー残しを押さえに自動配置。役割分担で無駄を省きます。"
-                       "（買い目構造は予測エッジでなく点数最適化。検証済み①人気-人気-穴の方針と併用）")
+            if _is_tri:
+                st.caption("着順あり(1着-2着-3着)。✅残し上位を1着/2着、🎯穴・🛟ボーダー残しを3着候補に自動配置。"
+                           "（着順固定の分だけ点数は増えます。検証済みの妙味は相手選びの方針と併用）")
+            else:
+                st.caption("✅残し上位を軸/対抗に、🎯穴・🛟ボーダー残しを押さえに自動配置。役割分担で無駄を省きます。"
+                           "（買い目構造は予測エッジでなく点数最適化。検証済み①人気-人気-穴の方針と併用）")
             _keepdf = _edf[_edf['判定'] == '✅残し']
             _keep_um = [int(x) for x in _keepdf['馬番'].tolist()]
             _border_um = [int(x) for x in _edf[_edf['判定'] == '🛟ボーダー残し']['馬番'].tolist()]
@@ -6406,38 +6460,130 @@ if nav == "🧹 消去フィルター":
                 st.session_state['kf_form_c2'] = _def2
                 st.session_state['kf_form_c3'] = _def3
                 st.session_state['kf_form_sig'] = _form_sig
+            _lab_c1 = "1着" if _is_tri else "1列目 軸"
+            _lab_c2 = "2着" if _is_tri else "2列目 対抗"
+            _lab_c3 = "3着" if _is_tri else "3列目 押さえ(穴含む)"
             _fc1, _fc2, _fc3 = st.columns(3)
             with _fc1:
-                _c1 = st.multiselect("1列目 軸", _all_um, default=_def1,
+                _c1 = st.multiselect(_lab_c1, _all_um, default=_def1,
                                      format_func=_lab, key="kf_form_c1")
             with _fc2:
-                _c2 = st.multiselect("2列目 対抗", _all_um, default=_def2,
+                _c2 = st.multiselect(_lab_c2, _all_um, default=_def2,
                                      format_func=_lab, key="kf_form_c2")
             with _fc3:
-                _c3 = st.multiselect("3列目 押さえ(穴含む)", _all_um, default=_def3,
+                _c3 = st.multiselect(_lab_c3, _all_um, default=_def3,
                                      format_func=_lab, key="kf_form_c3")
             try:
                 from core import trio_engine as _te
                 import importlib as _il_te2; _il_te2.reload(_te)
-                _trios = _te.build_formation(_c1, _c2, _c3)
+                _trios = (_te.build_trifecta_formation(_c1, _c2, _c3) if _is_tri
+                          else _te.build_formation(_c1, _c2, _c3))
             except Exception as _fe:
                 _trios = []
                 st.warning(f"フォーメーション生成エラー: {_fe}")
             if _trios:
-                _unit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
-                                        value=100, step=100, key="kf_form_unit")
-                st.success(f"買い目 {len(_trios)}点 × {int(_unit)}円 = 合計 {len(_trios) * int(_unit):,}円")
-                _bl = pd.DataFrame([{
-                    '馬番': '-'.join(str(u) for u in t),
-                    '馬名': ' '.join(f"({u}){_name_of.get(u, '')}" for u in t),
-                } for t in _trios])
-                st.dataframe(_bl, hide_index=True, use_container_width=True, height=240,
-                             column_config={
-                                 '馬番': st.column_config.TextColumn('馬番', width='small'),
-                                 '馬名': st.column_config.TextColumn('馬名'),
-                             })
+                _sep = '→' if _is_tri else '-'
+                _nsep = ' → ' if _is_tri else ' '
+                _umcol = '馬番(1→2→3着)' if _is_tri else '馬番'
+                # ── オッズに応じた掛け金配分（人気組=低オッズに厚く） ──
+                _alc_l, _alc_m, _alc_r = st.columns([1, 1.4, 1])
+                with _alc_l:
+                    _form_budget = st.number_input("予算(合計・円)", 100, 1000000, 3000, 100,
+                                                   key="kf_form_budget")
+                with _alc_m:
+                    _form_amode = st.radio("掛け金の配り方",
+                                           ["人気組に厚く(払戻均等)", "均等"],
+                                           key="kf_form_amode", horizontal=True,
+                                           help="人気組に厚く=低オッズ(人気)の組ほど多く賭け、どの組が当たっても"
+                                                "払戻が近くなる配り方(オッズ逆比)。均等=全組同額。")
+                with _alc_r:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    _fetch_form_odds = st.button("💴 オッズ取得＆配分", key="kf_form_fetch_odds",
+                                                 use_container_width=True)
+                _fodds_key = f"kf_form_odds_{race_id_input}_{'tri' if _is_tri else 'puk'}"
+                if _fetch_form_odds:
+                    with st.spinner("オッズ取得中（3連単/3連複のライブオッズ）..."):
+                        try:
+                            if _is_tri:
+                                _omap = _te.build_trifecta_odds_map(
+                                    scraper.fetch_sanrentan_odds(race_id_input))
+                            else:
+                                _omap = _te.build_odds_map(
+                                    scraper.fetch_sanrenpuku_odds(race_id_input))
+                        except Exception as _oe:
+                            _omap = {}
+                            st.warning(f"オッズ取得エラー: {_oe}")
+                        st.session_state[_fodds_key] = _omap
+                _omap = st.session_state.get(_fodds_key)
+                if _omap:
+                    _mode2 = '払戻均等' if _form_amode.startswith('人気組') else '均等買い'
+                    _bets, _no_odds = [], 0
+                    for t in _trios:
+                        _o = _omap.get(t) if _is_tri else _omap.get(frozenset(t))
+                        if _o:
+                            _bets.append({'combo': t, 'odds': float(_o)})
+                        else:
+                            _no_odds += 1
+                    if _bets:
+                        _bets.sort(key=lambda b: b['odds'])  # 人気(低オッズ)順
+                        _ares = _te.allocate_budget(_bets, int(_form_budget), mode=_mode2, unit=100)
+                        _rows = [{
+                            '馬番': _sep.join(str(u) for u in b['combo']),
+                            '馬名': _nsep.join(f"({u}){_name_of.get(u, '')}" for u in b['combo']),
+                            'オッズ': round(b['odds'], 1),
+                            '推奨掛け金(円)': b.get('stake', 0),
+                            '的中払戻(円)': b.get('payout_if_hit', 0),
+                            'ﾄﾘｶﾞﾐ': '⚠' if b.get('toriga') else '',
+                        } for b in _bets]
+                        st.success(f"{_form_kind} {len(_bets)}点 / 合計 {_ares.get('total', 0):,}円"
+                                   + (f"（{_no_odds}点はオッズ未取得で除外）" if _no_odds else "")
+                                   + f" ・配分=「{_form_amode}」")
+                        st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                                     use_container_width=True, height=340,
+                                     column_config={
+                                         '馬番': st.column_config.TextColumn(_umcol, width='small'),
+                                         '馬名': st.column_config.TextColumn('馬名'),
+                                         'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f"),
+                                         '推奨掛け金(円)': st.column_config.NumberColumn('推奨掛け金(円)', format="%d"),
+                                         '的中払戻(円)': st.column_config.NumberColumn('的中払戻(円)', format="%d"),
+                                     })
+                        st.caption("💡『人気組に厚く(払戻均等)』はオッズの逆数で配分＝人気組ほど多く賭け、"
+                                   "どの組が当たっても払戻が近くなります。ﾄﾘｶﾞﾐ⚠=その組が的中しても合計購入額を"
+                                   "下回る（人気すぎ）。※配分は資金管理の型であって予測エッジ(妙味)ではありません。")
+                    else:
+                        st.warning("対象のライブオッズが取得できませんでした（発売前・終了レースは3連複/3連単の"
+                                   "オッズが出ないことがあります）。下のフラット表示をご利用ください。")
+                        _omap = None
+                if not _omap:
+                    _unit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
+                                            value=100, step=100, key="kf_form_unit")
+                    st.info(f"{_form_kind} 買い目 {len(_trios)}点 × {int(_unit)}円 = "
+                            f"合計 {len(_trios) * int(_unit):,}円"
+                            "（「💴 オッズ取得＆配分」を押すと、オッズに応じた推奨掛け金を表示します）")
+                    _bl = pd.DataFrame([{
+                        '馬番': _sep.join(str(u) for u in t),
+                        '馬名': _nsep.join(f"({u}){_name_of.get(u, '')}" for u in t),
+                    } for t in _trios])
+                    st.dataframe(_bl, hide_index=True, use_container_width=True, height=240,
+                                 column_config={
+                                     '馬番': st.column_config.TextColumn(_umcol, width='small'),
+                                     '馬名': st.column_config.TextColumn('馬名'),
+                                 })
             else:
-                st.info("各列に馬を選ぶと3連複の買い目が生成されます（3頭が相異なる組合せ）。")
+                st.info(f"各列に馬を選ぶと{_form_kind}の買い目が生成されます（3頭が相異なる組合せ）。")
+            # 🎰 買い方最適化へ連携（軸=1列目/1着、相手1=2列目/2着、相手2=3列目/3着）
+            if _c1:
+                if st.button("🎰 この選択を買い方最適化へ送る（軸=1列目 / 相手1=2列目 / 相手2=3列目）",
+                             key="kf_form_to_bo"):
+                    _axis_link = [int(u) for u in _c1]
+                    _mate1_link = [int(u) for u in _c2 if int(u) not in _axis_link]
+                    _mate2_link = [int(u) for u in _c3
+                                   if int(u) not in _axis_link and int(u) not in _mate1_link]
+                    st.session_state['bo_axis'] = _axis_link
+                    st.session_state['bo_mate1'] = _mate1_link
+                    st.session_state['bo_mate2'] = _mate2_link
+                    st.success("🎰 買い方最適化の軸・相手1・相手2に反映しました。"
+                               "下の🎰パネルで「▶ ライブオッズ取得＆EV計算」を押してください。")
 
             # ===== 🎰 買い方最適化（券種EV比較・配分）=====
             st.markdown("#### 🎰 買い方最適化（券種EV比較・配分）")
@@ -6471,26 +6617,69 @@ if nav == "🧹 消去フィルター":
                 _ordered = sorted(_scores, key=lambda u: -_scores[u])
                 _all_um_bo = [int(x) for x in _edf['馬番'].tolist()]
                 _def_axis = _ordered[:2]
-                _def_mate = [u for u in _ordered[2:7]]
-                if _anauma is not None and int(_anauma['馬番']) not in _def_mate:
-                    _def_mate = _def_mate + [int(_anauma['馬番'])]
-                _bc1, _bc2 = st.columns(2)
-                with _bc1:
-                    _axis = st.multiselect("軸", _all_um_bo, default=_def_axis, format_func=_lab, key="bo_axis")
-                with _bc2:
-                    _mate = st.multiselect("相手", _all_um_bo, default=_def_mate, format_func=_lab, key="bo_mate")
-                _bcc1, _bcc2, _bcc3 = st.columns(3)
-                with _bcc1:
-                    _budget = st.number_input("予算(円)", 100, 1000000, 3000, 100, key="bo_budget")
-                with _bcc2:
-                    _bankroll = st.number_input("総資金(ケリー基準用・円)", 1000, 100000000, 100000, 1000, key="bo_bank")
-                with _bcc3:
-                    _amode = st.selectbox("配分方式", ["kelly", "払戻均等", "均等"], key="bo_mode")
-                _alpha = st.slider("モデル寄与度 α（0=市場どおり / 1=モデル全振り）", 0.0, 1.0, 0.35, 0.05,
-                                   key="bo_alpha",
-                                   help="市場オッズを事前分布にしたモデル確率の混ぜ具合。"
-                                        "小さいほど市場を尊重し外れ馬のEV暴発を抑制。既定0.35=市場寄り。")
-                if st.button("▶ ライブオッズ取得＆EV計算", key="bo_run"):
+                _def_mate1 = [u for u in _ordered[2:5]]
+                _def_mate2 = [u for u in _ordered[5:8]]
+                if _anauma is not None:
+                    _au = int(_anauma['馬番'])
+                    if _au not in _def_mate1 and _au not in _def_mate2:
+                        _def_mate2 = _def_mate2 + [_au]
+                # 相手カードのpill色をフォーメーションと揃える(相手1=#008080 / 相手2=#0000ff)
+                st.markdown(
+                    "<style>"
+                    ".st-key-bo_mate1 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
+                    ".st-key-bo_mate2 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
+                    ".st-key-bo_mate1 span[data-baseweb=\"tag\"] *,"
+                    ".st-key-bo_mate2 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
+                    "</style>",
+                    unsafe_allow_html=True)
+                # ── 入力カード(軸選択 | 計算設定) ──
+                _top_l, _top_r = st.columns([1.3, 1])
+                with _top_l:
+                    with st.container(border=True):
+                        st.markdown("**🎯 軸馬選択**")
+                        _axis = st.multiselect("軸", _all_um_bo, default=_def_axis,
+                                               format_func=_lab, key="bo_axis",
+                                               label_visibility="collapsed",
+                                               placeholder="馬を入力…")
+                with _top_r:
+                    with st.container(border=True):
+                        st.markdown("**⚙️ 計算設定**")
+                        _budget = st.number_input("予算(円)", 100, 1000000, 3000, 100, key="bo_budget")
+                        _bankroll = st.number_input("総資金(ケリー基準用・円)", 1000, 100000000,
+                                                    100000, 1000, key="bo_bank")
+                        _amode = st.selectbox("配分方式", ["kelly", "払戻均等", "均等"], key="bo_mode")
+                # ── 相手選択カード(相手1=2列目/2着・相手2=3列目/3着。横並びで詰める) ──
+                _mid_l, _mid_r = st.columns(2)
+                with _mid_l:
+                    with st.container(border=True):
+                        st.markdown("**🤝 相手馬選択1**（対抗 / 2着）")
+                        _mate1 = st.multiselect("相手1", _all_um_bo, default=_def_mate1,
+                                                format_func=_lab, key="bo_mate1",
+                                                label_visibility="collapsed",
+                                                placeholder="追加…")
+                with _mid_r:
+                    with st.container(border=True):
+                        st.markdown("**🤝 相手馬選択2**（押さえ・穴 / 3着）")
+                        _mate2 = st.multiselect("相手2", _all_um_bo, default=_def_mate2,
+                                                format_func=_lab, key="bo_mate2",
+                                                label_visibility="collapsed",
+                                                placeholder="追加…")
+                # EV計算用に相手1+相手2を統合(軸と重複は除く)
+                _mate = [int(u) for u in (list(_mate1) + list(_mate2))
+                         if int(u) not in [int(a) for a in _axis]]
+                _mate = list(dict.fromkeys(_mate))
+                # ── モデル寄与度 + 実行ボタン ──
+                _sl_l, _sl_r = st.columns([2, 1])
+                with _sl_l:
+                    _alpha = st.slider("モデル寄与度 α（0=市場どおり / 1=モデル全振り）", 0.0, 1.0, 0.35, 0.05,
+                                       key="bo_alpha",
+                                       help="市場オッズを事前分布にしたモデル確率の混ぜ具合。"
+                                            "小さいほど市場を尊重し外れ馬のEV暴発を抑制。既定0.35=市場寄り。")
+                with _sl_r:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    _run_bo = st.button("▶ ライブオッズ取得＆EV計算", key="bo_run",
+                                        use_container_width=True, type="primary")
+                if _run_bo:
                     with st.spinner("ライブオッズ取得中（単複/馬連/ワイド/3連複）..."):
                         _ok = {}
                         try:
@@ -6548,18 +6737,26 @@ if nav == "🧹 消去フィルター":
                         pass
                     _types = [('tan', '単勝'), ('fuku', '複勝'), ('umaren', '馬連'), ('wide', 'ワイド'), ('trio', '3連複')]
                     _summary, _all_bets = [], []
+                    _missing = []
                     for _k, _lab2 in _types:
                         _om = _ok.get(_k) or {}
                         if not _om:
+                            _missing.append(_lab2)
                             continue
                         _bets = _bo.enumerate_bets(_k, _axis, _mate, _wp, _om, _allu, max_points=10)
                         if not _bets:
+                            _missing.append(_lab2)
                             continue
                         _b0 = _bets[0]
                         _summary.append({'券種': _lab2, '最良買い目': _b0['label'],
                                          'EV(目安)': round(_b0['ev'], 2),
                                          '的中率': f"{_b0['prob'] * 100:.1f}%", 'オッズ': _b0['odds']})
                         _all_bets.append((_lab2, _k, _bets))
+                    if _missing:
+                        st.info("📭 オッズ未取得で比較から除外: " + "・".join(_missing)
+                                + "。馬連/ワイド/3連複の**ライブオッズは『発売中』のレースのみ**取得できます"
+                                  "（発売前・終了レースは単勝/複勝の最終オッズしか出ないことがあります）。"
+                                  "発売中のレースで「▶ ライブオッズ取得」を押すと全券種が並びます。")
                     if not _summary:
                         st.warning("買い目が生成できませんでした（軸/相手の選択かオッズ取得を確認）。")
                     else:
@@ -6568,7 +6765,8 @@ if nav == "🧹 消去フィルター":
 
                         def _ev_color(s):
                             return ['color:#2e7d32;font-weight:bold' if v >= 1.0 else 'color:#b71c1c' for v in s]
-                        _bo_colcfg = {'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")}
+                        _bo_colcfg = {'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f"),
+                                      'EV(目安)': st.column_config.NumberColumn('EV(目安)', format="%.2f")}
                         try:
                             st.dataframe(_sumdf.style.apply(_ev_color, subset=['EV(目安)']),
                                          hide_index=True, use_container_width=True, column_config=_bo_colcfg)
@@ -6588,93 +6786,78 @@ if nav == "🧹 消去フィルター":
                             'ﾄﾘｶﾞﾐ': '⚠' if b.get('toriga') else '',
                         } for b in _posev])
                         st.dataframe(_bl, hide_index=True, use_container_width=True,
-                                     column_config={'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f")})
+                                     column_config={'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f"),
+                                                    'EV(目安)': st.column_config.NumberColumn('EV(目安)', format="%.2f")})
                         _syn = _alloc.get('synthetic_odds')
-                        st.success(f"【{_pick}・{_amode}】合計 {_alloc['total']:,}円／合成オッズ "
-                                   f"{(str(_syn)+'倍') if _syn else '-'}／期待回収 "
-                                   f"{(str(int(_alloc['expected_value']*100))+'%') if _alloc.get('expected_value') else '-'}"
-                                   f"／買い目 {len(_posev)}点")
+                        _res_l, _res_r = st.columns([3, 1])
+                        with _res_l:
+                            st.success(f"【{_pick}・{_amode}】合計 {_alloc['total']:,}円／合成オッズ "
+                                       f"{(str(_syn)+'倍') if _syn else '-'}／期待回収 "
+                                       f"{(str(int(_alloc['expected_value']*100))+'%') if _alloc.get('expected_value') else '-'}"
+                                       f"／買い目 {len(_posev)}点")
+                        with _res_r:
+                            _csv = _bl.to_csv(index=False).encode('utf-8-sig')
+                            st.download_button("💾 保存・エクスポート", _csv,
+                                               file_name=f"buy_{race_id_input}_{_pick}_{_amode}.csv",
+                                               mime="text/csv", key="bo_export",
+                                               use_container_width=True)
                         st.caption("⚠ﾄﾘｶﾞﾐ=的中しても合計購入額を下回る点。EV/期待回収は未検証モデル確率(Projected Score)の目安。"
                                    "特に人気薄でEVが極端に高い馬はモデルの過大評価の可能性が高い。"
                                    "実証エッジは✨Scannerの妙味シグナル(単複乖離/断層/黄金ライン)側にある。"
                                    "この画面は券種比較と配分(合成オッズ/ﾄﾘｶﾞﾐ/ケリー)の構造づくりに使うのが安全。")
 
-            # ===== 🎯 3連単フォーメーション（消去エンジン連携）=====
-            try:
-                _edf_tri = _edf  # 消去エンジンの判定テーブル(同ページ上部で生成済)
-            except NameError:
-                _edf_tri = None
-            if _edf_tri is not None and not _edf_tri.empty:
-                st.markdown("---")
-                st.markdown("#### 🎯 3連単フォーメーション（消去エンジン連携）")
-                # 列ごとに選択pillの色を変える: 1着=既定(赤系)/2着=#008080/3着=#0000ff
-                st.markdown(
-                    "<style>"
-                    ".st-key-kf_tri_c2 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
-                    ".st-key-kf_tri_c3 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
-                    ".st-key-kf_tri_c2 span[data-baseweb=\"tag\"] *,"
-                    ".st-key-kf_tri_c3 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
-                    "</style>",
-                    unsafe_allow_html=True)
-                st.caption("3連複と同じ消去エンジン配置を初期値に、着順あり(1着-2着-3着)で組みます。"
-                           "✅残し上位を1着/2着、🎯穴・🛟ボーダー残しを3着候補に自動配置。"
-                           "（着順固定の分だけ点数は増えます。検証済みの妙味は相手選びの方針と併用）")
-                _tri_tmpl = st.radio("フォーメーション型", ["1着流し(1-4-7)", "2-4-7型", "カスタム"],
-                                     horizontal=True, key="kf_tri_tmpl")
-                if _tri_tmpl == "2-4-7型":
-                    _ta, _tb, _tcn = 2, 4, 7
+                # ── 📜 確定配当で回顧比較（終了レース向け）──
+                st.markdown("##### 📜 確定配当で回顧比較（終了レース向け）")
+                st.caption("終了後は全組合せのライブオッズが消えるため、全券種の『当選した確定配当』を表示します。"
+                           "上で選んだ軸＋相手で当選をカバーできていたか(✅)も判定（回顧用・事前EVではありません）。")
+                if st.button("📜 確定配当を取得", key="bo_payout_run"):
+                    with st.spinner("結果ページから確定配当を取得中..."):
+                        try:
+                            st.session_state[f"bo_payout_{race_id_input}"] = scraper.fetch_race_payouts(race_id_input)
+                        except Exception as _pe:
+                            st.session_state[f"bo_payout_{race_id_input}"] = {}
+                            st.warning(f"確定配当取得エラー: {_pe}")
+                _pay = st.session_state.get(f"bo_payout_{race_id_input}")
+                if _pay:
+                    _pool = set(int(u) for u in _axis) | set(int(u) for u in _mate)
+                    _knames = {'tan': '単勝', 'fuku': '複勝', 'wakuren': '枠連', 'umaren': '馬連',
+                               'wide': 'ワイド', 'umatan': '馬単', 'trio': '3連複', 'trifecta': '3連単'}
+                    _prows = []
+                    for _kk in ['tan', 'fuku', 'wakuren', 'umaren', 'wide', 'umatan', 'trio', 'trifecta']:
+                        for _it in _pay.get(_kk, []):
+                            _cb = _it.get('combo', [])
+                            _cov = '✅' if _cb and all(c in _pool for c in _cb) else '✗'
+                            _prows.append({'券種': _knames.get(_kk, _kk),
+                                           '当選': '-'.join(str(c) for c in _cb),
+                                           '確定配当(倍)': _it.get('odds'),
+                                           '人気': _it.get('pop'),
+                                           '選択でカバー': _cov})
+                    if _prows:
+                        _pdf = pd.DataFrame(_prows)
+
+                        def _cov_color(s):
+                            return ['color:#2e7d32;font-weight:bold' if v == '✅'
+                                    else 'color:#b71c1c' for v in s]
+                        try:
+                            st.dataframe(_pdf.style.apply(_cov_color, subset=['選択でカバー']),
+                                         hide_index=True, use_container_width=True,
+                                         column_config={'確定配当(倍)': st.column_config.NumberColumn(
+                                             '確定配当(倍)', format="%.1f")})
+                        except Exception:
+                            st.dataframe(_pdf, hide_index=True, use_container_width=True)
+                        _hit = [r for r in _prows if r['選択でカバー'] == '✅']
+                        if _hit:
+                            _best = max(_hit, key=lambda r: (r['確定配当(倍)'] or 0))
+                            st.success(f"選択でカバーできた当選: {len(_hit)}件／最高配当 "
+                                       f"{_best['券種']} {_best['当選']} = {_best['確定配当(倍)']}倍")
+                        else:
+                            st.info("今の軸＋相手では、どの券種の当選もカバーできていません（取りこぼし）。")
+                        st.caption("✅=軸＋相手の選択に当選馬が全頭含まれていた（=その券種を手広く買っていれば的中圏）。"
+                                   "✗=選択外。これは回顧で、実際の的中可否は買い目の点数構成に依存します。")
+                    else:
+                        st.caption("確定配当が取得できませんでした（未確定/古いレースの可能性）。")
                 else:
-                    _ta, _tb, _tcn = 1, 4, 7
-                _tdef1 = _keep_um[:_ta]
-                _tdef2 = _keep_um[_ta:_ta + _tb]
-                _tdef3 = _keep_um[_ta + _tb:_ta + _tb + _tcn]
-                if _ana_um is not None and _ana_um not in _tdef3:
-                    _tdef3 = (_tdef3 + [_ana_um])[:_tcn + 1]
-                for _bu in _border_um:
-                    if _bu not in _tdef1 and _bu not in _tdef2 and _bu not in _tdef3:
-                        _tdef3 = _tdef3 + [_bu]
-                # 型・ボーダー残し・レースが変わったら初期配置に作り直す(3連複と同じ仕組み)
-                _tri_sig = (str(race_id_input), _tri_tmpl,
-                            tuple(_tdef1), tuple(_tdef2), tuple(_tdef3))
-                if st.session_state.get('kf_tri_sig') != _tri_sig:
-                    st.session_state['kf_tri_c1'] = _tdef1
-                    st.session_state['kf_tri_c2'] = _tdef2
-                    st.session_state['kf_tri_c3'] = _tdef3
-                    st.session_state['kf_tri_sig'] = _tri_sig
-                _tcol1, _tcol2, _tcol3 = st.columns(3)
-                with _tcol1:
-                    _ti1 = st.multiselect("1着", _all_um, default=_tdef1,
-                                          format_func=_lab, key="kf_tri_c1")
-                with _tcol2:
-                    _ti2 = st.multiselect("2着", _all_um, default=_tdef2,
-                                          format_func=_lab, key="kf_tri_c2")
-                with _tcol3:
-                    _ti3 = st.multiselect("3着", _all_um, default=_tdef3,
-                                          format_func=_lab, key="kf_tri_c3")
-                try:
-                    from core import trio_engine as _te2
-                    import importlib as _il_te3; _il_te3.reload(_te2)
-                    _tris = _te2.build_trifecta_formation(_ti1, _ti2, _ti3)
-                except Exception as _tfe:
-                    _tris = []
-                    st.warning(f"3連単フォーメーション生成エラー: {_tfe}")
-                if _tris:
-                    _tunit = st.number_input("1点あたり(円)", min_value=100, max_value=10000,
-                                             value=100, step=100, key="kf_tri_unit")
-                    st.success(f"買い目 {len(_tris)}点 × {int(_tunit)}円 = "
-                               f"合計 {len(_tris) * int(_tunit):,}円")
-                    _tbl = pd.DataFrame([{
-                        '馬番': '→'.join(str(u) for u in t),
-                        '馬名': ' → '.join(f"({u}){_name_of.get(u, '')}" for u in t),
-                    } for t in _tris])
-                    st.dataframe(_tbl, hide_index=True, use_container_width=True, height=240,
-                                 column_config={
-                                     '馬番': st.column_config.TextColumn('馬番(1→2→3着)', width='small'),
-                                     '馬名': st.column_config.TextColumn('馬名(1着→2着→3着)'),
-                                 })
-                else:
-                    st.info("各列(1着/2着/3着)に馬を選ぶと3連単の買い目が生成されます"
-                            "（着順あり・3頭が相異なる組合せ）。")
+                    st.caption("「📜 確定配当を取得」を押すと、終了レースの全券種の当選配当を表示します。")
 
 # Tab 2 placeholder logic
 if nav == "🔍 Race Scanner (Batch)":
