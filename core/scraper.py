@@ -1580,6 +1580,7 @@ def extract_race_metadata(soup, race_date_val=""):
         'weather': '-',
         'condition': '-',
         'is_handicap': False,
+        'is_fillies': False,
         'date_val': race_date_val
     }
     try:
@@ -1623,6 +1624,11 @@ def extract_race_metadata(soup, race_date_val=""):
                     if c in t02:
                         metadata['class'] = c
                         break
+
+                # 牝馬限定戦: RaceData02の条件部に「牝」記号があれば限定戦
+                # (混合戦の性別表記は出ないため「牝」単独出現＝牝馬限定)
+                if '牝' in t02:
+                    metadata['is_fillies'] = True
     except Exception as e:
         logger.warning(f"Failed to extract race metadata: {e}")
     return metadata

@@ -230,6 +230,31 @@ def empirical_bias(prior_winners):
             'baba_for_v': baba_for_v, 'evidence': ev, 'confident': n >= 4}
 
 
+def danger_popular_inner(emp_bias, umaban, tosu, ninki):
+    """危険人気馬(逆張り消去)フラグ。検証済(scripts/tenkai_bias_backtest.py・2021-25)。
+    『はっきり外枠有利と判明した日(confident)に内枠を引いた1-3番人気馬』は複勝率が
+    オッズ期待を -4.6pp(z-3.8) 下回る＝過剰人気。順張り(合致馬を買う)は妙味ゼロ(priced-in)
+    のため買いには使わず、この逆張り消去のみが検証済みエッジ。
+    戻り値: 該当時 {'flag':'⚠危険人気','detail':str} / 非該当 None。
+    """
+    if not emp_bias or emp_bias.get('lane_label') != '外有利':
+        return None
+    try:
+        u = int(umaban); n = int(tosu); nin = int(ninki)
+    except (TypeError, ValueError):
+        return None
+    if nin < 1 or nin > 3:
+        return None
+    if u > max(1, n / 3):        # 内枠(下位1/3)でなければ対象外
+        return None
+    strong = bool(emp_bias.get('confident'))
+    pp = '-4.6pp' if strong else '-2.2pp'
+    conf_txt = '(明確)' if strong else ''
+    return {'flag': '⚠危険人気',
+            'detail': (f"外枠有利日{conf_txt}に内枠({u}番)の{nin}番人気＝"
+                       f"前提が崩れるのに過剰人気(複勝期待{pp}・検証済)")}
+
+
 def empirical_bias_from_db(year, monthday, jyo, surface, before_race_num,
                            db_path=None):
     """jravan.db から同日・同場・同馬場で race_num が before より前のレースの勝ち馬を集計。

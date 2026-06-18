@@ -135,6 +135,47 @@ def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_hors
     return {'score': round(score, 1), 'label': label, 'breakdown': breakdown, 'fav_odds': fav}
 
 
+# ───────────────────────── 3連複 決着タイプ傾向(本線 ⇔ ②穴妙味) ─────────────────────────
+def trio_lean(meta=None, n_horses=None, fav_odds=None, pace_z=None):
+    """3連複の決着タイプの傾向を検証済みエッジから推定する。
+    score>0=②穴妙味(人気-穴-穴)寄り / score<0=本線(人気2頭軸＝鉄板+①)寄り。
+
+    検証(scripts/condition_arare_backtest.py 2021-25 平地 tosu>=8・1番人気オッズ帯で統制):
+      母集団: 本線決着率31.1% / ②型(3着内に5番人気以下2頭)28.0%
+      ・ハンデ戦       : 本線-3.8pp(z-2.7) / ②型+7.9pp(z+5.2) ＝独立エッジ(②寄り)
+      ・フルゲート16頭+ : 本線-2.2pp(z-3.9) / ②型+3.4pp(z+5.9) ＝独立エッジ(②寄り)
+      ・少頭数8-10頭    : 本線+8.4pp(z+8.3) / ②型-10.7pp(z-11.9) ＝堅い(本線寄り)
+      ・牝馬限定/ダート/芝: 残差≈0(z<|2|)＝オッズ織込み済み→スコアに入れない(検索フィルタのみ)
+      ・ペース(別検証)  : ハイ想定→荒れ寄り / スロー想定→前残り堅め(中程度のエッジ)
+    """
+    meta = meta or {}
+    score = 0.0
+    pos, neg = [], []  # pos=②穴妙味の理由 / neg=本線の理由
+    if meta.get('is_handicap') or meta.get('weight_rule') == 'ハンデ':
+        score += 2.0; pos.append('ハンデ戦(②型+7.9pp/z5.2・検証済)')
+    if n_horses and n_horses >= 16:
+        score += 1.5; pos.append(f'フルゲート{n_horses}頭(②型+3.4pp/z5.9・検証済)')
+    if n_horses and 8 <= n_horses <= 10:
+        score -= 2.0; neg.append(f'少頭数{n_horses}頭(本線+8.4pp/z8.3・検証済)')
+    if fav_odds is not None:
+        if fav_odds >= 3.5:
+            score += 1.0; pos.append(f'1番人気{fav_odds:.1f}倍=混戦')
+        elif fav_odds < 1.8:
+            score -= 1.5; neg.append(f'1番人気{fav_odds:.1f}倍=鉄板')
+    if pace_z is not None:
+        if pace_z >= 0.7:
+            score += 0.8; pos.append(f'🌀ハイペース想定(z{pace_z:+.1f})')
+        elif pace_z <= -0.5:
+            score -= 0.8; neg.append(f'🏁スロー想定=前残り(z{pace_z:+.1f})')
+    if score >= 1.5:
+        lean = '②穴妙味向き'
+    elif score <= -1.5:
+        lean = '本線向き'
+    else:
+        lean = '中立'
+    return {'lean': lean, 'score': round(score, 1), 'pos': pos, 'neg': neg}
+
+
 # ───────────────────────── 単複乖離(検証済の妙味馬シグナル) ─────────────────────────
 def tanpuku_divergence(win_odds, place_mid):
     """単複乖離の強さを返す。
