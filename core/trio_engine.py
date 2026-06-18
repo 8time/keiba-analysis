@@ -41,23 +41,16 @@ def _match_pattern(n_pop, n_ana, pattern):
 
 
 def deploy_bonus_from_ctx(pace_ctx):
-    """展開コンテキスト(build_pace_context)から各馬の展開ボーナス {umaban: pts} を作る。
-    検証済の『好位妙味ゾーン』(ペース有利な極端でない好位〜中団・複勝残差+2.4pp)に加点。
-    pace=スロー→前(pos4小)有利 / ハイ→差し(pos4大) / ミドル→好位。極端は加点しない。"""
-    out = {}
-    if not pace_ctx or not pace_ctx.get('pos4'):
-        return out
-    pace = pace_ctx.get('pace')
-    for u, p in pace_ctx['pos4'].items():
-        if pace == 'スロー':
-            b = 1.0 - p
-        elif pace == 'ハイ':
-            b = p
-        else:
-            b = 1.0 - abs(p - 0.45)
-        # 好位妙味ゾーン(0.40-0.62)=過小評価でプラス。極端(前残り人気/超後方)は加点しない。
-        out[u] = 12.0 if 0.40 <= b <= 0.62 else 0.0
-    return out
+    """展開コンテキストから各馬の展開ボーナス {umaban: pts} を作る（互換のため残置）。
+
+    ⚠️ 旧実装は『好位妙味ゾーン+2.4pp』に+12点加点していたが、大標本の再検証
+    (scripts/tenkai_alert_backtest.py・2024-25/360R)で否定された:
+      - 展開恩恵スコアは全帯で複勝残差≈0〜負(中帯 n=1310 で-0.44pp/z=-0.39)=人気に織込み済み
+      - +2.4pp は小標本(n=466/z=1.25)のノイズだった
+      - 検証済み末脚エッジ(人気薄×習性末脚上位)に展開恩恵を重ねると逆に悪化
+    よって非エッジを3連複エンジンへ配線しないため**加点ゼロ**に変更(2026-06-18)。
+    展開恩恵を妙味として使わない。末脚は別途 alert/value_scanner 側で扱う。"""
+    return {}
 
 
 def allocate_budget(bets, budget, mode='均等買い', unit=100):
@@ -104,7 +97,16 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
 
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
     ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
-    if len(pop_set) < 1 or len(ana_set) < 1:
+
+    # 軸を明示指定(1軸/2軸)した場合は「軸流し」の意思を最優先する。
+    # この時パターン(本線/②妙味)はハード除外でなく『堅め/荒れ』のソフト加点に格下げし、
+    # 3頭目を全頭に流す。さもないと軸に穴馬を据えた瞬間、人気構成フィルタが
+    # 狙った相手(=高配当の穴)を全部間引いてしまう(2026-06-18 修正)。
+    _axis_active = ((axis_mode == '2軸' and len(axis_umaban) >= 2) or
+                    (axis_mode == '1軸' and len(axis_umaban) >= 1))
+
+    # 人気/穴の分類は auto(パターンハード適用)モードでのみ必須。軸流し時は人気未取得でも流す。
+    if not _axis_active and (len(pop_set) < 1 or len(ana_set) < 1):
         return {'bets': [], 'meta': {}, 'warning': '人気/穴の頭数が不足（人気・オッズ未取得の可能性）'}
 
     # ── 候補トリオ生成 ──
@@ -131,11 +133,17 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         if len(trio) != 3:
             continue
         n_pop, n_ana = _classify(trio, pop_set, ana_set)
-        if not _match_pattern(n_pop, n_ana, pattern):
+        if not _axis_active and not _match_pattern(n_pop, n_ana, pattern):
             continue
         base = sum(by[u].get('score', 0) for u in trio)
         # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
         bonus = 0.0
+        # 軸流し時はパターンを除外でなくソフト加点に: 本線=堅め(人気の3頭目)寄り / ②妙味=荒れ(穴の3頭目)寄り
+        if _axis_active:
+            if pattern == '本線':
+                bonus += 6.0 * n_pop
+            elif pattern == '②妙味':
+                bonus += 8.0 * n_ana
         # ②妙味は穴の選別を検証済みエッジに寄せる=妙味シグナル穴を強く加点(本命より穴で勝負)
         _val_boost = 18.0 if pattern == '②妙味' else 8.0
         _sig_ana = 0

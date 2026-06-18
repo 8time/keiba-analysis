@@ -2748,63 +2748,63 @@ if nav == "🏠 Single Race Analysis":
                                             f"{v['umaban']}番{v['name']}({v['style']})" for v in _vm_list
                                         )
                                         st.success(f"🏆 Vエリア該当馬: {_vm_names}")
-
-                                        # ── 🔍 展開妙味アラート ──
-                                        # Vエリア該当（展開は向く）なのに、着順予想が後方 or 人気薄
-                                        # ＝アプリ自身が実力・人気で消している前残り穴候補を目立つ形で抽出
-                                        try:
-                                            _fin = _pmap.predict_finish(
-                                                _pm_horses, _pm_profiles, _pm_ctx, extras=_pm_extras)
-                                            _n_h = len(_pm_horses)
-                                            _fin_rank = {u: i + 1 for i, (u, _) in enumerate(
-                                                sorted(_fin.items(), key=lambda kv: (kv[1], kv[0])))}
-                                            _pop_map = {}
-                                            for _, _pr in df.iterrows():
-                                                try:
-                                                    _pop_map[int(_pr['Umaban'])] = _pm_num(_pr.get('Popularity'))
-                                                except Exception:
-                                                    pass
-                                            _myumi = []
-                                            for _v in _vm_list:
-                                                _u = _v['umaban']
-                                                _fr = _fin_rank.get(_u, _n_h)
-                                                _pop = _pop_map.get(_u)
-                                                _is_back = _fr > _n_h * 0.5          # 着順予想が後ろ半分
-                                                _is_unpop = _pop is not None and _pop >= 5  # 5番人気以下
-                                                if _is_back or _is_unpop:
-                                                    _myumi.append((_u, _v['name'], _v['style'], _fr, _pop))
-                                            if _myumi:
-                                                _chips = ""
-                                                for _u, _nm, _sty, _fr, _pop in sorted(_myumi, key=lambda m: (m[4] or 99), reverse=True):
-                                                    _poptxt = f"{int(_pop)}番人気" if _pop else "人気－"
-                                                    _chips += (
-                                                        f"<div style='display:flex;align-items:center;gap:10px;"
-                                                        f"background:rgba(0,0,0,0.22);border-radius:8px;"
-                                                        f"padding:8px 12px;margin:6px 0;'>"
-                                                        f"<span style='font-size:22px;font-weight:900;color:#fff;'>{_u}</span>"
-                                                        f"<span style='font-size:17px;font-weight:800;color:#fff;'>{_nm}</span>"
-                                                        f"<span style='font-size:13px;color:#ffe9a8;'>{_sty}</span>"
-                                                        f"<span style='margin-left:auto;font-size:13px;color:#ffd9d9;'>"
-                                                        f"着順予想 {_fr}番手 ｜ {_poptxt}</span></div>")
-                                                st.markdown(
-                                                    "<div style='background:linear-gradient(135deg,#6a1b9a,#e63946);"
-                                                    "border:3px solid #ffd700;border-radius:14px;padding:16px 18px;"
-                                                    "margin:14px 0;box-shadow:0 0 22px rgba(255,215,0,0.55);'>"
-                                                    "<div style='font-size:22px;font-weight:900;color:#fff;"
-                                                    "letter-spacing:1px;'>🔍 展開妙味アラート</div>"
-                                                    "<div style='font-size:13px;color:#ffe;margin:4px 0 10px;'>"
-                                                    "Vエリア該当（展開は向く）なのに、アプリは実力・人気で低評価 "
-                                                    "＝<b>前残り穴候補</b>。複勝・ワイド向きの押さえ。</div>"
-                                                    f"{_chips}"
-                                                    "<div style='font-size:11px;color:#ffd;margin-top:8px;'>"
-                                                    "※過去検証では『スロー＋前＋人気薄』の3着内率は約9%。"
-                                                    "確信の本命ではなく、安く広く拾う穴印です。</div></div>",
-                                                    unsafe_allow_html=True,
-                                                )
-                                        except Exception as _my_e:
-                                            st.caption(f"展開妙味判定: {_my_e}")
                                     else:
                                         st.info("Vエリア（赤枠）にすっぽり収まる馬は不在。半端なポジションの馬が多く波乱の余地あり。")
+
+                                    # ── 🔍 末脚妙味アラート（検証済みエッジに貼り替え）──
+                                    # 旧『展開妙味（展開向く×人気薄）』は検証(scripts/tenkai_alert_backtest.py)で否定。
+                                    # 展開恩恵は人気に織込み済みで、向く×人気薄はむしろ過剰人気(複勝率9〜13%/残差負)。
+                                    # 人気薄で実際に効くのは展開でなく"末脚"(verified_spurt_index: 人気薄6+×習性末脚上位=単ROI≈111%)。
+                                    # 選別基準を『人気薄(≥6番人気) × 習性上がり3F上位33%』に変更。
+                                    try:
+                                        _pop_map = {}
+                                        for _, _pr in df.iterrows():
+                                            try:
+                                                _pop_map[int(_pr['Umaban'])] = _pm_num(_pr.get('Popularity'))
+                                            except Exception:
+                                                pass
+                                        _spurt = []
+                                        for _h in (_pm_horses or []):
+                                            _u = _h.get('umaban')
+                                            _nm = _h.get('name', '')
+                                            _prof = (_pm_profiles or {}).get(_nm) or {}
+                                            _ag = _prof.get('agari')   # 習性上がり相対順位 0=最速(過去走・事前確定)
+                                            _pop = _pop_map.get(_u)
+                                            if (_ag is not None and _ag <= 0.33
+                                                    and _pop is not None and _pop >= 6):
+                                                _spurt.append((_u, _nm, _h.get('style', ''), _ag, _pop))
+                                        if _spurt:
+                                            _chips = ""
+                                            for _u, _nm, _sty, _ag, _pop in sorted(_spurt, key=lambda m: m[3]):
+                                                _agtxt = f"末脚 上位{int(round(_ag * 100))}%"
+                                                _chips += (
+                                                    f"<div style='display:flex;align-items:center;gap:10px;"
+                                                    f"background:rgba(0,0,0,0.22);border-radius:8px;"
+                                                    f"padding:8px 12px;margin:6px 0;'>"
+                                                    f"<span style='font-size:22px;font-weight:900;color:#fff;'>{_u}</span>"
+                                                    f"<span style='font-size:17px;font-weight:800;color:#fff;'>{_nm}</span>"
+                                                    f"<span style='font-size:13px;color:#ffe9a8;'>{_sty}</span>"
+                                                    f"<span style='margin-left:auto;font-size:13px;color:#cdebff;'>"
+                                                    f"{_agtxt} ｜ {int(_pop)}番人気</span></div>")
+                                            st.markdown(
+                                                "<div style='background:linear-gradient(135deg,#1d3557,#2a9d8f);"
+                                                "border:3px solid #ffd700;border-radius:14px;padding:16px 18px;"
+                                                "margin:14px 0;box-shadow:0 0 22px rgba(42,157,143,0.55);'>"
+                                                "<div style='font-size:22px;font-weight:900;color:#fff;"
+                                                "letter-spacing:1px;'>🔍 末脚妙味アラート</div>"
+                                                "<div style='font-size:13px;color:#ffe;margin:4px 0 10px;'>"
+                                                "<b>人気薄(6番人気以下)×習性の上がり3F上位</b>＝市場が過小評価しがちな差し脚。"
+                                                "複勝・ワイド・3連複の押さえ向き。</div>"
+                                                f"{_chips}"
+                                                "<div style='font-size:11px;color:#ffd;margin-top:8px;'>"
+                                                "※検証(2024-25)=人気薄6+×末脚上位33%で単回収率約111%(母集団71%超)。"
+                                                "旧『展開が向く×人気薄』は検証で否定(過剰人気)のため末脚基準に変更済み。</div></div>",
+                                                unsafe_allow_html=True,
+                                            )
+                                        else:
+                                            st.caption("🔍 末脚妙味アラート: 該当なし（人気薄かつ習性の上がり3F上位の馬は不在）。")
+                                    except Exception as _my_e:
+                                        st.caption(f"末脚妙味判定: {_my_e}")
                                     st.caption(
                                         "縦=隊列位置（テンの位置取り実データ）、横=想定の通り（枠順＋脚質から推定）。"
                                         "金縁の馬がVエリア該当。スロー→前有利 / ハイ→後方有利、馬場が荒れるほど外有利。"
@@ -4074,60 +4074,15 @@ if nav == "🏠 Single Race Analysis":
                     _all_display = [_col_to_display[c] for c in _all_cols]
                     _default_display = [_col_to_display[c] for c in _default_cols]
 
-                    # ── 展開フィルター（検証済みエンジン版 v3）──────────────── #
-                    # 旧版(DeployScore/前崩れ理論)はバックテストで市場に勝てず廃止。
-                    # 検証済み build_pace_context(pace+pos4) の「展開恩恵」で再構築。
-                    # 知見: ペース有利な極端ポジ(前残り馬等)は人気で買われ妙味なし(残差マイナス)。
-                    #       好位〜中団(恩恵スコア中)だけが複勝残差 +2.4pp と過小評価＝狙い目。
-                    _dep_benefit = {}
-                    _pace_lbl_f = None
-                    try:
-                        if '_pm_ctx' in dir() and _pm_ctx and _pm_ctx.get('pos4'):
-                            _pace_lbl_f = _pm_ctx.get('pace')
-                            for _bu, _bp in _pm_ctx['pos4'].items():
-                                if _pace_lbl_f == 'スロー':
-                                    _bv = 1.0 - _bp          # 前が恵まれる
-                                elif _pace_lbl_f == 'ハイ':
-                                    _bv = _bp                # 差しが恵まれる
-                                else:
-                                    _bv = 1.0 - abs(_bp - 0.45)
-                                _dep_benefit[_bu] = _bv
-                    except Exception:
-                        _dep_benefit = {}
-
-                    _filter_row = st.columns([2, 3])
-                    _deploy_filter = '全て'
-                    _dep_opts = ['全て']
-                    if _dep_benefit:
-                        _dep_opts += ['🎯 好位妙味ゾーンのみ（検証:複勝+2.4pp）',
-                                      '▲ 展開有利だが人気先行ゾーンを除外']
-                    with _filter_row[0]:
-                        _deploy_filter = st.selectbox(
-                            '🚦 展開フィルター（検証済みエンジン版）',
-                            options=_dep_opts, key='deploy_filter_sra',
-                            help=("バックテスト(jravan)で『人気以上に3着内へ来る』と確認できた展開ゾーンに絞ります。\n"
-                                  "・好位妙味ゾーン: ペース上恵まれる『極端でない好位〜中団』。市場が過小評価しがちで複勝+2.4pp。\n"
-                                  "・人気先行ゾーン除外: 前残り馬場の逃げ馬など『展開有利だが既に人気で買われている』妙味薄の馬を消去。\n"
-                                  "※旧版(展開適合度/前崩れ理論)は市場に勝てなかったため廃止しました。"))
-                    with _filter_row[1]:
-                        if _pace_lbl_f:
-                            st.markdown(
-                                f"<div style='font-size:0.8em;color:#888;margin-bottom:2px;'>想定ペース（検証済みエンジン）</div>"
-                                f"<div style='font-size:1.1em;font-weight:700;'>【{_pace_lbl_f}】"
-                                f"<span style='font-size:0.75em;color:#888;'> ＝ "
-                                f"{'前・好位が展開利' if _pace_lbl_f=='スロー' else '差し・追込が展開利' if _pace_lbl_f=='ハイ' else '好位中心'}</span></div>",
-                                unsafe_allow_html=True)
-                        else:
-                            st.caption("展開マップ未計算のため『全て』のみ。展開マップを開くと有効化されます。")
-                    # フィルター適用（umaban基準）
-                    _view_df_filtered = view_df.copy()
-                    if _dep_benefit and 'Umaban' in _view_df_filtered.columns and _deploy_filter != '全て':
-                        if '好位妙味' in _deploy_filter:
-                            _keep = {str(u) for u, b in _dep_benefit.items() if 0.40 <= b <= 0.62}
-                        else:  # 人気先行ゾーン除外: 恩恵が極端に高い(=人気で買われる)馬を消す
-                            _keep = {str(u) for u, b in _dep_benefit.items() if b <= 0.62}
-                        _view_df_filtered = _view_df_filtered[_view_df_filtered['Umaban'].astype(str).isin(_keep)]
-                    view_df = _view_df_filtered
+                    # ── 展開フィルター（廃止）────────────────────────────── #
+                    # 旧『好位妙味ゾーンで絞ると複勝+2.4pp』は大標本の再検証で否定された:
+                    #   scripts/tenkai_alert_backtest.py(2024-25/360R)=展開恩恵は全帯で複勝残差≈0〜負
+                    #   (好位中帯 n=1310 で-0.44pp/z=-0.39)。+2.4pp は小標本(n=466/z=1.25)のノイズだった。
+                    # 展開恩恵は人気に織込み済みで妙味選別に使えないためフィルターを撤去。
+                    # 人気薄の妙味は『展開マップ→🔍末脚妙味アラート』(検証済み末脚エッジ)を参照。
+                    if '_pm_ctx' in dir() and _pm_ctx and _pm_ctx.get('pos4'):
+                        st.caption("🚦 展開フィルターは廃止（展開恩恵での妙味絞りは検証で否定＝人気に織込み済み）。"
+                                   "人気薄の妙味は展開マップの『🔍末脚妙味アラート』(検証済み末脚エッジ)を参照。")
                     # ─────────────────────────────────────────────────────── #
 
                     # ── 列順設定（チェック式）─────────────────────────── #
@@ -4954,12 +4909,10 @@ if nav == "🏠 Single Race Analysis":
                             'pop': int(_pv) if pd.notnull(_pv) and _pv < 99 else None,
                             'alert': str(_r.get('Alert', '') or ''),
                         })
-                    # 展開マップ連携: 保存済み展開コンテキストから好位妙味ボーナス
+                    # 展開マップ連携: 旧『好位妙味ボーナス』は検証で否定(deploy_bonus_from_ctxは加点ゼロ化済み)。
+                    # 展開恩恵は妙味でないため3連複加点には使わない。pace_ctxはペース強度ヒント(下)でのみ利用。
                     _pace_ctx = st.session_state.get(f'_pace_ctx_{race_id_input}')
-                    _deploy_map = _te.deploy_bonus_from_ctx(_pace_ctx) if _pace_ctx else None
-                    if _deploy_map and any(v > 0 for v in _deploy_map.values()):
-                        _hb = [u for u, v in _deploy_map.items() if v > 0]
-                        st.caption(f"🗺️ 展開マップ連携ON（想定ペース{_pace_ctx.get('pace', '-')}・好位妙味馬 {_hb} に加点）")
+                    _deploy_map = None
                     # 事前ペース強度ヒント（検証済: ハイ想定→荒れ寄り＝②妙味向き / スロー想定→堅め＝本線向き）
                     _pint = st.session_state.get(f'_pace_int_{race_id_input}')
                     if _pint and _pint.get('label'):
@@ -5800,13 +5753,31 @@ if nav == "🧹 消去フィルター":
     
     # --- 上部: レース検索カード ---
     st.markdown("### 🔍 レースを検索")
-    
+
+    # 🏠 Single Race Analysis と同じく、netkeiba の URL を貼っても 12桁レースIDを自動抽出する。
+    if 'kf_race_id_box' not in st.session_state:
+        st.session_state['kf_race_id_box'] = st.session_state['kf_race_id']
+
+    def _on_kf_race_id_change():
+        val = str(st.session_state.get('kf_race_id_box', '') or '')
+        match = re.search(r'race_id=(\d{12})', val)
+        if not match:
+            match = re.search(r'(\d{12})', val)
+        if match:
+            extracted = match.group(1)
+            if extracted != val:
+                st.session_state['kf_race_id_box'] = extracted
+                st.session_state['kf_race_id_extracted'] = True
+
     race_id_input = st.text_input(
-        "netkeibaのレースIDを入力して Enter（出馬表を自動取得）",
-        value=st.session_state['kf_race_id'],
-        placeholder="例: 202405020611 を入力して Enter",
+        "netkeibaのレースIDを入力して Enter（URL貼り付けでもOK・出馬表を自動取得）",
+        placeholder="例: 202405020611 / Netkeiba の URL をそのまま貼り付け",
         key="kf_race_id_box",
+        on_change=_on_kf_race_id_change,
     )
+    if st.session_state.get('kf_race_id_extracted', False):
+        st.success("🔗 URLからレースIDを自動抽出しました！", icon="🔗")
+        st.session_state['kf_race_id_extracted'] = False
 
     # レースID→Enter（入力変更）だけで自動取得。前回取得IDと違う時のみfetch（再取得ループ防止）。
     if race_id_input and race_id_input != st.session_state['kf_fetched_id']:
@@ -9693,15 +9664,9 @@ if nav == "🧠 MAGIシステム":
                 except Exception:
                     _place_mc = {}
 
-            # 展開好位妙味ゾーン(任意・展開マップ連携)
+            # 旧『展開好位妙味ゾーン』はCASPER票への加点に使っていたが検証で否定(常に空)。
+            # CASPERは実質 末脚救出(検証エッジ)のみで投票する。
             _pace_mc = set()
-            try:
-                _pctx = st.session_state.get(f"_pace_ctx_{_rid_mc}")
-                if _pctx and hasattr(trio_engine, 'deploy_bonus_from_ctx'):
-                    _db = trio_engine.deploy_bonus_from_ctx(_pctx) or {}
-                    _pace_mc = {int(u) for u, v in _db.items() if v and v > 0}
-            except Exception:
-                _pace_mc = set()
 
             _mc_res = _mc.evaluate_consensus(
                 df_magi.to_dict('records'), _vs_mc, _jj_mc, _jyo_mc, _surf_mc,

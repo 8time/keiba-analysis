@@ -10,7 +10,8 @@ MAGI 合議ゲート (Consensus Gate) — 妙味判定／見送り判定器
 
   MELCHIOR-1 (論理・実力)  : 強適消去スコア上位 = 実力で消えない本命視点
   BALTHASAR-2(母・市場妙味): 単複乖離(検証2.5→7%)/オッズ断層/黄金ライン/厩舎当コース
-  CASPER-3   (女・展開直感): 🔥末脚救出(検証)/展開好位妙味(検証+2.4pp)
+  CASPER-3   (女・展開直感): 🔥末脚救出(検証)。※旧『展開好位妙味+2.4pp』は大標本再検証
+             (scripts/tenkai_alert_backtest.py)で否定(残差≈0〜負)し撤去＝pace_posは常に空。
 
 出力は「誰が勝つか」ではなく合議状態:
   - 全会一致(3票)の人気薄 → 🟢GO(別々の検証済みエッジが同じ人気薄を指す=本物の可能性)
@@ -39,7 +40,8 @@ def evaluate_consensus(rows, vs, jj, jyo, surface, dist, month, min_year,
     vs         : core.value_scanner モジュール
     jj         : core.jockey_jv モジュール
     place_map  : {umaban: {'Mid': float}} 事前複勝オッズ(単複乖離用)。無ければ単複乖離は不発。
-    pace_pos   : 展開好位妙味ゾーンの馬番 set(任意・展開マップ連携)。CASPERの展開票に使用。
+    pace_pos   : (非推奨・互換用)旧『展開好位妙味ゾーン』馬番 set。検証で否定され供給側が常に空。
+                 CASPER票は実質 cas_pos(末脚救出)のみで決まる。
     gap_anchors: オッズ断層上位の馬番 set(任意)。無ければ内部で計算しない(value_scannerには渡さない)。
     ana_pop    : 人気薄の下限人気(妙味判定の対象)
     danger_pop : 危険人気馬の上限人気
