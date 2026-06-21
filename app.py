@@ -1865,6 +1865,31 @@ if nav == "🏠 Single Race Analysis":
                                     f"（馬場差は🔵補正タイムで較正済み）。")
                         st.caption("※馬場は締切直前に良→重へ変わることがあります。"
                                    "発走前に再取得して最新の馬場状態で判断してください。")
+                    # 🌧️ 当日の時間別天気(会場・Open-Meteo) — 馬場悪化の予兆を確認
+                    with st.expander("🌧️ 当日の時間別天気（会場・Open-Meteo）", expanded=False):
+                        st.caption("締切直前に馬場が良→重へ変わる予兆を、会場の時間別降水量で確認します（押した時だけ取得）。")
+                        _wd = str(meta.get('date_val', '') or '')[:8]
+                        if not (len(_wd) == 8 and _wd.isdigit()):
+                            st.caption("（このレースの開催日が取得できず天気照会できません）")
+                        elif st.button("⛅ 時間別の天気を取得", key=f"wx_btn_{race_id_input}"):
+                            from core import weather as _wx
+                            with st.spinner("Open-Meteoから取得中..."):
+                                _wr = _wx.fetch_hourly_precip(race_id_input, _wd)
+                            if not _wr or '_error' in _wr:
+                                st.warning(f"取得できませんでした: {(_wr or {}).get('_error', '不明')}")
+                            else:
+                                _sm = _wx.summarize(_wr)
+                                if _sm:
+                                    _wic = '🌧️' if _sm['rained'] else '☀️'
+                                    st.info(f"{_wic} {_wr['venue']} {_wr['date']}：日中降水 **{_sm['total_mm']}mm** "
+                                            f"/ ピーク {_sm['peak_hour']} / 傾向: **{_sm['trend']}**")
+                                    if _sm['trend'].startswith('悪化'):
+                                        st.warning("⚠️ 午後に雨が増える予報＝馬場悪化の可能性。後半レースは重/不良前提で"
+                                                   "（芝の重・不良×1番人気は検証上 危険）。")
+                                _whr = [{'時刻': hh, '降水mm': (p or 0)} for hh, p, _ in _wr.get('hours', [])
+                                        if str(hh).split(':')[0].isdigit() and 6 <= int(str(hh).split(':')[0]) <= 20]
+                                if _whr:
+                                    st.bar_chart(pd.DataFrame(_whr).set_index('時刻'), height=170)
                     # 当日逆算バイアス: jravan.db に当該レースがあれば同日同場の既走Rから集計（無ければNone）
                     _tb_emp = None
                     _tb_rr = None  # jravan.db未配置(Streamlit Cloud等)でも後段で参照できるよう初期化
