@@ -123,3 +123,66 @@ def fetch_oikiri_detail(race_id, fetch_fn=None):
         fetch_fn = scraper.fetch_robust_html
     html = fetch_fn(url)
     return parse_oikiri_detail(html) if html else {}
+
+
+def query_jv_training(ketto_nums, race_date=None):
+    """jravan.db training表から直近の坂路調教を取得。
+    ketto_nums: [str, ...] 血統登録番号リスト
+    race_date: 'YYYYMMDD' — 指定するとそれより前の最新1本を返す
+    Returns: {ketto_num: {center,cho_date,t4f,t3f,t2f,lap_86,lap_64,lap_42,lap_20,accel,z4f}}
+    """
+    import os
+    import sqlite3
+    import statistics
+    db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      'data', 'jravan.db')
+    if not os.path.exists(db):
+        return {}
+    try:
+        con = sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=10)
+    except Exception:
+        return {}
+    cur = con.cursor()
+    try:
+        cur.execute("SELECT 1 FROM training LIMIT 1")
+    except Exception:
+        con.close()
+        return {}
+    out = {}
+    for kt in ketto_nums:
+        if not kt:
+            continue
+        if race_date:
+            row = cur.execute(
+                "SELECT center,cho_date,t4f,t3f,t2f,lap_86,lap_64,lap_42,lap_20 "
+                "FROM training WHERE ketto_num=? AND cho_date<? AND t4f>0 "
+                "ORDER BY cho_date DESC LIMIT 1", (str(kt), str(race_date))).fetchone()
+        else:
+            row = cur.execute(
+                "SELECT center,cho_date,t4f,t3f,t2f,lap_86,lap_64,lap_42,lap_20 "
+                "FROM training WHERE ketto_num=? AND t4f>0 "
+                "ORDER BY cho_date DESC LIMIT 1", (str(kt),)).fetchone()
+        if not row:
+            continue
+        center, cho_date, t4f, t3f, t2f, l86, l64, l42, l20 = row
+        accel = False
+        if all(x and x > 0 for x in (l86, l64, l42, l20)):
+            accel = (l86 >= l64 - 2 and l64 >= l42 - 2 and l42 >= l20 - 2)
+        z4f = None
+        pop = [r[0] for r in cur.execute(
+            "SELECT t4f FROM training WHERE cho_date=? AND center=? AND t4f>0",
+            (cho_date, center))]
+        if len(pop) >= 8:
+            m = statistics.mean(pop)
+            sd = statistics.pstdev(pop) or 1e-9
+            z4f = round((m - t4f) / sd, 2)
+        out[str(kt)] = {
+            'center': '美浦' if center == '1' else '栗東' if center == '2' else center,
+            'cho_date': cho_date,
+            't4f': t4f, 't3f': t3f, 't2f': t2f,
+            'lap_86': l86, 'lap_64': l64, 'lap_42': l42, 'lap_20': l20,
+            'accel': accel,
+            'z4f': z4f,
+        }
+    con.close()
+    return out

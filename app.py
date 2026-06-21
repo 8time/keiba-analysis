@@ -1027,6 +1027,12 @@ if nav == "💰 BetSync（資金管理）":
                        "配分すべきかをケリー基準で算出します（追い上げの代わりに）。")
             # 🔗 Single Race Analysis の 🎰買い方最適化 が出した勝率×オッズを自動取込
             _feed = _ss.get('bs_ev_feed')
+            if not _feed or not _feed.get('rows'):
+                try:
+                    from core import score_cache as _sc_bs
+                    _feed = _sc_bs.read_kelly_bridge()
+                except Exception:
+                    pass
             if _feed and _feed.get('rows'):
                 fl1, fl2 = st.columns([3, 1])
                 with fl1:
@@ -1111,6 +1117,12 @@ if nav == "💰 BetSync（資金管理）":
             try:
                 # 🔗 予測モデル連携: feed の全頭をワンクリックで台帳へ（Brier較正データ化）
                 _lfeed = _ss.get('bs_ev_feed')
+                if not _lfeed or not _lfeed.get('rows'):
+                    try:
+                        from core import score_cache as _sc_led
+                        _lfeed = _sc_led.read_kelly_bridge()
+                    except Exception:
+                        pass
                 if _lfeed and _lfeed.get('rows'):
                     _lrid = _lfeed['race_id']
                     _exists = _lg.con.execute(
@@ -3199,6 +3211,50 @@ if nav == "🏠 Single Race Analysis":
                                                "※調教時計は検証で『速い時計＝過剰人気』のため参考用です。")
                             st.caption("※検証(中央重賞2021–2025・9,092頭): 調教評価の3着内残差は A=+0.009(z+0.55, 有意でない)、"
                                        "B=−0.016(z−3.6), C=−0.023(z−3.3)＝B/Cは有意に過剰人気。よって調教評価の予測ボーナスは0に降格（表示・参考用）。")
+                            # --- JV-Link坂路調教(HC) ---
+                            try:
+                                from core.oikiri import query_jv_training
+                                _jv_kettos = [str(r.get('ketto_num', '')) for _, r in df.iterrows()
+                                              if r.get('ketto_num')]
+                                _jv_date = None
+                                try:
+                                    _rd = str(race_id_input)
+                                    if len(_rd) >= 8:
+                                        _jv_date = _rd[:4] + _rd[4:8]
+                                except Exception:
+                                    pass
+                                _jv_train = query_jv_training(_jv_kettos, race_date=_jv_date) if _jv_kettos else {}
+                                if _jv_train:
+                                    _kt_to_um = {}
+                                    for _, _r in df.iterrows():
+                                        try:
+                                            _kt_to_um[str(_r.get('ketto_num', ''))] = (
+                                                int(_r['Umaban']), str(_r.get('Name', '')))
+                                        except Exception:
+                                            pass
+                                    _jt_rows = []
+                                    for kt, td in _jv_train.items():
+                                        um, nm = _kt_to_um.get(kt, (0, ''))
+                                        if not um:
+                                            continue
+                                        _jt_rows.append({
+                                            '馬番': um, '馬名': nm,
+                                            'トレセン': td['center'],
+                                            '日付': td['cho_date'],
+                                            '4F': f"{td['t4f']/10:.1f}" if td.get('t4f') else '-',
+                                            '3F': f"{td['t3f']/10:.1f}" if td.get('t3f') else '-',
+                                            '終い1F': f"{td['lap_20']/10:.1f}" if td.get('lap_20') else '-',
+                                            '加速': '◯' if td.get('accel') else '',
+                                            'z偏差': f"{td['z4f']:+.1f}" if td.get('z4f') is not None else '-',
+                                        })
+                                    if _jt_rows:
+                                        _jt_rows.sort(key=lambda x: x['馬番'])
+                                        st.markdown("**🏇 坂路調教タイム（JV-Link HC）**")
+                                        st.dataframe(pd.DataFrame(_jt_rows), hide_index=True, use_container_width=True)
+                                        st.caption("JV-Link坂路調教。z偏差=同日同トレセン内の相対速度(+が速い)。"
+                                                   "加速◯=ラップが終いに向け短縮。※速い時計は過剰人気(検証済)・参考用。")
+                            except Exception:
+                                pass
 
                     st.divider()
 
@@ -3996,8 +4052,29 @@ if nav == "🏠 Single Race Analysis":
                     if 'SpeedIndex' in df.columns:
                         df['SpRank'] = df['SpeedIndex'].rank(ascending=False, method='min')
 
-                    # Sort by Projected Score (new)
+                    # Sort option (B8: LTR blending)
+                    _sort_candidates = []
                     if 'Projected Score' in view_df.columns:
+                        _sort_candidates.append('⭐予測スコア')
+                    if 'LTR' in view_df.columns:
+                        _sort_candidates.append('🤖LTR')
+                    if 'Projected Score' in view_df.columns and 'LTR' in view_df.columns:
+                        _sort_candidates.append('🔀ブレンド(予測+LTR)')
+                    if 'BattleScore' in view_df.columns:
+                        _sort_candidates.append('🔥総合戦闘力')
+                    _sort_sel = st.radio("並び順", _sort_candidates or ['デフォルト'],
+                                         horizontal=True, key="sra_sort_key") if _sort_candidates else None
+                    if _sort_sel == '🤖LTR' and 'LTR' in view_df.columns:
+                        view_df = view_df.sort_values(by='LTR', ascending=False).reset_index(drop=True)
+                    elif _sort_sel == '🔀ブレンド(予測+LTR)':
+                        _ps = pd.to_numeric(view_df['Projected Score'], errors='coerce').fillna(0)
+                        _lr = pd.to_numeric(view_df['LTR'], errors='coerce').fillna(0)
+                        view_df['_blend'] = 0.6 * _ps + 0.4 * _lr
+                        view_df = view_df.sort_values(by='_blend', ascending=False).reset_index(drop=True)
+                        view_df.drop(columns=['_blend'], inplace=True)
+                    elif _sort_sel == '🔥総合戦闘力' and 'BattleScore' in view_df.columns:
+                        view_df = view_df.sort_values(by='BattleScore', ascending=False).reset_index(drop=True)
+                    elif 'Projected Score' in view_df.columns:
                         view_df = view_df.sort_values(by='Projected Score', ascending=False).reset_index(drop=True)
                     elif 'BattleScore' in view_df.columns:
                         view_df = view_df.sort_values(by='BattleScore', ascending=False).reset_index(drop=True)
@@ -5540,33 +5617,79 @@ if nav == "🏠 Single Race Analysis":
                         else:
                             st.caption("（現状は3連複が同等以上。馬連/馬単での取り逃しはなし）")
 
+                        # --- 馬連/馬単 配分 ---
+                        _qe_bc1, _qe_bc2 = st.columns(2)
+                        with _qe_bc1:
+                            _qe_budget = st.number_input("馬連/馬単 予算(円・任意)", min_value=0, max_value=200000,
+                                                         value=0, step=500, key='qe_budget')
+                        with _qe_bc2:
+                            _qe_amode = '均等買い'
+                            if _qe_budget:
+                                _qe_amode = st.radio("配分モード", ['均等買い', '払戻均等'], horizontal=True,
+                                                     key='qe_alloc_mode',
+                                                     help="均等買い=全点同額。払戻均等=オッズ逆比配分。")
+
                         # --- 馬連おすすめ ---
                         st.markdown("**馬連おすすめ**（軸 × 相手）")
-                        _qe_qrows = [{
-                            '買い目': '-'.join(str(x) for x in r['combo']),
-                            '馬名': ' / '.join(r['names']),
-                            '構成': r['pop_ana'],
-                            'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
-                            '🎯当て度': r.get('aim_tag', ''),
-                            '根拠': r.get('aim_reason', '-'),
-                            '狙い目': '🎯' if r['in_band'] else '',
-                        } for r in _qe['quinella']]
+                        _qe_q_bets = _qe['quinella']
+                        if _qe_budget and _qe_q_bets:
+                            _te.allocate_budget(_qe_q_bets, _qe_budget, mode=_qe_amode)
+                        _qe_qrows = []
+                        for r in _qe_q_bets:
+                            _qr = {
+                                '買い目': '-'.join(str(x) for x in r['combo']),
+                                '馬名': ' / '.join(r['names']),
+                                '構成': r['pop_ana'],
+                                'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
+                                '🎯当て度': r.get('aim_tag', ''),
+                                '根拠': r.get('aim_reason', '-'),
+                                '狙い目': '🎯' if r['in_band'] else '',
+                            }
+                            if _qe_budget:
+                                _qr['購入額'] = f"¥{r.get('stake', 0):,}"
+                                _qr['的中時払戻'] = f"¥{r['payout_if_hit']:,}" if r.get('payout_if_hit') else '-'
+                                _qr['トリガミ'] = '⚠️' if r.get('toriga') else ''
+                            _qe_qrows.append(_qr)
                         if _qe_qrows:
                             st.dataframe(pd.DataFrame(_qe_qrows), hide_index=True, use_container_width=True)
+                            if _qe_budget:
+                                _q_total = sum(r.get('stake', 0) for r in _qe_q_bets)
+                                _q_ntg = sum(1 for r in _qe_q_bets if r.get('toriga'))
+                                _q_msg = f"馬連 {len(_qe_q_bets)}点 / 投資¥{_q_total:,}（{_qe_amode}）"
+                                if _q_ntg:
+                                    _q_msg += f" ⚠️トリガミ目{_q_ntg}点"
+                                st.caption(_q_msg)
 
                         # --- 馬単おすすめ ---
                         st.markdown("**馬単おすすめ**（1着 → 2着）")
-                        _qe_erows = [{
-                            '買い目': '→'.join(str(x) for x in r['combo']),
-                            '馬名': ' → '.join(r['names']),
-                            '構成': r['pop_ana'],
-                            'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
-                            '🎯当て度': r.get('aim_tag', ''),
-                            '根拠': r.get('aim_reason', '-'),
-                            '狙い目': '🎯' if r['in_band'] else '',
-                        } for r in _qe['exacta']]
+                        _qe_e_bets = _qe['exacta']
+                        if _qe_budget and _qe_e_bets:
+                            _te.allocate_budget(_qe_e_bets, _qe_budget, mode=_qe_amode)
+                        _qe_erows = []
+                        for r in _qe_e_bets:
+                            _er = {
+                                '買い目': '→'.join(str(x) for x in r['combo']),
+                                '馬名': ' → '.join(r['names']),
+                                '構成': r['pop_ana'],
+                                'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
+                                '🎯当て度': r.get('aim_tag', ''),
+                                '根拠': r.get('aim_reason', '-'),
+                                '狙い目': '🎯' if r['in_band'] else '',
+                            }
+                            if _qe_budget:
+                                _er['購入額'] = f"¥{r.get('stake', 0):,}"
+                                _er['的中時払戻'] = f"¥{r['payout_if_hit']:,}" if r.get('payout_if_hit') else '-'
+                                _er['トリガミ'] = '⚠️' if r.get('toriga') else ''
+                            _qe_erows.append(_er)
                         if _qe_erows:
                             st.dataframe(pd.DataFrame(_qe_erows), hide_index=True, use_container_width=True)
+                            if _qe_budget:
+                                _e_total = sum(r.get('stake', 0) for r in _qe_e_bets)
+                                _e_ntg = sum(1 for r in _qe_e_bets if r.get('toriga'))
+                                _e_msg = f"馬単 {len(_qe_e_bets)}点 / 投資¥{_e_total:,}（{_qe_amode}）"
+                                if _e_ntg:
+                                    _e_msg += f" ⚠️トリガミ目{_e_ntg}点"
+                                st.caption(_e_msg)
                         st.caption("構成: 人=1〜5番人気 / 中=6〜9 / 穴=10番人気〜。"
                                    "狙い目帯=馬連10〜120倍・馬単20〜250倍。")
 
@@ -7517,10 +7640,12 @@ if nav == "🧹 消去フィルター":
                                 _ev_feed.append({'umaban': int(_u), 'bamei': _name_map.get(int(_u), ''),
                                                  'p': float(_wp[_u]), 'odds': float(_o)})
                         if _ev_feed:
-                            st.session_state['bs_ev_feed'] = {
+                            _ev_feed_dict = {
                                 'race_id': str(race_id_input), 'rows': _ev_feed,
                                 'alpha': _alpha, 'ts': datetime.now().strftime('%m/%d %H:%M'),
                             }
+                            st.session_state['bs_ev_feed'] = _ev_feed_dict
+                            _sc.write_kelly_bridge(_ev_feed_dict)
                     except Exception:
                         pass
                     _types = [('tan', '単勝'), ('fuku', '複勝'), ('umaren', '馬連'), ('wide', 'ワイド'), ('trio', '3連複')]
@@ -9812,6 +9937,37 @@ if nav == "🧠 MAGIシステム":
                        "3軸全一致/末脚×断層は別格(複勝率~27%/単ROI~95%)だがフラット単勝で黒字化はせず＝**複勝/組合せ向き**。")
             st.markdown("---")
             st.markdown("**📒 実測台帳（あなたの記録）**")
+            _mc_rid = st.session_state.get('mc_race_id', '')
+            if _mc_rid and not st.session_state.get(f'mc_logged_{_mc_rid}'):
+                if st.button("📒 合議結果を回顧台帳に記録（結果を取得して自動採点）",
+                             key="mc_log_outcome", use_container_width=True):
+                    with st.spinner("レース結果を取得中..."):
+                        try:
+                            _ar2 = scraper.fetch_comprehensive_result(_mc_rid)
+                            _cand2 = _mc_res.get('candidate', {})
+                            _cu = _cand2.get('um')
+                            _chaku = None
+                            _c_odds = _cand2.get('odds')
+                            if _ar2 and _ar2.get('horses') and _cu is not None:
+                                _ch = _ar2['horses'].get(str(_cu)) or _ar2['horses'].get(_cu)
+                                if _ch:
+                                    _chaku = int(_ch.get('Rank', 99))
+                            from core import magi_consensus as _mc3
+                            _mc3.log_consensus_outcome(_mc_rid, _mc_res,
+                                                       candidate_chaku=_chaku,
+                                                       candidate_odds=_c_odds)
+                            st.session_state[f'mc_logged_{_mc_rid}'] = True
+                            if _chaku and _chaku <= 3:
+                                st.success(f"記録完了: 焦点候補 {_cu} → {_chaku}着 ✅ 的中!")
+                            elif _chaku:
+                                st.info(f"記録完了: 焦点候補 {_cu} → {_chaku}着")
+                            else:
+                                st.warning("記録完了（結果取得できず→着順は空欄で保存）")
+                        except Exception as _e_log:
+                            st.error(f"記録エラー: {_e_log}")
+            elif st.session_state.get(f'mc_logged_{_mc_rid}'):
+                st.caption("✅ このレースの合議結果は記録済み")
+
             try:
                 from core import magi_consensus as _mc2
                 _cal = _mc2.calibration_summary()
@@ -10395,7 +10551,14 @@ if nav == "🧠 MAGIシステム":
                 if _ready_t:
                     st.success("**✅ 検証候補（3回以上出現）** — バックテストで効果を確認すべきタグ")
                     for t, v in _ready_t.items():
-                        st.markdown(f"- **{t}** ({v['count']}回) → `scripts/` にバックテストを書いて検証")
+                        _tag_safe = t.replace('"', '\\"')
+                        st.markdown(
+                            f"- **{t}** ({v['count']}回)\n"
+                            f"  ```\n"
+                            f"  python scripts/signal_tag_backtest.py \"{_tag_safe}\"\n"
+                            f"  ```\n"
+                            f"  検証手順: jravan.dbで該当条件の馬を抽出→オッズ補正残差で妙味有無を判定"
+                        )
                 if _quarant:
                     st.warning("**⚠ 俗説隔離タグ** — 検証で否定済み。再実装しない")
                     st.caption(", ".join(f"~~{t}~~({v['count']}回)" for t, v in _quarant.items()))
@@ -10500,6 +10663,7 @@ if nav == "🧠 MAGIシステム":
 
             if not osh['done']:
                 st.markdown("<div class='magi-sub' style='margin-top:8px'>⚠ INPUT QUERY</div>", unsafe_allow_html=True)
+                st.caption("💡 音声入力: Win+H (Windows) / fn fn (Mac) でディクテーション可")
                 with st.form("osh_ans_form", clear_on_submit=True):
                     _ans = st.text_area("答え", placeholder="普通の言葉でOK（わからなければ「わからない」）",
                                         label_visibility="collapsed", height=90)
@@ -10556,6 +10720,31 @@ if nav == "🧠 MAGIシステム":
             if not osh['done']:
                 _entries.append("<div class='proc'>&gt;&gt;&gt; PROCESSING ...</div>")
             st.markdown(f"<div class='log-wrap'>{''.join(_entries)}</div>", unsafe_allow_html=True)
+
+            _magi_msgs = [m for m in osh['chat'] if m['role'] == 'magi']
+            if _magi_msgs:
+                _pitch_map = {'melchior': 0.85, 'balthasar': 1.3, 'casper': 1.0}
+                _rate_map = {'melchior': 1.1, 'balthasar': 0.85, 'casper': 1.0}
+                _tts_items = []
+                for _tm in _magi_msgs:
+                    _tp = _tm.get('persona', 'casper')
+                    _safe = _html.escape(_tm['message']).replace("'", "\\'").replace('\n', ' ')
+                    _tts_items.append("{text:'" + _safe + "',pitch:" + str(_pitch_map.get(_tp, 1.0)) + ",rate:" + str(_rate_map.get(_tp, 1.0)) + "}")
+                _tts_js = ','.join(_tts_items)
+                import streamlit.components.v1 as _stc
+                _stc.html(
+                    '<div style="display:flex;gap:6px;margin:4px 0;">'
+                    '<button onclick="readAll()" style="background:#2a2f3a;color:#ff8c42;border:1px solid #5a2d0a;'
+                    'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
+                    '\U0001f50a 読み上げ</button>'
+                    '<button onclick="speechSynthesis.cancel()" style="background:#2a2f3a;color:#888;border:1px solid #444;'
+                    'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
+                    '■ 停止</button></div>'
+                    '<script>var msgs=[' + _tts_js + '];'
+                    'function readAll(){speechSynthesis.cancel();'
+                    'msgs.forEach(function(m){var u=new SpeechSynthesisUtterance(m.text);'
+                    'u.lang="ja-JP";u.pitch=m.pitch;u.rate=m.rate;speechSynthesis.speak(u);});}'
+                    '</script>', height=40)
 
             if osh.get('saved'):
                 _lg = osh.get('learning', {})

@@ -36,6 +36,7 @@ FEATURES = [
     'field_size', 'is_handicap', 'surface_code', 'kyori', 'baba_code',
     'h7_fig', 'h7_rank', 'spurt_mean3', 'spurt_rank',
     'prior_top3_rate', 'avg_chaku5',
+    'jyo_code', 'race_num_code', 'cushion', 'dirt_moisture',
 ]
 
 BASELINE_FROM = 1990
@@ -66,9 +67,11 @@ def load_data():
         SELECT r.race_key, r.ketto_num, r.umaban, r.chakujun, r.ninki, r.win_odds,
                r.bataiju, r.zogen, r.ato3f AS horse_ato3f, r.sex, r.age, r.futan, r.time,
                ra.year, ra.monthday, ra.jyo, ra.surface, ra.kyori, ra.shusso_tosu,
-               ra.juryo, ra.baba_shiba, ra.baba_dirt, ra.race_num
+               ra.juryo, ra.baba_shiba, ra.baba_dirt, ra.race_num,
+               tc.cushion, tc.dirt_moisture
         FROM results r
         JOIN races ra ON r.race_key = ra.race_key
+        LEFT JOIN track_cond tc ON ra.year = tc.year AND ra.monthday = tc.monthday AND ra.jyo = tc.jyo
         WHERE ra.surface IN ('芝','ダート')
           AND CAST(ra.year AS INTEGER) >= {base}
           AND r.chakujun > 0 AND r.chakujun <= 28
@@ -159,6 +162,11 @@ def encode_features(df):
     df['is_handicap'] = (df['juryo'].astype(str) == '3').astype(int)
     df['field_size'] = df['shusso_tosu'].astype(int)
     df['log_odds'] = np.log1p(pd.to_numeric(df['win_odds'], errors='coerce').fillna(0))
+    df['jyo_code'] = pd.to_numeric(df['jyo'], errors='coerce').fillna(0).astype(int)
+    df['race_num_code'] = pd.to_numeric(df['race_num'], errors='coerce').fillna(0).astype(int)
+    # cushion/dirt_moisture are from track_cond LEFT JOIN (2021+ only, NaN for older)
+    df['cushion'] = pd.to_numeric(df['cushion'], errors='coerce')
+    df['dirt_moisture'] = pd.to_numeric(df['dirt_moisture'], errors='coerce')
     return df
 
 

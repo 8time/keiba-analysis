@@ -189,3 +189,31 @@ def read_magi_bridge():
         return df, data.get('metadata', {}), data.get('race_id', '')
     except Exception:
         return None, None, None
+
+
+def _kelly_path():
+    return os.path.join(_DIR, '_kelly_bridge.json')
+
+
+def write_kelly_bridge(feed_dict):
+    """SRA/買い方最適化タブで算出した勝率×オッズをディスク保存しBetSyncタブから読む。"""
+    if not feed_dict:
+        return
+    try:
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_kelly_path(), 'w', encoding='utf-8') as f:
+            json.dump(feed_dict, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_kelly_bridge():
+    """BetSyncタブ用: SRAが書いたケリー用feedを読む。"""
+    p = _kelly_path()
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None

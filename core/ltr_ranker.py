@@ -81,7 +81,7 @@ def _prior_record(con, ketto):
 def get_scores(horses, race_info):
     """
     horses: [{umaban, ketto_num, ninki, win_odds, bataiju, zogen, sex, age, futan}, ...]
-    race_info: {surface, kyori, field_size, baba, is_handicap}
+    race_info: {surface, kyori, field_size, baba, is_handicap, jyo, race_num, cushion, dirt_moisture}
     Returns {umaban(int): score(float)} or None.
     """
     model, meta = _load()
@@ -103,6 +103,11 @@ def get_scores(horses, race_info):
     bc = bm.get(str(race_info.get('baba', '')), 0)
     # jravan.db codes: 1=牡, 2=牝, 3=セ; runtime receives text from scraping
     sx = {'牡': 1, '牝': 2, 'セ': 3}
+    # Track bias Phase4 features
+    jyo_code = int(race_info.get('jyo') or 0)
+    race_num_code = int(race_info.get('race_num') or 0)
+    cushion_val = race_info.get('cushion')
+    dirt_moist = race_info.get('dirt_moisture')
 
     con = _jv_con()
     rows = []
@@ -128,6 +133,8 @@ def get_scores(horses, race_info):
             'kyori': ky, 'baba_code': bc,
             'h7_fig': h7, 'spurt_mean3': sp,
             'prior_top3_rate': t3, 'avg_chaku5': a5,
+            'jyo_code': jyo_code, 'race_num_code': race_num_code,
+            'cushion': cushion_val, 'dirt_moisture': dirt_moist,
         })
     if con:
         con.close()
