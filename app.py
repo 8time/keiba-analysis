@@ -6650,7 +6650,7 @@ if nav == "🧹 消去フィルター":
                             _score_avail = True
                             if 'BattleScore' in _sd.columns:
                                 _bs = pd.to_numeric(_sd['BattleScore'], errors='coerce')
-                                _bth = _bs.quantile(0.30)  # 下位30%=小さい方
+                                _bth = _bs.quantile(0.35)  # 総合戦闘力 下位35%(18頭なら下位6頭)
                                 for _, _sr in _sd.iterrows():
                                     _u = _sr['_um']
                                     if pd.notnull(_u) and pd.notnull(_bs.loc[_sr.name]) and _bs.loc[_sr.name] <= _bth:
@@ -6667,9 +6667,9 @@ if nav == "🧹 消去フィルター":
                     _score_avail = False
                 if _score_avail:
                     _use_score = st.checkbox(
-                        "🏠 Single Race Analysisの『総合戦闘力／予測スコア』下位30%も加味する",
+                        "🏠 Single Race Analysisの『総合戦闘力 下位35%／予測スコア 下位30%』も加味する",
                         value=True, key=f"kf_excross_usescore_{race_id_input}",
-                        help="🏠で採点済みのテーブルから、総合戦闘力・予測スコアが下位30%の馬に弱点フラグを追加します。"
+                        help="🏠で採点済みのテーブルから、総合戦闘力が下位35%(18頭なら下位6頭)・予測スコアが下位30%の馬に弱点フラグを追加します。"
                              "※これらは人気/オッズを内包し検証(backtest)不可のため、推定複勝率(検証値)には算入せず『参考の重ね』として表示します。")
                 else:
                     _use_score = False
@@ -7136,6 +7136,60 @@ if nav == "🧹 消去フィルター":
                     st.session_state['bo_mate2'] = _mate2_link
                     st.success("🎰 買い方最適化の軸・相手1・相手2に反映しました。"
                                "下の🎰パネルで「▶ ライブオッズ取得＆EV計算」を押してください。")
+
+            # ===== 🎯 流し（軸固定 × 相手・絞った馬から選択）=====
+            st.markdown("#### 🎯 流し（軸固定 × 相手）")
+            st.caption("フォーメーションと別に、軸を固定して相手に流す買い方。馬・頭数は絞った馬(✅残し/🛟ボーダー残し/🎯穴)から自分で選びます。")
+            _nag_pool = sorted(set(_keep_um + _border_um + ([_ana_um] if _ana_um is not None else [])))
+            if not _nag_pool:
+                st.info("先に「▶ 強適消去エンジンを実行」を押して残し馬を確定してください。")
+            else:
+                _ngc1, _ngc2 = st.columns([1.4, 1])
+                with _ngc1:
+                    _nag_kind = st.radio("券種", ["3連複", "馬連", "ワイド", "馬単", "3連単"],
+                                         horizontal=True, key="kf_nag_kind")
+                with _ngc2:
+                    _ax_opts = ["1軸", "2軸"] if _nag_kind in ("3連複", "3連単") else ["1軸"]
+                    _nag_axn = st.radio("軸数", _ax_opts, horizontal=True, key=f"kf_nag_axn_{_nag_kind}")
+                _need_ax = 2 if _nag_axn == "2軸" else 1
+                _nag_axis = st.multiselect(f"軸（{_need_ax}頭・絞った馬から）", _nag_pool,
+                                           format_func=_lab, key="kf_nag_axis", max_selections=_need_ax)
+                _ax = [int(u) for u in _nag_axis][:_need_ax]
+                _mate_opts = [u for u in _nag_pool if u not in _ax]
+                _nag_mate = st.multiselect("相手（絞った馬から）", _mate_opts, default=_mate_opts,
+                                           format_func=_lab, key="kf_nag_mate")
+                _mt = [int(u) for u in _nag_mate if int(u) not in _ax]
+                from itertools import combinations as _comb_n, permutations as _perm_n
+                _nc = []
+                if len(_ax) >= _need_ax and _mt:
+                    if _nag_kind == "3連複":
+                        if _need_ax == 2:
+                            _nc = [tuple(sorted((_ax[0], _ax[1], m))) for m in _mt]
+                        else:
+                            _nc = [tuple(sorted((_ax[0],) + pair)) for pair in _comb_n(_mt, 2)]
+                    elif _nag_kind in ("馬連", "ワイド"):
+                        _nc = [tuple(sorted((_ax[0], m))) for m in _mt]
+                    elif _nag_kind == "馬単":      # 軸→相手(1着固定)
+                        _nc = [(_ax[0], m) for m in _mt]
+                    elif _nag_kind == "3連単":
+                        if _need_ax == 2:          # 1-2着に軸2頭固定 → 3着相手
+                            _nc = [(_ax[0], _ax[1], m) for m in _mt]
+                        else:                      # 軸1着固定 → 相手から2着3着(順列)
+                            _nc = [(_ax[0],) + p for p in _perm_n(_mt, 2)]
+                if _nc:
+                    _sep = "→" if _nag_kind in ("馬単", "3連単") else "-"
+                    _nrows = [{'買い目': _sep.join(str(x) for x in c),
+                               '馬名': (" " + _sep + " ").join(_name_of.get(x, '') for x in c)}
+                              for c in _nc]
+                    st.dataframe(pd.DataFrame(_nrows), hide_index=True, use_container_width=True)
+                    st.success(f"{_nag_kind} {_nag_axn}流し ＝ **{len(_nc)}点**（軸{len(_ax)}頭 × 相手{len(_mt)}頭）")
+                    if st.button("🎰 この流しを買い方最適化へ送る（軸 / 相手）", key="kf_nag_to_bo"):
+                        st.session_state['bo_axis'] = _ax
+                        st.session_state['bo_mate1'] = _mt
+                        st.session_state['bo_mate2'] = []
+                        st.success("🎰 買い方最適化の軸・相手1に反映しました。下の🎰パネルで「▶ ライブオッズ取得＆EV計算」を。")
+                else:
+                    st.info("軸と相手を選ぶと流し買い目（点数）が出ます。")
 
             # ===== 🎰 買い方最適化（券種EV比較・配分）=====
             st.markdown("#### 🎰 買い方最適化（券種EV比較・配分）")
