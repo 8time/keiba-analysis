@@ -5080,6 +5080,43 @@ if nav == "🏠 Single Race Analysis":
                     _te_choices = [f"[{int(r['Umaban']):02d}] {r['Name']}"
                                    for _, r in _te_sorted.iterrows() if pd.notnull(r['Umaban'])]
 
+                    # --- 🎯 馬券フィルター用 検証エッジ/危険馬/穴セット(レース単位キャッシュ・全券種共有) ---
+                    _aim_key = f"_aimsets_{race_id_input}"
+                    if _aim_key not in st.session_state:
+                        try:
+                            from core import corrected_time as _ctf2
+                            from core import jockey_jv as _jjf2
+                            _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
+                            _baba_te = str(meta.get('condition', '') or '')
+                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set()
+                            for _, _rt in df.iterrows():
+                                _utn = pd.to_numeric(_rt.get('Umaban'), errors='coerce')
+                                if pd.isnull(_utn):
+                                    continue
+                                _ut = int(_utn)
+                                _popt = pd.to_numeric(_rt.get('Popularity'), errors='coerce')
+                                if pd.notnull(_popt) and _popt >= 6:
+                                    _ana_te.add(_ut)
+                                if pd.notnull(_popt) and _popt == 1 and (
+                                        ('芝' in _surf_te and _baba_te in ('重', '不良')) or
+                                        ('ダ' in _surf_te and _baba_te == '不良')):
+                                    _danger_te.add(_ut)
+                                _ktt, _ = _jjf2.resolve_horse(str(_rt.get('Name', '')))
+                                if _ktt:
+                                    _fg = _ctf2.get_figure(_ktt, _surf_te)
+                                    if _fg and _fg.get('fig') is not None:
+                                        _ctfig_te[_ut] = _fg['fig']
+                                    _cx = _jjf2.horse_recent_context(_ktt)
+                                    _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
+                                    if _si is not None and _srn >= 2:
+                                        _spurt_te[_ut] = _si
+                            _edge_te = {u for u, r in _ctf2.field_ranks(_ctfig_te).items() if r <= 3}
+                            _edge_te |= {u for u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]}
+                            st.session_state[_aim_key] = {'edge': _edge_te, 'danger': _danger_te, 'ana': _ana_te}
+                        except Exception:
+                            st.session_state[_aim_key] = {'edge': set(), 'danger': set(), 'ana': set()}
+                    _aim = st.session_state[_aim_key]
+
                     _c1, _c2, _c3, _c4 = st.columns(4)
                     with _c1:
                         _axis_mode = st.radio("軸モード", ['軸なし(自動)', '1軸', '2軸'], key='te_axis_mode')
@@ -5157,41 +5194,13 @@ if nav == "🏠 Single Race Analysis":
                     if _te_res['warning']:
                         st.warning(_te_res['warning'])
                     if _te_res['bets']:
-                        # --- 🎯 当てにいく馬券フィルター(ソフト=並べ替え＋印): 価格帯+穴脚エッジ+危険除外 ---
+                        # --- 🎯 当てにいく馬券フィルター(ソフト=並べ替え＋印): 共有セットで注釈 ---
                         try:
                             from core import bet_filter as _bf
                             import importlib as _il_bf; _il_bf.reload(_bf)
-                            from core import corrected_time as _ctf2
-                            from core import jockey_jv as _jjf2
-                            _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
-                            _baba_te = str(meta.get('condition', '') or '')
-                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set()
-                            for _, _rt in df.iterrows():
-                                _utn = pd.to_numeric(_rt.get('Umaban'), errors='coerce')
-                                if pd.isnull(_utn):
-                                    continue
-                                _ut = int(_utn)
-                                _popt = pd.to_numeric(_rt.get('Popularity'), errors='coerce')
-                                if pd.notnull(_popt) and _popt >= 6:
-                                    _ana_te.add(_ut)
-                                if pd.notnull(_popt) and _popt == 1 and (
-                                        ('芝' in _surf_te and _baba_te in ('重', '不良')) or
-                                        ('ダ' in _surf_te and _baba_te == '不良')):
-                                    _danger_te.add(_ut)
-                                _ktt, _ = _jjf2.resolve_horse(str(_rt.get('Name', '')))
-                                if _ktt:
-                                    _fg = _ctf2.get_figure(_ktt, _surf_te)
-                                    if _fg and _fg.get('fig') is not None:
-                                        _ctfig_te[_ut] = _fg['fig']
-                                    _cx = _jjf2.horse_recent_context(_ktt)
-                                    _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
-                                    if _si is not None and _srn >= 2:
-                                        _spurt_te[_ut] = _si
-                            _edge_te = {u for u, r in _ctf2.field_ranks(_ctfig_te).items() if r <= 3}
-                            _edge_te |= {u for u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]}
                             _te_res['bets'] = _bf.annotate_bets(
-                                _te_res['bets'], edge_horses=_edge_te,
-                                danger_horses=_danger_te, ana_set=_ana_te)
+                                _te_res['bets'], edge_horses=_aim['edge'],
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
                             st.caption("🎯当て度＝狙い目価格帯＋穴脚の検証エッジ(🔵補正T/末脚top)で上位化、⚠は危険馬(重不良×1番人気)を含む組。"
                                        "削らず並べ替え＝当たる根拠のある組を上に。")
                         except Exception as _bfe:
@@ -5287,6 +5296,17 @@ if nav == "🏠 Single Race Analysis":
                         _qe = _te.recommend_quinella_exacta(
                             _te_horses, q_odds=_qmap, e_odds=_emap,
                             axis_umaban=_qe_axis, n_opp=_qe_nopp, both_dir=_qe_both)
+                        # 🎯 当てにいく馬券フィルター(馬連/馬単にも横断適用・同じ共有セット)
+                        try:
+                            from core import bet_filter as _bfqe
+                            _qe['quinella'] = _bfqe.annotate_bets(
+                                _qe.get('quinella', []), edge_horses=_aim['edge'],
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
+                            _qe['exacta'] = _bfqe.annotate_bets(
+                                _qe.get('exacta', []), edge_horses=_aim['edge'],
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
+                        except Exception:
+                            pass
 
                         # --- 高配当検知（3連複 vs 馬連/馬単）---
                         _trio_src = [b['combo'] for b in _te_res['bets']] if _te_res.get('bets') else list(_tmap.keys())
@@ -5315,6 +5335,8 @@ if nav == "🏠 Single Race Analysis":
                             '馬名': ' / '.join(r['names']),
                             '構成': r['pop_ana'],
                             'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
+                            '🎯当て度': r.get('aim_tag', ''),
+                            '根拠': r.get('aim_reason', '-'),
                             '狙い目': '🎯' if r['in_band'] else '',
                         } for r in _qe['quinella']]
                         if _qe_qrows:
@@ -5327,6 +5349,8 @@ if nav == "🏠 Single Race Analysis":
                             '馬名': ' → '.join(r['names']),
                             '構成': r['pop_ana'],
                             'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
+                            '🎯当て度': r.get('aim_tag', ''),
+                            '根拠': r.get('aim_reason', '-'),
                             '狙い目': '🎯' if r['in_band'] else '',
                         } for r in _qe['exacta']]
                         if _qe_erows:
