@@ -2956,16 +2956,24 @@ if nav == "🏠 Single Race Analysis":
                                             _vm_baba_auto_idx = 1   # 中有利
                                     except Exception:
                                         _vm_baba_auto_idx = 0
+                                # 内有利/中有利/外有利 のラベルだけ赤字に(キャプションは通常色)
+                                st.markdown(
+                                    "<style>.st-key-vm_baba div[role='radiogroup'] label "
+                                    "div[data-testid='stMarkdownContainer'] p{color:#e03131 !important;"
+                                    "font-weight:700;}</style>", unsafe_allow_html=True)
+                                _VM_BABA_DISP = {'フラット': '内有利', '内2頭目まで荒れ': '中有利',
+                                                 '内4頭目まで荒れ': '外有利'}
                                 _vm_c1, _vm_c2 = st.columns(2)
                                 with _vm_c1:
                                     _vm_baba = st.radio(
                                         f"馬場バイアス（自動推定:{_vm_baba_src}・変更可）",
                                         _pmap.V_BABA_PATTERNS, horizontal=True, key="vm_baba",
                                         index=_vm_baba_auto_idx,
+                                        format_func=lambda x: _VM_BABA_DISP.get(x, x),
                                         captions=[
-                                            "内有利：芝が傷んでおらず最短距離の内枠・先行が恵まれる（開幕週・コース替り直後）",
-                                            "中有利：内2頭ぶんが荒れて遅い→そこを避けた中を通る馬が浮上（開催中盤）",
-                                            "外有利：内4頭ぶんまで荒れ→外を回す差し・外枠が台頭（開催後半・雨後）",
+                                            "芝が傷んでおらず最短距離の内枠・先行が恵まれる（開幕週・コース替り直後）",
+                                            "内2頭ぶんが荒れて遅い→そこを避けた中を通る馬が浮上（開催中盤）",
+                                            "内4頭ぶんまで荒れ→外を回す差し・外枠が台頭（開催後半・雨後）",
                                         ],
                                         help="初期値は①当日の前半レース結果からの逆算バイアス（あれば最優先）、"
                                              "②無ければ開催日数・馬場状態（1〜4日目=フラット/5〜6日目=内2/7日目以上 or 道悪=内4）。"
@@ -5243,13 +5251,33 @@ if nav == "🏠 Single Race Analysis":
                                 _kept_src = f"（🧹消去で残した{len(_inter)}頭を自動取込）"
                     except Exception:
                         pass
-                    _use_um = st.multiselect(
-                        f"使う馬（🧹消去の残し馬を自動取込・その場で編集可）{_kept_src}",
-                        _all_te_um, default=_keep_default,
-                        format_func=lambda u: f"{u} {_te_name_m.get(u, '')}",
-                        key=f"te_use_um_{race_id_input}",
-                        help="🧹消去フィルターで同じレースを確定すると、その最終候補をここに自動で取り込みます。"
-                             "チェックを外す/足すでその場でも調整できます。3頭以上で計算。")
+                    # 列順設定と同じチェック式(popover内のチェックボックス2列)で「使う馬」を選ぶ
+                    _uck = lambda u: f"te_use_ck_{race_id_input}_{u}"
+                    _use_init_key = f"te_use_init_{race_id_input}"
+                    _use_sig = (str(race_id_input), tuple(_keep_default))
+                    if st.session_state.get(_use_init_key) != _use_sig:
+                        _kd = set(_keep_default)
+                        for u in _all_te_um:
+                            st.session_state[_uck(u)] = (u in _kd)
+                        st.session_state[_use_init_key] = _use_sig
+                    with st.popover(f"🐎 使う馬を選ぶ{_kept_src}"):
+                        st.caption("チェックした馬だけで3連複を組みます。🧹消去の残し馬は自動でON（同レースを消去側で確定した場合）。")
+                        _ub1, _ub2 = st.columns(2)
+                        if _ub1.button("全選択", key=f"te_use_all_{race_id_input}"):
+                            for u in _all_te_um:
+                                st.session_state[_uck(u)] = True
+                        if _ub2.button("消去残しに戻す", key=f"te_use_reset_{race_id_input}"):
+                            _kd = set(_keep_default)
+                            for u in _all_te_um:
+                                st.session_state[_uck(u)] = (u in _kd)
+                        st.divider()
+                        _ugrid = st.columns(2)
+                        for _i, u in enumerate(_all_te_um):
+                            with _ugrid[_i % 2]:
+                                st.checkbox(f"{u} {_te_name_m.get(u, '')}", key=_uck(u))
+                    _use_um = [u for u in _all_te_um if st.session_state.get(_uck(u))]
+                    st.caption((f"🐎 使う馬 {len(_use_um)}頭: " + " / ".join(f"{u}{_te_name_m.get(u, '')}" for u in _use_um))
+                               if _use_um else "🐎 使う馬: 未選択（全馬で計算）")
                     if len(_use_um) >= 3:
                         _te_horses = [h for h in _te_horses if h['umaban'] in set(_use_um)]
                     else:
