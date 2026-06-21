@@ -6532,7 +6532,11 @@ if nav == "🧹 消去フィルター":
                         from core import jockey_jv as _jjx
                         from core import score_cache as _scx2
                         # 🏠展開MAPの最終直線『後方の馬』(ディスク橋渡し)→展開後方フラグ
-                        _pm_rear = _scx2.read_rear(race_id_input) or set()
+                        # ※起動中Streamlitが旧モジュールをキャッシュしている場合に備えガード
+                        try:
+                            _pm_rear = _scx2.read_rear(race_id_input) or set()
+                        except Exception:
+                            _pm_rear = set()
                         _rdate = str(metadata.get('date_val', '') or '')
                         try:
                             _cdist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
