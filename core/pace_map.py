@@ -1266,6 +1266,37 @@ def _phase_anchors(phases, turn, a=_TRACK_A, b=_TRACK_B):
     return pos
 
 
+def rear_count(nf):
+    """出馬数による後方頭数(5〜8頭)。"""
+    if nf <= 12:
+        return 5
+    if nf <= 14:
+        return 6
+    if nf <= 15:
+        return 7
+    return 8
+
+
+def rear_umaban(rows):
+    """局面rows([{umaban,x,...}])で後方グループ(出馬数依存5〜8頭)の馬番setを返す。
+    x小=後方。最終直線のrowsを渡せば『直線で後方にいる馬』が取れる。"""
+    nf = len(rows or [])
+    if nf < 8:
+        return set()
+    rn = min(rear_count(nf), nf - 1)
+    sx = sorted(rows, key=lambda r: r.get('x', 0))  # x小=後方
+    return {r.get('umaban') for r in sx[:rn]}
+
+
+def final_straight_rear(pace_map):
+    """pace_map(estimate_pace_mapの出力)から最終直線で後方にいる馬番setを返す。"""
+    if not pace_map:
+        return set()
+    phases = list(pace_map.keys())
+    last = '直線' if '直線' in pace_map else phases[-1]
+    return rear_umaban(pace_map.get(last, []))
+
+
 def build_figure(pace_map, turn='右', title='想定展開マップ'):
     """
     pace_map（estimate_pace_map の出力）から、フェーズ切替スライダー付き
@@ -1313,30 +1344,20 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
             xaxis='x2', yaxis='y2',
         )
 
-    def _rear_count(nf):
-        # 出馬数による後方頭数(5〜8頭)
-        if nf <= 12:
-            return 5
-        if nf <= 14:
-            return 6
-        if nf <= 15:
-            return 7
-        return 8
-
     def _rear_line(rows):
-        """後方グループ(出馬数依存5〜8頭)の境界に縦の破線を引く。局面ごとに位置が動く。"""
+        """後方グループ(出馬数依存5〜8頭)の境界に黄色の縦破線を引く。局面ごとに位置が動く。"""
         nf = len(rows)
         if nf < 8:  # 少頭数では引かない
             return go.Scatter(x=[None], y=[None], mode='lines',
                               hoverinfo='skip', line=dict(color='rgba(0,0,0,0)'))
-        rn = min(_rear_count(nf), nf - 1)
+        rn = min(rear_count(nf), nf - 1)
         sx = sorted(rows, key=lambda r: r['x'])  # x小=後方
         bx = (sx[rn - 1]['x'] + sx[rn]['x']) / 2.0
         return go.Scatter(
             x=[bx, bx], y=[-0.45, 5.1], mode='lines+text',
-            line=dict(color='#FFA500', width=2, dash='dash'),
+            line=dict(color='#FFD700', width=3, dash='dash'),
             text=['', f'後方{rn}頭'], textposition='top center',
-            textfont=dict(color='#FFA500', size=11, family='Arial Black'),
+            textfont=dict(color='#FFD700', size=11, family='Arial Black'),
             hovertext=[f'← 後方{rn}頭', f'← 後方{rn}頭'], hoverinfo='text',
         )
 

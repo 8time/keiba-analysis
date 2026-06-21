@@ -51,6 +51,40 @@ def write_scores(race_id, df):
         pass
 
 
+def _rear_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.rear.json")
+
+
+def write_rear(race_id, umaban_set):
+    """展開MAPの最終直線『後方グループ』馬番を保存(🧹消去クロスから参照)。"""
+    if not race_id:
+        return
+    try:
+        ums = sorted(int(u) for u in (umaban_set or []) if u is not None)
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_rear_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'rear': ums},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_rear(race_id):
+    """{馬番(int), ...} or None。"""
+    if not race_id:
+        return None
+    p = _rear_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return set(int(u) for u in (data.get('rear') or []))
+    except Exception:
+        return None
+
+
 def read_scores(race_id):
     """{umaban(int): {'proj':float|None,'battle':float|None}} or None。"""
     if not race_id:
