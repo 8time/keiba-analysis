@@ -2113,6 +2113,48 @@ if nav == "🏠 Single Race Analysis":
                             _match_pct = _deploy['match_rate_pct']
                             _match_horses = _deploy['match_horses']
 
+                            # ── 🧭 ペース総合判定（3指標を束ねて『どれを信じるか』を明示）──
+                            def _pnorm(s):
+                                s = str(s or '')
+                                if 'ハイ' in s or '前傾' in s:
+                                    return 'ハイ'
+                                if 'スロー' in s or '後傾' in s:
+                                    return 'スロー'
+                                if s in ('標準', 'ミドル', 'イーブン'):
+                                    return 'ミドル'
+                                return None
+                            _ten = st.session_state.get(f'_pace_int_{race_id_input}') or {}
+                            _ten_lbl = _ten.get('label')
+                            _ten_n = _pnorm(_ten_lbl)
+                            _map_p = st.session_state.get(f'_pace_map_pace_{race_id_input}')
+                            _map_n = _pnorm(_map_p)
+                            _rpci_n = _pnorm(_pace_lbl_pci)
+                            # 信頼順: テン速力(実時計・検証済) > 展開マップ(隊列の地図) > PCI(参考)
+                            _verdict = _ten_n or _map_n or _rpci_n or 'ミドル'
+                            _src = ('テン速力(検証済)' if _ten_n else ('展開マップ' if _map_n else 'PCI(参考)'))
+                            _votes = [v for v in (_ten_n, _map_n, _rpci_n) if v]
+                            _agree = _votes.count(_verdict)
+                            _conf = ('3指標一致=信頼◎' if _agree >= 3 else
+                                     ('2指標一致=多数決' if _agree == 2 else '食い違い=注意'))
+                            _lean_txt = ('差し台頭で荒れ寄り → ②穴妙味狙い向き' if _verdict == 'ハイ'
+                                         else ('前残りで堅め → 本線(人気2頭軸)向き' if _verdict == 'スロー'
+                                               else '標準 → 力通り'))
+                            _vc = {'ハイ': '#E63946', 'スロー': '#2A9D8F', 'ミドル': '#F4A261'}[_verdict]
+                            st.markdown(f"""
+                            <div style="background:#1a1a2e; color:#eee; padding:12px 16px; border-radius:10px;
+                                        border-left:8px solid {_vc}; margin-bottom:10px;">
+                                <div style="font-size:16px;">🧭 <b>ペース総合判定: <span style="color:{_vc};">{_verdict}</span></b>
+                                &nbsp;<span style="font-size:12px;color:#ffd166;">（信じるのは {_src} ／ {_conf}）</span></div>
+                                <div style="font-size:13px; color:#cfd6e4; margin-top:6px;">{_lean_txt}</div>
+                                <div style="font-size:12px; color:#9aa3b2; margin-top:6px;">
+                                内訳: テン速力z <b>{_ten_lbl or '—(展開マップ計算後に反映)'}</b> ｜
+                                展開マップ <b>{_map_p or '—'}</b> ｜ PCI/RPCI <b>{_pace_lbl_pci}</b></div>
+                                <div style="font-size:11px; color:#7a8290; margin-top:4px;">
+                                信頼順位 ①テン速力(実時計・荒れ率と検証相関＝3連複🌀の根拠) ②展開マップ(隊列の地図)
+                                ③PCI/RPCI(参考・乖離の妙味は検証で否定)。迷ったら①に従う。</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
                             # 物理的不利補正密集率
                             _sym_density = race_analysis_tools.analyze_field_density_with_symbols(df, _pos_map_pci)
                             _raw_d = _sym_density['raw_density_pct']
@@ -2708,6 +2750,8 @@ if nav == "🏠 Single Race Analysis":
                                 _pm_layout, _pm_wind)
                             # 3連複エンジン等から参照するため展開コンテキストを保存
                             st.session_state[f'_pace_ctx_{race_id_input}'] = _pm_ctx
+                            # 🧭 ペース総合判定(⚡PCI上部)から参照する展開マップのペース判定
+                            st.session_state[f'_pace_map_pace_{race_id_input}'] = _pm_ctx.get('pace')
                             # 事前ペース強度（テン速力ベース・検証済み: ハイ想定→荒れ寄り）を保存
                             try:
                                 st.session_state[f'_pace_int_{race_id_input}'] = \
