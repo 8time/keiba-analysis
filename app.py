@@ -3811,6 +3811,12 @@ if nav == "🏠 Single Race Analysis":
 
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
+                    # 新タブ化で別セッションになった🧹消去フィルターから採点を読めるようディスクにも保存
+                    try:
+                        from core import score_cache as _sc
+                        _sc.write_scores(race_id_input, df)
+                    except Exception:
+                        pass
                     try:
                         df.to_csv(os.path.join(os.path.dirname(__file__), "debug_app_bonus.csv"), encoding="utf-8-sig", index=False)
                     except:
@@ -4141,10 +4147,36 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         pass
 
+                    # --- 🔵補正タイム列(過去走ベスト・フィールド内top3に🔵。検証:1-2番人気×top3で複勝+5.36pp=本命補強) ---
+                    try:
+                        from core import corrected_time as _cth
+                        from core import jockey_jv as _jjh
+                        _surf_h = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else None
+                        _ct_best = {}
+                        for _, _rh in view_df.iterrows():
+                            _uhn = pd.to_numeric(_rh.get('Umaban'), errors='coerce')
+                            if pd.isnull(_uhn):
+                                continue
+                            _kth, _ = _jjh.resolve_horse(str(_rh.get('Name', '')))
+                            _fg = _cth.get_figure(_kth, _surf_h) if _kth else None
+                            _ct_best[int(_uhn)] = (_fg or {}).get('fig')
+                        _ct_ranks = _cth.field_ranks(_ct_best)
+
+                        def _ct_cell(_uu):
+                            _b = _ct_best.get(_uu)
+                            if _b is None:
+                                return '-'
+                            return ('🔵' if _ct_ranks.get(_uu, 99) <= 3 else '') + _cth.fmt(_b)
+                        view_df['CorrectedT'] = view_df['Umaban'].apply(
+                            lambda u: _ct_cell(int(pd.to_numeric(u, errors='coerce')))
+                            if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
+                    except Exception:
+                        pass
+
                     # Merge previous screenshot columns with latest advanced columns
                     # --- v2.02: 展開データ列を追加 ---
                     cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'AxisMark', 'Jockey', 'Signal',
-                            'Projected Score', 'BattleScore', 'AvgPosition',
+                            'Projected Score', 'BattleScore', 'CorrectedT', 'AvgPosition',
                             'DeployScoreLabel', 'PCILabel', 'Pos600m', 'FrontCollapseEffect',
                             'DensityPenaltyLabel',
                             'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried',
@@ -4188,7 +4220,7 @@ if nav == "🏠 Single Race Analysis":
                         "JockeyChange": "乗替", "Name": "馬名",
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
-                        "Projected Score": "⭐予測スコア", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
+                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス", "Waku": "枠",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
@@ -5955,6 +5987,19 @@ if nav == "🧹 消去フィルター":
             _score_df = st.session_state.get('current_bonus_df')
             if _score_df is None:
                 _score_df = st.session_state.get('df')
+            # 左メニュー新タブ化で🧹は別セッション→session_stateに🏠の採点が無い。
+            # ディスクキャッシュ(race_id一致・core/score_cache)から復元して連携を維持する。
+            if _score_df is None or getattr(_score_df, 'empty', True):
+                try:
+                    from core import score_cache as _scx
+                    _cs = _scx.read_scores(race_id_input)
+                    if _cs:
+                        _score_df = pd.DataFrame([
+                            {'Umaban': _u, 'BattleScore': (_v or {}).get('battle'),
+                             'Projected Score': (_v or {}).get('proj')}
+                            for _u, _v in _cs.items()])
+                except Exception:
+                    pass
             _battle_low = {}   # 馬番 -> True(総合戦闘力 下位30%)
             _proj_low = {}     # 馬番 -> True(予測スコア 下位30%)
             _score_match = 0   # この消去ページのレースと採点テーブルの馬番一致数
@@ -6169,6 +6214,34 @@ if nav == "🧹 消去フィルター":
                 try:
                     from core import jockey_jv as _jj
                     from core import elim_reasons as _er
+                    from core import corrected_time as _ct
+                    from core import bet_optimizer as _bo
+                    from core import score_cache as _sc2
+                    # --- 確率列(単勝EV/複勝率/連対率)用: 🏠採点のProjected Scoreをディスクから取得 ---
+                    _scache = _sc2.read_scores(race_id_input)
+                    _score_by_um = {}
+                    _odds_by_um = {}
+                    if _scache:
+                        for _, _rp in df.iterrows():
+                            try:
+                                _u = int(pd.to_numeric(_rp.get('Umaban'), errors='coerce'))
+                            except Exception:
+                                continue
+                            _pj = (_scache.get(_u) or {}).get('proj')
+                            _od = pd.to_numeric(_rp.get('Odds'), errors='coerce')
+                            if _pj is not None:
+                                _score_by_um[_u] = float(_pj)
+                            if pd.notnull(_od) and _od > 0:
+                                _odds_by_um[_u] = float(_od)
+                    _winp = _bo.blended_win_probs(_score_by_um, _odds_by_um) if _score_by_um else {}
+                    _all_um = list(_winp.keys())
+
+                    def _top2_prob(wp, a, allu):
+                        s = wp.get(a, 0.0)
+                        for b in allu:
+                            if b != a:
+                                s += _bo._p2(wp, b, a)
+                        return s
                     _jyo = str(race_id_input)[4:6]
                     _surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
                     try:
@@ -6297,12 +6370,22 @@ if nav == "🧹 消去フィルター":
                             zogen=_zg_e, sex_age=_sa, prev_kyaku=(_ctx or {}).get('prev_kyaku'),
                             surface=_surf, dirt_runs=(_ctx or {}).get('dirt_runs'),
                             topswap=_topswap))
+                        # 補正タイム(H7=直近7走×同一馬場の最高・負=速い／検証: 本命補強+穴の相手に有効)
+                        _figd = _ct.get_figure(_kt, _surf) if _kt else None
+                        _ctbest = (_figd or {}).get('fig')
+                        # 確率列(Projected Scoreがある時だけ) EV=p*odds / 複勝=P(3着内) / 連対=P(2着内)
+                        _p = _winp.get(_um)
+                        _ev = _bo.ev(_p, _odds) if (_p and pd.notnull(_odds)) else None
+                        _fuk = _bo.place_prob(_winp, _um, _all_um) if (_p and len(_all_um) >= 4) else None
+                        _ren = _top2_prob(_winp, _um, _all_um) if (_p and len(_all_um) >= 3) else None
                         _erows.append({'馬番': _um, '馬名': _nm,
                                        '人気': int(_pop) if pd.notnull(_pop) else None,
                                        'オッズ': float(_odds) if pd.notnull(_odds) else None,
                                        'score': _score, 'pos': _pos, 'neg': _neg,
                                        '妙味材料': ' / '.join(_posr) or '-',
                                        '危険材料': ' / '.join(_negr) or '-',
+                                       '_ctbest': _ctbest,
+                                       '_ev': _ev, '_fuk': _fuk, '_ren': _ren,
                                        '_tags': _tags})
                     st.session_state[_ekey] = _erows
                 except Exception as _e:
@@ -6313,6 +6396,7 @@ if nav == "🧹 消去フィルター":
             st.info("👆「▶ 強適消去エンジンを実行」を押すと、検証ファクター照合と消去判定を行います。")
         if _erows:
             from core import elim_reasons as _er
+            from core import corrected_time as _ct
             _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
             _n = len(_edf)
             _keep = (_n + 1) // 2
@@ -6356,7 +6440,36 @@ if nav == "🧹 消去フィルター":
             _anauma = _ana.iloc[0] if not _ana.empty else None
             _dgr = _edf[(_edf['人気'].fillna(99) <= 3) & (_edf['neg'])]
             _has_learn = (_edf['学習残し'].astype(str).str.len() > 0).any()
-            _show_cols = ['判定', '馬番', '馬名', '人気', 'オッズ', '妙味材料', '危険材料']
+            # --- 補正タイム列(フィールド内順位top3に🔵・負=基準より速い) ---
+            _figs = {}
+            for _, _rr in _edf.iterrows():
+                try:
+                    _figs[int(_rr['馬番'])] = _rr.get('_ctbest')
+                except Exception:
+                    pass
+            _franks = _ct.field_ranks(_figs)
+
+            def _ct_disp(rr):
+                b = rr.get('_ctbest')
+                if b is None:
+                    return '-'
+                try:
+                    u = int(rr['馬番'])
+                except Exception:
+                    u = -1
+                return ('🔵' if _franks.get(u, 99) <= 3 else '') + _ct.fmt(b)
+            _edf['補正T'] = [_ct_disp(_rr) for _, _rr in _edf.iterrows()]
+            # --- 確率列(Projected Scoreがある時のみ。EV=p×odds, 複勝=P(3着内), 連対=P(2着内)) ---
+            def _pct(v):
+                return f"{v * 100:.0f}%" if v is not None else '-'
+            _has_prob = any(_rr.get('_ev') is not None for _, _rr in _edf.iterrows())
+            _edf['単勝EV'] = [(f"{_rr['_ev']:.2f}" if _rr.get('_ev') is not None else '-') for _, _rr in _edf.iterrows()]
+            _edf['複勝率'] = [_pct(_rr.get('_fuk')) for _, _rr in _edf.iterrows()]
+            _edf['連対率'] = [_pct(_rr.get('_ren')) for _, _rr in _edf.iterrows()]
+            _show_cols = ['判定', '馬番', '馬名', '人気', 'オッズ', '補正T']
+            if _has_prob:
+                _show_cols += ['単勝EV', '複勝率', '連対率']
+            _show_cols += ['妙味材料', '危険材料']
             if _has_learn:
                 _show_cols.append('学習残し')
             _show = _edf[_show_cols]
@@ -6386,6 +6499,15 @@ if nav == "🧹 消去フィルター":
                        + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
                        + "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）")
+            st.caption("🔵補正T＝過去走ベストの補正タイム偏差(負=基準より速い)。フィールド内top3に🔵。"
+                       "検証では**1-2番人気×補正top3で複勝+5.36pp**＝本命(軸)補強に有効/穴単体は+1ppで弱い。")
+            if _has_prob:
+                st.caption("単勝EV＝予測勝率×オッズ(1.0超で理論プラス)／複勝率＝P(3着内)／連対率＝P(2着内)。"
+                           "**🏠の予測スコアから算出したモデル目安(未検証)**。人気薄の高EVは過信注意。"
+                           "下の📊は別物=jravan.db実測のオッズ帯平均。")
+            else:
+                st.caption("ℹ️ 単勝EV/複勝率/連対率を出すには、先に🏠 Single Race Analysisで**同じレースを採点**してください"
+                           "(予測スコアをディスク経由で取り込みます)。")
 
             # ===== 📊 残った馬の期待値・回収率・連対率（jravan.db実測ベース）=====
             st.markdown("#### 📊 残った馬の期待値・回収率・連対率")
@@ -9720,256 +9842,185 @@ if nav == "🧠 MAGIシステム":
 
 if nav == "🧠 MAGIシステム":
     st.divider()
-    st.header("🎓 MAGI 回顧学習 - 過去レース振り返りセッション")
+    # === MAGI おしゃべりルーム (EVANGELION風 左右2分割) ===
+    import core.magi_chat as mc
+    import random as _rand, html as _html
 
-    st.markdown("""
-    **このタブでできること:**
-    - 過去のレースRaceIDを入力し、アプリの全スコア（Ranking Table相当）でMAGI予測を自動生成
-    - netkeibaから**実際の結果**を取得
-    - **3人格（MELCHIOR・BALTHASAR・CASPER）がLLMで回顧** → 「なぜ外れたか」「次回どうすべきか」を議論
-    - 学習結果はMAGIのシステムプロンプトに活かされます
-    """)
+    st.markdown('''<style>
+    .magi-bar{background:linear-gradient(90deg,#1a0e00,#2a1500);border:1px solid #e8590c;color:#ff8c42;font-family:monospace;letter-spacing:2px;padding:8px 14px;border-radius:6px;margin-bottom:10px;font-weight:700;}
+    .magi-panel{background:#070707;border:1px solid #5a2d0a;border-radius:8px;padding:12px;margin-bottom:10px;}
+    .magi-sub{color:#e8590c;font-family:monospace;font-size:0.72em;letter-spacing:1px;margin-bottom:8px;}
+    .magi-status{display:flex;justify-content:space-between;font-family:monospace;color:#ff8c42;font-size:1.15em;font-weight:700;}
+    .pcard{border-radius:6px;padding:8px 10px;margin-bottom:6px;background:#101418;border:1px solid #2a2f3a;}
+    .pcard.active{border-color:#e8590c;box-shadow:0 0 8px rgba(232,89,12,0.45);}
+    .pname{font-weight:700;font-size:0.9em;}
+    .prole{color:#8a8f99;font-size:0.7em;}
+    .pstate{float:right;font-family:monospace;font-size:0.72em;color:#e8590c;}
+    .log-wrap{max-height:480px;overflow-y:auto;padding-right:6px;}
+    .log-entry{border-left:3px solid #555;padding:6px 10px;margin-bottom:10px;background:rgba(255,255,255,0.02);border-radius:0 4px 4px 0;}
+    .log-entry.user{border-left-color:#6f9bff;background:rgba(120,160,255,0.06);}
+    .log-tag{color:#fff;font-size:0.7em;font-weight:700;padding:1px 8px;border-radius:3px;font-family:monospace;}
+    .log-id{color:#666;font-family:monospace;font-size:0.66em;margin-left:6px;}
+    .log-body{margin-top:5px;color:#dfe3ea;font-size:0.9em;line-height:1.55;}
+    .proc{color:#e8590c;font-family:monospace;font-size:0.8em;margin-top:8px;}
+    </style>''', unsafe_allow_html=True)
 
-    retro_cols1 = st.columns([2, 1, 1, 2])
-    with retro_cols1[0]:
-        retro_race_id = st.text_input(
-            "回顧対象 RaceID",
-            value="",
-            placeholder="例: 202406050811",
-            key="retro_race_id_input"
-        )
-    with retro_cols1[1]:
-        retro_date = st.text_input("日付 (保存用)", placeholder="例: 2024/12/22", key="retro_date_input")
-    with retro_cols1[2]:
-        retro_place = st.text_input("場所 (保存用)", placeholder="例: 中山", key="retro_place_input")
-    with retro_cols1[3]:
-        retro_name = st.text_input("レース名 (保存用)", placeholder="例: 有馬記念", key="retro_name_input")
+    if 'oshaberi' not in st.session_state:
+        st.session_state.oshaberi = None
+    osh = st.session_state.oshaberi
 
-    retro_cols2 = st.columns(2)
-    with retro_cols2[0]:
-        retro_course_opts = ["標準", "小回り(中山・中京・福島)", "直線が長い(東京・京都外回り)", "洋芝(札幌・函館)"]
-        retro_course = st.selectbox("コース特性", retro_course_opts, key="retro_course")
-    with retro_cols2[1]:
-        retro_chaos_opts = ["C (堅い)", "B (標準)", "A (波乱)", "S (大波乱)"]
-        retro_chaos = st.select_slider("波乱度（事後評価）", options=retro_chaos_opts, value="B (標準)", key="retro_chaos")
+    def _logid():
+        return ''.join(_rand.choices('0123456789abcdefghijklmnopqrstuvwxyz', k=5))
 
-    retro_btn = st.button("🎓 回顧セッション開始", type="primary", use_container_width=False, key="retro_btn")
+    st.markdown("<div class='magi-bar'>🗣️ MAGI SYSTEM — レース回顧おしゃべり</div>", unsafe_allow_html=True)
 
-    # ── Session State for Interactive Learning ──
-    if 'retro_session' not in st.session_state:
-        st.session_state.retro_session = None
+    _left, _right = st.columns([1, 1.5], gap="medium")
 
-    if retro_btn and retro_race_id:
-        st.session_state.retro_session = {
-            'race_id': str(retro_race_id).strip(),
-            'date': str(retro_date).strip(),
-            'place': str(retro_place).strip(),
-            'name': str(retro_name).strip()
-        }
-        st.session_state.retro_chat_history = []
-        
-        retro_race_id_str = st.session_state.retro_session['race_id']
-        st.info(f"📡 レースID: {retro_race_id_str} のデータを取得中...")
+    with _left:
+        if not osh:
+            st.markdown("<div class='magi-sub'>⚠ INPUT QUERY</div>", unsafe_allow_html=True)
+            with st.form("osh_start_form", clear_on_submit=False):
+                _rid_in = st.text_input("レースID", placeholder="例: 202406050811", label_visibility="collapsed")
+                _go = st.form_submit_button("▶ 審議開始", type="primary", use_container_width=True)
+            if _go and _rid_in and _rid_in.strip():
+                _rid = _rid_in.strip()
+                with st.spinner("レース結果を読み込み中..."):
+                    try:
+                        _df_o = scraper.get_race_data(_rid, use_storage=False)
+                        if not _df_o.empty:
+                            _df_o = calculator.calculate_all(_df_o)
+                    except Exception:
+                        _df_o = pd.DataFrame()
+                    try:
+                        from core.magi_system import run_magi_deliberation
+                        _mp = run_magi_deliberation(_df_o, course_profile="標準", chaos_rank="B") if not _df_o.empty else {}
+                    except Exception:
+                        _mp = {}
+                    try:
+                        _ar = scraper.fetch_comprehensive_result(_rid)
+                    except Exception:
+                        _ar = {}
+                if not _ar or not _ar.get('horses'):
+                    st.error("結果を取得できませんでした。確定済みのレースIDか確認してね。")
+                else:
+                    _ctx = mc.build_context(_df_o, _mp, _ar)
+                    try:
+                        _f = mc.magi_turn(_ctx, [], GEMINI_API_KEY)
+                    except Exception:
+                        _f = {'persona': 'balthasar', 'message': 'このレースで気になった馬はいた?', 'done': False}
+                    st.session_state.oshaberi = {
+                        'race_id': _rid, 'ctx': _ctx, 'result_line': mc.result_one_line(_ctx),
+                        'chat': [{'role': 'magi', 'persona': _f['persona'], 'message': _f['message'], 'id': _logid()}],
+                        'done': False, 'saved': False,
+                    }
+                    st.rerun()
+            st.caption("👶 終わったレースのIDを入れて審議開始。3人格がやさしく質問します。")
+        else:
+            _status = "決議完了" if osh['done'] else "審議中"
+            st.markdown(
+                f"<div class='magi-panel'><div class='magi-status'><span>提訴</span><span>決議</span></div>"
+                f"<div class='magi-sub' style='margin-top:6px'>CODE : {osh['race_id'][-4:]}　STATUS : {_status}</div></div>",
+                unsafe_allow_html=True)
+            _active = None
+            for _m in reversed(osh['chat']):
+                if _m['role'] == 'magi':
+                    _active = _m['persona']
+                    break
+            for _k, _p in mc.PERSONAS.items():
+                _cls = 'pcard active' if (_k == _active and not osh['done']) else 'pcard'
+                _cnt = sum(1 for _m in osh['chat'] if _m.get('persona') == _k)
+                _stt = '質問中' if (_k == _active and not osh['done']) else (f'{_cnt}問' if _cnt else '待機')
+                st.markdown(
+                    f"<div class='{_cls}' style='border-left:4px solid {_p['color']}'>"
+                    f"<span class='pstate'>{_stt}</span>"
+                    f"<div class='pname' style='color:{_p['color']}'>{_p['emoji']} {_p['jp']}</div>"
+                    f"<div class='prole'>{_p['role']}</div></div>", unsafe_allow_html=True)
 
-        # Step 1: レースカードデータ取得
-        with st.spinner("Step 1/4: レースカードデータ取得中..."):
-            try:
-                df_retro = scraper.get_race_data(retro_race_id_str, use_storage=False)
-            except Exception as e:
-                df_retro = pd.DataFrame()
-                st.warning(f"スクレイパーエラー: {e}")
+            if not osh['done']:
+                st.markdown("<div class='magi-sub' style='margin-top:8px'>⚠ INPUT QUERY</div>", unsafe_allow_html=True)
+                with st.form("osh_ans_form", clear_on_submit=True):
+                    _ans = st.text_area("答え", placeholder="普通の言葉でOK（わからなければ「わからない」）",
+                                        label_visibility="collapsed", height=90)
+                    _send = st.form_submit_button("▶ 送信", type="primary", use_container_width=True)
+                if _send and _ans and _ans.strip():
+                    osh['chat'].append({'role': 'user', 'message': _ans.strip(), 'id': _logid()})
+                    with st.spinner("MAGI 審議中..."):
+                        try:
+                            _nx = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY)
+                        except Exception:
+                            _nx = {'persona': 'casper', 'message': 'なるほど。ほかに覚えていることは?', 'done': False}
+                    osh['chat'].append({'role': 'magi', 'persona': _nx['persona'], 'message': _nx['message'], 'id': _logid()})
+                    if _nx['done']:
+                        osh['done'] = True
+                    st.session_state.oshaberi = osh
+                    st.rerun()
+            else:
+                if not osh.get('saved'):
+                    if st.button("📒 審議を記録する", type="primary", use_container_width=True, key="osh_save"):
+                        with st.spinner("学びをメモ中..."):
+                            _lg = mc.extract_learning(osh['ctx'], osh['chat'], GEMINI_API_KEY)
+                            _rec, _ts = mc.save_record(osh['race_id'], {}, osh['ctx'], osh['chat'], _lg)
+                        osh['saved'] = True
+                        osh['learning'] = _lg
+                        osh['tagsum'] = _ts
+                        st.session_state.oshaberi = osh
+                        st.rerun()
+                else:
+                    st.success("記録しました")
 
-        if df_retro.empty:
-            st.error("❌ レースカードデータを取得できませんでした。RaceIDを確認してください。")
-            st.session_state.retro_session = None
-            st.stop()
-        
-        # Step 2: スコア計算
-        with st.spinner("Step 2/4: BattleScore・OguraIndex等の計算中..."):
-            try:
-                df_retro = calculator.calculate_all(df_retro)
-            except Exception as e:
-                st.warning(f"スコア計算エラー（部分): {e}")
+            if st.button("■ ABORT / 別のレース", use_container_width=True, key="osh_reset"):
+                st.session_state.oshaberi = None
+                st.rerun()
 
-        # Step 3: MAGI合議
-        with st.spinner("Step 3/4: MAGI合議（ルールベース）実行中..."):
-            try:
-                from core.magi_system import run_magi_deliberation
-                chaos_char = retro_chaos[0]
-                magi_pred = run_magi_deliberation(df_retro, course_profile=retro_course, chaos_rank=chaos_char)
-            except Exception as e:
-                magi_pred = {}
-                st.warning(f"MAGI合議エラー: {e}")
+    with _right:
+        st.markdown("<div class='magi-sub'>📡 DELIBERATION LOG</div>", unsafe_allow_html=True)
+        if not osh:
+            st.markdown("<div class='magi-panel' style='color:#666;font-family:monospace'>&gt;&gt;&gt; AWAITING QUERY ...</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='magi-panel' style='font-size:0.9em'>🏁 {_html.escape(osh['result_line'])}</div>", unsafe_allow_html=True)
+            _entries = []
+            for _m in osh['chat']:
+                _body = _html.escape(_m['message']).replace(chr(10), '<br>')
+                if _m['role'] == 'user':
+                    _entries.append(
+                        f"<div class='log-entry user'><span class='log-tag' style='background:#6f9bff'>あなた</span>"
+                        f"<span class='log-id'>LOG_ID: {_m.get('id','')}</span><div class='log-body'>{_body}</div></div>")
+                else:
+                    _p = mc.PERSONAS.get(_m['persona'], {})
+                    _entries.append(
+                        f"<div class='log-entry' style='border-left-color:{_p.get('color','#555')}'>"
+                        f"<span class='log-tag' style='background:{_p.get('color','#555')}'>{_p.get('jp','MAGI')}</span>"
+                        f"<span class='log-id'>LOG_ID: {_m.get('id','')}</span><div class='log-body'>{_body}</div></div>")
+            if not osh['done']:
+                _entries.append("<div class='proc'>&gt;&gt;&gt; PROCESSING ...</div>")
+            st.markdown(f"<div class='log-wrap'>{''.join(_entries)}</div>", unsafe_allow_html=True)
 
-        # Step 4: 実際の結果取得
-        with st.spinner("Step 4/4: netkeibaから実際の結果を取得中..."):
-            try:
-                actual_result = scraper.fetch_comprehensive_result(retro_race_id_str)
-            except Exception as e:
-                actual_result = {}
-                st.warning(f"結果取得エラー: {e}")
-
-        if not actual_result or not actual_result.get('horses'):
-            st.error("❌ 実際の結果を取得できませんでした。確定済みレースか確認してください。")
-            st.session_state.retro_session = None
-            st.stop()
-
-        # Step 5: LLM回顧セッション
-        with st.spinner("🔴🟢🔵 3ユニットが回顧中... (約30〜40秒)"):
-            try:
-                from core.magi_retrospective import run_magi_retrospective
-                retro_result = run_magi_retrospective(
-                    df=df_retro,
-                    magi_prediction=magi_pred,
-                    actual_result=actual_result,
-                    api_key=GEMINI_API_KEY,
-                    meta={'course_profile': retro_course, 'chaos_rank': chaos_char}
-                )
-            except Exception as e:
-                st.error(f"回顧セッションエラー: {e}")
-                retro_result = None
-
-        # Store to session and RERUN to display cleanly
-        st.session_state.retro_session.update({
-            'df_retro': df_retro,
-            'magi_pred': magi_pred,
-            'actual_result': actual_result,
-            'retro_result': retro_result
-        })
-        st.rerun()
-
-    # ── Render Session Data ──
-    if st.session_state.retro_session and 'retro_result' in st.session_state.retro_session:
-        rs = st.session_state.retro_session
-        df_retro = rs['df_retro']
-        magi_pred = rs['magi_pred']
-        actual_result = rs['actual_result']
-        retro_result = rs['retro_result']
-
-        st.success(f"✅ レースデータ取得完了")
-        # 予測結果プレビュー
-        if magi_pred and 'final_prediction' in magi_pred:
-            pred_horses = magi_pred['final_prediction'].get('horses', [])
-            if pred_horses:
-                pred_str = ', '.join([f"馬番{h['umaban']}({h.get('name','?')})" for h in pred_horses[:3]])
-                st.info(f"🔮 MAGI事前予測TOP3: {pred_str}")
-
-        # 実際の結果プレビュー
-        from core.magi_retrospective import format_actual_result
-        actual_text = format_actual_result(actual_result)
-        with st.expander("📋 実際のレース結果（クリックで開く）", expanded=True):
-            st.text(actual_text)
-
-        st.divider()
-        st.subheader("🧠 MAGI 回顧セッション（3人格がLLMで分析）")
-
-        if retro_result:
-            summary = retro_result.get('summary', {})
-            pred_top3 = summary.get('predicted_top3', [])
-            actual_top3 = summary.get('actual_top3', [])
-            hits = summary.get('hits', [])
-            hit_count = summary.get('hit_count', 0)
-
-            hit_color = "🟢" if hit_count >= 2 else ("🟡" if hit_count == 1 else "🔴")
-            st.markdown(f"### {hit_color} 予測精度: {summary.get('hit_rate_label', '?')} 的中")
-            met1, met2, met3 = st.columns(3)
-            met1.metric("MAGI予測TOP3", ", ".join(pred_top3) or "-")
-            met2.metric("実際のTOP3", ", ".join(actual_top3) or "-")
-            met3.metric("一致した馬番", ", ".join(str(h) for h in hits) or "なし")
-            st.divider()
-
-            retro_cols = st.columns(3)
-            unit_configs = [
-                ('melchior', '🔴 MELCHIOR-1', '科学者・論理'),
-                ('balthasar', '🟢 BALTHASAR-2', '母・資金管理'),
-                ('casper', '�� CASPER-3', '女・直感'),
-            ]
-            for col, (key, label, subtitle) in zip(retro_cols, unit_configs):
-                with col:
-                    r = retro_result.get(key, {})
-                    if '_error' in r:
-                         st.error(f"{label}: エラー")
-                         continue
-                    acc = r.get('prediction_accuracy', '不明')
-                    acc_icon = "✅" if acc == "的中" else "❌"
-                    st.markdown(f"#### {label}")
-                    st.caption(subtitle)
-                    st.markdown(f"**{acc_icon} {acc}**")
-
-                    lesson = r.get('lesson_learned', '')
-                    if lesson:
-                        st.info(f"💡 **学習ポイント**: {lesson}")
-
-                    with st.expander(f"{label} 全回顧内容", expanded=False):
-                        display_map = {{
-                            'key_miss_factor': '🔍 最大の見落とし',
-                            'scientific_note': '🔬 科学的補足',
-                            'odds_analysis': '📊 オッズ評価',
-                            'bet_assessment': '💰 馬券評価',
-                            'risk_note': '⚠️ リスク見落とし',
-                            'intuition_review': '💭 直感の振り返り',
-                            'pattern_a_result': '📌 パターンA結果',
-                            'pattern_b_result': '📌 パターンB結果',
-                            'hidden_signal': '👁 見落としたサイン',
-                            'emotional_note': '💔 感情的振り返り',
-                            'revised_confidence': '📈 次回信頼度',
-                        }}
-                        for field, label_j in display_map.items():
-                            val = r.get(field)
-                            if val is not None and val != '':
-                                st.markdown(f"**{label_j}**: {val}")
-
-            st.divider()
-            with st.expander("📊 使用したRanking Table（解析データ）", expanded=False):
-                display_cols = [c for c in ['Umaban', 'Name', 'Popularity', 'Odds', 'BattleScore', 'OguraIndex', 'AvgPosition', 'AvgAgari', 'Rank'] if c in df_retro.columns]
-                if display_cols:
-                    st.dataframe(df_retro[display_cols].reset_index(drop=True), use_container_width=True, hide_index=True)
-
-        # ── 人間とMAGIの対話（Interactive Learning） ──
-        st.divider()
-        st.subheader("🗣 人間とMAGIの反省討論（Interactive Session）")
-        st.markdown("レース結果を見た**あなたの直感やパドックの印象、気づいたサイン**を入力してください。AIと共に次へ繋がるロジックを探求します。")
-        
-        # 過去のチャットログを表示
-        for msg in st.session_state.retro_chat_history:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-                
-        user_insight = st.chat_input("なぜこの穴馬を当てられなかったのか？例：パドックで発汗がひどかったから切るべきだった")
-        if user_insight:
-            st.session_state.retro_chat_history.append({"role": "user", "content": user_insight})
-            with st.chat_message("user"):
-                st.write(user_insight)
-                
-            with st.chat_message("assistant"):
-                with st.spinner("MAGIマスターAIが考察中..."):
-                    from core.magi_retrospective import discuss_interactive_retrospective
-                    # API Key is defined globally in app.py as GEMINI_API_KEY
-                    response_text = discuss_interactive_retrospective(st.session_state.retro_session, user_insight, st.session_state.retro_chat_history[:-1], GEMINI_API_KEY)
-                    st.write(response_text)
-                    st.session_state.retro_chat_history.append({"role": "assistant", "content": response_text})
-                    
-            # 記録処理 (Log to diary)
-            import os
-            from datetime import datetime
-            diary_dir = os.path.join("sandbox", "hyperagents")
-            diary_file = os.path.join(diary_dir, "IMPROVEMENTS.md")
-            if os.path.exists(diary_file):
-                with open(diary_file, "a", encoding="utf-8") as f:
-                    # 追加情報のフォーマット生成
-                    date_str = rs.get('date', '')
-                    place_str = rs.get('place', '')
-                    name_str = rs.get('name', '')
-                    
-                    extra_parts = []
-                    if date_str: extra_parts.append(date_str)
-                    if place_str: extra_parts.append(place_str)
-                    if name_str: extra_parts.append(name_str)
-                    extra_text = f" ({' / '.join(extra_parts)})" if extra_parts else ""
-                    
-                    f.write(f"\n\n## [ HUMAN + AI Interactive Retro ] Race {rs['race_id']}{extra_text} [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                    f.write(f"**Human**: {user_insight}\n")
-                    f.write(f"**MAGI AI**: {response_text[:400]}...\n")
+            if osh.get('saved'):
+                _lg = osh.get('learning', {})
+                _tk = _lg.get('key_takeaways') or []
+                _tags = osh.get('tagsum') or {}
+                _sess = _lg.get('signal_tags') or []
+                _parts = ["<div class='magi-panel'><div class='magi-sub'>🧠 学習レコード</div>"]
+                if _tk:
+                    _parts.append("<div style='color:#dfe3ea;font-size:0.88em'><b>今日の学び</b><ul style='margin:4px 0 8px 18px'>")
+                    for _t in _tk:
+                        _parts.append(f"<li>{_html.escape(str(_t))}</li>")
+                    _parts.append("</ul></div>")
+                if _sess:
+                    _chips = []
+                    for _t in _sess:
+                        _info = _tags.get(_t, {'count': 1, 'quarantined': mc.is_quarantined(_t), 'ready': False})
+                        _ts2 = _html.escape(str(_t))
+                        if _info['quarantined']:
+                            _chips.append(f"<span style='background:#5c1f1f;color:#ffb3b3;padding:2px 8px;border-radius:10px;font-size:0.78em'>⚠ {_ts2}（俗説・採用しない）</span>")
+                        elif _info['ready']:
+                            _chips.append(f"<span style='background:#1f5c2f;color:#b3ffc4;padding:2px 8px;border-radius:10px;font-size:0.78em'>✅ {_ts2}（{_info['count']}回目・要検証）</span>")
+                        else:
+                            _chips.append(f"<span style='background:#2a2f3a;color:#cfd6e4;padding:2px 8px;border-radius:10px;font-size:0.78em'>{_ts2}（{_info['count']}/3）</span>")
+                    _parts.append("<div style='font-size:0.78em;color:#8a8f99;margin-bottom:4px'>気づきタグ（3回で検証候補）</div>")
+                    _parts.append("<div style='line-height:2'>" + " ".join(_chips) + "</div>")
+                _parts.append("</div>")
+                st.markdown("".join(_parts), unsafe_allow_html=True)
 
 
 # --- History & Review（MAGIシステムタブ最下部・MAGI回顧学習の下に統合表示）---

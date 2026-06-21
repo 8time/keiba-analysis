@@ -1313,6 +1313,33 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
             xaxis='x2', yaxis='y2',
         )
 
+    def _rear_count(nf):
+        # 出馬数による後方頭数(5〜8頭)
+        if nf <= 12:
+            return 5
+        if nf <= 14:
+            return 6
+        if nf <= 15:
+            return 7
+        return 8
+
+    def _rear_line(rows):
+        """後方グループ(出馬数依存5〜8頭)の境界に縦の破線を引く。局面ごとに位置が動く。"""
+        nf = len(rows)
+        if nf < 8:  # 少頭数では引かない
+            return go.Scatter(x=[None], y=[None], mode='lines',
+                              hoverinfo='skip', line=dict(color='rgba(0,0,0,0)'))
+        rn = min(_rear_count(nf), nf - 1)
+        sx = sorted(rows, key=lambda r: r['x'])  # x小=後方
+        bx = (sx[rn - 1]['x'] + sx[rn]['x']) / 2.0
+        return go.Scatter(
+            x=[bx, bx], y=[-0.45, 5.1], mode='lines+text',
+            line=dict(color='#FFA500', width=2, dash='dash'),
+            text=['', f'後方{rn}頭'], textposition='top center',
+            textfont=dict(color='#FFA500', size=11, family='Arial Black'),
+            hovertext=[f'← 後方{rn}頭', f'← 後方{rn}頭'], hoverinfo='text',
+        )
+
     # 静的トレース: コース外形・フェーズラベル・ゴール
     t_track = go.Scatter(
         x=[p[0] for p in track], y=[p[1] for p in track],
@@ -1340,13 +1367,14 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
         hoverinfo='skip', xaxis='x2', yaxis='y2',
     )
 
-    # data: [0]=馬, [1]=コース, [2]=ラベル, [3]=ゴール, [4]=ハイライト
+    # data: [0]=馬, [1]=コース, [2]=ラベル, [3]=ゴール, [4]=ハイライト, [5]=後方ライン
     fig = go.Figure(
         data=[_trace(pace_map[phases[0]]), t_track, t_labels, t_goal,
-              _highlight(phases[0])],
+              _highlight(phases[0]), _rear_line(pace_map[phases[0]])],
         frames=[
-            go.Frame(name=ph, data=[_trace(pace_map[ph]), _highlight(ph)],
-                     traces=[0, 4])
+            go.Frame(name=ph,
+                     data=[_trace(pace_map[ph]), _highlight(ph), _rear_line(pace_map[ph])],
+                     traces=[0, 4, 5])
             for ph in phases
         ],
     )
