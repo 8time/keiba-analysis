@@ -1941,9 +1941,18 @@ if nav == "🏠 Single Race Analysis":
                         _mck = f"tb_moist_c4_{race_id_input}"
                         _tc_c = _tc_db.get('cushion') or 0.0
                         _tc_m = _tc_db.get('dirt_moisture') or 0.0
-                        st.session_state.setdefault(_ck, _tc_c)
-                        st.session_state.setdefault(_mk, _tc_m if 'ダ' in _tb_surf else 0.0)
-                        st.session_state.setdefault(_mck, 0.0)
+                        # 📌 24時間キャッシュ(開催日×場): 一度入れたら同日同場の他レースに自動引き継ぎ
+                        from core import track_cond_cache as _tcache
+                        _tcc = _tcache.load(race_id_input) or {}
+                        _def_c = _tcc.get('cushion') or _tc_c
+                        _def_m = _tcc.get('moist_goal') or (_tc_m if 'ダ' in _tb_surf else 0.0)
+                        _def_mc = _tcc.get('moist_corner') or 0.0
+                        st.session_state.setdefault(_ck, _def_c)
+                        st.session_state.setdefault(_mk, _def_m)
+                        st.session_state.setdefault(_mck, _def_mc)
+                        if _tcc:
+                            st.caption(f"📌 24時間キャッシュから自動入力（同じ開催日・場で共有／24h後に自動消去）"
+                                       f"：クッション{_tcc.get('cushion') or '-'} / 含水ゴール前{_tcc.get('moist_goal') or '-'} / 4角{_tcc.get('moist_corner') or '-'}")
                         if _tc_c > 0 or _tc_m > 0:
                             _auto_parts = []
                             if _tc_c > 0:
@@ -1984,6 +1993,12 @@ if nav == "🏠 Single Race Analysis":
                         _cv = _tb_cushion if _tb_cushion > 0 else None
                         _mv = _tb_moist if _tb_moist > 0 else None
                         _mc = _tb_moist_c4 if _tb_moist_c4 > 0 else None
+                        # 入力値を24hキャッシュへ保存(同日同場の他レースへ自動引き継ぎ・24h後自動消去)
+                        if _cv or _mv or _mc:
+                            try:
+                                _tcache.save(race_id_input, cushion=_cv, moist_goal=_mv, moist_corner=_mc)
+                            except Exception:
+                                pass
                         st.session_state['_tb_cushion_style'] = _tb.cushion_style_bias(_tb_surf, _cv, _mv)
 
                         # エビデンス行を追記（Phase2: 馬場メトリクス / Phase1: 当日バイアス・コース×馬場）
@@ -5213,6 +5228,32 @@ if nav == "🏠 Single Race Analysis":
                             'pop': int(_pv) if pd.notnull(_pv) and _pv < 99 else None,
                             'alert': str(_r.get('Alert', '') or ''),
                         })
+                    # --- 🧹消去フィルターで残した馬を自動取込＋その場で編集(使う馬を絞る) ---
+                    _all_te_um = [h['umaban'] for h in _te_horses]
+                    _te_name_m = {h['umaban']: h['name'] for h in _te_horses}
+                    _keep_default = _all_te_um
+                    _kept_src = ''
+                    try:
+                        from core import score_cache as _sck_r
+                        _kept = _sck_r.read_keep(race_id_input)
+                        if _kept:
+                            _inter = [u for u in _all_te_um if u in _kept]
+                            if len(_inter) >= 3:
+                                _keep_default = _inter
+                                _kept_src = f"（🧹消去で残した{len(_inter)}頭を自動取込）"
+                    except Exception:
+                        pass
+                    _use_um = st.multiselect(
+                        f"使う馬（🧹消去の残し馬を自動取込・その場で編集可）{_kept_src}",
+                        _all_te_um, default=_keep_default,
+                        format_func=lambda u: f"{u} {_te_name_m.get(u, '')}",
+                        key=f"te_use_um_{race_id_input}",
+                        help="🧹消去フィルターで同じレースを確定すると、その最終候補をここに自動で取り込みます。"
+                             "チェックを外す/足すでその場でも調整できます。3頭以上で計算。")
+                    if len(_use_um) >= 3:
+                        _te_horses = [h for h in _te_horses if h['umaban'] in set(_use_um)]
+                    else:
+                        st.caption("⚠ 3頭未満のため全馬で計算します。")
                     # 展開マップ連携: 旧『好位妙味ボーナス』は検証で否定(deploy_bonus_from_ctxは加点ゼロ化済み)。
                     # 展開恩恵は妙味でないため3連複加点には使わない。pace_ctxはペース強度ヒント(下)でのみ利用。
                     _pace_ctx = st.session_state.get(f'_pace_ctx_{race_id_input}')
@@ -6438,6 +6479,13 @@ if nav == "🧹 消去フィルター":
             _border_n = int((_edf['判定'] == '🛟ボーダー残し').sum())
             _cut_n = int((_edf['判定'] == '🧹消し').sum())
             _learn_n = int((_edf['学習残し'].astype(str).str.len() > 0).sum())
+            # 🧹→🏠3連複エンジン連携: 残し(✅+🛟)をディスク保存(後でクロスの最終候補が上書き)
+            try:
+                from core import score_cache as _sck_w
+                _sck_w.write_keep(race_id_input,
+                                  [int(x) for x in _edf[_edf['判定'] != '🧹消し']['馬番'].tolist()])
+            except Exception:
+                pass
             st.caption(f"全{_n}頭 → ✅残し{_keep_n}頭"
                        + (f" / 🛟ボーダー残し{_border_n}頭" if _border_n else "")
                        + f" / 🧹消し{_cut_n}頭"
@@ -6811,6 +6859,13 @@ if nav == "🧹 消去フィルター":
                     st.markdown(
                         f"**🎯 最終候補 {_nf}頭**（目標6〜7頭・軸含む） {_badge}　"
                         + " / ".join(f"{int(r['馬番'])}{r['馬名']}" for r in _final_rows))
+                    # 🧹→🏠3連複エンジン連携: クロステーブルの最終候補を確定として保存(上書き)
+                    try:
+                        from core import score_cache as _sck_w2
+                        _sck_w2.write_keep(race_id_input, [int(r['馬番']) for r in _final_rows])
+                        st.caption("→ この最終候補は🏠 Single Race Analysisの🎯3連複おすすめエンジンに自動取込されます(同レースID)。")
+                    except Exception:
+                        pass
                     # 1頭以上で点灯したフラグだけを列にする(空列を出さない)。なければ全フラグ。
                     _active = [k for k in _exc.FLAG_DEFS_ORDER
                                if any(k in (r.get('_lit') or []) for r in _xrows)]
