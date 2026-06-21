@@ -5157,6 +5157,45 @@ if nav == "🏠 Single Race Analysis":
                     if _te_res['warning']:
                         st.warning(_te_res['warning'])
                     if _te_res['bets']:
+                        # --- 🎯 当てにいく馬券フィルター(ソフト=並べ替え＋印): 価格帯+穴脚エッジ+危険除外 ---
+                        try:
+                            from core import bet_filter as _bf
+                            import importlib as _il_bf; _il_bf.reload(_bf)
+                            from core import corrected_time as _ctf2
+                            from core import jockey_jv as _jjf2
+                            _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
+                            _baba_te = str(meta.get('condition', '') or '')
+                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set()
+                            for _, _rt in df.iterrows():
+                                _utn = pd.to_numeric(_rt.get('Umaban'), errors='coerce')
+                                if pd.isnull(_utn):
+                                    continue
+                                _ut = int(_utn)
+                                _popt = pd.to_numeric(_rt.get('Popularity'), errors='coerce')
+                                if pd.notnull(_popt) and _popt >= 6:
+                                    _ana_te.add(_ut)
+                                if pd.notnull(_popt) and _popt == 1 and (
+                                        ('芝' in _surf_te and _baba_te in ('重', '不良')) or
+                                        ('ダ' in _surf_te and _baba_te == '不良')):
+                                    _danger_te.add(_ut)
+                                _ktt, _ = _jjf2.resolve_horse(str(_rt.get('Name', '')))
+                                if _ktt:
+                                    _fg = _ctf2.get_figure(_ktt, _surf_te)
+                                    if _fg and _fg.get('fig') is not None:
+                                        _ctfig_te[_ut] = _fg['fig']
+                                    _cx = _jjf2.horse_recent_context(_ktt)
+                                    _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
+                                    if _si is not None and _srn >= 2:
+                                        _spurt_te[_ut] = _si
+                            _edge_te = {u for u, r in _ctf2.field_ranks(_ctfig_te).items() if r <= 3}
+                            _edge_te |= {u for u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]}
+                            _te_res['bets'] = _bf.annotate_bets(
+                                _te_res['bets'], edge_horses=_edge_te,
+                                danger_horses=_danger_te, ana_set=_ana_te)
+                            st.caption("🎯当て度＝狙い目価格帯＋穴脚の検証エッジ(🔵補正T/末脚top)で上位化、⚠は危険馬(重不良×1番人気)を含む組。"
+                                       "削らず並べ替え＝当たる根拠のある組を上に。")
+                        except Exception as _bfe:
+                            st.caption(f"（馬券フィルター適用スキップ: {_bfe}）")
                         _alloc_mode = '均等買い'
                         if _budget:
                             _alloc_mode = st.radio("予算配分モード", ['均等買い', '払戻均等'], horizontal=True,
@@ -5171,6 +5210,8 @@ if nav == "🏠 Single Race Analysis":
                                 '馬名': ' / '.join(_b['names']),
                                 '人気構成': f"人{_b['pop_ana'][0]}穴{_b['pop_ana'][1]}",
                                 'オッズ': f"{_od:.1f}倍" if _od else '-',
+                                '🎯当て度': _b.get('aim_tag', ''),
+                                '根拠': _b.get('aim_reason', '-'),
                                 '狙い目': '🎯' if _b['in_band'] else '',
                                 'スコア': _b['score'],
                             }
