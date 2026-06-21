@@ -138,3 +138,54 @@ def read_scores(race_id):
         return out or None
     except Exception:
         return None
+
+
+def _magi_path():
+    return os.path.join(_DIR, '_magi_bridge.json')
+
+
+def write_magi_bridge(race_id, df, metadata=None):
+    """SRAで解析したDataFrameをディスクに保存しMAGIタブから読めるようにする。"""
+    if not race_id or df is None:
+        return
+    try:
+        import pandas as pd
+        cols = [c for c in df.columns if c not in ('_internal',)]
+        records = []
+        for _, r in df.iterrows():
+            rec = {}
+            for c in cols:
+                v = r.get(c)
+                if pd.isna(v):
+                    rec[c] = None
+                elif isinstance(v, (int, float, bool)):
+                    rec[c] = v
+                else:
+                    rec[c] = str(v)
+            records.append(rec)
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_magi_path(), 'w', encoding='utf-8') as f:
+            json.dump({
+                'race_id': str(race_id),
+                'ts': time.time(),
+                'metadata': metadata or {},
+                'columns': cols,
+                'records': records,
+            }, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_magi_bridge():
+    """MAGIタブ用: 最後にSRAで解析したレースのDF・メタデータ・race_idを返す。"""
+    p = _magi_path()
+    if not os.path.exists(p):
+        return None, None, None
+    try:
+        import pandas as pd
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        df = pd.DataFrame(data.get('records', []), columns=data.get('columns', []))
+        return df, data.get('metadata', {}), data.get('race_id', '')
+    except Exception:
+        return None, None, None

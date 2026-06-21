@@ -3943,10 +3943,11 @@ if nav == "🏠 Single Race Analysis":
 
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
-                    # 新タブ化で別セッションになった🧹消去フィルターから採点を読めるようディスクにも保存
+                    # 新タブ化で別セッションになった🧹消去フィルター/🧠MAGIから採点を読めるようディスクにも保存
                     try:
                         from core import score_cache as _sc
                         _sc.write_scores(race_id_input, df)
+                        _sc.write_magi_bridge(race_id_input, df, st.session_state.get('race_metadata'))
                     except Exception:
                         pass
                     try:
@@ -4868,6 +4869,26 @@ if nav == "🏠 Single Race Analysis":
                             return ["color: #e03131; font-weight: bold;" if "乗替" in str(v) else "" for v in s]
                         if 'JockeyChange' in view_df.columns:
                             styled_df = styled_df.apply(color_jockey_change, axis=0, subset=['JockeyChange'])
+
+                        def color_weight_carried(s):
+                            vals = []
+                            for v in s:
+                                try:
+                                    vals.append(float(str(v).replace('kg', '')))
+                                except Exception:
+                                    vals.append(None)
+                            valid = [x for x in vals if x is not None]
+                            if not valid:
+                                return [""] * len(s)
+                            from collections import Counter
+                            mode_val = Counter(valid).most_common(1)[0][0]
+                            return [
+                                "background-color: #fff3bf; color: #d9480f; font-weight: bold;"
+                                if x is not None and x != mode_val else ""
+                                for x in vals
+                            ]
+                        if 'WeightCarried' in view_df.columns:
+                            styled_df = styled_df.apply(color_weight_carried, axis=0, subset=['WeightCarried'])
                         
                         # === オッズ断層バッジパネル（ホバー→説明文 / クリック→解説画像）===
                         try:
@@ -9588,13 +9609,29 @@ if nav == "🧠 MAGIシステム":
     """, unsafe_allow_html=True)
 
 
-    st.info("**使い方:** 先に「🏠 Single Race Analysis」でレースを解析してから、このページでMAGI合議を実行してください。")
+    st.info("**使い方:** 先に「🏠 Single Race Analysis」でレースを解析すると、自動的にこのページにもデータが連携されます。")
 
-    # データ確認
+    # データ確認: まずセッション、なければディスクキャッシュから復元
     df_magi = st.session_state.get('df')
     race_metadata = st.session_state.get('race_metadata', {})
+    race_id_for_magi = st.session_state.get('tab1_analyzed_id', '')
 
-    if df_magi is None or df_magi.empty:
+    if df_magi is None or (hasattr(df_magi, 'empty') and df_magi.empty):
+        try:
+            from core.score_cache import read_magi_bridge
+            _br_df, _br_meta, _br_rid = read_magi_bridge()
+            if _br_df is not None and not _br_df.empty:
+                df_magi = _br_df
+                race_metadata = _br_meta or {}
+                race_id_for_magi = _br_rid or ''
+                st.session_state['df'] = df_magi
+                st.session_state['race_metadata'] = race_metadata
+                st.session_state['tab1_analyzed_id'] = race_id_for_magi
+                st.caption(f"📡 SRAタブから自動連携: {race_id_for_magi}")
+        except Exception:
+            pass
+
+    if df_magi is None or (hasattr(df_magi, 'empty') and df_magi.empty):
         st.warning("⚠️ レースデータが未読み込みです。先に Single Race Analysis でレースを解析してください。")
         st.stop()
 
@@ -9606,9 +9643,6 @@ if nav == "🧠 MAGIシステム":
         st.metric("馬場状態", race_metadata.get('condition', '-'))
     with meta_col3:
         st.metric("出走頭数", len(df_magi))
-
-    # コースプロファイル選択
-    race_id_for_magi = st.session_state.get('tab1_analyzed_id', '')
     default_magi_profile = 2
     if len(str(race_id_for_magi)) >= 6:
         vc = str(race_id_for_magi)[4:6]
