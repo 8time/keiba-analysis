@@ -1850,6 +1850,21 @@ if nav == "🏠 Single Race Analysis":
                             _tb_surf = 'ダ'
                     except Exception:
                         pass
+                    # 🌧️ 重・不良馬場の検証済み注意(verified_heavy_track_bias)
+                    _hb_cond = str(meta.get('condition', '') or '')
+                    if _hb_cond in ('重', '不良', '稍重'):
+                        if _tb_surf == '芝' and _hb_cond in ('重', '不良'):
+                            st.warning(f"🌧️ 芝{_hb_cond}馬場：**1番人気の複勝率が大きく低下**"
+                                       f"（検証: 芝重-5.6pp / 芝不良-9.2pp・オッズに未織込）。"
+                                       f"1番人気の軸は割引き、人気薄の台頭・巻き返しに注意。", icon="🌧️")
+                        elif _tb_surf == 'ダ' and _hb_cond == '不良':
+                            st.warning("🌧️ ダート不良馬場：**1番人気がやや危険**（複勝-3.7pp）＋"
+                                       "**外枠6-8が不利**の検証傾向。", icon="🌧️")
+                        else:
+                            st.info(f"🌧️ {_hb_cond}馬場：人気の信頼度低下は有意でなく概ね織込み済み"
+                                    f"（馬場差は🔵補正タイムで較正済み）。")
+                        st.caption("※馬場は締切直前に良→重へ変わることがあります。"
+                                   "発走前に再取得して最新の馬場状態で判断してください。")
                     # 当日逆算バイアス: jravan.db に当該レースがあれば同日同場の既走Rから集計（無ければNone）
                     _tb_emp = None
                     _tb_rr = None  # jravan.db未配置(Streamlit Cloud等)でも後段で参照できるよう初期化
@@ -5049,7 +5064,8 @@ if nav == "🏠 Single Race Analysis":
                                             captions=['堅め・的中重視(鉄板+①を83%カバー)',
                                                       '荒れ・高配当(本線が取りこぼす穴レース／🔥末脚救出等の妙味穴を厚く)'])
                     with _c3:
-                        _n_points = st.selectbox("提案数", [5, 8, 10, 12, 15, 18], index=2, key='te_npoints')
+                        _n_points = st.selectbox("提案数", [5, 8, 10, 12, 15, 18, 20, 30, 50], index=2, key='te_npoints',
+                                                 help="②穴妙味狙いは後半(16番目以降)の組に的中が出やすい傾向。点数を増やすと拾える反面、合成オッズ低下＝トリガミに注意。")
                     with _c4:
                         _budget = st.number_input("予算(円・任意)", min_value=0, max_value=200000,
                                                   value=0, step=500, key='te_budget')
@@ -6028,6 +6044,8 @@ if nav == "🧹 消去フィルター":
                         return s
                     _jyo = str(race_id_input)[4:6]
                     _surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
+                    # 馬場状態(重/不良)= 検証済み危険人気馬バイアス用(verified_heavy_track_bias)
+                    _baba = str(metadata.get('condition', '') or '')
                     try:
                         _dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
                     except Exception:
@@ -6119,6 +6137,12 @@ if nav == "🧹 消去フィルター":
                         _sr = (_ctx or {}).get('spurt_runs', 0)
                         _spurt = bool(_um in _spurt_top3 and _sr >= 2
                                       and pd.notnull(_pop) and _pop >= 6)
+                        # 🌧️ 重・不良馬場×1番人気=構造的に危険(verified_heavy_track_bias)
+                        # 芝重/芝不良で複勝-5.6〜-9.2pp, ダ不良で-3.7pp(オッズ未織込・z有意)
+                        _babafav = bool(
+                            pd.notnull(_pop) and _pop == 1 and (
+                                ('芝' in _surf and _baba in ('重', '不良')) or
+                                ('ダ' in _surf and _baba == '不良')))
                         _posr = []
                         if _gold:
                             _posr.append(f"黄金ライン(連対{_g['top2']:.0%}/{_g['rides']})")
@@ -6141,6 +6165,8 @@ if nav == "🧹 消去フィルター":
                             _negr.append('斤量比≥12.6%')
                         if _rest:
                             _negr.append('半年休み明け')
+                        if _babafav:
+                            _negr.append(f'🌧️{_baba}馬場×1番人気(複勝-5〜9pp検証)')
                         if _nige:
                             _negr.append('前走逃げ')
                         _pos = bool(_posr)
