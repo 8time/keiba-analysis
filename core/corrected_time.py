@@ -83,10 +83,33 @@ def field_ranks(figs):
 
 
 def fmt(best):
-    """補正タイム表示。負=基準より速い。"""
+    """補正タイム表示(偏差)。負=基準より速い。"""
     if best is None:
         return '-'
     try:
         return f"{float(best):+.1f}"
     except Exception:
         return '-'
+
+
+# 補9風(TARGET互換)変換: 100=勝ち負けレベル・+1=0.1秒速い・高いほど速い。
+# TARGETの 補9 = 100 − (走破 − 基準2勝)×10 を逆算(添付スクショ2レースで実証)。
+# 我々の基準は同日同コース較正の corrected。勝ち馬corrected中央値(=補正100相当)を
+# scripts/figure_recency_backtest.py / tactic1_backtest.py で実測 → -1.30。これを100に合わせる。
+WINNER_BASELINE = -1.30
+
+
+def to_t100(fig):
+    """corrected偏差(負=速い) → 補9風スコア(int, 100=勝ち負けレベル, 高=速い)。"""
+    if fig is None:
+        return None
+    try:
+        return int(round(100 - (float(fig) - WINNER_BASELINE) * 10))
+    except Exception:
+        return None
+
+
+def fmt_t100(fig):
+    """補9風スコアの表示文字列。"""
+    v = to_t100(fig)
+    return str(v) if v is not None else '-'

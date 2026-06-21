@@ -4166,7 +4166,7 @@ if nav == "🏠 Single Race Analysis":
                             _b = _ct_best.get(_uu)
                             if _b is None:
                                 return '-'
-                            return ('🔵' if _ct_ranks.get(_uu, 99) <= 3 else '') + _cth.fmt(_b)
+                            return ('🔵' if _ct_ranks.get(_uu, 99) <= 3 else '') + _cth.fmt_t100(_b)
                         view_df['CorrectedT'] = view_df['Umaban'].apply(
                             lambda u: _ct_cell(int(pd.to_numeric(u, errors='coerce')))
                             if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
@@ -6457,7 +6457,7 @@ if nav == "🧹 消去フィルター":
                     u = int(rr['馬番'])
                 except Exception:
                     u = -1
-                return ('🔵' if _franks.get(u, 99) <= 3 else '') + _ct.fmt(b)
+                return ('🔵' if _franks.get(u, 99) <= 3 else '') + _ct.fmt_t100(b)
             _edf['補正T'] = [_ct_disp(_rr) for _, _rr in _edf.iterrows()]
             # --- 確率列(Projected Scoreがある時のみ。EV=p×odds, 複勝=P(3着内), 連対=P(2着内)) ---
             def _pct(v):
@@ -6499,8 +6499,8 @@ if nav == "🧹 消去フィルター":
                        + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
                        + "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）")
-            st.caption("🔵補正T＝過去走ベストの補正タイム偏差(負=基準より速い)。フィールド内top3に🔵。"
-                       "検証では**1-2番人気×補正top3で複勝+5.36pp**＝本命(軸)補強に有効/穴単体は+1ppで弱い。")
+            st.caption("🔵補正T＝補9風スコア(H7=直近7走×同馬場の最高・**100=勝ち負けレベル/+1=0.1秒速い/高いほど速い**)。"
+                       "フィールド内top3に🔵。検証では**1-2番人気×top3で複勝+5pp**＝本命(軸)補強に有効/穴は複勝の相手向き。")
             if _has_prob:
                 st.caption("単勝EV＝予測勝率×オッズ(1.0超で理論プラス)／複勝率＝P(3着内)／連対率＝P(2着内)。"
                            "**🏠の予測スコアから算出したモデル目安(未検証)**。人気薄の高EVは過信注意。"
@@ -6576,13 +6576,16 @@ if nav == "🧹 消去フィルター":
                             else ('✨EV>1' if _roi >= 1.0 else '-'))
                     _vrows.append({'判定': _rr['判定'], '馬番': int(_rr['馬番']), '馬名': _rr['馬名'],
                                    '人気': (int(_pop) if pd.notnull(_pop) else None),
-                                   'オッズ': float(_o), '単勝回収率': _roi * 100,
+                                   'オッズ': float(_o), '補正T': _ct.fmt_t100(_rr.get('_ctbest')),
+                                   '単勝回収率': _roi * 100,
                                    '連対率': _e['top2'] * 100, '複勝率': _e['top3'] * 100,
                                    '妙味': _myo})
                 if _vrows:
                     _vdf = pd.DataFrame(_vrows)
                     _vcfg = {
                         'オッズ': st.column_config.NumberColumn('オッズ', format="%.1f"),
+                        '補正T': st.column_config.TextColumn(
+                            '🔵補正T', help="補9風スコア(直近7走×同馬場の最高/100=勝ち負けレベル/高いほど速い・検証済H7図)"),
                         '単勝回収率': st.column_config.NumberColumn(
                             '単勝期待値(回収率)', format="%.0f%%",
                             help="勝率(オッズ帯実測)×オッズ。100%=損益分岐。控除率のため大半は75-85%で横並び。"),
