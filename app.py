@@ -9929,7 +9929,10 @@ if nav == "🧠 MAGI回顧":
         if not osh:
             st.markdown("<div class='magi-panel' style='color:#666;font-family:monospace'>&gt;&gt;&gt; AWAITING QUERY ...</div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<div class='magi-panel' style='font-size:0.9em'>🏁 {_html.escape(osh['result_line'])}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='magi-panel' style='font-size:0.95em;color:#ffd9a0;font-weight:700;"
+                f"background:#1a0e00;border:1px solid #e8590c;'>🏁 {_html.escape(osh['result_line'])}</div>",
+                unsafe_allow_html=True)
             _entries = []
             for _m in osh['chat']:
                 _body = _html.escape(_m['message']).replace(chr(10), '<br>')
@@ -9943,22 +9946,57 @@ if nav == "🧠 MAGI回顧":
                         f"<div class='log-entry' style='border-left-color:{_p.get('color','#555')}'>"
                         f"<span class='log-tag' style='background:{_p.get('color','#555')}'>{_p.get('jp','MAGI')}</span>"
                         f"<span class='log-id'>LOG_ID: {_m.get('id','')}</span><div class='log-body'>{_body}</div></div>")
+            # デュラララ風チャットルーム(読みやすい3人チャット): 色分けハンドル＋フェードイン＋自動スクロール。
+            # iframe内で完結させ、CSSアニメと最下部スクロールを確実に動かす。
+            _typing = ''
             if not osh['done']:
-                _entries.append("<div class='proc'>&gt;&gt;&gt; PROCESSING ...</div>")
-            st.markdown(f"<div class='log-wrap'>{''.join(_entries)}</div>", unsafe_allow_html=True)
+                _typing = ("<div class='typing'><span class='dots'><span></span><span></span><span></span></span>"
+                           "<b>MAGI_CHANNEL</b> // 接続中 — あなたの返答を待っています</div>")
+            _room_css = (
+                "<style>"
+                "@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');"
+                "*{box-sizing:border-box;}html,body{margin:0;background:#0a0a0a;}"
+                ".room{font-family:'Share Tech Mono',monospace;}"
+                ".room-hd{color:#9ecbff;letter-spacing:3px;font-size:11px;border-bottom:1px dashed #3a4a6a;"
+                "padding:4px 2px;margin-bottom:8px;}"
+                ".log-wrap{max-height:460px;overflow-y:auto;padding-right:6px;}"
+                ".log-entry{border-left:3px solid #555;padding:6px 10px;margin-bottom:10px;"
+                "background:rgba(255,255,255,0.03);border-radius:0 6px 6px 0;animation:msgIn .35s ease both;}"
+                ".log-entry.user{border-left-color:#6f9bff;background:rgba(120,160,255,0.08);}"
+                ".log-tag{color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:3px;"
+                "font-family:monospace;text-shadow:0 0 6px rgba(255,255,255,0.35);}"
+                ".log-id{color:#666;font-family:monospace;font-size:10px;margin-left:6px;}"
+                ".log-body{margin-top:5px;color:#e6ebf3;font-size:14px;line-height:1.55;}"
+                "@keyframes msgIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}"
+                ".typing{display:flex;align-items:center;gap:8px;color:#e8590c;font-size:12px;margin:4px 0 2px;}"
+                ".typing b{color:#ffb37a;}"
+                ".dots span{display:inline-block;width:6px;height:6px;border-radius:50%;background:#e8590c;"
+                "margin-right:3px;animation:blink 1.2s infinite;}"
+                ".dots span:nth-child(2){animation-delay:.2s;}.dots span:nth-child(3){animation-delay:.4s;}"
+                "@keyframes blink{0%,80%,100%{opacity:.2;}40%{opacity:1;}}"
+                "</style>")
+            _room_html = (
+                _room_css
+                + "<div class='room'><div class='room-hd'>&#9617; MAGI_CHAT_ROOM // 回顧チャンネル &#9617;</div>"
+                + "<div class='log-wrap' id='logw'>" + ''.join(_entries) + _typing + "</div></div>"
+                + "<script>var w=document.getElementById('logw');if(w){w.scrollTop=w.scrollHeight;}</script>")
+            import streamlit.components.v1 as _stc2
+            _stc2.html(_room_html, height=510, scrolling=False)
 
             _magi_msgs = [m for m in osh['chat'] if m['role'] == 'magi']
             if _magi_msgs:
                 # 🔊 音声モード(ブラウザ標準=Web Speech API・VOICEVOX不要・push/クラウド版でも動作・サーバ負荷ゼロ)
+                # value=とkey=の併用はStreamlitで競合し『何度もクリック必要』になるためsetdefault+keyのみにする
+                st.session_state.setdefault('magi_voice_on', False)
+                st.session_state.setdefault('magi_voice_auto', False)
                 _vc1, _vc2 = st.columns([1, 1])
                 with _vc1:
-                    _voice_on = st.checkbox("🔊 音声(軽量)", value=st.session_state.get('magi_voice_on', False),
-                                            key='magi_voice_on',
+                    _voice_on = st.checkbox("🔊 音声(軽量)", key='magi_voice_on',
                                             help="ブラウザ内蔵の読み上げ。VOICEVOX等の起動は不要で、公開版でもそのまま話します。")
                 with _vc2:
-                    _voice_auto = st.checkbox("自動読み上げ", value=st.session_state.get('magi_voice_auto', False),
-                                              key='magi_voice_auto', disabled=not _voice_on,
-                                              help="新しい発言が出たら自動で1回だけ読み上げます。")
+                    _voice_auto = st.checkbox("自動読み上げ", key='magi_voice_auto', disabled=not _voice_on,
+                                              help="新しい発言が出たら自動で1回だけ読み上げます。"
+                                                   "ブラウザの自動再生制限で、最初の1回は🔊全部読むを押すと解除されます。")
                 if _voice_on:
                     # 3人とも別々の女性の声: 日本語音声プールから別音声を割当(順=メル/バル/キャス)。
                     # 声が1つしかない環境でも女性寄りのピッチ/速度差で3人を差別化(全員pitch≥1.0)。
