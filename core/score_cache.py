@@ -144,34 +144,50 @@ def _magi_path():
     return os.path.join(_DIR, '_magi_bridge.json')
 
 
+def _json_safe(v):
+    """1セルをJSON保存可能な値に変換。リスト/辞書(PastRuns等)は構造を保持して往復可能にする。"""
+    import pandas as pd
+    # ネスト構造(PastRuns/WeightHistory等)はそのまま保持。pd.isnaはリストで例外なので先に判定
+    if isinstance(v, (list, dict)):
+        return v
+    if isinstance(v, (str, bool)):
+        return v
+    if isinstance(v, (int, float)):
+        return v
+    try:
+        if pd.isna(v):
+            return None
+    except (ValueError, TypeError):
+        pass
+    try:
+        import numpy as np
+        if isinstance(v, np.generic):
+            return v.item()
+    except Exception:
+        pass
+    return str(v)
+
+
 def write_magi_bridge(race_id, df, metadata=None):
     """SRAで解析したDataFrameをディスクに保存しMAGIタブから読めるようにする。"""
     if not race_id or df is None:
         return
     try:
-        import pandas as pd
         cols = [c for c in df.columns if c not in ('_internal',)]
         records = []
         for _, r in df.iterrows():
-            rec = {}
-            for c in cols:
-                v = r.get(c)
-                if pd.isna(v):
-                    rec[c] = None
-                elif isinstance(v, (int, float, bool)):
-                    rec[c] = v
-                else:
-                    rec[c] = str(v)
+            rec = {c: _json_safe(r.get(c)) for c in cols}
             records.append(rec)
         os.makedirs(_DIR, exist_ok=True)
         with open(_magi_path(), 'w', encoding='utf-8') as f:
+            # default=str: リスト/辞書内にnumpy型等が残っても保存を止めない安全網
             json.dump({
                 'race_id': str(race_id),
                 'ts': time.time(),
                 'metadata': metadata or {},
                 'columns': cols,
                 'records': records,
-            }, f, ensure_ascii=False)
+            }, f, ensure_ascii=False, default=str)
     except Exception:
         pass
 

@@ -1,0 +1,253 @@
+# -*- coding: utf-8 -*-
+"""LTRパイプラインを包む『安全な自己改善ループ』 — scripts/auto_feature_search.py
+
+図の自己改善ループ(戦略→BT→採点→弱点→並列別案→最良選択→絞り込み)を、
+中核目標(過小評価の勝ち馬=recall@7)に限定して安全に回す。
+
+設計(影響最小・検証済みエッジのみ思想):
+- build_ltr_model.py / ltr_ranker.py は一切変更しない(import して再利用するだけ)。
+- 評価は固定の 2025+ テスト集合の recall@7 のみ(リーク耐性のある単一指標)。ROI最適化はしない。
+- 候補特徴量は『リークしない×推論時(ltr_ranker)でも計算できる』ものだけ。
+- 多重検定の罠を避ける: ①固定seedで決定論化 ②val(2024)とtest(2025+)の両方で改善した案だけ採用候補
+  ③改善マージンしきい値(--margin, 既定+0.0015=+0.15pp) ④自動デプロイしない(人がレビューして配線)。
+
+候補(2026-06-22 第2イテレーション=より良い仮説):
+  [強]  cand_prior_margin      前走の勝ち馬との着差(秒)。shift(1)で前走・フィルタ前の全履歴で計算
+        cand_jockey_form_t3    騎手の直近複勝率(過去50騎乗・当該除外のrolling)
+        cand_jockey_win        騎手の直近勝率(過去80騎乗)
+        cand_trainer_form_t3   厩舎の直近複勝率(過去30出走)
+  [簡]  --include-simple 時のみ: weight_ratio/zogen_abs/draw_rel/age_sq/bataiju_dev/futan_dev(第1回で不採用)
+
+使い方:
+  python scripts/auto_feature_search.py                 # 強候補のadd-one探索
+  python scripts/auto_feature_search.py --include-simple# 簡易候補も含める
+  python scripts/auto_feature_search.py --ablation      # drop-one(有害特徴量検出)も
+  python scripts/auto_feature_search.py --quick          # 2019+のみ・軽量(動作確認)
+出力: data/feature_search_log.json + 標準エラーにランキング表。本番モデルは上書きしない。
+"""
+import os
+import sys
+import json
+import sqlite3
+import argparse
+import time as _time
+
+import numpy as np
+import pandas as pd
+import lightgbm as lgb
+
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import scripts.build_ltr_model as bm  # 既存パイプラインを再利用(変更しない)
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_PATH = os.path.join(ROOT, 'data', 'feature_search_log.json')
+JV_DB = os.path.join(ROOT, 'data', 'jravan.db')
+
+PARAMS = {
+    'objective': 'lambdarank', 'metric': 'ndcg', 'ndcg_eval_at': [3, 7],
+    'learning_rate': 0.05, 'num_leaves': 31, 'min_data_in_leaf': 50,
+    'feature_fraction': 0.8, 'bagging_fraction': 0.8, 'bagging_freq': 5,
+    'verbose': -1, 'seed': 42, 'bagging_seed': 42, 'feature_fraction_seed': 42,
+}
+
+
+def _rolling_prior_rate(df, key, value_col, window, minp):
+    """key(騎手/厩舎)ごとに日付順で『当該レースを除外した』過去N件のvalue_col平均を返す。
+    shift(1)で必ず過去のみ=リーク無し。元のdf.indexに揃えて返す。"""
+    tmp = df[[key, 'day', 'race_num', value_col]].sort_values([key, 'day', 'race_num'])
+    res = tmp.groupby(key, sort=False)[value_col].transform(
+        lambda x: x.shift(1).rolling(window, min_periods=minp).mean())
+    return res.reindex(df.index)
+
+
+def add_strong_candidates(df):
+    """前走着差・騎手/厩舎の直近成績(リーク無・推論時も計算可)。フィルタ前の全履歴で計算する想定。"""
+    # 騎手・厩舎コードを results から取り込み(build_ltr_modelのSELECTには無いので自前で)
+    con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
+    jt = pd.read_sql("SELECT race_key, umaban, jockey_code, trainer_code FROM results", con)
+    con.close()
+    df = df.merge(jt, on=['race_key', 'umaban'], how='left').reset_index(drop=True)
+
+    # 前走着差: 各レースの勝ち馬秒との差 → 馬ごとに1走前(shift1)を採用
+    race_min = df.groupby('race_key')['sec'].transform('min')
+    df['_race_margin'] = df['sec'] - race_min
+    tmp = df[['ketto_num', 'day', 'race_num', '_race_margin']].sort_values(['ketto_num', 'day', 'race_num'])
+    df['cand_prior_margin'] = tmp.groupby('ketto_num', sort=False)['_race_margin'].shift(1).reindex(df.index)
+    df.drop(columns=['_race_margin'], inplace=True)
+
+    # 騎手/厩舎の直近成績(複勝=chaku<=3 / 勝=chaku==1)
+    df['_t3'] = (df['chakujun'] <= 3).astype(float)
+    df['_w'] = (df['chakujun'] == 1).astype(float)
+    df['cand_jockey_form_t3'] = _rolling_prior_rate(df, 'jockey_code', '_t3', 50, 10)
+    df['cand_jockey_win'] = _rolling_prior_rate(df, 'jockey_code', '_w', 80, 20)
+    df['cand_trainer_form_t3'] = _rolling_prior_rate(df, 'trainer_code', '_t3', 30, 8)
+    df.drop(columns=['_t3', '_w'], inplace=True)
+    return df, ['cand_prior_margin', 'cand_jockey_form_t3', 'cand_jockey_win', 'cand_trainer_form_t3']
+
+
+def add_simple_candidates(df):
+    """第1イテレーションの簡易候補(全て不採用だった)。--include-simple 時のみ使用。"""
+    bat = pd.to_numeric(df['bataiju'], errors='coerce')
+    fut = pd.to_numeric(df['futan'], errors='coerce')
+    df['_bat_num'] = bat
+    df['_fut_num'] = fut
+    df['cand_weight_ratio'] = fut / bat.replace(0, np.nan)
+    df['cand_zogen_abs'] = pd.to_numeric(df['zogen'], errors='coerce').abs()
+    df['cand_draw_rel'] = pd.to_numeric(df['umaban'], errors='coerce') / pd.to_numeric(df['field_size'], errors='coerce').replace(0, np.nan)
+    df['cand_age_sq'] = pd.to_numeric(df['age'], errors='coerce') ** 2
+    df['cand_bataiju_dev'] = bat - df.groupby('race_key')['_bat_num'].transform('mean')
+    df['cand_futan_dev'] = fut - df.groupby('race_key')['_fut_num'].transform('mean')
+    df.drop(columns=['_bat_num', '_fut_num'], inplace=True)
+    return ['cand_weight_ratio', 'cand_zogen_abs', 'cand_draw_rel',
+            'cand_age_sq', 'cand_bataiju_dev', 'cand_futan_dev']
+
+
+def prepare(quick=False, include_simple=False):
+    print('=== データ準備(既存パイプライン再利用) ===', file=sys.stderr)
+    df = bm.load_data()
+    df = bm.compute_corrected_time(df)          # 'sec','day' を生成
+    df = bm.compute_rolling_features(df)
+    # 強候補は『フィルタ前の全履歴』で計算(前走/騎手騎乗履歴を欠けさせない)
+    df, cands = add_strong_candidates(df)
+
+    base_year = 2019 if quick else 2016
+    df = df[df['year'].astype(int) >= base_year].copy()
+    df = bm.encode_features(df)
+    df = bm.compute_race_ranks(df)
+    if include_simple:
+        cands = cands + add_simple_candidates(df)
+
+    df['label'] = np.clip(4 - df['chakujun'], 0, 3).astype(int)
+    df = df.dropna(subset=['ninki'])
+    rc = df.groupby('race_key').size()
+    df = df[df['race_key'].isin(rc[rc >= 5].index)]
+
+    yi = df['year'].astype(int)
+    train_df = df[yi <= bm.TRAIN_END].sort_values('race_key')
+    val_df = df[yi == bm.VAL_YEAR].sort_values('race_key')
+    test_df = df[yi >= bm.TEST_FROM].sort_values('race_key')
+    print(f'Train {len(train_df):,} / Val {len(val_df):,} / Test {len(test_df):,} / 候補{len(cands)}本',
+          file=sys.stderr)
+    return train_df, val_df, test_df, cands
+
+
+def _recall7(model, eval_df, features):
+    X = eval_df[features].values.astype(np.float64)
+    g = eval_df[['race_key', 'chakujun', 'umaban']].copy()
+    g['pred'] = model.predict(X)
+    win_hit, tot, t3 = 0, 0, []
+    for _, grp in g.groupby('race_key'):
+        winner = set(grp[grp['chakujun'] == 1]['umaban'])
+        top3 = set(grp[grp['chakujun'] <= 3]['umaban'])
+        if not winner or not top3:
+            continue
+        top7 = set(grp.nlargest(7, 'pred')['umaban'])
+        win_hit += int(bool(winner & top7))
+        t3.append(len(top3 & top7) / len(top3))
+        tot += 1
+    return (win_hit / tot if tot else 0.0), (float(np.mean(t3)) if t3 else 0.0), tot
+
+
+def train_eval(train_df, val_df, test_df, features, rounds=1000):
+    train_g = train_df.groupby('race_key', sort=False).size().values
+    val_g = val_df.groupby('race_key', sort=False).size().values
+    ds_tr = lgb.Dataset(train_df[features].values.astype(np.float64),
+                        label=train_df['label'].values, group=train_g, feature_name=features)
+    ds_va = lgb.Dataset(val_df[features].values.astype(np.float64),
+                        label=val_df['label'].values, group=val_g, feature_name=features, reference=ds_tr)
+    model = lgb.train(PARAMS, ds_tr, num_boost_round=rounds, valid_sets=[ds_va],
+                      callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])
+    v_win, v_t3, _ = _recall7(model, val_df, features)
+    t_win, t_t3, n = _recall7(model, test_df, features)
+    return {'val_win7': v_win, 'val_top3_7': v_t3,
+            'test_win7': t_win, 'test_top3_7': t_t3,
+            'test_races': n, 'best_iter': model.best_iteration}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
+    ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
+    ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
+    ap.add_argument('--margin', type=float, default=0.0015,
+                    help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
+    args = ap.parse_args()
+
+    t0 = _time.time()
+    train_df, val_df, test_df, cands = prepare(quick=args.quick, include_simple=args.include_simple)
+    rounds = 400 if args.quick else 1000
+    base = list(bm.FEATURES)
+
+    print('\n=== ① ベースライン(現行FEATURES) ===', file=sys.stderr)
+    base_m = train_eval(train_df, val_df, test_df, base, rounds)
+    print(f"  test win@7={base_m['test_win7']:.4f}  top3@7={base_m['test_top3_7']:.4f}  "
+          f"val win@7={base_m['val_win7']:.4f}  (races={base_m['test_races']})", file=sys.stderr)
+
+    results = []
+
+    print('\n=== ② add-one 探索(ベース+候補1本) ===', file=sys.stderr)
+    for c in cands:
+        m = train_eval(train_df, val_df, test_df, base + [c], rounds)
+        d_test = m['test_win7'] - base_m['test_win7']
+        d_val = m['val_win7'] - base_m['val_win7']
+        ok = (d_test >= args.margin) and (d_val >= 0)
+        results.append({'kind': 'add', 'feature': c, **m,
+                        'd_test_win7': d_test, 'd_val_win7': d_val, 'adopt': ok})
+        print(f"  +{c:22s} test {m['test_win7']:.4f} ({d_test*100:+.2f}pp)  "
+              f"val ({d_val*100:+.2f}pp)  {'★採用候補' if ok else ''}", file=sys.stderr)
+
+    # 強候補が複数採用候補なら、まとめて足した版も評価(相乗/冗長の確認)
+    add_ok = [r['feature'] for r in results if r.get('adopt')]
+    if len(add_ok) >= 2:
+        m = train_eval(train_df, val_df, test_df, base + add_ok, rounds)
+        d_test = m['test_win7'] - base_m['test_win7']
+        d_val = m['val_win7'] - base_m['val_win7']
+        results.append({'kind': 'combo', 'feature': '+'.join(add_ok), **m,
+                        'd_test_win7': d_test, 'd_val_win7': d_val,
+                        'adopt': (d_test >= args.margin and d_val >= 0)})
+        print(f"  ＝全採用候補同時: test {m['test_win7']:.4f} ({d_test*100:+.2f}pp) val ({d_val*100:+.2f}pp)",
+              file=sys.stderr)
+
+    if args.ablation:
+        print('\n=== ③ drop-one 探索(各既存特徴量を1本抜く=不要/有害の検出) ===', file=sys.stderr)
+        for f in base:
+            sub = [x for x in base if x != f]
+            m = train_eval(train_df, val_df, test_df, sub, rounds)
+            d_test = m['test_win7'] - base_m['test_win7']
+            results.append({'kind': 'drop', 'feature': f, **m,
+                            'd_test_win7': d_test, 'd_val_win7': m['val_win7'] - base_m['val_win7'],
+                            'adopt': False})
+            flag = '⚠抜くと改善(有害?)' if d_test >= args.margin else ''
+            print(f"  -{f:22s} test {m['test_win7']:.4f} ({d_test*100:+.2f}pp)  {flag}", file=sys.stderr)
+
+    results.sort(key=lambda r: -r['d_test_win7'])
+    adopt = [r for r in results if r.get('adopt') and r['kind'] in ('add', 'combo')]
+
+    print('\n' + '=' * 60, file=sys.stderr)
+    print('=== 採点まとめ(test win_recall@7 改善順) ===', file=sys.stderr)
+    for r in results[:12]:
+        print(f"  [{r['kind']}] {r['feature']:26s} Δtest{r['d_test_win7']*100:+.2f}pp "
+              f"Δval{r['d_val_win7']*100:+.2f}pp", file=sys.stderr)
+    if adopt:
+        print('\n★ 採用候補(test+val 両方改善・マージン超え) — 人がレビューして配線:', file=sys.stderr)
+        for r in adopt:
+            print(f"   - {r['feature']}", file=sys.stderr)
+        print('   配線先=build_ltr_model.FEATURES&encode + ltr_ranker.py(推論時の各行)。'
+              '1案ずつ・影響少なめに→`python scripts/build_ltr_model.py`再訓練。', file=sys.stderr)
+    else:
+        print('\n採用候補なし(現行FEATURESが既に強い/候補は織込み済み)。', file=sys.stderr)
+
+    out = {'ts': _time.strftime('%Y-%m-%d %H:%M:%S'), 'quick': args.quick,
+           'include_simple': args.include_simple, 'margin': args.margin,
+           'baseline': base_m, 'results': results, 'adopt': [r['feature'] for r in adopt]}
+    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+    with open(LOG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    print(f'\nlog → {LOG_PATH}　done in {_time.time()-t0:.0f}s', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

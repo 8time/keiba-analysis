@@ -33,7 +33,7 @@ PERSONAS = {
                  'role': '危険な人気馬を見抜く（科学者）', 'dialect': '関西弁'},
     'balthasar': {'emoji': '🟢', 'name': 'BALTHASAR', 'jp': 'バルタザール', 'color': '#2ecc71',
                   'role': '見落とした勝ち馬を拾う（母）', 'dialect': '京都弁'},
-    'casper': {'emoji': '🔵', 'name': 'CASPER', 'jp': 'カスパー', 'color': '#3498db',
+    'casper': {'emoji': '🔵', 'name': 'CASPER', 'jp': 'キャスパー', 'color': '#3498db',
                'role': 'レースの流れ・荒れを読む（女）', 'dialect': '標準語'},
 }
 
