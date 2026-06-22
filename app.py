@@ -9868,7 +9868,7 @@ if nav == "🧠 MAGI回顧":
                     st.session_state.oshaberi = {
                         'race_id': _rid, 'ctx': _ctx, 'result_line': mc.result_one_line(_ctx),
                         'chat': _chat0, 'done': bool(_burst.get('done')), 'saved': False, 'rounds': 1,
-                        'user_name': _uname,
+                        'user_name': _uname, 'cap': 20,
                     }
                     st.rerun()
             st.caption("👶 終わったレースのIDを入れて審議開始。3人格が話し合いながら回顧します。")
@@ -9907,7 +9907,7 @@ if nav == "🧠 MAGI回顧":
                 if _send and _ans and _ans.strip():
                     osh['chat'].append({'role': 'user', 'message': _ans.strip(), 'id': _logid()})
                     osh['rounds'] = osh.get('rounds', 1) + 1
-                    _force = osh['rounds'] >= 20   # 上限: 20ターンで総括して締める(エンドレス防止)
+                    _force = osh['rounds'] >= osh.get('cap', 20)   # 上限到達で総括して締める(延長可)
                     with st.spinner("MAGI 審議中..."):
                         try:
                             _burst = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY,
@@ -9924,6 +9924,12 @@ if nav == "🧠 MAGI回顧":
                     st.session_state.oshaberi = osh
                     st.rerun()
             else:
+                # 🔄 ターン延長: 締まった会議をもう少し続ける(上限+10して入力欄を復活)
+                if st.button("🔄 もっと話す（+10ターン）", use_container_width=True, key="osh_extend"):
+                    osh['cap'] = osh.get('cap', 20) + 10
+                    osh['done'] = False
+                    st.session_state.oshaberi = osh
+                    st.rerun()
                 if not osh.get('saved'):
                     if st.button("📒 審議を記録する", type="primary", use_container_width=True, key="osh_save"):
                         with st.spinner("学びをメモ中..."):
