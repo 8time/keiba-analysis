@@ -4004,6 +4004,7 @@ if nav == "🏠 Single Race Analysis":
                         from core import score_cache as _sc
                         _sc.write_scores(race_id_input, df)
                         _sc.write_magi_bridge(race_id_input, df, st.session_state.get('race_metadata'))
+                        _sc.write_race_full(race_id_input, df)  # MAGI回顧がレース別にシグナルを読む
                     except Exception:
                         pass
                     try:
@@ -9822,12 +9823,24 @@ if nav == "🧠 MAGI回顧":
             if _go and _rid_in and _rid_in.strip():
                 _rid = _rid_in.strip()
                 with st.spinner("レース結果を読み込み中..."):
+                    _df_o = pd.DataFrame()
+                    # Tier2: SRAで解析済みなら完全df(Vエリア/末脚/強適/消去込み)を優先採用
                     try:
-                        _df_o = scraper.get_race_data(_rid, use_storage=False)
-                        if not _df_o.empty:
-                            _df_o = calculator.calculate_all(_df_o)
+                        from core import score_cache as _sc_osh
+                        _saved = _sc_osh.read_race_full(_rid)
+                        if _saved is not None and not _saved.empty:
+                            _df_o = _saved
                     except Exception:
-                        _df_o = pd.DataFrame()
+                        pass
+                    # 未解析レースはライブ取得して採点(calculate_battle_score+n_index。旧calculate_allは存在せず空dfだった)
+                    if _df_o.empty:
+                        try:
+                            _df_o = scraper.get_race_data(_rid, use_storage=False)
+                            if not _df_o.empty:
+                                _df_o = calculator.calculate_battle_score(_df_o)
+                                _df_o = calculator.calculate_n_index(_df_o)
+                        except Exception:
+                            _df_o = pd.DataFrame()
                     try:
                         from core.magi_system import run_magi_deliberation
                         _mp = run_magi_deliberation(_df_o, course_profile="標準", chaos_rank="B") if not _df_o.empty else {}

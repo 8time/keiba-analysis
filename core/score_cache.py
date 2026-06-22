@@ -233,3 +233,41 @@ def read_kelly_bridge():
             return json.load(f)
     except Exception:
         return None
+
+
+def _full_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.full.json")
+
+
+def write_race_full(race_id, df):
+    """SRAで解析した完全なDataFrameをレースIDごとに永続保存(MAGI回顧がシグナルを読む)。
+    _json_safeでリスト/辞書(PastRuns等)も構造保持。"""
+    if not race_id or df is None or getattr(df, 'empty', True):
+        return
+    try:
+        cols = [c for c in df.columns if c not in ('_internal',)]
+        records = [{c: _json_safe(r.get(c)) for c in cols} for _, r in df.iterrows()]
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_full_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'columns': cols, 'records': records}, f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def read_race_full(race_id):
+    """MAGI回顧用: race_id一致のSRA完全dfを返す(無ければNone)。"""
+    if not race_id:
+        return None
+    p = _full_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        import pandas as pd
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        df = pd.DataFrame(data.get('records', []), columns=data.get('columns', []))
+        return df if not df.empty else None
+    except Exception:
+        return None
