@@ -316,7 +316,7 @@ with st.sidebar:
         import time as _t_fresh
         _FRESH_DAYS = 14
         _fresh_warns = []
-        for _fn, _lbl in [('data/corrected_time.db', '補正T'), ('data/ltr_model.lgb', 'LTRモデル')]:
+        for _fn, _lbl in [('data/corrected_time.db', '補正T'), ('data/ltr_model.lgb', '検証AIモデル')]:
             _fp = os.path.join(os.path.dirname(__file__), _fn)
             if os.path.exists(_fp):
                 _age = (_t_fresh.time() - os.path.getmtime(_fp)) / 86400
@@ -4058,16 +4058,16 @@ if nav == "🏠 Single Race Analysis":
                     if 'Projected Score' in view_df.columns:
                         _sort_candidates.append('⭐予測スコア')
                     if 'LTR' in view_df.columns:
-                        _sort_candidates.append('🤖LTR')
+                        _sort_candidates.append('🤖検証AI')
                     if 'Projected Score' in view_df.columns and 'LTR' in view_df.columns:
-                        _sort_candidates.append('🔀ブレンド(予測+LTR)')
+                        _sort_candidates.append('🔀ブレンド(予測+検証AI)')
                     if 'BattleScore' in view_df.columns:
                         _sort_candidates.append('🔥総合戦闘力')
                     _sort_sel = st.radio("並び順", _sort_candidates or ['デフォルト'],
                                          horizontal=True, key="sra_sort_key") if _sort_candidates else None
-                    if _sort_sel == '🤖LTR' and 'LTR' in view_df.columns:
+                    if _sort_sel == '🤖検証AI' and 'LTR' in view_df.columns:
                         view_df = view_df.sort_values(by='LTR', ascending=False).reset_index(drop=True)
-                    elif _sort_sel == '🔀ブレンド(予測+LTR)':
+                    elif _sort_sel == '🔀ブレンド(予測+検証AI)':
                         _ps = pd.to_numeric(view_df['Projected Score'], errors='coerce').fillna(0)
                         _lr = pd.to_numeric(view_df['LTR'], errors='coerce').fillna(0)
                         view_df['_blend'] = 0.6 * _ps + 0.4 * _lr
@@ -4495,7 +4495,7 @@ if nav == "🏠 Single Race Analysis":
                         "JockeyChange": "乗替", "Name": "馬名",
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
-                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖LTR", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
+                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス", "Waku": "枠",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
