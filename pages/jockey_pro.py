@@ -1042,13 +1042,16 @@ def render():
             st.divider()
 
             # ── ランキング表 ──
-            st.subheader("📊 騎手ランキング（全指標スコア順）")
+            st.subheader("📊 騎手ランキング（騎手の力・調子の数値化）")
+            st.caption("このレースで『馬に勝たせてもらっている』のか『馬の力を引き出している』のかを見る列に絞り込み。"
+                       "**USM(馬力絞り出しメーター)**=単勝オッズ帯ごとの平均成績から推定した期待値に対し実際の成績が何%か。"
+                       "100%超=人気以上に走らせる＝騎手の実力／100%割れ=取りこぼし。"
+                       "単=勝ち切る力 / 連=2着内に入れる力 / 複=3着内に残す力。"
+                       "PRB=ライバルを上回った割合(0.5平均)・PW指数=騎乗の強さ・単回収%=コース単勝回収率。")
 
             _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
-                             '人気', 'オッズ', '調子P', 'PRB', '調子', '脚質傾向',
-                             '単勝USM', '連対USM', '複勝USM',
-                             'コース連対%', 'コース複勝%', '単回収%',
-                             '騎乗数', '本年勝率', '本年連対%', '本年複勝%', 'PW指数', '加減点', 'フラグ', '総合スコア']
+                             '人気', 'オッズ', 'PRB', 'PW指数',
+                             '単勝USM', '連対USM', '複勝USM', '単回収%', '総合スコア']
             _df_rank = pd.DataFrame(scored)[_display_cols]
 
             def _to_numeric(val):
@@ -1096,7 +1099,7 @@ def render():
 
             def _style_rank_row(row):
                 rank = row['順位']
-                flag = str(row['フラグ'])
+                flag = str(row.get('フラグ', ''))  # フラグ列は表示から除外したため安全参照
                 if rank == 1:
                     return ['background-color: #2a2200; color: #FBC02D; font-weight: bold; border-top: 1px solid #FBC02D; border-bottom: 1px solid #FBC02D;'] * len(row)
                 if rank == 2:
