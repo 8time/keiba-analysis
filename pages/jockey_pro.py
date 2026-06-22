@@ -2,12 +2,24 @@
 """🏇 騎手分析Pro — pages/jockey_pro.py (app.pyから抽出)"""
 import os
 import re
+import math
 import streamlit as st
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 戦法モジュール(任意)はモジュールglobalsに置く: コード内の `'trainer_tactics' in globals()`
+# ガードを成立させるため。失敗時は未定義のまま=機能オフ(クラッシュしない)。
+try:
+    from core import trainer_tactics
+except Exception:
+    pass
+try:
+    from core import jockey_tactics
+except Exception:
+    pass
 
 
 def _detect_public():
@@ -50,7 +62,8 @@ def render():
     st.header("🏇 騎手分析Pro")
     st.caption("N指数不使用 — 回収率・連対率ベースのスクリーニングエンジン")
 
-    # --- ユーティリティインポート ---
+    # --- コア/ユーティリティインポート ---
+    from core import jockey_analyzer
     from utils.jockey_stats_db import JockeyStatsDB
     from utils.jockey_screening import screen_entry, ScreeningResult
     from utils.jockey_bayesian import bayesian_adjusted_rate
