@@ -126,6 +126,41 @@ def _jockey_jyo_win(con, jockey_name, jyo):
         return None
 
 
+def _jockey_dist_win(con, jockey_name, kyori):
+    """騎手の当該距離帯・直近50騎乗の勝率(S<=1400/M1401-1800/L1801-2200/X2201+)。
+    学習側 compute_jockey_dist と同義。<12騎乗はNone。"""
+    if not jockey_name or not kyori:
+        return None
+    nm = str(jockey_name).replace(' ', '').replace('　', '')
+    if not nm:
+        return None
+    try:
+        k = int(kyori)
+    except Exception:
+        return None
+    if k <= 1400:
+        lo, hi = 0, 1400
+    elif k <= 1800:
+        lo, hi = 1401, 1800
+    elif k <= 2200:
+        lo, hi = 1801, 2200
+    else:
+        lo, hi = 2201, 99999
+    try:
+        rows = con.execute("""
+            SELECT res.chakujun FROM results res
+            JOIN races ra ON res.race_key = ra.race_key
+            WHERE REPLACE(REPLACE(res.jockey_name, ' ', ''), '　', '') = ?
+              AND CAST(ra.kyori AS INTEGER) BETWEEN ? AND ? AND res.chakujun > 0
+            ORDER BY ra.year DESC, ra.monthday DESC LIMIT 50
+        """, (nm, lo, hi)).fetchall()
+        if len(rows) < 12:
+            return None
+        return sum(1 for x in rows if x[0] == 1) / len(rows)
+    except Exception:
+        return None
+
+
 def get_scores(horses, race_info):
     """
     horses: [{umaban, ketto_num, ninki, win_odds, bataiju, zogen, sex, age, futan}, ...]
@@ -172,6 +207,7 @@ def get_scores(horses, race_info):
         t3, a5 = (_prior_record(con, kt) if con and kt else (None, None))
         tjt3 = _trainer_jyo_t3(con, kt, jyo_text) if con and kt else None
         jjw = _jockey_jyo_win(con, h.get('jockey'), jyo_text) if con else None
+        jdw = _jockey_dist_win(con, h.get('jockey'), ky) if con else None
 
         rows.append({
             'umaban': um,
@@ -186,7 +222,7 @@ def get_scores(horses, race_info):
             'prior_top3_rate': t3, 'avg_chaku5': a5,
             'jyo_code': jyo_code, 'race_num_code': race_num_code,
             'cushion': cushion_val, 'dirt_moisture': dirt_moist,
-            'trainer_jyo_t3': tjt3, 'jockey_jyo_win': jjw,
+            'trainer_jyo_t3': tjt3, 'jockey_jyo_win': jjw, 'jockey_dist_win': jdw,
         })
     if con:
         con.close()

@@ -37,7 +37,7 @@ FEATURES = [
     'h7_fig', 'h7_rank', 'spurt_mean3', 'spurt_rank',
     'prior_top3_rate', 'avg_chaku5',
     'jyo_code', 'race_num_code', 'cushion', 'dirt_moisture',
-    'trainer_jyo_t3', 'jockey_jyo_win',
+    'trainer_jyo_t3', 'jockey_jyo_win', 'jockey_dist_win',
 ]
 
 BASELINE_FROM = 1990
@@ -200,6 +200,22 @@ def compute_jockey_course(df):
     return df
 
 
+def compute_jockey_dist(df):
+    """騎手×距離帯の直近勝率(shift(1).rolling50,min12)=リーク無。auto_feature_searchで採用。
+    距離帯: S<=1400 / M1401-1800 / L1801-2200 / X2201+。"""
+    print('Computing jockey-distance form...', file=sys.stderr)
+    ky = pd.to_numeric(df['kyori'], errors='coerce')
+    db = np.where(ky <= 1400, 'S', np.where(ky <= 1800, 'M', np.where(ky <= 2200, 'L', 'X')))
+    df['_w'] = (df['chakujun'] == 1).astype(float)
+    df['_jkd'] = df['jockey_code'].astype(str) + '|' + pd.Series(db, index=df.index)
+    tmp = df[['_jkd', 'day', 'race_num', '_w']].sort_values(['_jkd', 'day', 'race_num'])
+    df['jockey_dist_win'] = (tmp.groupby('_jkd', sort=False)['_w']
+                             .transform(lambda x: x.shift(1).rolling(50, min_periods=12).mean())
+                             .reindex(df.index))
+    df.drop(columns=['_w', '_jkd'], inplace=True)
+    return df
+
+
 def compute_race_ranks(df):
     df['h7_rank'] = df.groupby('race_key')['h7_fig'].rank(method='min', na_option='bottom')
     df['spurt_rank'] = df.groupby('race_key')['spurt_mean3'].rank(method='min', na_option='bottom')
@@ -308,6 +324,7 @@ def main():
     df = compute_rolling_features(df)
     df = compute_trainer_course(df)
     df = compute_jockey_course(df)
+    df = compute_jockey_dist(df)
     df = df[df['year'].astype(int) >= 2016].copy()
     df = encode_features(df)
     df = compute_race_ranks(df)

@@ -67,11 +67,13 @@ def build_candidates(df, candset):
     """リーク無・推論時も計算可の候補をフィルタ前の全履歴で計算。
     candset: 'strong'(前走着差+騎手厩舎の全体成績) / 'cond'(条件特化=当馬場・当コース)
             / 'cond2'(血統×馬場・枠×コース・騎手当コース再挑戦) / 'all'。"""
-    # 騎手・厩舎コード+枠を results から取り込み(build_ltr_modelのSELECTには無いので自前で)
-    con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
-    jt = pd.read_sql("SELECT race_key, umaban, jockey_code, trainer_code, waku FROM results", con)
-    con.close()
-    df = df.merge(jt, on=['race_key', 'umaban'], how='left').reset_index(drop=True)
+    # results から不足列のみ取り込み(load_dataにjockey/trainer_codeが入った後は衝突回避のためwakuのみ)
+    need = [c for c in ('jockey_code', 'trainer_code', 'waku') if c not in df.columns]
+    if need:
+        con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
+        jt = pd.read_sql(f"SELECT race_key, umaban, {', '.join(need)} FROM results", con)
+        con.close()
+        df = df.merge(jt, on=['race_key', 'umaban'], how='left').reset_index(drop=True)
     df['_t3'] = (df['chakujun'] <= 3).astype(float)
     df['_w'] = (df['chakujun'] == 1).astype(float)
     cands = []
@@ -130,6 +132,29 @@ def build_candidates(df, candset):
         df.drop(columns=['_sire_surf', '_dcg', '_bias', '_jk_jyo2', '_jk_sj'], inplace=True)
         cands += ['cand_sire_surf_t3', 'cand_draw_course_t3', 'cand_jockey_jyo_win', 'cand_jockey_surfjyo_t3']
 
+    if candset in ('cond3', 'all'):
+        # 距離帯バケツ
+        ky = pd.to_numeric(df['kyori'], errors='coerce')
+        db = pd.Series('X', index=df.index)
+        db[ky <= 1400] = 'S'
+        db[(ky > 1400) & (ky <= 1800)] = 'M'
+        db[(ky > 1800) & (ky <= 2200)] = 'L'
+        df['_dbk'] = db
+        # ① 騎手×距離帯(勝率/複勝率)  ② 厩舎×距離帯(複勝率)
+        df['_jk_d'] = df['jockey_code'].astype(str) + '|' + df['_dbk']
+        df['_tr_d'] = df['trainer_code'].astype(str) + '|' + df['_dbk']
+        df['cand_jockey_dist_win'] = _rolling_prior_rate(df, '_jk_d', '_w', 50, 12)
+        df['cand_jockey_dist_t3'] = _rolling_prior_rate(df, '_jk_d', '_t3', 50, 12)
+        df['cand_trainer_dist_t3'] = _rolling_prior_rate(df, '_tr_d', '_t3', 40, 10)
+        # ③ 前走クラス昇降の代理(DBに条件クラスコード無し): 前走勝ち=昇級戦代理 / 通算勝利数=クラス代理
+        tmp = df[['ketto_num', 'day', 'race_num', '_w']].sort_values(['ketto_num', 'day', 'race_num'])
+        df['cand_prev_was_win'] = tmp.groupby('ketto_num', sort=False)['_w'].shift(1).reindex(df.index)
+        df['cand_cum_wins'] = (tmp.groupby('ketto_num', sort=False)['_w']
+                               .transform(lambda x: x.shift(1).cumsum()).reindex(df.index))
+        df.drop(columns=['_dbk', '_jk_d', '_tr_d'], inplace=True)
+        cands += ['cand_jockey_dist_win', 'cand_jockey_dist_t3', 'cand_trainer_dist_t3',
+                  'cand_prev_was_win', 'cand_cum_wins']
+
     df.drop(columns=['_t3', '_w'], inplace=True)
     return df, cands
 
@@ -158,6 +183,7 @@ def prepare(quick=False, include_simple=False, candset='cond'):
     df = bm.compute_rolling_features(df)
     df = bm.compute_trainer_course(df)          # 本番FEATURES入りの trainer_jyo_t3 を再現(ベースライン用)
     df = bm.compute_jockey_course(df)           # 同上 jockey_jyo_win
+    df = bm.compute_jockey_dist(df)             # 同上 jockey_dist_win
     # 候補は『フィルタ前の全履歴』で計算(前走/騎手騎乗履歴を欠けさせない)
     df, cands = build_candidates(df, candset)
 
@@ -220,9 +246,10 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
-                         'cond2=血統×馬場・枠×コース・騎手当コース再挑戦 / all')
+                         'cond2=血統×馬場・枠×コース・騎手当コース / '
+                         'cond3=騎手厩舎×距離帯・昇級代理(前走勝ち/通算勝利数) / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()
