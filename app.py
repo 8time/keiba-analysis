@@ -6501,6 +6501,7 @@ if nav == "🧹 消去フィルター":
                             except Exception:
                                 pass
                     _spurt_top3 = {u for u, _ in sorted(_spurt_rank, key=lambda x: -x[1])[:3]}
+                    from core import track_bias as _tb  # 道悪×血統の精緻化に使用
                     _erows = []
                     for _, _r in df.iterrows():
                         _nm = str(_r.get('Name', ''))
@@ -6575,6 +6576,18 @@ if nav == "🧹 消去フィルター":
                             pd.notnull(_pop) and _pop == 1 and (
                                 ('芝' in _surf and _baba in ('重', '不良')) or
                                 ('ダ' in _surf and _baba == '不良')))
+                        # 血統で精緻化(scripts/heavy_fav_blood_split.py): シニミニ系は道悪ダートで
+                        # むしろ好走→危険を免除(🟢軸補強)、瞬発/ステゴ系は芝道悪で危険を裏付け。
+                        _wetaxis = None
+                        _fadewet = False
+                        if pd.notnull(_pop) and _pop <= 3 and _baba in ('重', '不良'):
+                            _hsire = _tb.sire_of_ketto(_kt) if _kt else None
+                            _bmod = _tb.heavy_fav_blood_mod(_hsire, _surf, _baba) if _hsire else None
+                            if _bmod and _bmod['mod'] == 'exempt':
+                                _babafav = False          # 高含水○血統→危険免除
+                                _wetaxis = _bmod
+                            elif _bmod and _bmod['mod'] == 'intensify':
+                                _fadewet = True           # 瞬発/ステゴ系→危険を裏付け
                         _posr = []
                         if _gold:
                             _posr.append(f"黄金ライン(連対{_g['top2']:.0%}/{_g['rides']})")
@@ -6582,6 +6595,8 @@ if nav == "🧹 消去フィルター":
                             _posr.append(f"厩舎当ｺｰｽ{_cs['win_rate']:.0%}")
                         if _spurt:
                             _posr.append(f"🔥末脚救出(指数{_si:.1f})")
+                        if _wetaxis:
+                            _posr.append(f"🟢道悪軸(高含水○血統・ダ{_baba})")
                         _negr = []
                         if _fade:
                             _negr.append('牝' + ('冬' if _mo in (12, 1, 2) else '春') + 'ﾌｪｰﾄﾞ')
@@ -6598,7 +6613,10 @@ if nav == "🧹 消去フィルター":
                         if _rest:
                             _negr.append('半年休み明け')
                         if _babafav:
-                            _negr.append(f'🌧️{_baba}馬場×1番人気(複勝-5〜9pp検証)')
+                            _bf_txt = f'🌧️{_baba}馬場×1番人気(複勝-5〜9pp検証)'
+                            if _fadewet:
+                                _bf_txt += '⚠瞬発/ステゴ系で裏付け'
+                            _negr.append(_bf_txt)
                         if _nige:
                             _negr.append('前走逃げ')
                         _pos = bool(_posr)

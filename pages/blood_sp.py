@@ -5,13 +5,20 @@
 で、レースの出走馬を『血統スコア』順に並べ、実着順と見比べる。
 良さげな信号が見つかったら必ず auto_feature_search でバックテストしてから強適スコアに採用する。
 
-⚠検証メモ: 父×馬場(sire×surface)はLTRに上乗せ無し=織込み済み(cond2)。母父(BMS)・ニックス(父×母父)は
-未検証で実験価値あり。血統は人気(オッズ)に大きく織込まれている点に注意。
+⚠検証メモ(2026-06): 血統は予測(着順当て)には完全に織込み済み=父×馬場(cond2)・母父(BMS)・
+ニックス(cond6)とも LTR に上乗せ無し。唯一市場を破れた角度は『道悪(重・不良)×血統×人気上位帯』で、
+これは予測でなく軸/消去の道具として core/track_bias.py に配線済み([[verified_baba_blood]])。
+このラボはその検証済み判定の可視化＋探索用(予測器ではない)。
 """
 import os
 import sqlite3
 import streamlit as st
 import pandas as pd
+
+try:
+    from core import track_bias as _tb
+except Exception:
+    _tb = None
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _JV_DB = os.path.join(_ROOT, 'data', 'jravan.db')
@@ -66,8 +73,9 @@ def render():
     st.header("🩸 血統SP（実験ラボ）")
     st.caption("血統だけでどこまで当たるかを試す実験場。父(種牡馬)・母父(BMS)の条件別成績で出走馬を"
                "『血統スコア』順に並べ、実着順と見比べます。"
-               "⚠血統は人気(オッズ)に大きく織込み済み(検証: 父×馬場はLTRに上乗せ無し)。"
-               "母父・ニックスは未検証で実験価値あり。良さげなら必ずバックテストしてから採用。")
+               "⚠血統は予測(着順当て)には完全に織込み済み(検証: 父×馬場cond2・母父/ニックスcond6とも"
+               "LTRに上乗せ無し)。唯一の妙味は『道悪×血統×人気上位』(検証済→track_biasに配線済)。"
+               "下表の『道悪判定』列がその検証済みシグナル。")
 
     blood = _ro(_BLOOD_DB)
     jv = _ro(_JV_DB)
@@ -88,16 +96,31 @@ def render():
         _c3.metric("母父の重み", f"{w_bms}")
 
         if rid:
-            race = jv.execute("SELECT surface, kyori, race_name FROM races WHERE race_id=? LIMIT 1", (rid,)).fetchone()
+            race = jv.execute(
+                "SELECT surface, kyori, race_name, baba_shiba, baba_dirt, year, monthday, jyo "
+                "FROM races WHERE race_id=? LIMIT 1", (rid,)).fetchone()
             horses = jv.execute(
                 "SELECT r.umaban, r.ketto_num, r.bamei, r.chakujun, r.ninki "
                 "FROM results r WHERE r.race_id=? AND r.chakujun>0 ORDER BY r.umaban", (rid,)).fetchall()
             if not race or not horses:
                 st.warning("そのレースIDは jravan.db に見つかりません（未取込 or 入力ミス）。過去の中央レースで試してください。")
             else:
-                surface, kyori, rname = race
+                surface, kyori, rname, _bsh, _bdt, _yr, _md, _jyo = race
                 band = _band(kyori)
-                st.markdown(f"**{rname or rid}**　{surface}{kyori}m（{band}）　{len(horses)}頭")
+                # 実馬場状態(検証済み道悪判定用): 芝はbaba_shiba/ダはbaba_dirt
+                _bcode = str(_bsh if (surface or '') == '芝' else _bdt)
+                baba = {'1': '良', '2': '稍重', '3': '重', '4': '不良'}.get(_bcode, '不明')
+                # 含水率(track_condにある日のみ)
+                _moist = None
+                try:
+                    _mr = jv.execute(
+                        "SELECT dirt_moisture FROM track_cond WHERE year=? AND monthday=? AND jyo=? LIMIT 1",
+                        (_yr, _md, _jyo)).fetchone()
+                    _moist = _mr[0] if _mr else None
+                except Exception:
+                    _moist = None
+                _mtxt = f"・含水{_moist:.1f}%" if _moist is not None else ""
+                st.markdown(f"**{rname or rid}**　{surface}{kyori}m（{band}）　馬場:{baba}{_mtxt}　{len(horses)}頭")
                 rows = []
                 for um, ketto, bamei, chaku, ninki in horses:
                     h = jv.execute("SELECT sire, bms FROM horses WHERE ketto_num=? LIMIT 1", (str(ketto),)).fetchone()
@@ -107,11 +130,22 @@ def render():
                     s_adj = s['adj_place'] if s else _POP_PLACE
                     b_adj = b['adj_place'] if b else _POP_PLACE
                     score = (w_sire * s_adj + w_bms * b_adj) * 100
+                    # ── 検証済み道悪判定(core/track_bias) ──
+                    _verdict = '-'
+                    if _tb is not None and sire:
+                        _bm = _tb.heavy_fav_blood_mod(sire, surface, baba)
+                        if _bm:
+                            _verdict = _bm['flag']
+                        elif _moist is not None and 'ダ' in (surface or ''):
+                            _dm = _tb.dirt_moisture_bloodtype(sire, _moist)
+                            if _dm:
+                                _verdict = _dm['flag']
                     rows.append({
                         '馬番': um, '馬名': bamei, '父': sire or '-', '母父': bms or '-',
                         '父複勝%(n)': f"{s['place_rate']:.0f}%({s['runs']})" if s else '-',
                         '母父複勝%(n)': f"{b['place_rate']:.0f}%({b['runs']})" if b else '-',
                         '血統スコア': round(score, 1),
+                        '道悪判定': _verdict,
                         '人気': ninki if ninki and ninki < 90 else '-',
                         '着順': chaku,
                     })
@@ -136,7 +170,10 @@ def render():
                     return [''] * len(row)
                 st.dataframe(df.style.apply(_hl, axis=1), hide_index=True, use_container_width=True)
                 st.caption("黄=1着 / 緑=2-3着。血統順と着順がどれだけ一致するか観察。"
-                           "血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。")
+                           "血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
+                           "『道悪判定』🟢道悪軸=ダ重不良でシニミニ系等が好走(危険人気から免除)/"
+                           "⚠瞬発系道悪=芝重不良でディープ・ステゴ系の人気馬は割引(検証済)。"
+                           "※この妙味は人気上位(1-3番人気)で検証。良/稍重では発火しません。")
 
     # ── タブB: 種牡馬/母父の条件別成績しらべ ──
     with tabB:
