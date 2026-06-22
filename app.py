@@ -368,6 +368,7 @@ with st.sidebar:
         "🧹 消去フィルター",
         "🤓 N氏の研究室",
         "🏇 騎手分析Pro",
+        "🩸 血統SP",
         "💾 ロジック置き場",
         "📦 データ保管庫",
     ]
@@ -10787,6 +10788,13 @@ if nav == "🧠 MAGI回顧":
 if nav == "🏇 騎手分析Pro":
     from pages.jockey_pro import render as _render_jpro
     _render_jpro()
+
+# ──────────────────────────────────────────────
+# 🩸 血統SP（pages/blood_sp.py・実験ラボ）
+# ──────────────────────────────────────────────
+if nav == "🩸 血統SP":
+    from pages.blood_sp import render as _render_blood
+    _render_blood()
 
 # ──────────────────────────────────────────────
 # --- Footer ---
