@@ -177,6 +177,37 @@ def build_candidates(df, candset):
         df.drop(columns=['_dbk4', '_tj', '_jsd', '_wd', '_b'], inplace=True)
         cands += ['cand_trainer_jockey_t3', 'cand_jockey_surf_dist_win', 'cand_waku_dist_t3']
 
+    if candset in ('cond5', 'all'):
+        # USM(馬力絞り出しメーター): オッズ帯の人口平均成績に対する、その騎手の過去実績比。
+        # leak防止=shift(1)で過去のみ。期待値=オッズ帯別の人口勝率/連対率/複勝率(集合知)。
+        od = pd.to_numeric(df['win_odds'], errors='coerce')
+        edges = [0, 1.45, 1.95, 2.95, 3.95, 4.95, 6.95, 9.95, 14.95, 19.95, 29.95, 49.95, 99.95, 1e9]
+        df['_band'] = pd.cut(od, bins=edges, labels=False, right=False)
+        _aw = (df['chakujun'] == 1).astype(float)
+        _a2 = (df['chakujun'] <= 2).astype(float)
+        _a3 = (df['chakujun'] <= 3).astype(float)
+        _valid = od > 0
+        bw = _aw[_valid].groupby(df['_band'][_valid]).mean()
+        b2 = _a2[_valid].groupby(df['_band'][_valid]).mean()
+        b3 = _a3[_valid].groupby(df['_band'][_valid]).mean()
+        df['_ew'] = df['_band'].map(bw); df['_e2'] = df['_band'].map(b2); df['_e3'] = df['_band'].map(b3)
+        df['_aw'] = _aw; df['_a2'] = _a2; df['_a3'] = _a3
+        for _c in ['_ew', '_e2', '_e3', '_aw', '_a2', '_a3']:
+            df.loc[~_valid, _c] = np.nan
+
+        def _usm(numc, denc, W=250, minp=40):
+            tmp = df[['jockey_code', 'day', 'race_num', numc, denc]].sort_values(['jockey_code', 'day', 'race_num'])
+            g = tmp.groupby('jockey_code', sort=False)
+            num = g[numc].transform(lambda x: x.shift(1).rolling(W, min_periods=minp).sum())
+            den = g[denc].transform(lambda x: x.shift(1).rolling(W, min_periods=minp).sum())
+            return (num / den.where(den > 0)).reindex(df.index)
+
+        df['cand_usm_win'] = _usm('_aw', '_ew')
+        df['cand_usm_t2'] = _usm('_a2', '_e2')
+        df['cand_usm_t3'] = _usm('_a3', '_e3')
+        df.drop(columns=['_band', '_ew', '_e2', '_e3', '_aw', '_a2', '_a3'], inplace=True)
+        cands += ['cand_usm_win', 'cand_usm_t2', 'cand_usm_t3']
+
     df.drop(columns=['_t3', '_w'], inplace=True)
     return df, cands
 
@@ -268,11 +299,12 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
                          'cond2=血統×馬場・枠×コース・騎手当コース / '
                          'cond3=騎手厩舎×距離帯・昇級代理 / '
-                         'cond4=厩舎×騎手相性・騎手×馬場×距離・枠×距離 / all')
+                         'cond4=厩舎×騎手相性・騎手×馬場×距離・枠×距離 / '
+                         'cond5=USM(単/連/複・全体・馬力絞り出し) / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()
