@@ -9817,6 +9817,10 @@ if nav == "🧠 MAGI回顧":
     with _left:
         if not osh:
             st.markdown("<div class='magi-sub'>⚠ INPUT QUERY</div>", unsafe_allow_html=True)
+            # 呼び名(任意・永続)。value=とkey=併用は競合するのでsetdefault+keyのみ
+            st.session_state.setdefault('magi_user_name', '')
+            st.text_input("あなたの呼び名（任意・3人がこの名前で呼びます）", key='magi_user_name',
+                          placeholder="例: たけし / 馬主さん")
             with st.form("osh_start_form", clear_on_submit=False):
                 _rid_in = st.text_input("レースID", placeholder="例: 202406050811", label_visibility="collapsed")
                 _go = st.form_submit_button("▶ 審議開始", type="primary", use_container_width=True)
@@ -9854,8 +9858,9 @@ if nav == "🧠 MAGI回顧":
                     st.error("結果を取得できませんでした。確定済みのレースIDか確認してね。")
                 else:
                     _ctx = mc.build_context(_df_o, _mp, _ar)
+                    _uname = (st.session_state.get('magi_user_name') or '').strip() or 'あなた'
                     try:
-                        _burst = mc.magi_turn(_ctx, [], GEMINI_API_KEY)
+                        _burst = mc.magi_turn(_ctx, [], GEMINI_API_KEY, user_name=_uname)
                     except Exception:
                         _burst = {'turns': [{'persona': 'balthasar', 'message': 'このレースで気になった馬はいた?'}], 'done': False}
                     _chat0 = [{'role': 'magi', 'persona': t['persona'], 'message': t['message'], 'id': _logid()}
@@ -9863,6 +9868,7 @@ if nav == "🧠 MAGI回顧":
                     st.session_state.oshaberi = {
                         'race_id': _rid, 'ctx': _ctx, 'result_line': mc.result_one_line(_ctx),
                         'chat': _chat0, 'done': bool(_burst.get('done')), 'saved': False, 'rounds': 1,
+                        'user_name': _uname,
                     }
                     st.rerun()
             st.caption("👶 終わったレースのIDを入れて審議開始。3人格が話し合いながら回顧します。")
@@ -9901,12 +9907,16 @@ if nav == "🧠 MAGI回顧":
                 if _send and _ans and _ans.strip():
                     osh['chat'].append({'role': 'user', 'message': _ans.strip(), 'id': _logid()})
                     osh['rounds'] = osh.get('rounds', 1) + 1
-                    _force = osh['rounds'] >= 4   # 上限: 4ターン目で総括して締める(エンドレス防止)
+                    _force = osh['rounds'] >= 20   # 上限: 20ターンで総括して締める(エンドレス防止)
                     with st.spinner("MAGI 審議中..."):
                         try:
-                            _burst = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY, force_done=_force)
+                            _burst = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY,
+                                                  force_done=_force, user_name=osh.get('user_name', 'あなた'))
                         except Exception:
-                            _burst = {'turns': [{'persona': 'casper', 'message': 'なるほど。ほかに覚えてることは?'}], 'done': _force}
+                            # 締めターンの失敗時は総括っぽい一言で閉じる(質問で終わらせない)
+                            _fb = ('今日はここまで。今回の学びを台帳に残しときましょか。'
+                                   if _force else 'なるほど。ほかに覚えてることは?')
+                            _burst = {'turns': [{'persona': 'balthasar', 'message': _fb}], 'done': _force}
                     for t in _burst['turns']:
                         osh['chat'].append({'role': 'magi', 'persona': t['persona'], 'message': t['message'], 'id': _logid()})
                     if _burst.get('done'):
@@ -9965,11 +9975,13 @@ if nav == "🧠 MAGI回顧":
             for _m in osh['chat']:
                 _body = _html.escape(_m['message']).replace(chr(10), '<br>')
                 if _m['role'] == 'user':
+                    _un = _html.escape(osh.get('user_name', 'あなた') or 'あなた')
+                    _uav = _html.escape((osh.get('user_name', '') or 'YOU')[:3])
                     _bubbles.append(
                         "<div class='row user'><div class='col'>"
-                        "<div class='nm' style='color:#6f9bff;text-align:right'>あなた</div>"
+                        "<div class='nm' style='color:#6f9bff;text-align:right'>" + _un + "</div>"
                         "<div class='bub ubub'>" + _body + "</div></div>"
-                        "<div class='av' style='background:#3a5bd0'>YOU</div></div>")
+                        "<div class='av' style='background:#3a5bd0'>" + _uav + "</div></div>")
                 else:
                     _p = mc.PERSONAS.get(_m['persona'], {})
                     _col = _p.get('color', '#888'); _emo = _p.get('emoji', ''); _nm = _p.get('jp', 'MAGI')
