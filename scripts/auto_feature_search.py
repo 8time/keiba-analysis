@@ -155,6 +155,28 @@ def build_candidates(df, candset):
         cands += ['cand_jockey_dist_win', 'cand_jockey_dist_t3', 'cand_trainer_dist_t3',
                   'cand_prev_was_win', 'cand_cum_wins']
 
+    if candset in ('cond4', 'all'):
+        ky = pd.to_numeric(df['kyori'], errors='coerce')
+        df['_dbk4'] = pd.Series(np.where(ky <= 1400, 'S', np.where(ky <= 1800, 'M',
+                                np.where(ky <= 2200, 'L', 'X'))), index=df.index)
+        # ① 厩舎×騎手の相性(複勝率) — 個別特徴量に無い相互作用
+        df['_tj'] = df['trainer_code'].astype(str) + '|' + df['jockey_code'].astype(str)
+        df['cand_trainer_jockey_t3'] = _rolling_prior_rate(df, '_tj', '_t3', 30, 8)
+        # ② 騎手×馬場×距離 勝率(より細かい騎手適性)
+        df['_jsd'] = df['jockey_code'].astype(str) + '|' + df['surface'].astype(str) + '|' + df['_dbk4']
+        df['cand_jockey_surf_dist_win'] = _rolling_prior_rate(df, '_jsd', '_w', 40, 10)
+        # ③ 枠×距離(馬場込み)の枠順バイアス: レース単位集約→shift(1).rollingで当該レース完全除外(リーク無)
+        df['_wd'] = df['surface'].astype(str) + '|' + df['_dbk4'] + '|' + df['waku'].astype(str)
+        g = df.groupby(['_wd', 'race_key'], as_index=False).agg(
+            _t3m=('_t3', 'mean'), _day=('day', 'first'), _rn=('race_num', 'first'))
+        g = g.sort_values(['_wd', '_day', '_rn'])
+        g['_b'] = g.groupby('_wd', sort=False)['_t3m'].transform(
+            lambda x: x.shift(1).rolling(150, min_periods=20).mean())
+        df = df.merge(g[['_wd', 'race_key', '_b']], on=['_wd', 'race_key'], how='left')
+        df['cand_waku_dist_t3'] = df['_b']
+        df.drop(columns=['_dbk4', '_tj', '_jsd', '_wd', '_b'], inplace=True)
+        cands += ['cand_trainer_jockey_t3', 'cand_jockey_surf_dist_win', 'cand_waku_dist_t3']
+
     df.drop(columns=['_t3', '_w'], inplace=True)
     return df, cands
 
@@ -246,10 +268,11 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
                          'cond2=血統×馬場・枠×コース・騎手当コース / '
-                         'cond3=騎手厩舎×距離帯・昇級代理(前走勝ち/通算勝利数) / all')
+                         'cond3=騎手厩舎×距離帯・昇級代理 / '
+                         'cond4=厩舎×騎手相性・騎手×馬場×距離・枠×距離 / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()
