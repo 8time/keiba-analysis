@@ -10,6 +10,41 @@ from dotenv import load_dotenv
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _detect_public():
+    """app.py の _detect_public と同等(破壊的削除はapp.py側に任せ、ここは検出のみ)。"""
+    _ev = os.environ.get('KEIBA_PUBLIC')
+    if _ev is not None:
+        return _ev not in ('0', '', 'false', 'False')
+    _db = os.path.join(_ROOT, 'data', 'jravan.db')
+    if not os.path.exists(_db):
+        return True
+    try:
+        import sqlite3 as _s
+        _c = _s.connect(f"file:{_db}?mode=ro", uri=True)
+        _has = _c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='results'").fetchone()
+        _c.close()
+        return not bool(_has)
+    except Exception:
+        return False
+
+
+_IS_PUBLIC = _detect_public()
+_PUB_REPL = [('JRA-VAN版', '限定版'), ('JRA-VAN実データ', '内部データ'),
+             ('JRA-VANで', '内部データで'), ('JRA-VAN/JRA', 'JRA'),
+             ('JRA-VAN', ''), ('JV-VAN', ''), ('JV-Data', '公式データ'),
+             ('jravan.db', '内部DB')]
+
+
+def _pub(s):
+    """公開(限定)版では JRA-VAN 等の表記を中立語へ置換。ローカルではそのまま返す。"""
+    if not _IS_PUBLIC or not isinstance(s, str):
+        return s
+    for _a, _b in _PUB_REPL:
+        s = s.replace(_a, _b)
+    return s.replace('  ', ' ')
+
+
 def render():
     """騎手分析Proページのレンダリング。app.pyから呼び出す。"""
     st.header("🏇 騎手分析Pro")
