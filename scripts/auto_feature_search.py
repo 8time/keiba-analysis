@@ -63,29 +63,44 @@ def _rolling_prior_rate(df, key, value_col, window, minp):
     return res.reindex(df.index)
 
 
-def add_strong_candidates(df):
-    """前走着差・騎手/厩舎の直近成績(リーク無・推論時も計算可)。フィルタ前の全履歴で計算する想定。"""
+def build_candidates(df, candset):
+    """リーク無・推論時も計算可の候補をフィルタ前の全履歴で計算。
+    candset: 'strong'(前走着差+騎手厩舎の全体成績) / 'cond'(条件特化=当馬場・当コース) / 'all'。"""
     # 騎手・厩舎コードを results から取り込み(build_ltr_modelのSELECTには無いので自前で)
     con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
     jt = pd.read_sql("SELECT race_key, umaban, jockey_code, trainer_code FROM results", con)
     con.close()
     df = df.merge(jt, on=['race_key', 'umaban'], how='left').reset_index(drop=True)
-
-    # 前走着差: 各レースの勝ち馬秒との差 → 馬ごとに1走前(shift1)を採用
-    race_min = df.groupby('race_key')['sec'].transform('min')
-    df['_race_margin'] = df['sec'] - race_min
-    tmp = df[['ketto_num', 'day', 'race_num', '_race_margin']].sort_values(['ketto_num', 'day', 'race_num'])
-    df['cand_prior_margin'] = tmp.groupby('ketto_num', sort=False)['_race_margin'].shift(1).reindex(df.index)
-    df.drop(columns=['_race_margin'], inplace=True)
-
-    # 騎手/厩舎の直近成績(複勝=chaku<=3 / 勝=chaku==1)
     df['_t3'] = (df['chakujun'] <= 3).astype(float)
     df['_w'] = (df['chakujun'] == 1).astype(float)
-    df['cand_jockey_form_t3'] = _rolling_prior_rate(df, 'jockey_code', '_t3', 50, 10)
-    df['cand_jockey_win'] = _rolling_prior_rate(df, 'jockey_code', '_w', 80, 20)
-    df['cand_trainer_form_t3'] = _rolling_prior_rate(df, 'trainer_code', '_t3', 30, 8)
+    cands = []
+
+    if candset in ('strong', 'all'):
+        # 前走着差: 各レースの勝ち馬秒との差 → 馬ごとに1走前(shift1)
+        df['_race_margin'] = df['sec'] - df.groupby('race_key')['sec'].transform('min')
+        tmp = df[['ketto_num', 'day', 'race_num', '_race_margin']].sort_values(['ketto_num', 'day', 'race_num'])
+        df['cand_prior_margin'] = tmp.groupby('ketto_num', sort=False)['_race_margin'].shift(1).reindex(df.index)
+        df.drop(columns=['_race_margin'], inplace=True)
+        df['cand_jockey_form_t3'] = _rolling_prior_rate(df, 'jockey_code', '_t3', 50, 10)
+        df['cand_jockey_win'] = _rolling_prior_rate(df, 'jockey_code', '_w', 80, 20)
+        df['cand_trainer_form_t3'] = _rolling_prior_rate(df, 'trainer_code', '_t3', 30, 8)
+        cands += ['cand_prior_margin', 'cand_jockey_form_t3', 'cand_jockey_win', 'cand_trainer_form_t3']
+
+    if candset in ('cond', 'all'):
+        # 条件特化(全体成績は織込み済み→当馬場/当コースは織込み薄い: project_trainer_course整合)
+        df['_jk_surf'] = df['jockey_code'].astype(str) + '|' + df['surface'].astype(str)
+        df['_jk_jyo'] = df['jockey_code'].astype(str) + '|' + df['jyo'].astype(str)
+        df['_tr_jyo'] = df['trainer_code'].astype(str) + '|' + df['jyo'].astype(str)
+        df['_tr_surf'] = df['trainer_code'].astype(str) + '|' + df['surface'].astype(str)
+        df['cand_jockey_surf_t3'] = _rolling_prior_rate(df, '_jk_surf', '_t3', 30, 8)
+        df['cand_jockey_jyo_t3'] = _rolling_prior_rate(df, '_jk_jyo', '_t3', 20, 5)
+        df['cand_trainer_jyo_t3'] = _rolling_prior_rate(df, '_tr_jyo', '_t3', 20, 5)
+        df['cand_trainer_surf_t3'] = _rolling_prior_rate(df, '_tr_surf', '_t3', 30, 8)
+        df.drop(columns=['_jk_surf', '_jk_jyo', '_tr_jyo', '_tr_surf'], inplace=True)
+        cands += ['cand_jockey_surf_t3', 'cand_jockey_jyo_t3', 'cand_trainer_jyo_t3', 'cand_trainer_surf_t3']
+
     df.drop(columns=['_t3', '_w'], inplace=True)
-    return df, ['cand_prior_margin', 'cand_jockey_form_t3', 'cand_jockey_win', 'cand_trainer_form_t3']
+    return df, cands
 
 
 def add_simple_candidates(df):
@@ -105,13 +120,13 @@ def add_simple_candidates(df):
             'cand_age_sq', 'cand_bataiju_dev', 'cand_futan_dev']
 
 
-def prepare(quick=False, include_simple=False):
+def prepare(quick=False, include_simple=False, candset='cond'):
     print('=== データ準備(既存パイプライン再利用) ===', file=sys.stderr)
     df = bm.load_data()
     df = bm.compute_corrected_time(df)          # 'sec','day' を生成
     df = bm.compute_rolling_features(df)
-    # 強候補は『フィルタ前の全履歴』で計算(前走/騎手騎乗履歴を欠けさせない)
-    df, cands = add_strong_candidates(df)
+    # 候補は『フィルタ前の全履歴』で計算(前走/騎手騎乗履歴を欠けさせない)
+    df, cands = build_candidates(df, candset)
 
     base_year = 2019 if quick else 2016
     df = df[df['year'].astype(int) >= base_year].copy()
@@ -172,12 +187,15 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
+    ap.add_argument('--candset', choices=['strong', 'cond', 'all'], default='cond',
+                    help='strong=前走着差+全体成績 / cond=条件特化(当馬場・当コース) / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()
 
     t0 = _time.time()
-    train_df, val_df, test_df, cands = prepare(quick=args.quick, include_simple=args.include_simple)
+    train_df, val_df, test_df, cands = prepare(quick=args.quick, include_simple=args.include_simple,
+                                               candset=args.candset)
     rounds = 400 if args.quick else 1000
     base = list(bm.FEATURES)
 

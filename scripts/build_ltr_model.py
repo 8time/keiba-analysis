@@ -37,6 +37,7 @@ FEATURES = [
     'h7_fig', 'h7_rank', 'spurt_mean3', 'spurt_rank',
     'prior_top3_rate', 'avg_chaku5',
     'jyo_code', 'race_num_code', 'cushion', 'dirt_moisture',
+    'trainer_jyo_t3',
 ]
 
 BASELINE_FROM = 1990
@@ -66,6 +67,7 @@ def load_data():
     df = pd.read_sql("""
         SELECT r.race_key, r.ketto_num, r.umaban, r.chakujun, r.ninki, r.win_odds,
                r.bataiju, r.zogen, r.ato3f AS horse_ato3f, r.sex, r.age, r.futan, r.time,
+               r.trainer_code,
                ra.year, ra.monthday, ra.jyo, ra.surface, ra.kyori, ra.shusso_tosu,
                ra.juryo, ra.baba_shiba, ra.baba_dirt, ra.race_num,
                tc.cushion, tc.dirt_moisture
@@ -167,6 +169,20 @@ def encode_features(df):
     # cushion/dirt_moisture are from track_cond LEFT JOIN (2021+ only, NaN for older)
     df['cushion'] = pd.to_numeric(df['cushion'], errors='coerce')
     df['dirt_moisture'] = pd.to_numeric(df['dirt_moisture'], errors='coerce')
+    return df
+
+
+def compute_trainer_course(df):
+    """厩舎×競馬場(jyo)の直近複勝率(shift(1).rolling20,min5)=リーク無。
+    『当コース成績』は検証エッジ(全体勝率は織込み済み・auto_feature_searchで採用)。"""
+    print('Computing trainer-course form...', file=sys.stderr)
+    df['_t3'] = (df['chakujun'] <= 3).astype(float)
+    df['_tcj'] = df['trainer_code'].astype(str) + '|' + df['jyo'].astype(str)
+    tmp = df[['_tcj', 'day', 'race_num', '_t3']].sort_values(['_tcj', 'day', 'race_num'])
+    df['trainer_jyo_t3'] = (tmp.groupby('_tcj', sort=False)['_t3']
+                            .transform(lambda x: x.shift(1).rolling(20, min_periods=5).mean())
+                            .reindex(df.index))
+    df.drop(columns=['_t3', '_tcj'], inplace=True)
     return df
 
 
@@ -276,6 +292,7 @@ def main():
     df = load_data()
     df = compute_corrected_time(df)
     df = compute_rolling_features(df)
+    df = compute_trainer_course(df)
     df = df[df['year'].astype(int) >= 2016].copy()
     df = encode_features(df)
     df = compute_race_ranks(df)

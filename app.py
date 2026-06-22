@@ -4418,12 +4418,16 @@ if nav == "🏠 Single Race Analysis":
                                     'bataiju': _lbw, 'zogen': _lzg, 'sex': _lsex,
                                     'age': _lage, 'futan': _lft,
                                 })
+                            _rid_str = str(race_id_input or '')
                             _ltr_ri = {
                                 'surface': _surf_h or '',
                                 'kyori': pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce') if 'CurrentDistance' in df.columns and not df.empty else 0,
                                 'field_size': len(df),
                                 'baba': str(_ltr_meta.get('condition', '')),
                                 'is_handicap': bool(_ltr_meta.get('is_handicap')),
+                                # 推論時にjyo/race_numを渡す(これが無いとjyo_code等が常に0になっていた潜在バグ)
+                                'jyo': _rid_str[4:6] if len(_rid_str) >= 6 else '',
+                                'race_num': _rid_str[10:12] if len(_rid_str) >= 12 else '',
                             }
                             _ltr_sc = _ltr.get_scores(_ltr_hs, _ltr_ri)
                             if _ltr_sc:
@@ -9941,28 +9945,60 @@ if nav == "🧠 MAGI回顧":
 
             _magi_msgs = [m for m in osh['chat'] if m['role'] == 'magi']
             if _magi_msgs:
-                _pitch_map = {'melchior': 0.85, 'balthasar': 1.3, 'casper': 1.0}
-                _rate_map = {'melchior': 1.1, 'balthasar': 0.85, 'casper': 1.0}
-                _tts_items = []
-                for _tm in _magi_msgs:
-                    _tp = _tm.get('persona', 'casper')
-                    _safe = _html.escape(_tm['message']).replace("'", "\\'").replace('\n', ' ')
-                    _tts_items.append("{text:'" + _safe + "',pitch:" + str(_pitch_map.get(_tp, 1.0)) + ",rate:" + str(_rate_map.get(_tp, 1.0)) + "}")
-                _tts_js = ','.join(_tts_items)
-                import streamlit.components.v1 as _stc
-                _stc.html(
-                    '<div style="display:flex;gap:6px;margin:4px 0;">'
-                    '<button onclick="readAll()" style="background:#2a2f3a;color:#ff8c42;border:1px solid #5a2d0a;'
-                    'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
-                    '\U0001f50a 読み上げ</button>'
-                    '<button onclick="speechSynthesis.cancel()" style="background:#2a2f3a;color:#888;border:1px solid #444;'
-                    'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
-                    '■ 停止</button></div>'
-                    '<script>var msgs=[' + _tts_js + '];'
-                    'function readAll(){speechSynthesis.cancel();'
-                    'msgs.forEach(function(m){var u=new SpeechSynthesisUtterance(m.text);'
-                    'u.lang="ja-JP";u.pitch=m.pitch;u.rate=m.rate;speechSynthesis.speak(u);});}'
-                    '</script>', height=40)
+                # 🔊 音声モード(ブラウザ標準=Web Speech API・VOICEVOX不要・push/クラウド版でも動作・サーバ負荷ゼロ)
+                _vc1, _vc2 = st.columns([1, 1])
+                with _vc1:
+                    _voice_on = st.checkbox("🔊 音声(軽量)", value=st.session_state.get('magi_voice_on', False),
+                                            key='magi_voice_on',
+                                            help="ブラウザ内蔵の読み上げ。VOICEVOX等の起動は不要で、公開版でもそのまま話します。")
+                with _vc2:
+                    _voice_auto = st.checkbox("自動読み上げ", value=st.session_state.get('magi_voice_auto', False),
+                                              key='magi_voice_auto', disabled=not _voice_on,
+                                              help="新しい発言が出たら自動で1回だけ読み上げます。")
+                if _voice_on:
+                    # 3人とも別々の女性の声: 日本語音声プールから別音声を割当(順=メル/バル/キャス)。
+                    # 声が1つしかない環境でも女性寄りのピッチ/速度差で3人を差別化(全員pitch≥1.0)。
+                    _pitch_map = {'melchior': 1.05, 'balthasar': 1.2, 'casper': 1.35}
+                    _rate_map = {'melchior': 1.05, 'balthasar': 0.92, 'casper': 1.0}
+                    _tts_items = []
+                    for _tm in _magi_msgs:
+                        _tp = _tm.get('persona', 'casper')
+                        _safe = _html.escape(_tm['message']).replace("'", "\\'").replace('\n', ' ')
+                        _tts_items.append("{text:'" + _safe + "',persona:'" + _tp + "',pitch:"
+                                          + str(_pitch_map.get(_tp, 1.0)) + ",rate:" + str(_rate_map.get(_tp, 1.0)) + "}")
+                    _tts_js = ','.join(_tts_items)
+                    _last = _magi_msgs[-1]
+                    _last_id = _last.get('id', str(len(_magi_msgs)))
+                    _auto_flag = 'true' if _voice_auto else 'false'
+                    import streamlit.components.v1 as _stc
+                    _stc.html(
+                        '<div style="display:flex;gap:6px;margin:4px 0;">'
+                        '<button onclick="readAll()" style="background:#2a2f3a;color:#ff8c42;border:1px solid #5a2d0a;'
+                        'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
+                        '\U0001f50a 全部読む</button>'
+                        '<button onclick="speechSynthesis.cancel()" style="background:#2a2f3a;color:#888;border:1px solid #444;'
+                        'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
+                        '■ 停止</button></div>'
+                        '<script>var msgs=[' + _tts_js + '];'
+                        'var ORDER=["melchior","balthasar","casper"];'
+                        'function jaVoices(){return speechSynthesis.getVoices().filter('
+                        'function(v){return v.lang&&v.lang.toLowerCase().indexOf("ja")===0;});}'
+                        'function femFirst(vs){var f=/(nanami|haruka|sayaka|kyoko|ayumi|mayu|female|女性|o-?ren|google)/i;'
+                        'var w=vs.filter(function(v){return f.test(v.name);});return w.length?w:vs;}'
+                        'function vmap(){var vs=femFirst(jaVoices());var m={};'
+                        'ORDER.forEach(function(p,i){m[p]=vs.length?vs[i%vs.length]:null;});return m;}'
+                        'function spk(m,vm){var u=new SpeechSynthesisUtterance(m.text);u.lang="ja-JP";'
+                        'u.pitch=m.pitch;u.rate=m.rate;var v=vm[m.persona];if(v)u.voice=v;speechSynthesis.speak(u);}'
+                        'function withVoices(cb){if(jaVoices().length){cb();}else{'
+                        'speechSynthesis.onvoiceschanged=function(){cb();};speechSynthesis.getVoices();}}'
+                        'function readAll(){withVoices(function(){speechSynthesis.cancel();var vm=vmap();'
+                        'msgs.forEach(function(m){spk(m,vm);});});}'
+                        'if(' + _auto_flag + ' && msgs.length){var k="magi_last_spoken";'
+                        'if(sessionStorage.getItem(k)!=="' + _last_id + '"){sessionStorage.setItem(k,"' + _last_id + '");'
+                        'withVoices(function(){speechSynthesis.cancel();spk(msgs[msgs.length-1],vmap());});}}'
+                        '</script>', height=40)
+                    st.caption("3人別の女性声。声の種類はお使いのブラウザ/OSの日本語音声に依存します"
+                               "（Edge=Nanami/Haruka等が豊富）。声が少ない環境はピッチ差で区別します。")
 
             if osh.get('saved'):
                 _lg = osh.get('learning', {})

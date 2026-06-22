@@ -78,6 +78,31 @@ def _prior_record(con, ketto):
         return None, None
 
 
+def _trainer_jyo_t3(con, ketto, jyo):
+    """厩舎の当競馬場(jyo)・直近20走の複勝率。馬の最新厩舎を引いてから算出(検証エッジ)。
+    学習側 compute_trainer_course と同義(過去のみ参照)。<5走はNone。"""
+    if not jyo:
+        return None
+    try:
+        r = con.execute(
+            "SELECT trainer_code FROM results WHERE ketto_num = ? "
+            "AND trainer_code IS NOT NULL AND trainer_code != '' "
+            "ORDER BY year DESC, monthday DESC LIMIT 1", (str(ketto),)).fetchone()
+        if not r or not r[0]:
+            return None
+        rows = con.execute("""
+            SELECT res.chakujun FROM results res
+            JOIN races ra ON res.race_key = ra.race_key
+            WHERE res.trainer_code = ? AND ra.jyo = ? AND res.chakujun > 0
+            ORDER BY ra.year DESC, ra.monthday DESC LIMIT 20
+        """, (r[0], str(jyo))).fetchall()
+        if len(rows) < 5:
+            return None
+        return sum(1 for x in rows if x[0] <= 3) / len(rows)
+    except Exception:
+        return None
+
+
 def get_scores(horses, race_info):
     """
     horses: [{umaban, ketto_num, ninki, win_odds, bataiju, zogen, sex, age, futan}, ...]
@@ -108,6 +133,7 @@ def get_scores(horses, race_info):
     race_num_code = int(race_info.get('race_num') or 0)
     cushion_val = race_info.get('cushion')
     dirt_moist = race_info.get('dirt_moisture')
+    jyo_text = f"{jyo_code:02d}" if jyo_code else None
 
     con = _jv_con()
     rows = []
@@ -121,6 +147,7 @@ def get_scores(horses, race_info):
         h7 = fig['fig'] if fig else None
         sp = _prior_spurt(con, kt) if con and kt else None
         t3, a5 = (_prior_record(con, kt) if con and kt else (None, None))
+        tjt3 = _trainer_jyo_t3(con, kt, jyo_text) if con and kt else None
 
         rows.append({
             'umaban': um,
@@ -135,6 +162,7 @@ def get_scores(horses, race_info):
             'prior_top3_rate': t3, 'avg_chaku5': a5,
             'jyo_code': jyo_code, 'race_num_code': race_num_code,
             'cushion': cushion_val, 'dirt_moisture': dirt_moist,
+            'trainer_jyo_t3': tjt3,
         })
     if con:
         con.close()
