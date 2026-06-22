@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
-"""cand_trainer_jyo_t3(厩舎の当コース複勝率)の seed 頑健性チェック — scripts/seed_robustness_check.py
+"""採用候補の seed 頑健性チェック — scripts/seed_robustness_check.py
 
-第3イテレーションで防護柵を通った候補が『単一seedの偶然でないか』を確認する。
+防護柵を通った候補が『単一seedの偶然でないか』を確認する。
 データ準備は1回だけ(auto_feature_search.prepare を再利用)、複数seedで
 ベース vs ベース+候補 を訓練し Δtest/Δval recall@7 の分布を見る。
 全seedで一貫して正なら配線へGO、ばらつくなら見送り。
+
+  python scripts/seed_robustness_check.py                                  # 既定=trainer_jyo_t3/cond
+  python scripts/seed_robustness_check.py --feat cand_jockey_jyo_win --candset cond2
 """
 import os
 import sys
+import argparse
 import numpy as np
 
 sys.stdout.reconfigure(encoding='utf-8')
@@ -17,12 +21,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import scripts.auto_feature_search as afs
 import scripts.build_ltr_model as bm
 
-FEAT = 'cand_trainer_jyo_t3'
 SEEDS = [42, 1, 7, 123, 2024]
 
 
 def main():
-    train_df, val_df, test_df, cands = afs.prepare(quick=False, candset='cond')
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--feat', default='cand_trainer_jyo_t3')
+    ap.add_argument('--candset', default='cond')
+    args = ap.parse_args()
+    FEAT = args.feat
+
+    train_df, val_df, test_df, cands = afs.prepare(quick=False, candset=args.candset)
     base = list(bm.FEATURES)
     assert FEAT in cands, f'{FEAT} not in candidates: {cands}'
 

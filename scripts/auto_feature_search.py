@@ -65,10 +65,11 @@ def _rolling_prior_rate(df, key, value_col, window, minp):
 
 def build_candidates(df, candset):
     """リーク無・推論時も計算可の候補をフィルタ前の全履歴で計算。
-    candset: 'strong'(前走着差+騎手厩舎の全体成績) / 'cond'(条件特化=当馬場・当コース) / 'all'。"""
-    # 騎手・厩舎コードを results から取り込み(build_ltr_modelのSELECTには無いので自前で)
+    candset: 'strong'(前走着差+騎手厩舎の全体成績) / 'cond'(条件特化=当馬場・当コース)
+            / 'cond2'(血統×馬場・枠×コース・騎手当コース再挑戦) / 'all'。"""
+    # 騎手・厩舎コード+枠を results から取り込み(build_ltr_modelのSELECTには無いので自前で)
     con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
-    jt = pd.read_sql("SELECT race_key, umaban, jockey_code, trainer_code FROM results", con)
+    jt = pd.read_sql("SELECT race_key, umaban, jockey_code, trainer_code, waku FROM results", con)
     con.close()
     df = df.merge(jt, on=['race_key', 'umaban'], how='left').reset_index(drop=True)
     df['_t3'] = (df['chakujun'] <= 3).astype(float)
@@ -99,6 +100,36 @@ def build_candidates(df, candset):
         df.drop(columns=['_jk_surf', '_jk_jyo', '_tr_jyo', '_tr_surf'], inplace=True)
         cands += ['cand_jockey_surf_t3', 'cand_jockey_jyo_t3', 'cand_trainer_jyo_t3', 'cand_trainer_surf_t3']
 
+    if candset in ('cond2', 'all'):
+        # ① 血統×馬場: 種牡馬(sire)の産駒が当該馬場で稼ぐ複勝率(roll100 min30)
+        con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
+        sires = pd.read_sql("SELECT ketto_num, sire FROM horses", con)
+        con.close()
+        df = df.merge(sires, on='ketto_num', how='left').reset_index(drop=True)
+        df['_sire_surf'] = df['sire'].astype(str) + '|' + df['surface'].astype(str)
+        df['cand_sire_surf_t3'] = _rolling_prior_rate(df, '_sire_surf', '_t3', 100, 30)
+
+        # ② 枠×コース(枠順バイアス): 当(jyo|surface|kyori|waku)の過去複勝率。
+        #    1レースに同枠が複数いるのでレース単位に集約→shift(1).rollingで当該レースを完全除外(リーク無)
+        df['_dcg'] = (df['jyo'].astype(str) + '|' + df['surface'].astype(str) + '|'
+                      + df['kyori'].astype(str) + '|' + df['waku'].astype(str))
+        g = df.groupby(['_dcg', 'race_key'], as_index=False).agg(
+            _t3m=('_t3', 'mean'), _day=('day', 'first'), _rn=('race_num', 'first'))
+        g = g.sort_values(['_dcg', '_day', '_rn'])
+        g['_bias'] = g.groupby('_dcg', sort=False)['_t3m'].transform(
+            lambda x: x.shift(1).rolling(150, min_periods=20).mean())
+        df = df.merge(g[['_dcg', 'race_key', '_bias']], on=['_dcg', 'race_key'], how='left')
+        df['cand_draw_course_t3'] = df['_bias']
+
+        # ③ 騎手の当コース系(再挑戦): 当場の勝率 + 騎手×(場|馬場)複勝率
+        df['_jk_jyo2'] = df['jockey_code'].astype(str) + '|' + df['jyo'].astype(str)
+        df['cand_jockey_jyo_win'] = _rolling_prior_rate(df, '_jk_jyo2', '_w', 60, 15)
+        df['_jk_sj'] = (df['jockey_code'].astype(str) + '|' + df['jyo'].astype(str)
+                        + '|' + df['surface'].astype(str))
+        df['cand_jockey_surfjyo_t3'] = _rolling_prior_rate(df, '_jk_sj', '_t3', 25, 6)
+        df.drop(columns=['_sire_surf', '_dcg', '_bias', '_jk_jyo2', '_jk_sj'], inplace=True)
+        cands += ['cand_sire_surf_t3', 'cand_draw_course_t3', 'cand_jockey_jyo_win', 'cand_jockey_surfjyo_t3']
+
     df.drop(columns=['_t3', '_w'], inplace=True)
     return df, cands
 
@@ -125,6 +156,8 @@ def prepare(quick=False, include_simple=False, candset='cond'):
     df = bm.load_data()
     df = bm.compute_corrected_time(df)          # 'sec','day' を生成
     df = bm.compute_rolling_features(df)
+    df = bm.compute_trainer_course(df)          # 本番FEATURES入りの trainer_jyo_t3 を再現(ベースライン用)
+    df = bm.compute_jockey_course(df)           # 同上 jockey_jyo_win
     # 候補は『フィルタ前の全履歴』で計算(前走/騎手騎乗履歴を欠けさせない)
     df, cands = build_candidates(df, candset)
 
@@ -187,8 +220,9 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'all'], default='cond',
-                    help='strong=前走着差+全体成績 / cond=条件特化(当馬場・当コース) / all')
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'all'], default='cond',
+                    help='strong=前走着差+全体成績 / cond=当馬場当コース / '
+                         'cond2=血統×馬場・枠×コース・騎手当コース再挑戦 / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()

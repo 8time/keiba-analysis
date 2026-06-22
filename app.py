@@ -4417,6 +4417,7 @@ if nav == "🏠 Single Race Analysis":
                                     'win_odds': pd.to_numeric(_lr.get('Odds'), errors='coerce'),
                                     'bataiju': _lbw, 'zogen': _lzg, 'sex': _lsex,
                                     'age': _lage, 'futan': _lft,
+                                    'jockey': str(_lr.get('Jockey', '')),
                                 })
                             _rid_str = str(race_id_input or '')
                             _ltr_ri = {

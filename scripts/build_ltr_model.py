@@ -37,7 +37,7 @@ FEATURES = [
     'h7_fig', 'h7_rank', 'spurt_mean3', 'spurt_rank',
     'prior_top3_rate', 'avg_chaku5',
     'jyo_code', 'race_num_code', 'cushion', 'dirt_moisture',
-    'trainer_jyo_t3',
+    'trainer_jyo_t3', 'jockey_jyo_win',
 ]
 
 BASELINE_FROM = 1990
@@ -67,7 +67,7 @@ def load_data():
     df = pd.read_sql("""
         SELECT r.race_key, r.ketto_num, r.umaban, r.chakujun, r.ninki, r.win_odds,
                r.bataiju, r.zogen, r.ato3f AS horse_ato3f, r.sex, r.age, r.futan, r.time,
-               r.trainer_code,
+               r.trainer_code, r.jockey_code,
                ra.year, ra.monthday, ra.jyo, ra.surface, ra.kyori, ra.shusso_tosu,
                ra.juryo, ra.baba_shiba, ra.baba_dirt, ra.race_num,
                tc.cushion, tc.dirt_moisture
@@ -186,6 +186,20 @@ def compute_trainer_course(df):
     return df
 
 
+def compute_jockey_course(df):
+    """騎手×競馬場(jyo)の直近勝率(shift(1).rolling60,min15)=リーク無。
+    当場勝率はauto_feature_searchのseed頑健性で採用(複勝でなく勝率がrecall@7に効く)。"""
+    print('Computing jockey-course form...', file=sys.stderr)
+    df['_w'] = (df['chakujun'] == 1).astype(float)
+    df['_jcj'] = df['jockey_code'].astype(str) + '|' + df['jyo'].astype(str)
+    tmp = df[['_jcj', 'day', 'race_num', '_w']].sort_values(['_jcj', 'day', 'race_num'])
+    df['jockey_jyo_win'] = (tmp.groupby('_jcj', sort=False)['_w']
+                            .transform(lambda x: x.shift(1).rolling(60, min_periods=15).mean())
+                            .reindex(df.index))
+    df.drop(columns=['_w', '_jcj'], inplace=True)
+    return df
+
+
 def compute_race_ranks(df):
     df['h7_rank'] = df.groupby('race_key')['h7_fig'].rank(method='min', na_option='bottom')
     df['spurt_rank'] = df.groupby('race_key')['spurt_mean3'].rank(method='min', na_option='bottom')
@@ -293,6 +307,7 @@ def main():
     df = compute_corrected_time(df)
     df = compute_rolling_features(df)
     df = compute_trainer_course(df)
+    df = compute_jockey_course(df)
     df = df[df['year'].astype(int) >= 2016].copy()
     df = encode_features(df)
     df = compute_race_ranks(df)

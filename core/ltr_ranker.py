@@ -103,6 +103,29 @@ def _trainer_jyo_t3(con, ketto, jyo):
         return None
 
 
+def _jockey_jyo_win(con, jockey_name, jyo):
+    """騎手の当競馬場(jyo)・直近60騎乗の勝率。騎手はレース毎に変わるので名前で照合。
+    学習側 compute_jockey_course と同義(過去のみ)。<15騎乗はNone。"""
+    if not jyo or not jockey_name:
+        return None
+    nm = str(jockey_name).replace(' ', '').replace('　', '')
+    if not nm:
+        return None
+    try:
+        rows = con.execute("""
+            SELECT res.chakujun FROM results res
+            JOIN races ra ON res.race_key = ra.race_key
+            WHERE REPLACE(REPLACE(res.jockey_name, ' ', ''), '　', '') = ?
+              AND ra.jyo = ? AND res.chakujun > 0
+            ORDER BY ra.year DESC, ra.monthday DESC LIMIT 60
+        """, (nm, str(jyo))).fetchall()
+        if len(rows) < 15:
+            return None
+        return sum(1 for x in rows if x[0] == 1) / len(rows)
+    except Exception:
+        return None
+
+
 def get_scores(horses, race_info):
     """
     horses: [{umaban, ketto_num, ninki, win_odds, bataiju, zogen, sex, age, futan}, ...]
@@ -148,6 +171,7 @@ def get_scores(horses, race_info):
         sp = _prior_spurt(con, kt) if con and kt else None
         t3, a5 = (_prior_record(con, kt) if con and kt else (None, None))
         tjt3 = _trainer_jyo_t3(con, kt, jyo_text) if con and kt else None
+        jjw = _jockey_jyo_win(con, h.get('jockey'), jyo_text) if con else None
 
         rows.append({
             'umaban': um,
@@ -162,7 +186,7 @@ def get_scores(horses, race_info):
             'prior_top3_rate': t3, 'avg_chaku5': a5,
             'jyo_code': jyo_code, 'race_num_code': race_num_code,
             'cushion': cushion_val, 'dirt_moisture': dirt_moist,
-            'trainer_jyo_t3': tjt3,
+            'trainer_jyo_t3': tjt3, 'jockey_jyo_win': jjw,
         })
     if con:
         con.close()
