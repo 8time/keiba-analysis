@@ -9853,9 +9853,13 @@ if nav == "🧠 MAGI回顧":
             st.caption("👶 終わったレースのIDを入れて審議開始。3人格がやさしく質問します。")
         else:
             _status = "決議完了" if osh['done'] else "審議中"
+            _nk_url = f"https://race.netkeiba.com/race/result.html?race_id={osh['race_id']}"
             st.markdown(
                 f"<div class='magi-panel'><div class='magi-status'><span>提訴</span><span>決議</span></div>"
-                f"<div class='magi-sub' style='margin-top:6px'>CODE : {osh['race_id'][-4:]}　STATUS : {_status}</div></div>",
+                f"<div class='magi-sub' style='margin-top:6px'>CODE : {osh['race_id'][-4:]}　STATUS : {_status}</div>"
+                f"<div style='margin-top:6px'><a href='{_nk_url}' target='_blank' "
+                f"style='color:#5fb3ff;font-family:monospace;font-size:0.78em;text-decoration:none;'>"
+                f"🔗 netkeibaでこのレースを開く（{osh['race_id']}）</a></div></div>",
                 unsafe_allow_html=True)
             _active = None
             for _m in reversed(osh['chat']):
