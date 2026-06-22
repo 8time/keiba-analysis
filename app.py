@@ -9855,16 +9855,17 @@ if nav == "🧠 MAGI回顧":
                 else:
                     _ctx = mc.build_context(_df_o, _mp, _ar)
                     try:
-                        _f = mc.magi_turn(_ctx, [], GEMINI_API_KEY)
+                        _burst = mc.magi_turn(_ctx, [], GEMINI_API_KEY)
                     except Exception:
-                        _f = {'persona': 'balthasar', 'message': 'このレースで気になった馬はいた?', 'done': False}
+                        _burst = {'turns': [{'persona': 'balthasar', 'message': 'このレースで気になった馬はいた?'}], 'done': False}
+                    _chat0 = [{'role': 'magi', 'persona': t['persona'], 'message': t['message'], 'id': _logid()}
+                              for t in _burst['turns']]
                     st.session_state.oshaberi = {
                         'race_id': _rid, 'ctx': _ctx, 'result_line': mc.result_one_line(_ctx),
-                        'chat': [{'role': 'magi', 'persona': _f['persona'], 'message': _f['message'], 'id': _logid()}],
-                        'done': False, 'saved': False,
+                        'chat': _chat0, 'done': bool(_burst.get('done')), 'saved': False, 'rounds': 1,
                     }
                     st.rerun()
-            st.caption("👶 終わったレースのIDを入れて審議開始。3人格がやさしく質問します。")
+            st.caption("👶 終わったレースのIDを入れて審議開始。3人格が話し合いながら回顧します。")
         else:
             _status = "決議完了" if osh['done'] else "審議中"
             _nk_url = f"https://race.netkeiba.com/race/result.html?race_id={osh['race_id']}"
@@ -9899,13 +9900,16 @@ if nav == "🧠 MAGI回顧":
                     _send = st.form_submit_button("▶ 送信", type="primary", use_container_width=True)
                 if _send and _ans and _ans.strip():
                     osh['chat'].append({'role': 'user', 'message': _ans.strip(), 'id': _logid()})
+                    osh['rounds'] = osh.get('rounds', 1) + 1
+                    _force = osh['rounds'] >= 4   # 上限: 4ターン目で総括して締める(エンドレス防止)
                     with st.spinner("MAGI 審議中..."):
                         try:
-                            _nx = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY)
+                            _burst = mc.magi_turn(osh['ctx'], osh['chat'], GEMINI_API_KEY, force_done=_force)
                         except Exception:
-                            _nx = {'persona': 'casper', 'message': 'なるほど。ほかに覚えていることは?', 'done': False}
-                    osh['chat'].append({'role': 'magi', 'persona': _nx['persona'], 'message': _nx['message'], 'id': _logid()})
-                    if _nx['done']:
+                            _burst = {'turns': [{'persona': 'casper', 'message': 'なるほど。ほかに覚えてることは?'}], 'done': _force}
+                    for t in _burst['turns']:
+                        osh['chat'].append({'role': 'magi', 'persona': t['persona'], 'message': t['message'], 'id': _logid()})
+                    if _burst.get('done'):
                         osh['done'] = True
                     st.session_state.oshaberi = osh
                     st.rerun()
@@ -9947,114 +9951,100 @@ if nav == "🧠 MAGI回顧":
                 f"<div class='magi-panel' style='font-size:0.95em;color:#ffd9a0;font-weight:700;"
                 f"background:#1a0e00;border:1px solid #e8590c;'>🏁 {_html.escape(osh['result_line'])}</div>",
                 unsafe_allow_html=True)
-            _entries = []
+            # 🔊 音声オン/オフ(単一トグル=ONなら新しい発言を出るたび自動で順に再生)
+            st.session_state.setdefault('magi_voice_on', True)
+            _voice_on = st.checkbox(
+                "🔊 音声で話す（3人別の女性声・出るたび自動再生）", key='magi_voice_on',
+                help="ブラウザ内蔵の読み上げ(VOICEVOX不要)。新しい発言が出るたび順に自動で話します。"
+                     "ブラウザの自動再生制限で最初の1回だけ無音のことがあり、その時は『🔊全部読む』を1度押すと解除されます。")
+
+            # 吹き出しチャット(デュラララ風)＋発言ごとの自動音声を1つのiframeに同梱
+            _pitch_map = {'melchior': 1.05, 'balthasar': 1.2, 'casper': 1.35}
+            _rate_map = {'melchior': 1.05, 'balthasar': 0.92, 'casper': 1.0}
+            _bubbles, _tts_items = [], []
             for _m in osh['chat']:
                 _body = _html.escape(_m['message']).replace(chr(10), '<br>')
                 if _m['role'] == 'user':
-                    _entries.append(
-                        f"<div class='log-entry user'><span class='log-tag' style='background:#6f9bff'>あなた</span>"
-                        f"<span class='log-id'>LOG_ID: {_m.get('id','')}</span><div class='log-body'>{_body}</div></div>")
+                    _bubbles.append(
+                        "<div class='row user'><div class='col'>"
+                        "<div class='nm' style='color:#6f9bff;text-align:right'>あなた</div>"
+                        "<div class='bub ubub'>" + _body + "</div></div>"
+                        "<div class='av' style='background:#3a5bd0'>YOU</div></div>")
                 else:
                     _p = mc.PERSONAS.get(_m['persona'], {})
-                    _entries.append(
-                        f"<div class='log-entry' style='border-left-color:{_p.get('color','#555')}'>"
-                        f"<span class='log-tag' style='background:{_p.get('color','#555')}'>{_p.get('jp','MAGI')}</span>"
-                        f"<span class='log-id'>LOG_ID: {_m.get('id','')}</span><div class='log-body'>{_body}</div></div>")
-            # デュラララ風チャットルーム(読みやすい3人チャット): 色分けハンドル＋フェードイン＋自動スクロール。
-            # iframe内で完結させ、CSSアニメと最下部スクロールを確実に動かす。
+                    _col = _p.get('color', '#888'); _emo = _p.get('emoji', ''); _nm = _p.get('jp', 'MAGI')
+                    _bubbles.append(
+                        "<div class='row magi'><div class='av' style='background:" + _col + "'>" + _emo + "</div>"
+                        "<div class='col'><div class='nm' style='color:" + _col + "'>" + _nm + "</div>"
+                        "<div class='bub' style='border-color:" + _col + "66;'>" + _body + "</div></div></div>")
+                    _tp = _m.get('persona', 'casper')
+                    _safe = _html.escape(_m['message']).replace("'", "\\'").replace('\n', ' ')
+                    _tts_items.append("{id:'" + str(_m.get('id', '')) + "',persona:'" + _tp + "',text:'" + _safe
+                                      + "',pitch:" + str(_pitch_map.get(_tp, 1.0)) + ",rate:" + str(_rate_map.get(_tp, 1.0)) + "}")
             _typing = ''
             if not osh['done']:
                 _typing = ("<div class='typing'><span class='dots'><span></span><span></span><span></span></span>"
-                           "<b>MAGI_CHANNEL</b> // 接続中 — あなたの返答を待っています</div>")
-            _room_css = (
+                           "<b>MAGI</b> が考えています…</div>")
+            _voice_js = 'true' if _voice_on else 'false'
+            _rid_js = ''.join(ch for ch in str(osh['race_id']) if ch.isalnum())
+            _chat_html = (
                 "<style>"
                 "@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');"
-                "*{box-sizing:border-box;}html,body{margin:0;background:#0a0a0a;}"
-                ".room{font-family:'Share Tech Mono',monospace;}"
-                ".room-hd{color:#9ecbff;letter-spacing:3px;font-size:11px;border-bottom:1px dashed #3a4a6a;"
-                "padding:4px 2px;margin-bottom:8px;}"
-                ".log-wrap{max-height:460px;overflow-y:auto;padding-right:6px;}"
-                ".log-entry{border-left:3px solid #555;padding:6px 10px;margin-bottom:10px;"
-                "background:rgba(255,255,255,0.03);border-radius:0 6px 6px 0;animation:msgIn .35s ease both;}"
-                ".log-entry.user{border-left-color:#6f9bff;background:rgba(120,160,255,0.08);}"
-                ".log-tag{color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:3px;"
-                "font-family:monospace;text-shadow:0 0 6px rgba(255,255,255,0.35);}"
-                ".log-id{color:#666;font-family:monospace;font-size:10px;margin-left:6px;}"
-                ".log-body{margin-top:5px;color:#e6ebf3;font-size:14px;line-height:1.55;}"
+                "*{box-sizing:border-box;}html,body{margin:0;background:#0a0a0a;font-family:'Share Tech Mono',sans-serif;}"
+                ".hd{color:#9ecbff;letter-spacing:3px;font-size:11px;border-bottom:1px dashed #3a4a6a;padding:4px 2px;margin-bottom:8px;}"
+                ".wrap{max-height:430px;overflow-y:auto;padding:2px 6px 2px 2px;}"
+                ".row{display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;animation:msgIn .35s ease both;}"
+                ".row.user{flex-direction:row;justify-content:flex-end;}"
+                ".av{flex:0 0 34px;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;"
+                "justify-content:center;font-size:15px;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(0,0,0,.5);}"
+                ".row.user .av{font-size:10px;}"
+                ".col{max-width:78%;}"
+                ".nm{font-size:11px;font-weight:700;margin:0 2px 3px;}"
+                ".bub{position:relative;background:#15171c;border:1px solid #333;border-radius:12px;"
+                "padding:8px 12px;color:#e9edf4;font-size:14px;line-height:1.55;}"
+                ".bub::before{content:'';position:absolute;top:10px;left:-7px;border:7px solid transparent;"
+                "border-right-color:#15171c;}"
+                ".ubub{background:#16234a;border-color:#3a5bd0;}"
+                ".row.user .bub::before{left:auto;right:-7px;border-right-color:transparent;border-left-color:#16234a;}"
                 "@keyframes msgIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}"
-                ".typing{display:flex;align-items:center;gap:8px;color:#e8590c;font-size:12px;margin:4px 0 2px;}"
+                ".typing{display:flex;align-items:center;gap:8px;color:#e8590c;font-size:12px;margin:2px 0 6px 42px;}"
                 ".typing b{color:#ffb37a;}"
                 ".dots span{display:inline-block;width:6px;height:6px;border-radius:50%;background:#e8590c;"
                 "margin-right:3px;animation:blink 1.2s infinite;}"
                 ".dots span:nth-child(2){animation-delay:.2s;}.dots span:nth-child(3){animation-delay:.4s;}"
                 "@keyframes blink{0%,80%,100%{opacity:.2;}40%{opacity:1;}}"
-                "</style>")
-            _room_html = (
-                _room_css
-                + "<div class='room'><div class='room-hd'>&#9617; MAGI_CHAT_ROOM // 回顧チャンネル &#9617;</div>"
-                + "<div class='log-wrap' id='logw'>" + ''.join(_entries) + _typing + "</div></div>"
-                + "<script>var w=document.getElementById('logw');if(w){w.scrollTop=w.scrollHeight;}</script>")
+                ".bar{display:flex;gap:6px;margin:6px 0 2px;}"
+                ".bar button{background:#2a2f3a;color:#ff8c42;border:1px solid #5a2d0a;border-radius:4px;"
+                "padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;}"
+                "</style>"
+                "<div class='hd'>&#9617; MAGI_CHAT_ROOM // 回顧チャンネル &#9617;</div>"
+                "<div class='wrap' id='w'>" + ''.join(_bubbles) + _typing + "</div>"
+                "<div class='bar'><button onclick='readAll()'>\U0001f50a 全部読む</button>"
+                "<button onclick='speechSynthesis.cancel()' style='color:#888;border-color:#444;'>■ 停止</button></div>"
+                "<script>"
+                "var W=document.getElementById('w');if(W){W.scrollTop=W.scrollHeight;}"
+                "var MSGS=[" + ','.join(_tts_items) + "];var VOICE=" + _voice_js + ";var RID='" + _rid_js + "';"
+                "var ORDER=['melchior','balthasar','casper'];"
+                "function jaV(){return speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.toLowerCase().indexOf('ja')===0;});}"
+                "function femFirst(vs){var f=/(nanami|haruka|sayaka|kyoko|ayumi|mayu|female|女性|o-?ren|google)/i;"
+                "var w=vs.filter(function(v){return f.test(v.name);});return w.length?w:vs;}"
+                "function vmap(){var vs=femFirst(jaV());var m={};ORDER.forEach(function(p,i){m[p]=vs.length?vs[i%vs.length]:null;});return m;}"
+                "function spk(m,vm){var u=new SpeechSynthesisUtterance(m.text);u.lang='ja-JP';u.pitch=m.pitch;u.rate=m.rate;"
+                "var v=vm[m.persona];if(v)u.voice=v;speechSynthesis.speak(u);}"
+                "function withV(cb){if(jaV().length){cb();}else{speechSynthesis.onvoiceschanged=function(){cb();};speechSynthesis.getVoices();}}"
+                "function readAll(){withV(function(){speechSynthesis.cancel();var vm=vmap();MSGS.forEach(function(m){spk(m,vm);});"
+                "sessionStorage.setItem('mspk_'+RID,JSON.stringify(MSGS.map(function(m){return m.id;})));});}"
+                "function speakNew(){if(!VOICE||!MSGS.length)return;withV(function(){var vm=vmap();"
+                "var done=[];try{done=JSON.parse(sessionStorage.getItem('mspk_'+RID)||'[]');}catch(e){done=[];}"
+                "var fresh=MSGS.filter(function(m){return done.indexOf(m.id)<0;});"
+                "fresh.forEach(function(m){spk(m,vm);done.push(m.id);});"
+                "sessionStorage.setItem('mspk_'+RID,JSON.stringify(done));});}"
+                "speakNew();"
+                "</script>")
             import streamlit.components.v1 as _stc2
-            _stc2.html(_room_html, height=510, scrolling=False)
-
-            _magi_msgs = [m for m in osh['chat'] if m['role'] == 'magi']
-            if _magi_msgs:
-                # 🔊 音声モード(ブラウザ標準=Web Speech API・VOICEVOX不要・push/クラウド版でも動作・サーバ負荷ゼロ)
-                # value=とkey=の併用はStreamlitで競合し『何度もクリック必要』になるためsetdefault+keyのみにする
-                st.session_state.setdefault('magi_voice_on', False)
-                st.session_state.setdefault('magi_voice_auto', False)
-                _vc1, _vc2 = st.columns([1, 1])
-                with _vc1:
-                    _voice_on = st.checkbox("🔊 音声(軽量)", key='magi_voice_on',
-                                            help="ブラウザ内蔵の読み上げ。VOICEVOX等の起動は不要で、公開版でもそのまま話します。")
-                with _vc2:
-                    _voice_auto = st.checkbox("自動読み上げ", key='magi_voice_auto', disabled=not _voice_on,
-                                              help="新しい発言が出たら自動で1回だけ読み上げます。"
-                                                   "ブラウザの自動再生制限で、最初の1回は🔊全部読むを押すと解除されます。")
-                if _voice_on:
-                    # 3人とも別々の女性の声: 日本語音声プールから別音声を割当(順=メル/バル/キャス)。
-                    # 声が1つしかない環境でも女性寄りのピッチ/速度差で3人を差別化(全員pitch≥1.0)。
-                    _pitch_map = {'melchior': 1.05, 'balthasar': 1.2, 'casper': 1.35}
-                    _rate_map = {'melchior': 1.05, 'balthasar': 0.92, 'casper': 1.0}
-                    _tts_items = []
-                    for _tm in _magi_msgs:
-                        _tp = _tm.get('persona', 'casper')
-                        _safe = _html.escape(_tm['message']).replace("'", "\\'").replace('\n', ' ')
-                        _tts_items.append("{text:'" + _safe + "',persona:'" + _tp + "',pitch:"
-                                          + str(_pitch_map.get(_tp, 1.0)) + ",rate:" + str(_rate_map.get(_tp, 1.0)) + "}")
-                    _tts_js = ','.join(_tts_items)
-                    _last = _magi_msgs[-1]
-                    _last_id = _last.get('id', str(len(_magi_msgs)))
-                    _auto_flag = 'true' if _voice_auto else 'false'
-                    import streamlit.components.v1 as _stc
-                    _stc.html(
-                        '<div style="display:flex;gap:6px;margin:4px 0;">'
-                        '<button onclick="readAll()" style="background:#2a2f3a;color:#ff8c42;border:1px solid #5a2d0a;'
-                        'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
-                        '\U0001f50a 全部読む</button>'
-                        '<button onclick="speechSynthesis.cancel()" style="background:#2a2f3a;color:#888;border:1px solid #444;'
-                        'border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:monospace;">'
-                        '■ 停止</button></div>'
-                        '<script>var msgs=[' + _tts_js + '];'
-                        'var ORDER=["melchior","balthasar","casper"];'
-                        'function jaVoices(){return speechSynthesis.getVoices().filter('
-                        'function(v){return v.lang&&v.lang.toLowerCase().indexOf("ja")===0;});}'
-                        'function femFirst(vs){var f=/(nanami|haruka|sayaka|kyoko|ayumi|mayu|female|女性|o-?ren|google)/i;'
-                        'var w=vs.filter(function(v){return f.test(v.name);});return w.length?w:vs;}'
-                        'function vmap(){var vs=femFirst(jaVoices());var m={};'
-                        'ORDER.forEach(function(p,i){m[p]=vs.length?vs[i%vs.length]:null;});return m;}'
-                        'function spk(m,vm){var u=new SpeechSynthesisUtterance(m.text);u.lang="ja-JP";'
-                        'u.pitch=m.pitch;u.rate=m.rate;var v=vm[m.persona];if(v)u.voice=v;speechSynthesis.speak(u);}'
-                        'function withVoices(cb){if(jaVoices().length){cb();}else{'
-                        'speechSynthesis.onvoiceschanged=function(){cb();};speechSynthesis.getVoices();}}'
-                        'function readAll(){withVoices(function(){speechSynthesis.cancel();var vm=vmap();'
-                        'msgs.forEach(function(m){spk(m,vm);});});}'
-                        'if(' + _auto_flag + ' && msgs.length){var k="magi_last_spoken";'
-                        'if(sessionStorage.getItem(k)!=="' + _last_id + '"){sessionStorage.setItem(k,"' + _last_id + '");'
-                        'withVoices(function(){speechSynthesis.cancel();spk(msgs[msgs.length-1],vmap());});}}'
-                        '</script>', height=40)
-                    st.caption("3人別の女性声。声の種類はお使いのブラウザ/OSの日本語音声に依存します"
-                               "（Edge=Nanami/Haruka等が豊富）。声が少ない環境はピッチ差で区別します。")
+            _stc2.html(_chat_html, height=540, scrolling=False)
+            st.caption("3人別の女性声。声の種類はブラウザ/OSの日本語音声に依存（Edgeが豊富）。"
+                       "声が少ない環境はピッチ差で3人を区別します。")
 
             if osh.get('saved'):
                 _lg = osh.get('learning', {})

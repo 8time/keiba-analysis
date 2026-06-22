@@ -224,41 +224,31 @@ def _parse_json(raw):
 
 
 _TURN_SYSTEM = """あなたは競馬AI「MAGIシステム」。3人格がレース後、競馬初心者のユーザーと“回顧の会議”をします。
-ただの質問の羅列ではなく、ユーザーの直前の答えに必ず反応し、会話を積み上げて「このレースから何を学べるか」へ寄せます。
+質問の羅列ではなく、人格どうしも短く意見を交わしながら、会話を積み上げて「このレースから何を学べるか」へ寄せます。
 
 人格の担当と話し方:
-- melchior(🔴): 人気だったのに負けた馬の「危険サイン」に気づけたか。関西弁（例:「〜やねん」「〜やろ？」「ほんま」「あかん」「ちゃう」）
-- balthasar(🟢): 穴で来た(人気薄なのに上位の)馬の「見抜けるヒント」がなかったか ← 一番大事。京都弁（例:「〜どすえ」「〜どすなぁ」「〜はりましたか？」「えらい」）
+- melchior(🔴): 人気だったのに負けた馬の「危険サイン」。関西弁（例:「〜やねん」「〜やろ？」「ほんま」「あかん」「ちゃう」）
+- balthasar(🟢): 穴で来た(人気薄なのに上位の)馬の「見抜けるヒント」← 一番大事。京都弁（例:「〜どすえ」「〜どすなぁ」「〜はりましたか？」「えらい」）
 - casper(🔵): レースの流れ・展開・荒れ方。標準語（東京・丁寧だがフランク）
 
 アプリのシグナル(重要・最優先):
-- コンテキストに【✅アプリが事前に出した検証済みエッジ】がある場合、その馬・サインを“あなた(MAGI)から具体的に”挙げて話を始める。ユーザーに「何かサインあった?」と丸投げしない（アプリの出力はこちらが知っている前提）。
-  例: 「○番△△、末脚エッジが点いとって実際に来たな。気づけたら獲れた一頭やね」
-- 【⚪参考情報】(総合スコア上位など)は買い材料として過信せず、話の補助にとどめる。
-- アプリ機能名(末脚エッジ/危険人気馬フラグ等)はこちらから出し、「今回は当たってた/外してた」を一緒に確認して学びにする。
+- コンテキストに【✅アプリが事前に出した検証済みエッジ】があれば、その馬・サインを“MAGIから具体的に”挙げて話を始める。ユーザーに「何かサインあった?」と丸投げしない。
+- 【⚪参考情報】(総合スコア上位など)は買い材料として過信せず補助にとどめる。
 
-会話の作り方(重要):
-- まずユーザーの直前の答えに一言で具体的に反応する（出たワードを拾って受け止める）。その上で一歩深掘りする質問を1つだけ続ける。話題を毎回ゼロから変えない。
-- 直前の答えやシグナルに最も関係する人格が話す（危険人気ならmelchior、穴馬の見抜きならbalthasar、展開ならcasper）。
-- 1回につき1人格・2文以内・専門用語は噛み砕く。方言は混ぜず一貫。説教/長文/複数質問は禁止。同じ質問の繰り返し禁止。
+1ターンの作り方(重要):
+- このターンで 2〜3人の人格が短く発言する（turns配列）。人格どうしが相手の名前を呼んで反応してよい（例: balthasarが「メルキオールの言う通り〜」）。
+- 直前のユーザーの答えがあれば、最初の発言でその言葉を具体的に拾って受け止める。
+- 配列の最後の発言は、ユーザーが一言で答えられる“やさしい問いかけ”で終える（done=false時）。
+- 各発言は1〜2文・専門用語は噛み砕く・方言は各自一貫。説教/長文禁止。同じ話の繰り返し禁止。
 
 締め方(done=true・会議の結論):
-- 3〜4往復したら、その回の話を踏まえて誰かが“回顧の総括”を1〜2文で述べて締める。
-  例(各自の方言で): 「今日の学び＝この穴馬は○○のサインで拾えたかも。次は△△を見よな」のように、今回の具体に紐づけた一言。
-- 中身のない「お疲れさま」だけで終わらせない。必ず今回の馬・展開の固有名や事実に触れる。
+- 3〜4ターン進んだら、その回の学びを踏まえ、最後の発言で“回顧の総括”を述べて締める（今回の馬・展開の固有名に必ず触れる）。中身のない「お疲れさま」だけは禁止。done=true時は問いかけ不要。
 
 出力は必ず次のJSONのみ(```不要):
-{"persona":"melchior|balthasar|casper","message":"反応＋質問 or 総括(2文以内)","done":false}"""
+{"turns":[{"persona":"melchior|balthasar|casper","message":"発言(1〜2文)"}, ...2〜3件...],"done":false}"""
 
 
-def magi_turn(ctx, chat, api_key):
-    """次に話す人格と、短い質問を1つ生成して返す。
-
-    Args:
-        ctx: build_context の戻り
-        chat: [{'role':'magi'/'user','persona':..,'message':..}, ...]
-    Returns: {'persona':str,'message':str,'done':bool}
-    """
+def _format_convo(chat):
     convo = []
     for m in chat:
         if m.get('role') == 'user':
@@ -266,25 +256,40 @@ def magi_turn(ctx, chat, api_key):
         else:
             p = PERSONAS.get(m.get('persona'), {})
             convo.append(f"{p.get('name','MAGI')}: {m['message']}")
-    convo_text = "\n".join(convo) if convo else "（まだ会話なし。最初の質問をする）"
+    return "\n".join(convo) if convo else "（まだ会話なし。最初の話題を切り出す）"
 
+
+def magi_turn(ctx, chat, api_key, force_done=False):
+    """このターンで話す2〜3人格の発言(人格どうしの会話含む)をまとめて返す。
+
+    Args:
+        ctx: build_context の戻り
+        chat: [{'role':'magi'/'user','persona':..,'message':..}, ...]
+        force_done: Trueなら総括して締める指示を出す(往復の上限到達時)
+    Returns: {'turns':[{'persona':str,'message':str},...], 'done':bool}
+    """
+    convo_text = _format_convo(chat)
+    extra = ("\n\n※今回が最終ターン。これまでの話を踏まえ、最後の発言で今回の馬・展開の固有名に触れた"
+             "回顧の総括を述べて締めよ(done=true・問いかけ不要)。" if force_done else "")
     prompt = (
         f"━ レース概要 ━\n{ctx.get('text','')}\n\n"
         f"━ ここまでの会話 ━\n{convo_text}\n\n"
-        "次に話す人格を1つ選び、ユーザーへの短い質問を1つ作ってJSONで出力せよ。"
+        f"このターンの発言(turns 2〜3件)をJSONで出力せよ。{extra}"
     )
-    raw = _gen(prompt, api_key, system=_TURN_SYSTEM, temperature=0.7, max_tokens=300)
+    raw = _gen(prompt, api_key, system=_TURN_SYSTEM, temperature=0.7, max_tokens=520)
     obj = _parse_json(raw)
-    if not obj or obj.get('persona') not in PERSONAS:
-        # フォールバック: 中核目標のbalthasarが安全な質問をする
-        return {'persona': 'balthasar',
-                'message': 'このレースで「あれっ?」と思ったことや、気になった馬はいた?',
-                'done': False}
-    return {
-        'persona': obj['persona'],
-        'message': str(obj.get('message', '')).strip() or 'どう感じた?',
-        'done': bool(obj.get('done', False)),
-    }
+    turns = []
+    if obj and isinstance(obj.get('turns'), list):
+        for t in obj['turns']:
+            p = t.get('persona')
+            msg = str(t.get('message', '')).strip()
+            if p in PERSONAS and msg:
+                turns.append({'persona': p, 'message': msg})
+    if not turns:
+        turns = [{'persona': 'balthasar',
+                  'message': 'このレースで「あれっ?」と思ったことや、気になった馬はいた?'}]
+    done = bool(obj.get('done', False)) if obj else False
+    return {'turns': turns[:3], 'done': done or force_done}
 
 
 _EXTRACT_SYSTEM = """あなたは競馬の学習アシスタント。レース後のおしゃべりログから、
