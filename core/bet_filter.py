@@ -20,18 +20,33 @@ W_DANGER = 2.6    # 危険馬を含む(1頭ごと・減点)
 
 
 def annotate_bets(bets, *, edge_horses=None, danger_horses=None, ana_set=None,
-                  in_band_key='in_band'):
-    """買い目リストに当て度(aim_score)・印(aim_tag)・根拠(aim_reason)を付与し降順で返す。
+                  in_band_key='in_band', edge_reasons=None, danger_reasons=None):
+    """買い目リストに妙味度(aim_score)・印(aim_tag)・根拠(aim_reason)を付与し降順で返す。
 
     bets: [{'combo': iterable of umaban(int), in_band_key: bool(任意), ...}, ...]
-    edge_horses: 検証エッジ馬(補正T/末脚top)のumaban set
-    danger_horses: 危険馬(重不良×1番人気/消去の消し馬)のumaban set
+    edge_horses: 検証エッジ馬(補正T/末脚top/厩舎当ｺｰｽ/黄金ライン/道悪軸…)のumaban set
+    danger_horses: 危険馬(重不良×1番人気/道悪FADE/消去の消し馬)のumaban set
     ana_set: 穴馬(人気薄)のumaban set。エッジは穴脚に乗ると価値が高い。
+    edge_reasons/danger_reasons: {umaban: [ラベル..]} 馬ごとの具体的な根拠ラベル(任意・表示用)。
     戻り: 同じdictに aim_score/aim_tag/aim_reason/edge_legs/danger_legs を足し aim_score降順。
+
+    🎯は『狙い目価格帯 かつ 穴脚に検証エッジ』が揃った組だけ(価格帯は的中を予測しない=
+    [[verified_tansho_roi_efficient]]のため、価格帯のみでは🎯を付けない)。
     """
     edge = {int(u) for u in (edge_horses or [])}
     danger = {int(u) for u in (danger_horses or [])}
     ana = {int(u) for u in (ana_set or [])}
+    e_reasons = {int(k): list(v) for k, v in (edge_reasons or {}).items()}
+    d_reasons = {int(k): list(v) for k, v in (danger_reasons or {}).items()}
+
+    def _labels(legs, rmap):
+        seen = []
+        for u in legs:
+            for lab in rmap.get(u, []):
+                if lab not in seen:
+                    seen.append(lab)
+        return seen
+
     out = []
     for b in bets:
         try:
@@ -50,16 +65,22 @@ def annotate_bets(bets, *, edge_horses=None, danger_horses=None, ana_set=None,
         if edge_legs:
             # 穴脚に乗ったエッジは満額、人気脚のエッジは半額(穴の方が妙味)
             score += W_EDGE * (len(edge_ana) + 0.5 * (len(edge_legs) - len(edge_ana)))
-            reasons.append(f"検証エッジ脚{len(edge_legs)}" + (f"(穴{len(edge_ana)})" if edge_ana else ''))
+            _elab = _labels(edge_legs, e_reasons)
+            reasons.append('・'.join(_elab) if _elab
+                           else f"検証エッジ脚{len(edge_legs)}" + (f"(穴{len(edge_ana)})" if edge_ana else ''))
         if danger_legs:
             score -= W_DANGER * len(danger_legs)
-            reasons.append(f"⚠危険馬{len(danger_legs)}")
+            _dlab = _labels(danger_legs, d_reasons)
+            reasons.append('⚠' + ('・'.join(_dlab) if _dlab else f"危険馬{len(danger_legs)}"))
+        # 🎯は価格帯×穴脚エッジの合致時のみ(価格帯だけ/エッジだけは別チップに降格)
         if danger_legs:
             tag = '⚠'
-        elif in_band and edge_legs:
-            tag = '🎯本命級'
-        elif in_band or edge_legs:
+        elif in_band and edge_ana:
             tag = '🎯'
+        elif edge_legs:
+            tag = '🔵エッジ'
+        elif in_band:
+            tag = '価格帯'
         else:
             tag = ''
         nb = dict(b)

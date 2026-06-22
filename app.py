@@ -5336,9 +5336,17 @@ if nav == "🏠 Single Race Analysis":
                         try:
                             from core import corrected_time as _ctf2
                             from core import jockey_jv as _jjf2
+                            from core import track_bias as _tbf2
                             _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
                             _baba_te = str(meta.get('condition', '') or '')
+                            _jyo_te = str(race_id_input)[4:6]
                             _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set()
+                            # 馬ごとの根拠ラベル(表示用)。edge=妙味方向 / danger=危険方向
+                            _ereason = {}; _dreason = {}
+                            def _addr(d, u, lab):
+                                d.setdefault(u, [])
+                                if lab not in d[u]:
+                                    d[u].append(lab)
                             for _, _rt in df.iterrows():
                                 _utn = pd.to_numeric(_rt.get('Umaban'), errors='coerce')
                                 if pd.isnull(_utn):
@@ -5351,7 +5359,9 @@ if nav == "🏠 Single Race Analysis":
                                         ('芝' in _surf_te and _baba_te in ('重', '不良')) or
                                         ('ダ' in _surf_te and _baba_te == '不良')):
                                     _danger_te.add(_ut)
-                                _ktt, _ = _jjf2.resolve_horse(str(_rt.get('Name', '')))
+                                    _addr(_dreason, _ut, f'🌧️{_baba_te}×1番人気')
+                                _ktt, _tc2 = _jjf2.resolve_horse(str(_rt.get('Name', '')))
+                                _jky2 = str(_rt.get('Jockey', '') or '')
                                 if _ktt:
                                     _fg = _ctf2.get_figure(_ktt, _surf_te)
                                     if _fg and _fg.get('fig') is not None:
@@ -5360,19 +5370,77 @@ if nav == "🏠 Single Race Analysis":
                                     _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
                                     if _si is not None and _srn >= 2:
                                         _spurt_te[_ut] = _si
-                            _edge_te = {u for u, r in _ctf2.field_ranks(_ctfig_te).items() if r <= 3}
-                            _edge_te |= {u for u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]}
-                            st.session_state[_aim_key] = {'edge': _edge_te, 'danger': _danger_te, 'ana': _ana_te}
+                                    # 道悪×血統(検証済): WETPOWER=軸補強 / FADE=危険
+                                    _sire2 = _tbf2.sire_of_ketto(_ktt)
+                                    _bm2 = _tbf2.heavy_fav_blood_mod(_sire2, _surf_te, _baba_te) if _sire2 else None
+                                    if _bm2 and _bm2['mod'] == 'exempt':
+                                        _addr(_ereason, _ut, '🟢道悪軸')
+                                    elif _bm2 and _bm2['mod'] == 'intensify':
+                                        _danger_te.add(_ut)
+                                        _addr(_dreason, _ut, '⚠瞬発系道悪')
+                                # 厩舎の当コース勝率(検証: >20%は妙味)
+                                if _tc2:
+                                    _tcw = _jjf2.trainer_course_winrate(_tc2, _jyo_te, _surf_te)
+                                    if _tcw and _tcw.get('runs', 0) >= 5 and _tcw.get('win_rate', 0) >= 0.20:
+                                        _addr(_ereason, _ut, f"🏠厩舎当ｺｰｽ{_tcw['win_rate']*100:.0f}%")
+                                # 黄金ライン(騎手×厩舎の連対率・検証で消去エンジンと同条件)
+                                if _tc2 and _jky2:
+                                    _gl = _jjf2.jockey_trainer_combo(_jky2, _tc2)
+                                    if _gl and _gl.get('rides', 0) >= 10 and _gl.get('top2', 0) >= 0.40:
+                                        _addr(_ereason, _ut, f"⭐黄金ライン{_gl['top2']*100:.0f}%")
+                            # 補正T上位3 / 末脚上位3 を妙味エッジに(穴脚で価値・検証済)
+                            for _u, _r in _ctf2.field_ranks(_ctfig_te).items():
+                                if _r <= 3:
+                                    _addr(_ereason, _u, '🔵補正T上位')
+                            for _u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]:
+                                _addr(_ereason, _u, '🔥末脚top')
+                            _edge_te = set(_ereason.keys())
+                            st.session_state[_aim_key] = {
+                                'edge': _edge_te, 'danger': _danger_te, 'ana': _ana_te,
+                                'edge_reasons': _ereason, 'danger_reasons': _dreason}
                         except Exception:
-                            st.session_state[_aim_key] = {'edge': set(), 'danger': set(), 'ana': set()}
+                            st.session_state[_aim_key] = {'edge': set(), 'danger': set(), 'ana': set(),
+                                                          'edge_reasons': {}, 'danger_reasons': {}}
                     _aim = st.session_state[_aim_key]
+
+                    # ── 決着タイプ判定(検証済 value_scanner.trio_lean): どのパターンで勝てるレースか ──
+                    _rec_idx = 0
+                    try:
+                        from core import value_scanner as _vs_te
+                        _olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
+                        _favo = min(_olist) if _olist else None
+                        try:
+                            _distv = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _distv = None
+                        _pint_te = st.session_state.get(f'_pace_int_{race_id_input}')
+                        _pz_te = _pint_te.get('z') if isinstance(_pint_te, dict) else None
+                        _lean_res = _vs_te.trio_lean(meta=meta, n_horses=len(df), fav_odds=_favo,
+                                                     dist=_distv, baba=str(meta.get('condition', '') or ''),
+                                                     odds_list=_olist, pace_z=_pz_te)
+                        _lean = _lean_res['lean']
+                        _rec_idx = 1 if _lean == '②穴妙味向き' else 0
+                        if _lean == '②穴妙味向き':
+                            st.info(f"🎲 **決着タイプ判定: ②穴妙味向き**（lean {_lean_res['score']:+.1f}）"
+                                    f"→ 下の『②穴妙味狙い』推奨。" + "　/　".join(_lean_res['pos'][:3]))
+                        elif _lean == '本線向き':
+                            st.success(f"🛡️ **決着タイプ判定: 本線向き(堅め)**（lean {_lean_res['score']:+.1f}）"
+                                       f"→ 下の『本線』推奨。" + "　/　".join(_lean_res['neg'][:3]))
+                        else:
+                            st.caption(f"⚖️ 決着タイプ判定: 中立（lean {_lean_res['score']:+.1f}）。"
+                                       + "　/　".join((_lean_res['pos'] + _lean_res['neg'])[:3]))
+                        st.caption("※検証(scripts/trio_lean_validate.py 2021-25): 本線向き→実本線42.5%/②型13.0%、"
+                                   "②穴妙味向き→②型35.0%/本線25.4%（母集団31.2/27.9%）と決着タイプを分離。"
+                                   "判別子=ハンデ/頭数/距離/道悪/上位オッズの割れ具合。")
+                    except Exception as _le:
+                        st.caption(f"（決着タイプ判定スキップ: {_le}）")
 
                     _c1, _c2, _c3, _c4 = st.columns(4)
                     with _c1:
                         _axis_mode = st.radio("軸モード", ['軸なし(自動)', '1軸', '2軸'], key='te_axis_mode')
                     with _c2:
                         _pattern = st.radio("狙うパターン", ['本線(人気2頭軸＝鉄板+①)', '②穴妙味狙い(人気-穴-穴)'],
-                                            key='te_pattern_v3',
+                                            key='te_pattern_v3', index=_rec_idx,
                                             captions=['堅め・的中重視(鉄板+①を83%カバー)',
                                                       '荒れ・高配当(本線が取りこぼす穴レース／🔥末脚救出等の妙味穴を厚く)'])
                     with _c3:
@@ -5496,9 +5564,13 @@ if nav == "🏠 Single Race Analysis":
                             import importlib as _il_bf; _il_bf.reload(_bf)
                             _te_res['bets'] = _bf.annotate_bets(
                                 _te_res['bets'], edge_horses=_aim['edge'],
-                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
-                            st.caption("🎯当て度＝狙い目価格帯＋穴脚の検証エッジ(🔵補正T/末脚top)で上位化、⚠は危険馬(重不良×1番人気)を含む組。"
-                                       "削らず並べ替え＝当たる根拠のある組を上に。")
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'],
+                                edge_reasons=_aim.get('edge_reasons'),
+                                danger_reasons=_aim.get('danger_reasons'))
+                            st.caption("🎯妙味度＝🎯(狙い目価格帯×穴脚の検証エッジが揃った本命級のみ)／🔵エッジ(検証エッジ脚)"
+                                       "／価格帯(帯のみ)／⚠(危険馬を含む)。根拠列に🔵補正T・🔥末脚・🏠厩舎当ｺｰｽ・"
+                                       "⭐黄金ライン・🟢道悪軸などの検証エッジを表示。価格帯は的中を予測しないため🎯は付けません。"
+                                       "削らず並べ替え＝根拠のある組を上に。")
                         except Exception as _bfe:
                             st.caption(f"（馬券フィルター適用スキップ: {_bfe}）")
                         _alloc_mode = '均等買い'
@@ -5515,9 +5587,8 @@ if nav == "🏠 Single Race Analysis":
                                 '馬名': ' / '.join(_b['names']),
                                 '人気構成': f"人{_b['pop_ana'][0]}穴{_b['pop_ana'][1]}",
                                 'オッズ': f"{_od:.1f}倍" if _od else '-',
-                                '🎯当て度': _b.get('aim_tag', ''),
+                                '🎯妙味度': _b.get('aim_tag', ''),
                                 '根拠': _b.get('aim_reason', '-'),
-                                '狙い目': '🎯' if _b['in_band'] else '',
                                 'スコア': _b['score'],
                             }
                             if _budget:
@@ -5597,10 +5668,14 @@ if nav == "🏠 Single Race Analysis":
                             from core import bet_filter as _bfqe
                             _qe['quinella'] = _bfqe.annotate_bets(
                                 _qe.get('quinella', []), edge_horses=_aim['edge'],
-                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'],
+                                edge_reasons=_aim.get('edge_reasons'),
+                                danger_reasons=_aim.get('danger_reasons'))
                             _qe['exacta'] = _bfqe.annotate_bets(
                                 _qe.get('exacta', []), edge_horses=_aim['edge'],
-                                danger_horses=_aim['danger'], ana_set=_aim['ana'])
+                                danger_horses=_aim['danger'], ana_set=_aim['ana'],
+                                edge_reasons=_aim.get('edge_reasons'),
+                                danger_reasons=_aim.get('danger_reasons'))
                         except Exception:
                             pass
 
@@ -5648,9 +5723,8 @@ if nav == "🏠 Single Race Analysis":
                                 '馬名': ' / '.join(r['names']),
                                 '構成': r['pop_ana'],
                                 'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
-                                '🎯当て度': r.get('aim_tag', ''),
+                                '🎯妙味度': r.get('aim_tag', ''),
                                 '根拠': r.get('aim_reason', '-'),
-                                '狙い目': '🎯' if r['in_band'] else '',
                             }
                             if _qe_budget:
                                 _qr['購入額'] = f"¥{r.get('stake', 0):,}"
@@ -5679,9 +5753,8 @@ if nav == "🏠 Single Race Analysis":
                                 '馬名': ' → '.join(r['names']),
                                 '構成': r['pop_ana'],
                                 'オッズ': f"{r['odds']:.1f}倍" if r['odds'] else '-',
-                                '🎯当て度': r.get('aim_tag', ''),
+                                '🎯妙味度': r.get('aim_tag', ''),
                                 '根拠': r.get('aim_reason', '-'),
-                                '狙い目': '🎯' if r['in_band'] else '',
                             }
                             if _qe_budget:
                                 _er['購入額'] = f"¥{r.get('stake', 0):,}"

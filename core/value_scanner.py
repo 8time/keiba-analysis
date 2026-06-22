@@ -136,40 +136,76 @@ def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_hors
 
 
 # ───────────────────────── 3連複 決着タイプ傾向(本線 ⇔ ②穴妙味) ─────────────────────────
-def trio_lean(meta=None, n_horses=None, fav_odds=None, pace_z=None):
+def trio_lean(meta=None, n_horses=None, fav_odds=None, pace_z=None,
+              dist=None, baba=None, odds_list=None):
     """3連複の決着タイプの傾向を検証済みエッジから推定する。
     score>0=②穴妙味(人気-穴-穴)寄り / score<0=本線(人気2頭軸＝鉄板+①)寄り。
+    dist=距離(m)・baba=馬場('重'/'不良'等)・odds_list=全馬の単勝オッズ list を渡すと精度UP。
 
-    検証(scripts/condition_arare_backtest.py 2021-25 平地 tosu>=8・1番人気オッズ帯で統制):
-      母集団: 本線決着率31.1% / ②型(3着内に5番人気以下2頭)28.0%
-      ・ハンデ戦       : 本線-3.8pp(z-2.7) / ②型+7.9pp(z+5.2) ＝独立エッジ(②寄り)
-      ・フルゲート16頭+ : 本線-2.2pp(z-3.9) / ②型+3.4pp(z+5.9) ＝独立エッジ(②寄り)
-      ・少頭数8-10頭    : 本線+8.4pp(z+8.3) / ②型-10.7pp(z-11.9) ＝堅い(本線寄り)
-      ・牝馬限定/ダート/芝: 残差≈0(z<|2|)＝オッズ織込み済み→スコアに入れない(検索フィルタのみ)
-      ・ペース(別検証)  : ハイ想定→荒れ寄り / スロー想定→前残り堅め(中程度のエッジ)
+    検証A(scripts/condition_arare_backtest.py 2021-25 平地 tosu>=8・1番人気オッズ帯で統制):
+      母集団: 本線決着率31.2% / ②型(3着内に5番人気以下2頭)27.9%
+      ・ハンデ戦 ②+7.9pp(z5.2) / フルゲート16+ ②+3.4pp(z5.9) / 少頭数8-10 本線+8.4pp(z8.3)
+    検証B(scripts/trio_type_search.py 同データ・同統制で新判別子を追加検証):
+      ・オッズ形状: 上位3頭の単勝合成≥4.0倍 ②+5.4pp(z8.0) / 1-2番人気オッズ比≤1.25 本線+4.9pp(z8.1)
+                   / 同比≥1.8(1番人気抜け) ②+3.9pp(z7.4) ＝fav_odds単体より形状が効く
+      ・短距離≤1400 ②+1.8pp(z3.2) / 中距離1801-2200 本線寄り②-2.3pp(z-2.6)
+      ・多頭数14-15 ②+1.8pp(z2.4=頭数勾配) / 道悪(重不良) ②+2.2pp(z2.2)
+      ・牝馬限定/ダート/芝/重賞/ローカル場: 残差≈0 or 小標本→不採用(織込み済み or ノイズ)
+      ・ペース(別検証): ハイ想定→荒れ寄り / スロー想定→前残り堅め(中程度)
     """
     meta = meta or {}
     score = 0.0
     pos, neg = [], []  # pos=②穴妙味の理由 / neg=本線の理由
+    # ── 構造条件(オッズと独立・検証A/B) ──
     if meta.get('is_handicap') or meta.get('weight_rule') == 'ハンデ':
-        score += 2.0; pos.append('ハンデ戦(②型+7.9pp/z5.2・検証済)')
+        score += 2.0; pos.append('ハンデ戦(②+7.9pp/z5.2・検証済)')
     if n_horses and n_horses >= 16:
-        score += 1.5; pos.append(f'フルゲート{n_horses}頭(②型+3.4pp/z5.9・検証済)')
-    if n_horses and 8 <= n_horses <= 10:
+        score += 1.5; pos.append(f'フルゲート{n_horses}頭(②+3.4pp/z5.9・検証済)')
+    elif n_horses and 14 <= n_horses <= 15:
+        score += 0.6; pos.append(f'多頭数{n_horses}頭(②+1.8pp/z2.4・検証済)')
+    elif n_horses and 8 <= n_horses <= 10:
         score -= 2.0; neg.append(f'少頭数{n_horses}頭(本線+8.4pp/z8.3・検証済)')
-    if fav_odds is not None:
+    try:
+        _dd = int(dist) if dist else 0
+    except Exception:
+        _dd = 0
+    if _dd and _dd <= 1400:
+        score += 0.8; pos.append(f'短距離{_dd}m(②+1.8pp/z3.2・検証済)')
+    elif 1801 <= _dd <= 2200:
+        score -= 0.8; neg.append(f'中距離{_dd}m(本線寄り②-2.3pp/z2.6・検証済)')
+    if str(baba or '') in ('重', '不良'):
+        score += 0.8; pos.append(f'道悪({baba})(②+2.2pp/z2.2・検証済)')
+    # ── オッズ形状(タイプ判別に有効・検証B。fav_odds単体より上位の割れ具合が効く) ──
+    _syn3 = None; _r21 = None
+    if odds_list:
+        _od = sorted(o for o in odds_list if o and o > 0)
+        if len(_od) >= 3:
+            _inv = sum(1.0 / o for o in _od[:3])
+            _syn3 = 3.0 / _inv if _inv else None
+            _r21 = _od[1] / _od[0] if _od[0] else None
+    if _syn3 is not None and _syn3 >= 4.0:
+        score += 1.8; pos.append(f'上位3頭割れ(合成{_syn3:.1f}倍/②z8.0・検証済)')
+    if _r21 is not None:
+        if _r21 <= 1.25:
+            score -= 1.8; neg.append(f'上位拮抗(1-2番人気比{_r21:.2f}/本線z8.1・検証済)')
+        elif _r21 >= 1.8:
+            score += 1.0; pos.append(f'1番人気抜け(1-2番人気比{_r21:.1f}/②z7.4・検証済)')
+    elif fav_odds is not None:
+        # odds_list 無い時のフォールバック(従来の粗い1番人気オッズ)
         if fav_odds >= 3.5:
             score += 1.0; pos.append(f'1番人気{fav_odds:.1f}倍=混戦')
         elif fav_odds < 1.8:
             score -= 1.5; neg.append(f'1番人気{fav_odds:.1f}倍=鉄板')
+    # ── ペース ──
     if pace_z is not None:
         if pace_z >= 0.7:
             score += 0.8; pos.append(f'🌀ハイペース想定(z{pace_z:+.1f})')
         elif pace_z <= -0.5:
             score -= 0.8; neg.append(f'🏁スロー想定=前残り(z{pace_z:+.1f})')
-    if score >= 1.5:
+    # 判別子増に合わせ分類閾値を±2.0に(精度優先)
+    if score >= 2.0:
         lean = '②穴妙味向き'
-    elif score <= -1.5:
+    elif score <= -2.0:
         lean = '本線向き'
     else:
         lean = '中立'
