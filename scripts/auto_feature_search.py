@@ -177,6 +177,29 @@ def build_candidates(df, candset):
         df.drop(columns=['_dbk4', '_tj', '_jsd', '_wd', '_b'], inplace=True)
         cands += ['cand_trainer_jockey_t3', 'cand_jockey_surf_dist_win', 'cand_waku_dist_t3']
 
+    if candset in ('cond6', 'all'):
+        # 血統系(未検証の角度): 母父(BMS)×馬場/距離・ニックス(父×母父)。父×馬場はcond2で却下済み。
+        # 産駒成績=その血統を持つ馬の過去成績(shift1.rolling=リーク無)。
+        need_b = [c for c in ('sire', 'bms') if c not in df.columns]
+        if need_b:
+            con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
+            bl = pd.read_sql(f"SELECT ketto_num, {', '.join(need_b)} FROM horses", con)
+            con.close()
+            df = df.merge(bl, on='ketto_num', how='left').reset_index(drop=True)
+        ky6 = pd.to_numeric(df['kyori'], errors='coerce')
+        df['_dbk6'] = pd.Series(np.where(ky6 <= 1400, 'S', np.where(ky6 <= 1800, 'M',
+                                np.where(ky6 <= 2200, 'L', 'X'))), index=df.index)
+        df['_bms_surf'] = df['bms'].astype(str) + '|' + df['surface'].astype(str)
+        df['_bms_dist'] = df['bms'].astype(str) + '|' + df['_dbk6']
+        df['_nick'] = df['sire'].astype(str) + '|' + df['bms'].astype(str)
+        df['_nick_surf'] = df['sire'].astype(str) + '|' + df['bms'].astype(str) + '|' + df['surface'].astype(str)
+        df['cand_bms_surf_t3'] = _rolling_prior_rate(df, '_bms_surf', '_t3', 200, 40)
+        df['cand_bms_dist_t3'] = _rolling_prior_rate(df, '_bms_dist', '_t3', 150, 30)
+        df['cand_nick_t3'] = _rolling_prior_rate(df, '_nick', '_t3', 100, 20)
+        df['cand_nick_surf_t3'] = _rolling_prior_rate(df, '_nick_surf', '_t3', 80, 20)
+        df.drop(columns=['_dbk6', '_bms_surf', '_bms_dist', '_nick', '_nick_surf'], inplace=True)
+        cands += ['cand_bms_surf_t3', 'cand_bms_dist_t3', 'cand_nick_t3', 'cand_nick_surf_t3']
+
     if candset in ('cond5', 'all'):
         # USM(馬力絞り出しメーター): オッズ帯の人口平均成績に対する、その騎手の過去実績比。
         # leak防止=shift(1)で過去のみ。期待値=オッズ帯別の人口勝率/連対率/複勝率(集合知)。
@@ -299,12 +322,13 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'cond6', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
                          'cond2=血統×馬場・枠×コース・騎手当コース / '
                          'cond3=騎手厩舎×距離帯・昇級代理 / '
                          'cond4=厩舎×騎手相性・騎手×馬場×距離・枠×距離 / '
-                         'cond5=USM(単/連/複・全体・馬力絞り出し) / all')
+                         'cond5=USM(単/連/複) / '
+                         'cond6=母父×馬場距離・ニックス(父×母父) / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()
