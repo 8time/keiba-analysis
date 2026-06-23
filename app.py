@@ -4733,6 +4733,12 @@ if nav == "🏠 Single Race Analysis":
                                  "オッズ統制では複勝率-5〜11ppの過剰人気注意フラグ(加点ではない)。"
                                  "脚質/前走僅差負けは人気に織込み済のため不採用。"
                         ),
+                        "CorrectedT": st.column_config.TextColumn(
+                            "🔵補正T",
+                            help="補正タイム=直近7走×同一馬場の最高(補9風/100=勝ち負けレベル・高いほど速い・検証済H7)。🔵=レース内上位3"),
+                        "LTR": st.column_config.TextColumn(
+                            "🤖検証AI",
+                            help="LightGBM LambdaRankの予測順位スコア(検証済みエッジ統合・Win recall@7=0.936)"),
                     }
 
                     try:
