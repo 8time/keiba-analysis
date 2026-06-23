@@ -193,13 +193,23 @@ class Ledger:
         self.con = sqlite3.connect(db)
         self.con.row_factory = sqlite3.Row
         self.con.executescript(_DDL)
+        # #8 Gate結果列(buy/axis_warn/wait/skip・lean・severity)を後方互換で追加
+        for _col, _typ in (('gate_status', 'TEXT'), ('gate_lean', 'TEXT'),
+                           ('gate_severity', 'INTEGER')):
+            try:
+                self.con.execute(f"ALTER TABLE bets ADD COLUMN {_col} {_typ}")
+            except Exception:
+                pass  # 既に存在
+        self.con.commit()
 
-    def record_prediction(self, race_id, umaban, bamei, pred_prob, odds, stake=100, bet_type='単勝'):
+    def record_prediction(self, race_id, umaban, bamei, pred_prob, odds, stake=100, bet_type='単勝',
+                          gate_status=None, gate_lean=None, gate_severity=None):
         self.con.execute(
-            """INSERT INTO bets(ts,race_id,umaban,bamei,pred_prob,odds,stake,bet_type)
-               VALUES(?,?,?,?,?,?,?,?)""",
+            """INSERT INTO bets(ts,race_id,umaban,bamei,pred_prob,odds,stake,bet_type,
+                                gate_status,gate_lean,gate_severity)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (datetime.datetime.now().isoformat(timespec='seconds'), race_id, umaban, bamei,
-             pred_prob, odds, stake, bet_type))
+             pred_prob, odds, stake, bet_type, gate_status, gate_lean, gate_severity))
         self.con.commit()
 
     def settle(self, race_id, win_umaban, win_payout):
@@ -214,8 +224,22 @@ class Ledger:
     def settled_rows(self):
         """精算済みベットを古い順に返す（ROI推移グラフ用）"""
         return list(self.con.execute(
-            "SELECT bet_id,ts,race_id,pred_prob,odds,stake,won,payout FROM bets "
+            "SELECT bet_id,ts,race_id,pred_prob,odds,stake,won,payout,"
+            "gate_status,gate_lean,gate_severity FROM bets "
             "WHERE settled=1 ORDER BY bet_id"))
+
+    def roi_by_gate(self):
+        """Gate判定(gate_status)別の的中率/ROI/件数を返す(運用検証: buy/axis_warn/skip無視の比較)。"""
+        out = {}
+        for r in self.con.execute(
+                "SELECT gate_status AS g, COUNT(*) n, SUM(won) w, "
+                "SUM(stake) inv, SUM(payout) ret FROM bets WHERE settled=1 "
+                "GROUP BY gate_status"):
+            g = r['g'] or '(未タグ)'
+            inv = r['inv'] or 0
+            out[g] = {'n': r['n'], 'win_rate': (r['w'] or 0) / r['n'] if r['n'] else 0,
+                      'roi': (r['ret'] or 0) / inv if inv else 0}
+        return out
 
     def report(self):
         rows = list(self.con.execute("SELECT * FROM bets WHERE settled=1"))

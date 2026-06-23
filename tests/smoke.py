@@ -131,6 +131,25 @@ def main():
         assert r['axis'] == 2, f"危険軸1をvetoし2へ降格すべき, got {r['axis']}"
     check("trio_engine.recommend_quinella_exacta(veto_axis)", t_veto_axis)
 
+    def t_ledger_gate():
+        import tempfile
+        from core import money
+        _tmp = os.path.join(tempfile.gettempdir(), 'smoke_ledger_gate.db')
+        if os.path.exists(_tmp):
+            os.remove(_tmp)
+        lg = money.Ledger(db=_tmp)
+        lg.record_prediction('R1', 5, 'X', 0.3, 4.0, stake=100, bet_type='単勝',
+                             gate_status='buy', gate_lean='本線向き', gate_severity=0)
+        lg.settle('R1', 5, 400)
+        g = lg.roi_by_gate()
+        assert g.get('buy', {}).get('n') == 1 and abs(g['buy']['roi'] - 4.0) < 1e-6, f"got {g}"
+        lg.con.close()
+        try:
+            os.remove(_tmp)
+        except Exception:
+            pass
+    check("money.Ledger gate_status/roi_by_gate", t_ledger_gate)
+
     def t_danger_gate():
         from core import danger_gate as dg
         # 人気薄は対象外

@@ -1161,6 +1161,19 @@ if nav == "💰 BetSync（資金管理）":
                             _lt.append({'n': _idx, '回収率%': round(_lc / _lb * 100.0, 1) if _lb else 0})
                         st.caption("台帳ベースの累積回収率(%)")
                         st.line_chart(pd.DataFrame(_lt).set_index('n')['回収率%'])
+                    # #8 Gate判定別ROI(運用検証: buy/axis_warn/skip無視 で回収率が分かれるか)
+                    try:
+                        _rbg = _lg.roi_by_gate()
+                        _rbg = {k: v for k, v in _rbg.items() if k != '(未タグ)' and v['n'] >= 1}
+                        if _rbg:
+                            st.markdown("**🚦 Gate判定別の成績（あなたの実運用）**")
+                            st.dataframe(pd.DataFrame([
+                                {'Gate': k, '件数': v['n'], '的中率': f"{v['win_rate']*100:.0f}%",
+                                 '回収率': f"{v['roi']*100:.0f}%"} for k, v in _rbg.items()
+                            ]), hide_index=True, use_container_width=True)
+                            st.caption("『buy』中心で『skip無視』が低ければGateが機能。回収率は券種・点数管理と併読。")
+                    except Exception:
+                        pass
                     st.markdown("**🔍 反省会（予測 vs 実際の較正ズレ → 次回ルール）**")
                     for _rule in _lg.reflection():
                         st.markdown(f"- {_rule}")
@@ -1174,10 +1187,17 @@ if nav == "💰 BetSync（資金管理）":
                     _f_p = fc3.number_input("予測勝率%", 0.0, 100.0, 20.0, key="bs_led_p")
                     _f_odds = fc4.number_input("オッズ", 1.0, 999.0, 5.0, key="bs_led_odds")
                     _f_stake = fc5.number_input("賭け金", 100, 1000000, 100, 100, key="bs_led_stake")
+                    # #8 Gate判定タグ: 買った時の Scanner Gate 状態を残し、後でGate別ROIを検証する
+                    _f_gate = st.selectbox("Gate判定(任意)", ['', 'buy(✅買える)', 'axis_warn(⚠軸注意)',
+                                                              'wait(△様子見)', 'skip無視(⏸見送りを買った)'],
+                                           key="bs_led_gate",
+                                           help="買った時のScanner Gate状態。後で『Gate無視/axis_warn/buyのみ』のROIを比較できる。")
                     if st.form_submit_button("➕ 予測を台帳に記録"):
                         if _f_rid.strip():
+                            _gs = _f_gate.split('(')[0] or None
                             _lg.record_prediction(_f_rid.strip(), int(_f_uma), '',
-                                                  _f_p / 100.0, _f_odds, int(_f_stake))
+                                                  _f_p / 100.0, _f_odds, int(_f_stake),
+                                                  gate_status=_gs)
                             st.success("記録しました。")
                             st.rerun()
                         else:

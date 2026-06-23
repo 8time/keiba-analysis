@@ -43,6 +43,12 @@ def _month(monthday):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--ablate', default='',
+                    help='Gate要素を無効化して効きを分解: axis,danger,value,lean をカンマ指定')
+    args = ap.parse_args()
+    _abl = {s.strip() for s in args.ablate.split(',') if s.strip()}
     for attempt in range(8):
         try:
             con = sqlite3.connect(f'file:{DB}?mode=ro', uri=True, timeout=20)
@@ -163,6 +169,16 @@ def main():
             'lean': lean,
             'vscore': rv['score'],
         }
+        # ── #4 アブレーション: 指定要素を無効化して買いtierの分離がどれで落ちるか見る ──
+        if _abl:
+            if 'axis' in _abl:
+                result['axis_floor'] = True
+            if 'danger' in _abl:
+                result['danger_horses'] = []
+            if 'value' in _abl:
+                result['value_horses'] = []
+            if 'lean' in _abl:
+                result['lean'] = {'lean': '中立'}
         status = scanner_play_status(result)
 
         # ── actual outcomes ──
@@ -185,7 +201,8 @@ def main():
     # ── report ──
     print()
     print("=" * 80)
-    print("③Gate Scanner Priority バックテスト (2021-2025 平地 >=8頭)")
+    print("③Gate Scanner Priority バックテスト (2021-2025 平地 >=8頭)"
+          + (f"  [ablate={','.join(sorted(_abl))}]" if _abl else ""))
     print("=" * 80)
     _ORDER = ['buy', 'wait', 'axis_warn', 'skip']
     _LABEL = {'buy': '✅買える', 'wait': '△様子見', 'axis_warn': '⚠軸注意', 'skip': '⏸見送り'}
