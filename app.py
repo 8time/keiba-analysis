@@ -6278,6 +6278,30 @@ if nav == "🧹 消去フィルター":
     st.header("🧹 消去フィルター")
     st.caption("自然言語で消去条件を設定し、出馬表から該当する馬をリアルタイムで除外します。")
 
+    # ── 勝ちワークフロー(検証済み・緑枠で常掲) ──
+    st.markdown(
+        """
+<div style="border:2px solid #2e7d32; border-radius:10px; padding:12px 16px;
+            background:rgba(46,125,50,0.08); margin:8px 0 16px;">
+  <div style="font-weight:bold; color:#2e7d32; font-size:1.05em; margin-bottom:6px;">
+    🟢 勝ちワークフロー（検証済み・この順で絞る）
+  </div>
+  <div style="font-size:0.92em; line-height:1.7;">
+    <b>①消去フィルター＝母集団づくり</b>（3着内を取りこぼさない網。recall重視でOK）<br>
+    <b>②強適ランキングを主軸に</b> 🤖検証AI(recall@7最適化)＋🔥総合戦闘力 で軸・上位を決める<br>
+    <b>③絞りは「回収率」でなく検証エッジで：</b><br>
+    &nbsp;&nbsp;🚫 <b>危険人気馬を消す</b>（重/不良×1番人気・道悪FADE・外有利日×内枠の人気）＝市場を破る側<br>
+    &nbsp;&nbsp;🔵 <b>補正T＝本命軸の補強</b>（同点の決め手。穴の選別には使わない）<br>
+    &nbsp;&nbsp;🔥 <b>穴の相手＝末脚偏差</b>（人気薄×末脚top。補正Tでなくこちら）<br>
+    &nbsp;&nbsp;🟢 <b>道悪は血統</b>（シニミニ系=軸補強 / ディープ・ステゴ系の人気馬=消し）<br>
+    <span style="color:#c0392b;">⚠ 回収率は"馬の絞り"でなく
+    <b>見送り・点数を絞る・券種選び（トリガミ回避）</b>で守る数字（単勝ROIは市場効率的＝検証済）。</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
     import json
     import os
     import re
