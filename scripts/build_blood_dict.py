@@ -86,9 +86,9 @@ def main():
 
     # サンプル表示: 芝中距離の種牡馬 複勝率トップ
     print("\n■ 芝・中距離 種牡馬 複勝率トップ10（30走以上）")
-    for r in out.execute("""SELECT parent,runs,place_rate,win_roi FROM sire_stats
+    for parent, runs, place_rate, win_roi in out.execute("""SELECT parent,runs,place_rate,win_roi FROM sire_stats
         WHERE surface='芝' AND dist_band='中距離' ORDER BY place_rate DESC LIMIT 10"""):
-        print(f"  {r['parent']:<16} {r['runs']:>5}走 複勝率{r['place_rate']:5.1f}% 単回収{r['win_roi']:6.1f}%")
+        print(f"  {parent:<16} {runs:>5}走 複勝率{place_rate:5.1f}% 単回収{win_roi:6.1f}%")
     con.close(); out.close()
 
 if __name__ == '__main__':

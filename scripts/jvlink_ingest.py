@@ -93,6 +93,8 @@ def main():
     ap.add_argument('--probe', action='store_true', help='JVOpenしてファイル数だけ確認（読まない）')
     ap.add_argument('--from-year', type=int, dest='from_year', help='開始年(例: 1986)')
     ap.add_argument('--to-year', type=int, dest='to_year', help='終了年(例: 1990。この年の12/31まで)')
+    ap.add_argument('--savepath', default=None,
+                    help='JV-LinkのDL保存先を上書き(空フォルダを指定するとキャッシュ無視で最新を強制DL)')
     args = ap.parse_args()
 
     # --from-year / --to-year が指定された場合、fromtime と option を自動設定
@@ -133,6 +135,15 @@ def main():
     rc = jv.JVInit("UNKNOWN")
     log(f"JVInit rc={rc}")
     if rc != 0: return
+
+    # DL保存先の上書き(空フォルダ指定でキャッシュ無視→最新セットアップを強制DL)
+    if args.savepath:
+        try:
+            os.makedirs(args.savepath, exist_ok=True)
+            _sp_rc = jv.JVSetSavePath(args.savepath)
+            log(f"JVSetSavePath('{args.savepath}') rc={_sp_rc}")
+        except Exception as _spe:
+            log(f"JVSetSavePath例外(続行): {_spe}")
 
     # JVOpen（-301認証スロットル等は待って自動リトライ）
     r = None; code = None
