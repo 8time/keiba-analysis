@@ -8299,18 +8299,30 @@ if nav == "🔍 Race Scanner (Batch)":
                         valid = bool(od and od > 0 and pop and pop < 90)
                         if not valid:
                             continue
-                        # 軸フロア: 人気1-3 の danger severity(neg数)≥2 → 軸不可
+                        # 軸フロア: 人気1-3 の危険を core/danger_gate(検証済severity・#5校正)に寄せる。
+                        # severity>=2 で軸不可。既存の-ファクター(neg≥2)も保険でOR。
+                        _dvr = None
                         if pop and 1 <= pop <= 3:
                             _top3_count += 1
-                            if len(f['neg']) >= 2:
+                            try:
+                                from core import danger_gate as _dgs
+                                _dvr = _dgs.danger_veto(
+                                    ninki=pop, surface=surf,
+                                    baba=str(meta.get('condition', '') or ''),
+                                    sire=str(hr.get('sire', '') or ''),
+                                    sex_age=str(hr.get('SexAge', '') or ''), month=month)
+                            except Exception:
+                                _dvr = None
+                            if (_dvr and _dvr['severity'] >= 2) or len(f['neg']) >= 2:
                                 _top3_severe += 1
                         if f['div_level'] >= 1 or f.get('anchor') or (f['has_pos'] and pop >= 6):
                             value_horses.append({'um': um, 'name': nm, 'pop': pop,
                                                  'odds': od, 'why': ' / '.join(f['pos']) or '-',
                                                  'div': f['div_level'], 'anchor': bool(f.get('anchor'))})
-                        if f['has_neg'] and pop <= 3:
+                        _dgr = (_dvr['reasons'] if _dvr else [])
+                        if (f['has_neg'] or _dgr) and pop and pop <= 3:
                             danger_horses.append({'um': um, 'name': nm, 'pop': pop,
-                                                  'why': ' / '.join(f['neg'])})
+                                                  'why': ' / '.join(list(f['neg']) + _dgr) or '-'})
                     axis_floor = (_top3_count - _top3_severe) > 0 if _top3_count else True
 
                     # ランキング指標: 妙味馬数 と 妙味度
