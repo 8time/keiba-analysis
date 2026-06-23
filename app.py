@@ -6515,6 +6515,13 @@ if nav == "🧹 消去フィルター":
         st.success("🔗 URLからレースIDを自動抽出しました！", icon="🔗")
         st.session_state['kf_race_id_extracted'] = False
 
+    # このレースのnetkeibaページへのリンク(出馬表)を入力欄直下にも掲示
+    if race_id_input and len(str(race_id_input)) >= 12:
+        _kf_v = str(race_id_input)[4:6]
+        _kf_dom = 'nar.netkeiba.com' if (_kf_v.isdigit() and int(_kf_v) > 10) else 'race.netkeiba.com'
+        _kf_url = f"https://{_kf_dom}/race/shutuba.html?race_id={race_id_input}"
+        st.markdown(f"🔗 [netkeibaでこのレースを開く（出馬表）]({_kf_url})")
+
     # レースID→Enter（入力変更）だけで自動取得。前回取得IDと違う時のみfetch（再取得ループ防止）。
     if race_id_input and race_id_input != st.session_state['kf_fetched_id']:
         st.session_state['kf_fetched_id'] = race_id_input
@@ -7454,15 +7461,17 @@ if nav == "🧹 消去フィルター":
             _lab_c1 = "1着" if _is_tri else "1列目 軸"
             _lab_c2 = "2着" if _is_tri else "2列目 対抗"
             _lab_c3 = "3着" if _is_tri else "3列目 押さえ(穴含む)"
+            # default= は付けない: 値は上の kf_form_sig ブロックで session_state に設定済み。
+            # (default と session_state 両方指定すると「default value but value set via Session State」警告が出る)
             _fc1, _fc2, _fc3 = st.columns(3)
             with _fc1:
-                _c1 = st.multiselect(_lab_c1, _all_um, default=_def1,
+                _c1 = st.multiselect(_lab_c1, _all_um,
                                      format_func=_lab, key="kf_form_c1")
             with _fc2:
-                _c2 = st.multiselect(_lab_c2, _all_um, default=_def2,
+                _c2 = st.multiselect(_lab_c2, _all_um,
                                      format_func=_lab, key="kf_form_c2")
             with _fc3:
-                _c3 = st.multiselect(_lab_c3, _all_um, default=_def3,
+                _c3 = st.multiselect(_lab_c3, _all_um,
                                      format_func=_lab, key="kf_form_c3")
             try:
                 from core import trio_engine as _te
