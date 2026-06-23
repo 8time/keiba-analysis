@@ -361,6 +361,7 @@ with st.sidebar:
     st.markdown("### 🧭 メニュー (Menu)")
 
     _MENU = [
+        "🏁 今日のダッシュボード",
         "🏠 Single Race Analysis",
         "🧠 MAGI回顧",
         "💰 BetSync（資金管理）",
@@ -376,7 +377,7 @@ with st.sidebar:
     # 新タブ側がこのクエリパラメータを読んで該当ページを表示する）
     import urllib.parse as _urlparse
     _qp_nav = st.query_params.get('nav')
-    nav = _qp_nav if _qp_nav in _MENU else "🏠 Single Race Analysis"
+    nav = _qp_nav if _qp_nav in _MENU else "🏁 今日のダッシュボード"
 
     st.caption("クリックすると新しいタブで開きます（このタブの表示は変わりません）")
     _menu_html = '<div style="display:flex;flex-direction:column;gap:5px;">'
@@ -429,6 +430,84 @@ def display_icon_legend():
 
 
 
+
+# ──────────────────────────────────────────────
+# 🏁 今日の運用ダッシュボード（司令塔）
+# ──────────────────────────────────────────────
+if nav == "🏁 今日のダッシュボード":
+    st.header("🏁 今日の運用ダッシュボード")
+    st.caption("検証済みGateを通過したレースと、実運用の回収状況・回顧すべき負けを1画面で。"
+               "良い予想より『悪いレースを触らない・負け方を直す』導線。個別分析は左メニューへ。")
+    import urllib.parse as _dup
+    from core import score_cache as _dsc
+    from core import money as _dmoney
+
+    # ── 今日のGate結果(直近24hにScannerでスキャンしたレース) ──
+    _gates = _dsc.recent_gates(hours=24)
+    _by = {'buy': [], 'axis_warn': [], 'wait': [], 'skip': []}
+    for _g in _gates:
+        _by.setdefault(_g['status'], []).append(_g)
+    _d1, _d2, _d3, _d4 = st.columns(4)
+    _d1.metric("✅買える", len(_by.get('buy', [])))
+    _d2.metric("⚠軸注意", len(_by.get('axis_warn', [])))
+    _d3.metric("△様子見", len(_by.get('wait', [])))
+    _d4.metric("⏸見送り", len(_by.get('skip', [])))
+    if not _gates:
+        st.info("直近24hでスキャンしたレースがありません。🔍 Race Scanner で日付スキャンするとここに反映されます。")
+    else:
+        st.markdown("**✅ 今日の買えるレース**")
+        _buys = _by.get('buy', [])
+        if _buys:
+            _sra = _dup.quote("🏠 Single Race Analysis")
+            for _g in _buys[:30]:
+                _rid = _g['race_id']; _ln = _g.get('lean') or '-'
+                _nk = f"https://race.netkeiba.com/race/shutuba.html?race_id={_rid}"
+                st.markdown(f"- `{_rid}`　{_ln}　… "
+                            f"[🏠分析](/?nav={_sra}&race_id={_rid}) ｜ [🔗netkeiba]({_nk})")
+        else:
+            st.caption("買えるレースなし＝今日は無理に張らない日かも（見送りも立派な判断）。")
+        with st.expander("⚠軸注意 / ⏸見送り も見る"):
+            for _sk, _lb2 in (('axis_warn', '⚠軸注意'), ('skip', '⏸見送り')):
+                _rs = _by.get(_sk, [])
+                if _rs:
+                    st.markdown(f"**{_lb2}**（{len(_rs)}）: "
+                                + " / ".join(f"`{x['race_id']}`" for x in _rs[:20]))
+
+    st.markdown("---")
+    st.markdown("### 💰 実運用サマリ（BetSync台帳）")
+    try:
+        _dlg = _dmoney.Ledger()
+        _drep = _dlg.report()
+        if 'note' in _drep:
+            st.info("まだ精算済みベットがありません。💰 BetSync で予測→結果を記録すると、"
+                    "ここに回収率・最大DD・回顧すべき負けが出ます。")
+        else:
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            _m1.metric("記録数", f"{_drep['bets']}件")
+            _m2.metric("的中率", f"{_drep['hit_rate']}%")
+            _m3.metric("回収率", f"{_drep['roi']}%")
+            _m4.metric("最大DD", f"¥{_dlg.max_drawdown():,}")
+            _rbg = _dlg.roi_by_gate()
+            _rbg = {k: v for k, v in _rbg.items() if k != '(未タグ)'}
+            if _rbg:
+                st.markdown("**🚦 Gate別ROI（実運用）**")
+                st.dataframe(pd.DataFrame([
+                    {'Gate': k, '件数': v['n'], '的中率': f"{v['win_rate']*100:.0f}%",
+                     '回収率': f"{v['roi']*100:.0f}%"} for k, v in _rbg.items()]),
+                    hide_index=True, use_container_width=True)
+            _lbk = _dlg.loss_breakdown()
+            if _lbk:
+                _top3 = sorted(_lbk.items(), key=lambda kv: -kv[1]['loss'])[:3]
+                st.markdown("**🪞 回顧すべき負け（損失順トップ3）**")
+                for _k, _v in _top3:
+                    st.markdown(f"- {_k} … {_v['n']}件 / 損失¥{_v['loss']:,}")
+                _t0 = _top3[0][0]
+                if _t0.startswith(('Gate無視', '危険軸', '危険人気', '盲目②', '本線向きで点数過多', 'トリガミ設計')):
+                    st.warning(f"⚠ 最大の負け要因＝『{_t0}』は買い方の事故/設計ミス＝"
+                               "Gate遵守・点数管理で減らせます。")
+        _dlg.close()
+    except Exception as _de:
+        st.caption(f"（台帳サマリ読込スキップ: {_de}）")
 
 # ──────────────────────────────────────────────
 # 💰 BetSync（資金管理）タブ

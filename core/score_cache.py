@@ -155,6 +155,28 @@ def read_buy(race_id):
         return None
 
 
+def recent_gates(hours=24):
+    """直近 hours 時間に Scanner が書いた Gate判定を一覧で返す(ダッシュボード用)。
+    [{'race_id','status','lean','ts'}, ...] を ts 降順で。"""
+    import glob
+    out = []
+    cutoff = time.time() - hours * 3600
+    try:
+        for p in glob.glob(os.path.join(_DIR, '*.gate.json')):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                if (d.get('ts') or 0) >= cutoff and d.get('status'):
+                    out.append({'race_id': d.get('race_id'), 'status': d.get('status'),
+                                'lean': d.get('lean'), 'ts': d.get('ts')})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    out.sort(key=lambda x: -(x['ts'] or 0))
+    return out
+
+
 def _keep_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(_DIR, f"{rid}.keep.json")

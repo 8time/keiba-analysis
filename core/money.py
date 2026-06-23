@@ -297,6 +297,15 @@ class Ledger:
             d['loss'] += (r['stake'] or 0) - (r['payout'] or 0)
         return out
 
+    def max_drawdown(self):
+        """精算済みP/L推移の最大ドローダウン(円・0以下。0=DD無し)。"""
+        cum = 0; peak = 0; dd = 0
+        for r in self.settled_rows():
+            cum += (r['payout'] or 0) - (r['stake'] or 0)
+            peak = max(peak, cum)
+            dd = min(dd, cum - peak)
+        return dd
+
     def report(self):
         rows = list(self.con.execute("SELECT * FROM bets WHERE settled=1"))
         if not rows:

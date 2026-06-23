@@ -6,6 +6,7 @@
 
 | ページ/機能 | 期待動作（ユーザーストーリー） | ステータス | 検証/根拠 | 最終確認 |
 |---|---|---|---|---|
+| 🏁 今日のダッシュボード(司令塔) | 既定ランディング。今日の買える/軸注意/見送り(Scanner gate)＋Gate別ROI/最大DD/回顧すべき負け(BetSync台帳)を1画面 | 🟢 | score_cache.recent_gates＋money.report/roi_by_gate/max_drawdown/loss_breakdown | 2026-06-24 |
 | 🏠 Single Race Analysis | レースID/URL入力→出馬表取得→強適Ranking表示 | 🟡 | — | — |
 | ├ 強適Ranking Table | 予測スコア/戦闘力/補正T/LTR/適性を列表示・列順保存 | 🟢 | CorrectedT/LTRヘッダ修正(077cfeb/ab0d15f) | 2026-06-23 |
 | ├ 🎯軸馬候補◎〇▲ | 人気別複勝率＋圧勝🔨＋危険人気Vetoで軸提示(危険は降格/⚠) | ✅ | [[verified_ohtani_trap]]＋danger_gate(P0) | 2026-06-23 |
