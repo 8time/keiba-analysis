@@ -5451,6 +5451,7 @@ if nav == "🏠 Single Race Analysis":
 
                     # ── 決着タイプ判定(検証済 value_scanner.trio_lean): どのパターンで勝てるレースか ──
                     _rec_idx = 0
+                    _np_idx = 1   # 提案数の推奨初期値(既定=8点)。leanで可変(本線=少点/②=最大10)
                     try:
                         from core import value_scanner as _vs_te
                         _olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
@@ -5466,6 +5467,8 @@ if nav == "🏠 Single Race Analysis":
                                                      odds_list=_olist, pace_z=_pz_te)
                         _lean = _lean_res['lean']
                         _rec_idx = 1 if _lean == '②穴妙味向き' else 0
+                        # 可変点数(検証: 本線向きは少点数で的中/トリガミ回避・②は妙味穴狙いで最大10)
+                        _np_idx = 2 if _lean == '②穴妙味向き' else 1
                         if _lean == '②穴妙味向き':
                             st.info(f"🎲 **決着タイプ判定: ②穴妙味向き**（lean {_lean_res['score']:+.1f}）"
                                     f"→ 下の『②穴妙味狙い』推奨。" + "　/　".join(_lean_res['pos'][:3]))
@@ -5490,8 +5493,9 @@ if nav == "🏠 Single Race Analysis":
                                             captions=['堅め・的中重視(鉄板+①を83%カバー)',
                                                       '荒れ・高配当(本線が取りこぼす穴レース／🔥末脚救出等の妙味穴を厚く)'])
                     with _c3:
-                        _n_points = st.selectbox("提案数", [5, 8, 10, 12, 15, 18, 20, 30, 50], index=2, key='te_npoints',
-                                                 help="②穴妙味狙いは後半(16番目以降)の組に的中が出やすい傾向。点数を増やすと拾える反面、合成オッズ低下＝トリガミに注意。")
+                        _n_points = st.selectbox("提案数", [5, 8, 10, 12, 15, 18, 20, 30, 50], index=_np_idx, key='te_npoints',
+                                                 help="初期値は決着タイプ連動(本線向き=8点で的中/トリガミ回避・②穴妙味向き=10点で妙味穴狙い)。"
+                                                      "②は後半(16番目以降)の組に的中が出やすい傾向。点数を増やすと拾える反面、合成オッズ低下＝トリガミに注意。")
                     with _c4:
                         _budget = st.number_input("予算(円・任意)", min_value=0, max_value=200000,
                                                   value=0, step=500, key='te_budget')
@@ -5653,6 +5657,13 @@ if nav == "🏠 Single Race Analysis":
                             if _ntg:
                                 _te_msg += f" ⚠️トリガミ目{_ntg}点(的中しても投資割れ)"
                         st.success(_te_msg)
+                        # 本線向き×低合成オッズ=トリガミ警告(検証: 本線堅レースは点数増で配当が潰れる→ワイドへ)
+                        try:
+                            if _lean == '本線向き' and _syn and _syn < max(2.0, len(_te_res['bets']) * 0.25):
+                                st.warning(f"⚠ 本線向き(堅め)で合成オッズが低い({_syn}倍/{len(_te_res['bets'])}点)＝"
+                                           "的中しても妙味が薄い。点数を絞るか、軸2頭のワイド/馬連へ落とすのが有利。")
+                        except Exception:
+                            pass
 
                     # =========================================================
                     # 🎯 馬連 / 馬単 おすすめエンジン（3連複の代替・高配当検知）
@@ -8241,6 +8252,7 @@ if nav == "🔍 Race Scanner (Batch)":
                     gap_anchors = vs.odds_gap_anchors(odds_by_um)
 
                     value_horses, danger_horses = [], []
+                    _top3_count, _top3_severe = 0, 0
                     for _, hr in df_r.iterrows():
                         try:
                             um = int(pd.to_numeric(hr.get('Umaban'), errors='coerce'))
@@ -8264,19 +8276,22 @@ if nav == "🔍 Race Scanner (Batch)":
                                  'odds': float(_od) if pd.notnull(_od) else None}
                         pop = f['pop']
                         od = f['odds']
-                        # オッズ未確定/出走取消(オッズ≤0・人気9999等の番兵)は判定対象外
                         valid = bool(od and od > 0 and pop and pop < 90)
                         if not valid:
                             continue
-                        # 妙味馬: 単複乖離 or 断層上位(堅め) or (＋ファクター × 人気薄≥6)  ← 検証済の妙味定義
+                        # 軸フロア: 人気1-3 の danger severity(neg数)≥2 → 軸不可
+                        if pop and 1 <= pop <= 3:
+                            _top3_count += 1
+                            if len(f['neg']) >= 2:
+                                _top3_severe += 1
                         if f['div_level'] >= 1 or f.get('anchor') or (f['has_pos'] and pop >= 6):
                             value_horses.append({'um': um, 'name': nm, 'pop': pop,
                                                  'odds': od, 'why': ' / '.join(f['pos']) or '-',
                                                  'div': f['div_level'], 'anchor': bool(f.get('anchor'))})
-                        # 危険な人気馬: −ファクター × 人気≤3
                         if f['has_neg'] and pop <= 3:
                             danger_horses.append({'um': um, 'name': nm, 'pop': pop,
                                                   'why': ' / '.join(f['neg'])})
+                    axis_floor = (_top3_count - _top3_severe) > 0 if _top3_count else True
 
                     # ランキング指標: 妙味馬数 と 妙味度
                     results.append({
@@ -8284,7 +8299,8 @@ if nav == "🔍 Race Scanner (Batch)":
                         "vscore": rv['score'], "vlabel": rv['label'], "breakdown": rv['breakdown'],
                         "fav_odds": rv['fav_odds'], "skips": skips,
                         "value_horses": sorted(value_horses, key=lambda x: (-x['div'], -(x['odds'] or 0))),
-                        "danger_horses": danger_horses, "n_h": n_h, "surf": surf, "dist": dist,
+                        "danger_horses": danger_horses, "axis_floor": axis_floor,
+                        "n_h": n_h, "surf": surf, "dist": dist,
                         "pace_label": (_pint or {}).get('label'), "pace_z": _pace_z,
                         "lean": lean, "conds": _conds,
                     })
@@ -8311,27 +8327,8 @@ if nav == "🔍 Race Scanner (Batch)":
             if cond_filter:
                 valid = [r for r in valid if all(c in (r.get('conds') or []) for c in cond_filter)]
 
-            # 並び替え: 「買える順」(③Gate化)。良い予想より"悪いレースを触らない"導線を上に。
-            # 見送りでない→決着タイプ明確→相手の質(妙味馬)→危険人気をfade可→妙味度。
-            def _play_score(r):
-                if r['skips']:
-                    return -1.0                         # 見送りは最下層
-                _lean = (r.get('lean') or {}).get('lean')
-                _lean_clear = _lean in ('本線向き', '②穴妙味向き')
-                n_v = len(r['value_horses']); n_dg = len(r['danger_horses'])
-                s = 100.0
-                if _lean_clear:
-                    s += 20                             # trio_lean明確
-                s += min(n_v, 5) * 6                    # 相手の質(妙味馬)
-                if n_dg:
-                    s += 8                              # 危険人気をfadeできる=妙味
-                if min_value_horses > 0 and n_v >= min_value_horses:
-                    s += 10                             # 旧:妙味馬しきい値
-                if r['vscore'] >= min_value_score:
-                    s += 5                              # 旧:妙味度しきい値
-                s += r['vscore'] * 0.2
-                return s
-            valid.sort(key=_play_score, reverse=True)
+            # 「買える順」③Gate: 階層タプルソート。見送り→軸フロア→危険なし→相手質→trio_lean明確。
+            valid.sort(key=vs.scanner_priority, reverse=True)
 
             if errors:
                 with st.expander(f"✨ スキップ(取得エラー) {len(errors)}件", expanded=False):
@@ -8340,10 +8337,9 @@ if nav == "🔍 Race Scanner (Batch)":
                         if 'traceback' in r:
                             st.code(r['traceback'], language="python")
 
-            n_hot = sum(1 for r in valid if len(r['value_horses']) >= max(1, min_value_horses)
-                        and r['vscore'] >= min_value_score and not r['skips'])
+            n_hot = sum(1 for r in valid if vs.scanner_play_status(r) == 'buy')
             st.markdown(f"### 💡 スキャン結果 {len(valid)} 件　／　🎯 妙味レース候補 {n_hot} 件")
-            st.caption("並びは『買える順』(③Gate)＝✅買える(見送りでない×決着タイプ明確 or 妙味馬あり)を上、⏸見送りを下、△様子見は中間。"
+            st.caption("並びは『買える順』③Gate＝見送り除外→軸フロア(人気1-3に安全な軸)→危険なし→相手質(妙味馬数)→trio_lean明確 の階層ソート。"
                        "良い予想より『悪いレースを触らない』導線。"
                        "妙味度＝頭数/1番人気オッズ/上位拮抗/構造条件の集約。妙味馬＝単複乖離 or 黄金ライン/厩舎当コース🔴の過小評価馬。")
 
@@ -8410,13 +8406,18 @@ if nav == "🔍 Race Scanner (Batch)":
                     if r['skips']:
                         skip_badge = (f'&nbsp;<span title="{_tip_sk}" style="background:#222;color:#aaa;border:1px solid #555;'
                                       f'border-radius:6px;padding:3px 8px;font-size:0.8em;cursor:help;">🚫見送り: {"・".join(r["skips"])}</span>')
-                    dim = 'opacity:0.5;' if r['skips'] else ''
-                    # ③買える順Gate: 先頭に「✅買える/⏸見送り/△様子見」判定を出す
-                    _lean_clear = (r.get('lean') or {}).get('lean') in ('本線向き', '②穴妙味向き')
-                    if r['skips']:
+                    _pstat = vs.scanner_play_status(r)
+                    dim = 'opacity:0.5;' if _pstat == 'skip' else ''
+                    # ③買える順Gate: 4段ステータス ✅買える / ⚠軸注意 / △様子見 / ⏸見送り
+                    if _pstat == 'skip':
                         play_badge = ('<span style="background:#222;color:#999;border:1px solid #555;'
                                       'border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;">⏸見送り</span>')
-                    elif (_lean_clear or n_v >= 1):
+                    elif _pstat == 'axis_warn':
+                        play_badge = ('<span title="人気1-3の全馬に2つ以上の危険材料=安全な軸がない" '
+                                      'style="background:#2D1A00;color:#FF9F45;border:1px solid #FF9F45;'
+                                      'border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;cursor:help;">⚠軸注意</span>')
+                    elif _pstat == 'buy':
+                        _lean_clear = (r.get('lean') or {}).get('lean') in ('本線向き', '②穴妙味向き')
                         _wy = []
                         if _lean_clear:
                             _wy.append((r.get('lean') or {}).get('lean'))
