@@ -241,6 +241,39 @@ class Ledger:
                       'roi': (r['ret'] or 0) / inv if inv else 0}
         return out
 
+    @staticmethod
+    def classify_loss(won, gate_status, gate_lean=None, pred_prob=None):
+        """⑥回顧: 外れたベットの『負け理由』をGateメタから自動分類(改善ループの種)。
+        的中(won)はNone。Gate無視/危険軸が最も是正効果が大きい(運用事故)。
+        ※点数過多/トリガミ/妙味穴なし等の買い目設計系は別途(買い目メタが要る)。"""
+        if won:
+            return None
+        gs = (gate_status or '').strip()
+        if gs == 'skip':
+            return 'Gate無視(見送りレースを購入)'
+        if gs == 'axis_warn':
+            return '危険軸(安全な軸が無いのに購入)'
+        if gs == 'wait':
+            return '様子見レースを購入(根拠薄)'
+        if pred_prob is not None and pred_prob >= 0.5:
+            return '本命級が飛んだ(想定tier外/能力)'
+        if gs == 'buy':
+            return 'buyで不的中(想定内のハズレ)'
+        return '未タグ(Gate記録なし)'
+
+    def loss_breakdown(self):
+        """精算済みの負けを理由別に集計: {reason: {'n','loss'}}。"""
+        out = {}
+        for r in self.con.execute(
+                "SELECT won,gate_status,gate_lean,pred_prob,stake,payout FROM bets WHERE settled=1"):
+            if r['won']:
+                continue
+            reason = self.classify_loss(r['won'], r['gate_status'], r['gate_lean'], r['pred_prob'])
+            d = out.setdefault(reason, {'n': 0, 'loss': 0})
+            d['n'] += 1
+            d['loss'] += (r['stake'] or 0) - (r['payout'] or 0)
+        return out
+
     def report(self):
         rows = list(self.con.execute("SELECT * FROM bets WHERE settled=1"))
         if not rows:

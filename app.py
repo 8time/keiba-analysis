@@ -1174,6 +1174,21 @@ if nav == "💰 BetSync（資金管理）":
                             st.caption("『buy』中心で『skip無視』が低ければGateが機能。回収率は券種・点数管理と併読。")
                     except Exception:
                         pass
+                    # ⑥回顧: 負けの自動分類(改善ループの種。Gate無視/危険軸が是正効果大)
+                    try:
+                        _lb = _lg.loss_breakdown()
+                        if _lb:
+                            st.markdown("**🪞 負けの自動分類（どこで負けているか）**")
+                            _lbrows = sorted(_lb.items(), key=lambda kv: -kv[1]['loss'])
+                            st.dataframe(pd.DataFrame([
+                                {'負け理由': k, '件数': v['n'], '損失計': f"¥{v['loss']:,}"}
+                                for k, v in _lbrows]), hide_index=True, use_container_width=True)
+                            _top = _lbrows[0][0]
+                            if _top.startswith(('Gate無視', '危険軸', '様子見')):
+                                st.warning(f"⚠ 最大の負け要因＝『{_top}』。これは買い方の事故＝Gate遵守で減らせます。")
+                            st.caption("Gate無視/危険軸/様子見＝運用事故(Gate遵守で減る)。本命級が飛んだ/buy不的中＝想定内のブレ。")
+                    except Exception:
+                        pass
                     st.markdown("**🔍 反省会（予測 vs 実際の較正ズレ → 次回ルール）**")
                     for _rule in _lg.reflection():
                         st.markdown(f"- {_rule}")

@@ -143,6 +143,13 @@ def main():
         lg.settle('R1', 5, 400)
         g = lg.roi_by_gate()
         assert g.get('buy', {}).get('n') == 1 and abs(g['buy']['roi'] - 4.0) < 1e-6, f"got {g}"
+        # ⑥負け分類: skipレースを買って外した→「Gate無視」
+        lg.record_prediction('R2', 3, 'Y', 0.2, 8.0, stake=100, bet_type='単勝', gate_status='skip')
+        lg.settle('R2', 9, 0)
+        assert money.Ledger.classify_loss(0, 'skip') == 'Gate無視(見送りレースを購入)'
+        assert money.Ledger.classify_loss(1, 'skip') is None, "的中は分類しない"
+        lb = lg.loss_breakdown()
+        assert lb.get('Gate無視(見送りレースを購入)', {}).get('n') == 1, f"got {lb}"
         lg.con.close()
         try:
             os.remove(_tmp)
