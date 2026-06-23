@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 🏠 Single Race Analysis | レースID/URL入力→出馬表取得→強適Ranking表示 | 🟡 | — | — |
 | ├ 強適Ranking Table | 予測スコア/戦闘力/補正T/LTR/適性を列表示・列順保存 | 🟢 | CorrectedT/LTRヘッダ修正(077cfeb/ab0d15f) | 2026-06-23 |
-| ├ 🎯軸馬候補◎〇▲ | 人気別複勝率＋圧勝🔨で軸提示 | ✅ | [[verified_ohtani_trap]] | — |
+| ├ 🎯軸馬候補◎〇▲ | 人気別複勝率＋圧勝🔨＋危険人気Vetoで軸提示(危険は降格/⚠) | ✅ | [[verified_ohtani_trap]]＋danger_gate(P0) | 2026-06-23 |
 | ├ 🔵補正T | 直近7走×同馬場の最高/100・top3に🔵 | ✅ | [[verified_corrected_time]] | — |
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |
 | ├ 展開MAP/Vマトリクス | テン速力でペース想定・隊列・荒れ寄り判定 | 🟡 | 展開恩恵はpriced-in([[verified_tenkai_priced_in]]) | — |

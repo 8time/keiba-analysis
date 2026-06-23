@@ -4326,6 +4326,13 @@ if nav == "🏠 Single Race Analysis":
                     # core/axis_selector.py / 検証: verified_ohtani_trap, verified_legtype_axis
                     try:
                         from core import axis_selector as _axs
+                        from core import danger_gate as _dg
+                        # 危険人気Veto用の共通コンテキスト(検証済: 軸からの降格に使う)
+                        _dg_surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else ''
+                        _dg_meta = st.session_state.get('race_metadata', {}) or {}
+                        _dg_baba = str(_dg_meta.get('condition', '') or '')
+                        _dg_dv = str(_dg_meta.get('date_val', '') or '')
+                        _dg_month = int(_dg_dv[4:6]) if len(_dg_dv) >= 6 and _dg_dv[4:6].isdigit() else None
                         _ax_horses = []
                         for _, _dr in df.iterrows():
                             _nm = str(_dr.get('Name', '') or '')
@@ -4333,7 +4340,9 @@ if nav == "🏠 Single Race Analysis":
                                 'name': _nm, 'umaban': _dr.get('Umaban'),
                                 'pop': _dr.get('Popularity'),
                                 'odds': _dr.get('Odds'),
-                                'prev_win_margin': _tm.get(_nm, {}).get('awm')})
+                                'prev_win_margin': _tm.get(_nm, {}).get('awm'),
+                                'sire': str(_dr.get('sire', '') or ''),
+                                'sexage': str(_dr.get('SexAge', '') or '')})
                         _ax = _axs.axis_marks(_ax_horses)
                         _uma2mark = {}
                         for _h in _ax_horses:
@@ -4345,6 +4354,14 @@ if nav == "🏠 Single Race Analysis":
                             _txt = _mk + (f" {_conf:.0f}%" if _conf is not None else '')
                             if _info.get('atsu'):
                                 _txt += '🔨'  # 前走圧勝(着差≥1.0秒)＝過剰人気注意フラグ
+                            # 危険人気Veto: 人気上位の危険シグナルで軸を降格(1=⚠付記/2以上=軸不可)
+                            try:
+                                _vr = _dg.danger_veto(
+                                    ninki=_h.get('pop'), surface=_dg_surf, baba=_dg_baba,
+                                    sire=_h.get('sire'), sex_age=_h.get('sexage'), month=_dg_month)
+                                _txt = _dg.axis_demote(_txt, _vr)
+                            except Exception:
+                                pass
                             try:
                                 _uma2mark[int(_h['umaban'])] = _txt
                             except Exception:

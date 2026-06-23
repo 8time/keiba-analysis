@@ -99,6 +99,21 @@ def main():
         assert all(len(set(x)) == 3 for x in f) and len(f) == len(set(f)), "重複排除/3頭組"
     check("trio_engine.build_formation", t_formation)
 
+    def t_danger_gate():
+        from core import danger_gate as dg
+        # 人気薄は対象外
+        assert dg.danger_veto(ninki=8, surface='芝', baba='重')['severity'] == 0, "人気薄は危険対象外"
+        # 重×1番人気 + 牝×冬春fade = 2件→veto
+        r = dg.danger_veto(ninki=1, surface='芝', baba='重', sex_age='牝3', month=1)
+        assert r['veto'] and r['severity'] >= 2, f"重×1番+牝冬春→veto, got {r}"
+        # 1件なら降格注意(veto=False)
+        r1 = dg.danger_veto(ninki=1, surface='芝', baba='重')
+        assert (not r1['veto']) and r1['severity'] == 1, f"重×1番のみ→severity1, got {r1}"
+        # axis_demote: severity>=2はマーク置換
+        assert dg.axis_demote('◎ 60%', r).startswith('⚠危険'), "severity>=2でマーク置換"
+        assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
+    check("danger_gate.danger_veto / axis_demote", t_danger_gate)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():
