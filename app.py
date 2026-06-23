@@ -8311,16 +8311,27 @@ if nav == "🔍 Race Scanner (Batch)":
             if cond_filter:
                 valid = [r for r in valid if all(c in (r.get('conds') or []) for c in cond_filter)]
 
-            # 並び替え: ①見送りでない ②妙味馬がしきい値以上 ③妙味度しきい値以上 ④妙味馬数 ⑤妙味度
-            def _rank_key(r):
-                n_v = len(r['value_horses'])
-                return (
-                    0 if r['skips'] else 1,
-                    1 if n_v >= min_value_horses and min_value_horses > 0 else 0,
-                    1 if r['vscore'] >= min_value_score else 0,
-                    n_v, r['vscore'],
-                )
-            valid.sort(key=_rank_key, reverse=True)
+            # 並び替え: 「買える順」(③Gate化)。良い予想より"悪いレースを触らない"導線を上に。
+            # 見送りでない→決着タイプ明確→相手の質(妙味馬)→危険人気をfade可→妙味度。
+            def _play_score(r):
+                if r['skips']:
+                    return -1.0                         # 見送りは最下層
+                _lean = (r.get('lean') or {}).get('lean')
+                _lean_clear = _lean in ('本線向き', '②穴妙味向き')
+                n_v = len(r['value_horses']); n_dg = len(r['danger_horses'])
+                s = 100.0
+                if _lean_clear:
+                    s += 20                             # trio_lean明確
+                s += min(n_v, 5) * 6                    # 相手の質(妙味馬)
+                if n_dg:
+                    s += 8                              # 危険人気をfadeできる=妙味
+                if min_value_horses > 0 and n_v >= min_value_horses:
+                    s += 10                             # 旧:妙味馬しきい値
+                if r['vscore'] >= min_value_score:
+                    s += 5                              # 旧:妙味度しきい値
+                s += r['vscore'] * 0.2
+                return s
+            valid.sort(key=_play_score, reverse=True)
 
             if errors:
                 with st.expander(f"✨ スキップ(取得エラー) {len(errors)}件", expanded=False):
@@ -8332,8 +8343,9 @@ if nav == "🔍 Race Scanner (Batch)":
             n_hot = sum(1 for r in valid if len(r['value_horses']) >= max(1, min_value_horses)
                         and r['vscore'] >= min_value_score and not r['skips'])
             st.markdown(f"### 💡 スキャン結果 {len(valid)} 件　／　🎯 妙味レース候補 {n_hot} 件")
-            st.caption("妙味度＝頭数/1番人気オッズ/上位拮抗/構造条件の集約（荒れ＝中穴妙味）。"
-                       "妙味馬＝単複乖離(単≥10×複≤3) or 黄金ライン/厩舎当コース🔴の過小評価馬。")
+            st.caption("並びは『買える順』(③Gate)＝✅買える(見送りでない×決着タイプ明確 or 妙味馬あり)を上、⏸見送りを下、△様子見は中間。"
+                       "良い予想より『悪いレースを触らない』導線。"
+                       "妙味度＝頭数/1番人気オッズ/上位拮抗/構造条件の集約。妙味馬＝単複乖離 or 黄金ライン/厩舎当コース🔴の過小評価馬。")
 
             if not valid:
                 st.info("条件に合致するレースが見つかりませんでした。")
@@ -8399,6 +8411,26 @@ if nav == "🔍 Race Scanner (Batch)":
                         skip_badge = (f'&nbsp;<span title="{_tip_sk}" style="background:#222;color:#aaa;border:1px solid #555;'
                                       f'border-radius:6px;padding:3px 8px;font-size:0.8em;cursor:help;">🚫見送り: {"・".join(r["skips"])}</span>')
                     dim = 'opacity:0.5;' if r['skips'] else ''
+                    # ③買える順Gate: 先頭に「✅買える/⏸見送り/△様子見」判定を出す
+                    _lean_clear = (r.get('lean') or {}).get('lean') in ('本線向き', '②穴妙味向き')
+                    if r['skips']:
+                        play_badge = ('<span style="background:#222;color:#999;border:1px solid #555;'
+                                      'border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;">⏸見送り</span>')
+                    elif (_lean_clear or n_v >= 1):
+                        _wy = []
+                        if _lean_clear:
+                            _wy.append((r.get('lean') or {}).get('lean'))
+                        if n_v:
+                            _wy.append(f'相手{n_v}')
+                        if r['danger_horses']:
+                            _wy.append(f'危険{len(r["danger_horses"])}fade')
+                        play_badge = (f'<span title="買える条件が揃ったレース: {" / ".join(_wy)}" '
+                                      f'style="background:#0B1F00;color:#7CFC00;border:1px solid #7CFC00;'
+                                      f'border-radius:6px;padding:3px 10px;font-size:0.85em;font-weight:bold;cursor:help;">✅買える</span>')
+                    else:
+                        play_badge = ('<span title="決着タイプ中立かつ妙味馬なし=無理に触らない" '
+                                      'style="background:#1A1400;color:#FFD700;border:1px solid #FFD700;'
+                                      'border-radius:6px;padding:3px 10px;font-size:0.85em;">△様子見</span>')
                     rn = r["title"] if r["title"] != r["id"] else "(レース名不明)"
                     _vlab = _venue_label(r["id"])
                     _nk_url = f'https://race.netkeiba.com/race/shutuba.html?race_id={r["id"]}'
@@ -8406,7 +8438,7 @@ if nav == "🔍 Race Scanner (Batch)":
                         f'<a href="{_nk_url}" target="_blank" title="netkeiba.comでこのレースの出馬表を開く" '
                         f'style="text-decoration:none;color:#4FC3F7;font-weight:bold;font-size:1.05em;">🔗{_vlab}</a>'
                         f'&nbsp;<span style="font-size:1.12em;font-weight:bold;color:inherit;">{rn}</span>'
-                        f'&nbsp;&nbsp;{badge}{vh_badge}{dg_badge}{pace_badge}{cond_badge}{skip_badge}&nbsp;'
+                        f'&nbsp;&nbsp;{play_badge}&nbsp;{badge}{vh_badge}{dg_badge}{pace_badge}{cond_badge}{skip_badge}&nbsp;'
                         f'<span style="color:#888;font-size:0.8em;">{r["id"]}</span>'
                     )
                     st.html(f'<div style="margin-top:14px;padding:10px 0 4px;border-top:1px solid #333;{dim}">{header_html}</div>')
