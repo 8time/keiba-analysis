@@ -155,6 +155,9 @@ def main():
         assert money.Ledger.classify_loss(0, 'buy', gate_lean='②穴妙味向き', has_value_ana=0) == '盲目②(穴妙味向きなのに妙味穴なし)'
         assert money.Ledger.classify_loss(0, 'buy', gate_lean='本線向き', n_points=15).startswith('本線向きで点数過多')
         assert money.Ledger.classify_loss(0, 'buy', synth_odds=1.2).startswith('トリガミ設計')
+        # ⑥回顧→ルール生成: Gate無視の負けがある→ルールが出る
+        rules = lg.improvement_rules()
+        assert any('見送り' in r for r in rules), f"Gate無視ルール期待, got {rules}"
         lg.con.close()
         try:
             os.remove(_tmp)

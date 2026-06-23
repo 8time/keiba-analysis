@@ -297,6 +297,32 @@ class Ledger:
             d['loss'] += (r['stake'] or 0) - (r['payout'] or 0)
         return out
 
+    def improvement_rules(self):
+        """⑥回顧→次回ルールの自動生成。負けの最大要因とGate別ROIから『次にやめること』をstr listで返す。"""
+        rules = []
+        lb = self.loss_breakdown()
+        if lb:
+            k, v = sorted(lb.items(), key=lambda kv: -kv[1]['loss'])[0]
+            _map = {
+                'Gate無視': '🚫 見送り(skip)レースを買わない＝最大の損失源',
+                '危険軸': '⚠ axis_warn(安全な軸が無い)レースは軸固定で買わない',
+                '危険人気馬を含めて購入': '⚠ 危険人気馬(severity≥2)を買い目に入れない',
+                '盲目②': '🎯 ②穴妙味は妙味穴(末脚/単複乖離/厩舎当コース)がいる時だけ',
+                '本線向きで点数過多': '📉 本線向きは点数を絞る(8点目安)',
+                'トリガミ設計': '💸 合成オッズが低い買い目は点数削減 or ワイド/馬連へ',
+            }
+            for pre, msg in _map.items():
+                if k.startswith(pre):
+                    rules.append(f"{msg}（{v['n']}件/損失¥{v['loss']:,}）")
+                    break
+        rbg = {g: x for g, x in self.roi_by_gate().items() if g != '(未タグ)' and x['n'] >= 5}
+        if rbg:
+            worst_g, worst = min(rbg.items(), key=lambda kv: kv[1]['roi'])
+            if worst['roi'] < 0.6:
+                rules.append(f"📊 Gate『{worst_g}』の回収率{worst['roi']*100:.0f}%が低い"
+                             f"({worst['n']}件)→このGateは見送り寄りに")
+        return rules
+
     def max_drawdown(self):
         """精算済みP/L推移の最大ドローダウン(円・0以下。0=DD無し)。"""
         cum = 0; peak = 0; dd = 0

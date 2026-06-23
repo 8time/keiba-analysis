@@ -505,6 +505,11 @@ if nav == "🏁 今日のダッシュボード":
                 if _t0.startswith(('Gate無視', '危険軸', '危険人気', '盲目②', '本線向きで点数過多', 'トリガミ設計')):
                     st.warning(f"⚠ 最大の負け要因＝『{_t0}』は買い方の事故/設計ミス＝"
                                "Gate遵守・点数管理で減らせます。")
+            _rules = _dlg.improvement_rules()
+            if _rules:
+                st.markdown("**📋 次にやめること（回顧→自動ルール）**")
+                for _r in _rules:
+                    st.markdown(f"- {_r}")
         _dlg.close()
     except Exception as _de:
         st.caption(f"（台帳サマリ読込スキップ: {_de}）")

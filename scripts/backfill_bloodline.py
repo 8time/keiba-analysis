@@ -32,9 +32,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--year', type=int, default=2024, help='対象開始年(results.year>=)')
     ap.add_argument('--limit', type=int, default=0, help='今回処理する最大頭数(0=全部)')
-    ap.add_argument('--sleep', type=float, default=0.3, help='1頭ごとの待機秒(行儀)')
+    ap.add_argument('--sleep', type=float, default=0.5, help='1頭ごとの基本待機秒(行儀)')
+    ap.add_argument('--jitter', type=float, default=0.7, help='待機にランダム上乗せ(秒・ボット検知回避)')
     ap.add_argument('--commit-every', type=int, default=25, dest='commit_every')
     args = ap.parse_args()
+    import random
 
     con = sqlite3.connect(DB, timeout=30)
     cur = con.cursor()
@@ -73,7 +75,7 @@ def main():
             el = time.time() - t0
             print(f"  {i}/{len(rows)} 補完{filled} 不明{unknown} ({el:.0f}s, {i/max(el,1):.1f}頭/s) "
                   f"最新例: {bamei} 父={sire}", flush=True)
-        time.sleep(args.sleep)
+        time.sleep(args.sleep + random.uniform(0, args.jitter))
     con.commit()
     nh = cur.execute("SELECT COUNT(*) FROM horses WHERE sire IS NOT NULL AND sire!=''").fetchone()[0]
     con.close()
