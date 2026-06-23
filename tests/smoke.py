@@ -150,6 +150,18 @@ def main():
             pass
     check("money.Ledger gate_status/roi_by_gate", t_ledger_gate)
 
+    def t_gate_cache():
+        from core import score_cache as sc
+        rid = '209901019999'
+        sc.write_gate(rid, 'buy', '②穴妙味向き')
+        g = sc.read_gate(rid)
+        assert g and g['status'] == 'buy' and g['lean'] == '②穴妙味向き', f"got {g}"
+        try:
+            os.remove(sc._gate_path(rid))
+        except Exception:
+            pass
+    check("score_cache.write_gate/read_gate", t_gate_cache)
+
     def t_danger_gate():
         from core import danger_gate as dg
         # 人気薄は対象外

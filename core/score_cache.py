@@ -85,6 +85,40 @@ def read_rear(race_id):
         return None
 
 
+def _gate_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.gate.json")
+
+
+def write_gate(race_id, status, lean=None, severity=None):
+    """Scannerで見たレースのGate判定(scanner_play_status='buy'等)を保存。
+    💰BetSyncの台帳記録時に read_gate で自動補完し、運用の取り違え/タグ漏れを防ぐ。"""
+    if not race_id or not status:
+        return
+    try:
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_gate_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'status': status, 'lean': lean, 'severity': severity},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_gate(race_id):
+    """{'status','lean','severity'} or None。"""
+    if not race_id:
+        return None
+    p = _gate_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def _keep_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(_DIR, f"{rid}.keep.json")

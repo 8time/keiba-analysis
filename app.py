@@ -1187,9 +1187,23 @@ if nav == "💰 BetSync（資金管理）":
                     _f_p = fc3.number_input("予測勝率%", 0.0, 100.0, 20.0, key="bs_led_p")
                     _f_odds = fc4.number_input("オッズ", 1.0, 999.0, 5.0, key="bs_led_odds")
                     _f_stake = fc5.number_input("賭け金", 100, 1000000, 100, 100, key="bs_led_stake")
-                    # #8 Gate判定タグ: 買った時の Scanner Gate 状態を残し、後でGate別ROIを検証する
-                    _f_gate = st.selectbox("Gate判定(任意)", ['', 'buy(✅買える)', 'axis_warn(⚠軸注意)',
-                                                              'wait(△様子見)', 'skip無視(⏸見送りを買った)'],
+                    # #8 Gate判定タグ + #3 Scannerからの自動補完(read_gate)。買った時のGate状態を台帳に残す
+                    _gate_opts = ['', 'buy(✅買える)', 'axis_warn(⚠軸注意)',
+                                  'wait(△様子見)', 'skip無視(⏸見送りを買った)']
+                    try:
+                        from core import score_cache as _scg2
+                        _auto_rid = (st.session_state.get('bs_led_rid') or
+                                     (_ss.get('bs_ev_feed') or {}).get('race_id', ''))
+                        _ag = _scg2.read_gate(_auto_rid) if _auto_rid else None
+                        if _ag and 'bs_led_gate' not in st.session_state:
+                            _ai = {'buy': 1, 'axis_warn': 2, 'wait': 3, 'skip': 4}.get(_ag.get('status'), 0)
+                            st.session_state['bs_led_gate'] = _gate_opts[_ai]
+                        if _ag:
+                            st.caption(f"🚦 Scanner自動検出: Gate={_ag.get('status')}（{_ag.get('lean') or '-'}）"
+                                       "— 違う買い目なら手で変更。")
+                    except Exception:
+                        pass
+                    _f_gate = st.selectbox("Gate判定(任意・Scannerから自動補完)", _gate_opts,
                                            key="bs_led_gate",
                                            help="買った時のScanner Gate状態。後で『Gate無視/axis_warn/buyのみ』のROIを比較できる。")
                     if st.form_submit_button("➕ 予測を台帳に記録"):
@@ -8439,6 +8453,12 @@ if nav == "🔍 Race Scanner (Batch)":
                         skip_badge = (f'&nbsp;<span title="{_tip_sk}" style="background:#222;color:#aaa;border:1px solid #555;'
                                       f'border-radius:6px;padding:3px 8px;font-size:0.8em;cursor:help;">🚫見送り: {"・".join(r["skips"])}</span>')
                     _pstat = vs.scanner_play_status(r)
+                    # #3 Gate判定をディスクへキャッシュ→💰BetSync台帳記録時に自動補完(運用ミス防止)
+                    try:
+                        from core import score_cache as _scg
+                        _scg.write_gate(r['id'], _pstat, (r.get('lean') or {}).get('lean'))
+                    except Exception:
+                        pass
                     dim = 'opacity:0.5;' if _pstat == 'skip' else ''
                     # ③買える順Gate: 4段ステータス ✅買える / ⚠軸注意 / △様子見 / ⏸見送り
                     if _pstat == 'skip':
