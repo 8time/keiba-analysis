@@ -99,6 +99,14 @@ def main():
         assert all(len(set(x)) == 3 for x in f) and len(f) == len(set(f)), "重複排除/3頭組"
     check("trio_engine.build_formation", t_formation)
 
+    def t_veto_axis():
+        from core import trio_engine as te
+        hs = [{'umaban': 1, 'name': 'A', 'score': 99, 'pop': 1},
+              {'umaban': 2, 'name': 'B', 'score': 90, 'pop': 2}]
+        r = te.recommend_quinella_exacta(hs, q_odds={}, e_odds={}, veto_axis={1})
+        assert r['axis'] == 2, f"危険軸1をvetoし2へ降格すべき, got {r['axis']}"
+    check("trio_engine.recommend_quinella_exacta(veto_axis)", t_veto_axis)
+
     def t_danger_gate():
         from core import danger_gate as dg
         # 人気薄は対象外

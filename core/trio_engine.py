@@ -284,7 +284,7 @@ def _pop_label(pop):
 
 def recommend_quinella_exacta(horses, q_odds=None, e_odds=None, axis_umaban=None,
                               n_opp=6, band_q=(10.0, 120.0), band_e=(20.0, 250.0),
-                              both_dir=False):
+                              both_dir=False, veto_axis=None):
     """
     軸1頭 × 相手(スコア順 n_opp頭) の馬連/馬単おすすめ買い目。
     horses : [{'umaban','name','score','pop','alert'}]（recommend_trio と同形）
@@ -301,7 +301,13 @@ def recommend_quinella_exacta(horses, q_odds=None, e_odds=None, axis_umaban=None
         return {'axis': None, 'opp': [], 'quinella': [], 'exacta': []}
     by_um = {h['umaban']: h for h in hs}
     ranked = sorted(hs, key=lambda h: h.get('score', 0) or 0, reverse=True)
-    axis = axis_umaban if axis_umaban in by_um else ranked[0]['umaban']
+    # 自動軸は危険人気馬(veto_axis)を避けて次点へ降格(verified: 危険人気の軸固定は不利)
+    _veto = {u for u in (veto_axis or [])}
+    if axis_umaban in by_um:
+        axis = axis_umaban
+    else:
+        axis = next((h['umaban'] for h in ranked if h['umaban'] not in _veto),
+                    ranked[0]['umaban'])
     opp = [h['umaban'] for h in ranked if h['umaban'] != axis][:n_opp]
     q_odds = q_odds or {}
     e_odds = e_odds or {}

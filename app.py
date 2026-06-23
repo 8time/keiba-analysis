@@ -5360,10 +5360,13 @@ if nav == "🏠 Single Race Analysis":
                             from core import corrected_time as _ctf2
                             from core import jockey_jv as _jjf2
                             from core import track_bias as _tbf2
+                            from core import danger_gate as _dgte
                             _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
                             _baba_te = str(meta.get('condition', '') or '')
                             _jyo_te = str(race_id_input)[4:6]
-                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set()
+                            _dv_te = str(meta.get('date_val', '') or '')
+                            _month_te = int(_dv_te[4:6]) if len(_dv_te) >= 6 and _dv_te[4:6].isdigit() else None
+                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set(); _veto_te = set()
                             # 馬ごとの根拠ラベル(表示用)。edge=妙味方向 / danger=危険方向
                             _ereason = {}; _dreason = {}
                             def _addr(d, u, lab):
@@ -5378,13 +5381,27 @@ if nav == "🏠 Single Race Analysis":
                                 _popt = pd.to_numeric(_rt.get('Popularity'), errors='coerce')
                                 if pd.notnull(_popt) and _popt >= 6:
                                     _ana_te.add(_ut)
-                                if pd.notnull(_popt) and _popt == 1 and (
-                                        ('芝' in _surf_te and _baba_te in ('重', '不良')) or
-                                        ('ダ' in _surf_te and _baba_te == '不良')):
-                                    _danger_te.add(_ut)
-                                    _addr(_dreason, _ut, f'🌧️{_baba_te}×1番人気')
                                 _ktt, _tc2 = _jjf2.resolve_horse(str(_rt.get('Name', '')))
                                 _jky2 = str(_rt.get('Jockey', '') or '')
+                                # 血統: スクレイプ済み(netkeiba)優先→無ければjravan(JV血統は2023-07凍結)
+                                _sire2 = str(_rt.get('sire') or '').strip()
+                                if (not _sire2 or _sire2 == '-') and _ktt:
+                                    _sire2 = _tbf2.sire_of_ketto(_ktt)
+                                # 危険人気Veto(共通danger_gate): severity1=危険材料/2以上=軸不可(_veto_te)
+                                _vr = _dgte.danger_veto(
+                                    ninki=(int(_popt) if pd.notnull(_popt) else None),
+                                    surface=_surf_te, baba=_baba_te, sire=_sire2,
+                                    sex_age=str(_rt.get('SexAge', '') or ''), month=_month_te)
+                                if _vr['severity'] >= 1:
+                                    _danger_te.add(_ut)
+                                    for _rs in _vr['reasons']:
+                                        _addr(_dreason, _ut, _rs)
+                                    if _vr['severity'] >= 2:
+                                        _veto_te.add(_ut)
+                                # 道悪×血統 WETPOWER=軸補強(exempt)→妙味エッジ
+                                _bm2 = _tbf2.heavy_fav_blood_mod(_sire2, _surf_te, _baba_te) if _sire2 else None
+                                if _bm2 and _bm2.get('mod') == 'exempt':
+                                    _addr(_ereason, _ut, '🟢道悪軸')
                                 if _ktt:
                                     _fg = _ctf2.get_figure(_ktt, _surf_te)
                                     if _fg and _fg.get('fig') is not None:
@@ -5393,17 +5410,6 @@ if nav == "🏠 Single Race Analysis":
                                     _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
                                     if _si is not None and _srn >= 2:
                                         _spurt_te[_ut] = _si
-                                    # 道悪×血統(検証済): WETPOWER=軸補強 / FADE=危険
-                                    # スクレイプ済み血統(netkeiba)優先→無ければjravan horses(JV血統マスタは2023-07で凍結)
-                                    _sire2 = str(_rt.get('sire') or '').strip()
-                                    if not _sire2 or _sire2 == '-':
-                                        _sire2 = _tbf2.sire_of_ketto(_ktt)
-                                    _bm2 = _tbf2.heavy_fav_blood_mod(_sire2, _surf_te, _baba_te) if _sire2 else None
-                                    if _bm2 and _bm2['mod'] == 'exempt':
-                                        _addr(_ereason, _ut, '🟢道悪軸')
-                                    elif _bm2 and _bm2['mod'] == 'intensify':
-                                        _danger_te.add(_ut)
-                                        _addr(_dreason, _ut, '⚠瞬発系道悪')
                                 # 厩舎の当コース勝率(検証: >20%は妙味)
                                 if _tc2:
                                     _tcw = _jjf2.trainer_course_winrate(_tc2, _jyo_te, _surf_te)
@@ -5423,11 +5429,25 @@ if nav == "🏠 Single Race Analysis":
                             _edge_te = set(_ereason.keys())
                             st.session_state[_aim_key] = {
                                 'edge': _edge_te, 'danger': _danger_te, 'ana': _ana_te,
+                                'veto': _veto_te,
                                 'edge_reasons': _ereason, 'danger_reasons': _dreason}
                         except Exception:
                             st.session_state[_aim_key] = {'edge': set(), 'danger': set(), 'ana': set(),
+                                                          'veto': set(),
                                                           'edge_reasons': {}, 'danger_reasons': {}}
                     _aim = st.session_state[_aim_key]
+                    # 危険人気Veto(severity≥2)を軸の自動採用から降格: デフォルト軸候補の並びで後ろへ
+                    _veto_set = _aim.get('veto') or set()
+                    if _veto_set:
+                        def _veto_rank(_c):
+                            try:
+                                return 1 if int(_c[1:3]) in _veto_set else 0
+                            except Exception:
+                                return 0
+                        _te_choices = sorted(_te_choices, key=_veto_rank)
+                        st.warning("⚠ 危険人気馬（複数の危険材料で軸不可）: "
+                                   + " / ".join(f"{u}番" for u in sorted(_veto_set))
+                                   + " — 軸の自動採用から降格。相手/押さえで再検討を。")
 
                     # ── 決着タイプ判定(検証済 value_scanner.trio_lean): どのパターンで勝てるレースか ──
                     _rec_idx = 0
@@ -5688,7 +5708,8 @@ if nav == "🏠 Single Race Analysis":
 
                         _qe = _te.recommend_quinella_exacta(
                             _te_horses, q_odds=_qmap, e_odds=_emap,
-                            axis_umaban=_qe_axis, n_opp=_qe_nopp, both_dir=_qe_both)
+                            axis_umaban=_qe_axis, n_opp=_qe_nopp, both_dir=_qe_both,
+                            veto_axis=_aim.get('veto'))
                         # 🎯 当てにいく馬券フィルター(馬連/馬単にも横断適用・同じ共有セット)
                         try:
                             from core import bet_filter as _bfqe
