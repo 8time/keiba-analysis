@@ -388,9 +388,9 @@ def run_magi_retrospective(
     }
 
 def discuss_interactive_retrospective(session_data: dict, user_text: str, chat_history: list, api_key: str) -> str:
-    \"\"\"
+    """
     MAGI回顧学習タブでの「人間とAIの対話（どうしたら当てられたか？）」を処理する
-    \"\"\"
+    """
     import google.genai as genai
     from google.genai import types
     import tempfile
@@ -410,7 +410,7 @@ def discuss_interactive_retrospective(session_data: dict, user_text: str, chat_h
     bal_miss = retro_result.get('balthasar', {}).get('risk_note', '')
     cas_miss = retro_result.get('casper', {}).get('hidden_signal', '')
     
-    sys_prompt = f\"\"\"
+    sys_prompt = f"""
 あなたは競馬AI「MAGIシステム」のマスターAIです。人間（ユーザー）と共に過去のレースの敗因分析とロジック改善を討論します。
 
 【対象レース: {race_id}】
@@ -425,7 +425,7 @@ CASPER: {cas_miss}
 
 ユーザーから人間としての視点、直感、または現地で得た情報などが提供されます。
 ユーザーの意見に真摯に耳を傾け、「では、今のMAGIシステムのどの変数（MakuriPower, HiddenGemなど）を見直せば、この展開を事前に察知できたか？」を建設的に議論し、学習メモとしてまとめてください。
-\"\"\"
+"""
     
     prompt = sys_prompt + "\n\n【ここまでの対話】\n"
     for msg in chat_history:
