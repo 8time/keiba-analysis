@@ -8122,7 +8122,10 @@ if nav == "🔍 Race Scanner (Batch)":
                     rv = vs.race_value_score(odds_list, meta, jyo, surf, dist, n_h, pace_z=_pace_z)
                     skips = vs.race_skip_reasons(meta, n_h, surf, race_title, min_win)
                     # 3連複 決着タイプ傾向(本線⇔②穴妙味・検証済) と 特別条件
-                    lean = vs.trio_lean(meta, n_h, rv['fav_odds'], _pace_z)
+                    # ※距離/道悪/上位オッズ形状まで使う強化版(3連複エンジンと同一・trio_type_search検証)
+                    lean = vs.trio_lean(meta, n_h, rv['fav_odds'], _pace_z,
+                                        dist=dist, baba=str(meta.get('condition', '') or ''),
+                                        odds_list=odds_list)
                     _conds = []
                     if meta.get('is_fillies'):
                         _conds.append('牝馬限定戦')

@@ -168,7 +168,8 @@ def render():
                     if row['着順'] <= 3:
                         return ['background-color:#1a2a1a;color:#A5D6A7'] * len(row)
                     return [''] * len(row)
-                st.dataframe(df.style.apply(_hl, axis=1), hide_index=True, use_container_width=True)
+                st.dataframe(df.style.apply(_hl, axis=1).format({'血統スコア': '{:.1f}'}),
+                             hide_index=True, use_container_width=True)
                 st.caption("黄=1着 / 緑=2-3着。血統順と着順がどれだけ一致するか観察。"
                            "血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
                            "『道悪判定』🟢道悪軸=ダ重不良でシニミニ系等が好走(危険人気から免除)/"
