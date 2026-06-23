@@ -192,6 +192,28 @@ def main():
         assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
     check("danger_gate.danger_veto / axis_demote", t_danger_gate)
 
+    # ── Phase3.5: 実行時バグ/契約ガード(py_compileでは拾えない) ──
+    def t_dup_widget_keys():
+        import re as _re
+        with open(os.path.join(ROOT, 'app.py'), encoding='utf-8') as _f:
+            _src = _f.read()
+        _keys = _re.findall(r"""key=(['"])([^'"]+)\1""", _src)  # 静的keyのみ(f-stringは除外)
+        _seen, _dup = set(), set()
+        for _, k in _keys:
+            (_dup if k in _seen else _seen).add(k)
+        assert not _dup, f"重複widget key(実行時クラッシュ源): {sorted(_dup)[:10]}"
+    check("app.py 重複widget keyなし", t_dup_widget_keys)
+
+    def t_dashboard_contract():
+        # 🏁ダッシュボード/⑥回顧が依存する関数の存在保証(リネーム破壊を即検出)
+        from core import money, score_cache as sc
+        for m in ('roi_by_gate', 'max_drawdown', 'loss_breakdown',
+                  'improvement_rules', 'classify_loss', 'record_prediction'):
+            assert hasattr(money.Ledger, m), f"money.Ledger.{m} 欠落(ダッシュボード破壊)"
+        for fn in ('recent_gates', 'read_gate', 'write_gate', 'read_buy', 'write_buy'):
+            assert hasattr(sc, fn), f"score_cache.{fn} 欠落"
+    check("dashboard/⑥回顧の関数契約", t_dashboard_contract)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():
