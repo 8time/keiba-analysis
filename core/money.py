@@ -193,9 +193,11 @@ class Ledger:
         self.con = sqlite3.connect(db)
         self.con.row_factory = sqlite3.Row
         self.con.executescript(_DDL)
-        # #8 Gate結果列(buy/axis_warn/wait/skip・lean・severity)を後方互換で追加
+        # #8 Gate結果列＋#1 買い目メタ列(設計ミス分類用)を後方互換で追加
         for _col, _typ in (('gate_status', 'TEXT'), ('gate_lean', 'TEXT'),
-                           ('gate_severity', 'INTEGER')):
+                           ('gate_severity', 'INTEGER'),
+                           ('n_points', 'INTEGER'), ('synth_odds', 'REAL'),
+                           ('has_danger', 'INTEGER'), ('has_value_ana', 'INTEGER')):
             try:
                 self.con.execute(f"ALTER TABLE bets ADD COLUMN {_col} {_typ}")
             except Exception:
@@ -203,13 +205,18 @@ class Ledger:
         self.con.commit()
 
     def record_prediction(self, race_id, umaban, bamei, pred_prob, odds, stake=100, bet_type='単勝',
-                          gate_status=None, gate_lean=None, gate_severity=None):
+                          gate_status=None, gate_lean=None, gate_severity=None,
+                          n_points=None, synth_odds=None, has_danger=None, has_value_ana=None):
         self.con.execute(
             """INSERT INTO bets(ts,race_id,umaban,bamei,pred_prob,odds,stake,bet_type,
-                                gate_status,gate_lean,gate_severity)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                                gate_status,gate_lean,gate_severity,
+                                n_points,synth_odds,has_danger,has_value_ana)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (datetime.datetime.now().isoformat(timespec='seconds'), race_id, umaban, bamei,
-             pred_prob, odds, stake, bet_type, gate_status, gate_lean, gate_severity))
+             pred_prob, odds, stake, bet_type, gate_status, gate_lean, gate_severity,
+             n_points, synth_odds,
+             None if has_danger is None else int(bool(has_danger)),
+             None if has_value_ana is None else int(bool(has_value_ana))))
         self.con.commit()
 
     def settle(self, race_id, win_umaban, win_payout):
@@ -242,17 +249,30 @@ class Ledger:
         return out
 
     @staticmethod
-    def classify_loss(won, gate_status, gate_lean=None, pred_prob=None):
-        """⑥回顧: 外れたベットの『負け理由』をGateメタから自動分類(改善ループの種)。
-        的中(won)はNone。Gate無視/危険軸が最も是正効果が大きい(運用事故)。
-        ※点数過多/トリガミ/妙味穴なし等の買い目設計系は別途(買い目メタが要る)。"""
+    def classify_loss(won, gate_status, gate_lean=None, pred_prob=None,
+                      n_points=None, synth_odds=None, has_danger=None, has_value_ana=None):
+        """⑥回顧: 外れたベットの『負け理由』を自動分類(改善ループの種)。的中(won)はNone。
+        優先順=是正効果の大きい運用事故→買い目設計ミス→想定内のブレ。
+        運用事故(Gate無視/危険軸/危険人気含み)はGate遵守で直接減らせる。"""
         if won:
             return None
         gs = (gate_status or '').strip()
+        lean = (gate_lean or '').strip()
+        # ① 運用事故(最優先・Gate遵守で減る)
         if gs == 'skip':
             return 'Gate無視(見送りレースを購入)'
         if gs == 'axis_warn':
             return '危険軸(安全な軸が無いのに購入)'
+        if has_danger:
+            return '危険人気馬を含めて購入'
+        # ② 買い目設計ミス
+        if lean == '②穴妙味向き' and has_value_ana == 0:
+            return '盲目②(穴妙味向きなのに妙味穴なし)'
+        if lean == '本線向き' and n_points is not None and n_points >= 12:
+            return '本線向きで点数過多({}点)'.format(n_points)
+        if synth_odds is not None and 0 < synth_odds < 1.5:
+            return 'トリガミ設計(合成オッズ{:.1f}が低すぎ)'.format(synth_odds)
+        # ③ 根拠薄/想定内のブレ
         if gs == 'wait':
             return '様子見レースを購入(根拠薄)'
         if pred_prob is not None and pred_prob >= 0.5:
@@ -265,10 +285,13 @@ class Ledger:
         """精算済みの負けを理由別に集計: {reason: {'n','loss'}}。"""
         out = {}
         for r in self.con.execute(
-                "SELECT won,gate_status,gate_lean,pred_prob,stake,payout FROM bets WHERE settled=1"):
+                "SELECT won,gate_status,gate_lean,pred_prob,stake,payout,"
+                "n_points,synth_odds,has_danger,has_value_ana FROM bets WHERE settled=1"):
             if r['won']:
                 continue
-            reason = self.classify_loss(r['won'], r['gate_status'], r['gate_lean'], r['pred_prob'])
+            reason = self.classify_loss(
+                r['won'], r['gate_status'], r['gate_lean'], r['pred_prob'],
+                r['n_points'], r['synth_odds'], r['has_danger'], r['has_value_ana'])
             d = out.setdefault(reason, {'n': 0, 'loss': 0})
             d['n'] += 1
             d['loss'] += (r['stake'] or 0) - (r['payout'] or 0)

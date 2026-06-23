@@ -1205,6 +1205,7 @@ if nav == "💰 BetSync（資金管理）":
                     # #8 Gate判定タグ + #3 Scannerからの自動補完(read_gate)。買った時のGate状態を台帳に残す
                     _gate_opts = ['', 'buy(✅買える)', 'axis_warn(⚠軸注意)',
                                   'wait(△様子見)', 'skip無視(⏸見送りを買った)']
+                    _ag = None
                     try:
                         from core import score_cache as _scg2
                         _auto_rid = (st.session_state.get('bs_led_rid') or
@@ -1224,9 +1225,22 @@ if nav == "💰 BetSync（資金管理）":
                     if st.form_submit_button("➕ 予測を台帳に記録"):
                         if _f_rid.strip():
                             _gs = _f_gate.split('(')[0] or None
+                            # #1 買い目メタ(点数/合成/危険馬/妙味穴)を3連複エンジンのキャッシュから補完
+                            _bm = None
+                            try:
+                                from core import score_cache as _scb2
+                                _bm = _scb2.read_buy(_f_rid.strip())
+                            except Exception:
+                                _bm = None
+                            _bm = _bm or {}
                             _lg.record_prediction(_f_rid.strip(), int(_f_uma), '',
                                                   _f_p / 100.0, _f_odds, int(_f_stake),
-                                                  gate_status=_gs)
+                                                  gate_status=_gs,
+                                                  gate_lean=(_ag.get('lean') if _ag else None),
+                                                  n_points=_bm.get('n_points'),
+                                                  synth_odds=_bm.get('synth_odds'),
+                                                  has_danger=_bm.get('has_danger'),
+                                                  has_value_ana=_bm.get('has_value_ana'))
                             st.success("記録しました。")
                             st.rerun()
                         else:
@@ -5711,6 +5725,15 @@ if nav == "🏠 Single Race Analysis":
                             if _lean == '本線向き' and _syn and _syn < max(2.0, len(_te_res['bets']) * 0.25):
                                 st.warning(f"⚠ 本線向き(堅め)で合成オッズが低い({_syn}倍/{len(_te_res['bets'])}点)＝"
                                            "的中しても妙味が薄い。点数を絞るか、軸2頭のワイド/馬連へ落とすのが有利。")
+                        except Exception:
+                            pass
+                        # #1 買い目設計メタを💰BetSyncへ橋渡し(設計ミス系の負け分類に使う)
+                        try:
+                            from core import score_cache as _scb
+                            _bd = any(b.get('danger_legs') for b in _te_res['bets'])
+                            _bva = bool(set(_aim.get('edge') or ()) & set(_aim.get('ana') or ()))
+                            _scb.write_buy(race_id_input, n_points=len(_te_res['bets']),
+                                           synth_odds=_syn, has_danger=_bd, has_value_ana=_bva)
                         except Exception:
                             pass
 

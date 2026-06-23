@@ -150,6 +150,11 @@ def main():
         assert money.Ledger.classify_loss(1, 'skip') is None, "的中は分類しない"
         lb = lg.loss_breakdown()
         assert lb.get('Gate無視(見送りレースを購入)', {}).get('n') == 1, f"got {lb}"
+        # #1 設計ミス分類: 危険人気含み/盲目②/本線点数過多/トリガミ設計
+        assert money.Ledger.classify_loss(0, 'buy', has_danger=1) == '危険人気馬を含めて購入'
+        assert money.Ledger.classify_loss(0, 'buy', gate_lean='②穴妙味向き', has_value_ana=0) == '盲目②(穴妙味向きなのに妙味穴なし)'
+        assert money.Ledger.classify_loss(0, 'buy', gate_lean='本線向き', n_points=15).startswith('本線向きで点数過多')
+        assert money.Ledger.classify_loss(0, 'buy', synth_odds=1.2).startswith('トリガミ設計')
         lg.con.close()
         try:
             os.remove(_tmp)

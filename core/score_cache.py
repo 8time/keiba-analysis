@@ -119,6 +119,42 @@ def read_gate(race_id):
         return None
 
 
+def _buy_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.buy.json")
+
+
+def write_buy(race_id, n_points=None, synth_odds=None, has_danger=None, has_value_ana=None):
+    """3連複エンジンの買い目設計メタ(点数/合成オッズ/危険馬含有/妙味穴有無)を保存。
+    💰BetSync記録時に read_buy で自動補完し、設計ミス系の負け分類(点数過多/トリガミ/盲目②)に使う。"""
+    if not race_id:
+        return
+    try:
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_buy_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'n_points': n_points, 'synth_odds': synth_odds,
+                       'has_danger': int(bool(has_danger)) if has_danger is not None else None,
+                       'has_value_ana': int(bool(has_value_ana)) if has_value_ana is not None else None},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_buy(race_id):
+    """{'n_points','synth_odds','has_danger','has_value_ana'} or None。"""
+    if not race_id:
+        return None
+    p = _buy_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def _keep_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(_DIR, f"{rid}.keep.json")
