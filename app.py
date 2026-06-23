@@ -5377,7 +5377,10 @@ if nav == "🏠 Single Race Analysis":
                                     if _si is not None and _srn >= 2:
                                         _spurt_te[_ut] = _si
                                     # 道悪×血統(検証済): WETPOWER=軸補強 / FADE=危険
-                                    _sire2 = _tbf2.sire_of_ketto(_ktt)
+                                    # スクレイプ済み血統(netkeiba)優先→無ければjravan horses(JV血統マスタは2023-07で凍結)
+                                    _sire2 = str(_rt.get('sire') or '').strip()
+                                    if not _sire2 or _sire2 == '-':
+                                        _sire2 = _tbf2.sire_of_ketto(_ktt)
                                     _bm2 = _tbf2.heavy_fav_blood_mod(_sire2, _surf_te, _baba_te) if _sire2 else None
                                     if _bm2 and _bm2['mod'] == 'exempt':
                                         _addr(_ereason, _ut, '🟢道悪軸')
@@ -6660,7 +6663,10 @@ if nav == "🧹 消去フィルター":
                         _wetaxis = None
                         _fadewet = False
                         if pd.notnull(_pop) and _pop <= 3 and _baba in ('重', '不良'):
-                            _hsire = _tb.sire_of_ketto(_kt) if _kt else None
+                            # スクレイプ済み血統(netkeiba)優先→無ければjravan horses(JV血統マスタは2023-07凍結)
+                            _hsire = str(_r.get('sire') or '').strip()
+                            if not _hsire or _hsire == '-':
+                                _hsire = _tb.sire_of_ketto(_kt) if _kt else None
                             _bmod = _tb.heavy_fav_blood_mod(_hsire, _surf, _baba) if _hsire else None
                             if _bmod and _bmod['mod'] == 'exempt':
                                 _babafav = False          # 高含水○血統→危険免除
