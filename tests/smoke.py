@@ -83,6 +83,30 @@ def main():
         assert r['lean'] == '②穴妙味向き', f"ハンデ16頭短距離道悪→②期待, got {r['lean']}"
     check("value_scanner.trio_lean", t_lean)
 
+    def t_baba_code():
+        from core import value_scanner as vs
+        # 馬場コードは 1=良/2=稍重/3=重/4=不良(off-by-one再発防止)
+        assert vs.baba_code_to_label('1') == '良', "code1→良"
+        assert vs.baba_code_to_label('4') == '不良', "code4→不良"
+        assert vs.baba_code_to_label('3') == '重' and vs.baba_code_to_label(2) == '稍重'
+        assert vs.baba_code_to_label('0') == '' and vs.baba_code_to_label('') == ''
+    check("value_scanner.baba_code_to_label", t_baba_code)
+
+    def t_scanner_gate():
+        from core import value_scanner as vs
+        buy = {'skips': [], 'axis_floor': True, 'danger_horses': [],
+               'value_horses': [1], 'lean': {'lean': '②穴妙味向き'}, 'vscore': 40}
+        skip = {'skips': ['少頭数'], 'axis_floor': True, 'danger_horses': [],
+                'value_horses': [], 'lean': {'lean': '中立'}, 'vscore': 10}
+        assert vs.scanner_priority(buy) > vs.scanner_priority(skip), "buy > skip"
+        assert vs.scanner_play_status(buy) == 'buy', f"got {vs.scanner_play_status(buy)}"
+        assert vs.scanner_play_status(skip) == 'skip', f"got {vs.scanner_play_status(skip)}"
+        aw = {'skips': [], 'axis_floor': False, 'danger_horses': [1],
+              'value_horses': [1], 'lean': {'lean': '②穴妙味向き'}, 'vscore': 40}
+        assert vs.scanner_play_status(aw) == 'axis_warn'
+        assert vs.scanner_priority(buy) > vs.scanner_priority(aw), "buy > axis_warn"
+    check("value_scanner.scanner_gate", t_scanner_gate)
+
     def t_betfilter():
         from core import bet_filter as bf
         out = bf.annotate_bets(

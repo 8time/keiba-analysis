@@ -20,6 +20,15 @@ from datetime import datetime
 LOCAL_JYO = {'01', '02', '03', '04', '07', '10'}  # 札幌函館福島新潟中京小倉
 OPEN_CLASSES = {'オープン', 'G1', 'G2', 'G3', 'GI', 'GII', 'GIII', 'L', 'リステッド'}
 
+# JRA-VAN馬場状態コード→ラベル(共通の真実の源)。1=良/2=稍重/3=重/4=不良、0や空=該当なし。
+# ※アプリ/バックテストでコードのズレ(off-by-one)が起きないよう必ずこれを使う。
+_BABA_CODE = {'1': '良', '2': '稍重', '3': '重', '4': '不良'}
+
+
+def baba_code_to_label(code):
+    """馬場状態コード(str/int)→'良'/'稍重'/'重'/'不良'。該当なしは''。"""
+    return _BABA_CODE.get(str(code).strip()) or ''
+
 
 # ───────────────────────── 見送りレース判定 ─────────────────────────
 def race_skip_reasons(meta, n_horses, surface='', race_name='', min_win_odds=None):
@@ -339,3 +348,31 @@ def _njk(s):
 def _same_jk(a, b):
     return bool(a and b and (a == b or (len(a) >= 2 and len(b) >= 2
                 and (a.startswith(b) or b.startswith(a)))))
+
+
+# ───────────────────────── 買える順Gate ソートキー ─────────────────────────
+def scanner_priority(r):
+    """Race Scanner の「買える順」Gate ソートキーを返す(タプル・降順で使う)。
+    ゲート順: 見送りなし → 軸フロア → 危険なし → 相手質 → trio_lean明確。
+    r: results リストの1要素(dict)。app.py とバックテストで共用。"""
+    if r.get('skips'):
+        return (0, 0, 0, 0, 0, 0.0)
+    axis = 1 if r.get('axis_floor', True) else 0
+    no_dg = 1 if not r.get('danger_horses') else 0
+    n_v = min(len(r.get('value_horses', [])), 5)
+    lean_ok = 1 if (r.get('lean') or {}).get('lean') in ('本線向き', '②穴妙味向き') else 0
+    tie = r.get('vscore', 0) * 0.2 + n_v * 2.0
+    return (1, axis, no_dg, n_v, lean_ok, tie)
+
+
+def scanner_play_status(r):
+    """Gate判定から表示用ステータスを返す。
+    戻り値: 'buy'|'axis_warn'|'wait'|'skip'"""
+    if r.get('skips'):
+        return 'skip'
+    if not r.get('axis_floor', True):
+        return 'axis_warn'
+    _lean = (r.get('lean') or {}).get('lean', '')
+    if _lean in ('本線向き', '②穴妙味向き') or len(r.get('value_horses', [])) >= 1:
+        return 'buy'
+    return 'wait'
