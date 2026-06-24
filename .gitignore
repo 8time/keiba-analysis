@@ -26,3 +26,4 @@ elim_reasons.json
 
 # パドック観察タグ台帳(ユーザー個人データ)
 paddock_ledger.json
+data/paddock_media/

@@ -520,14 +520,19 @@ if nav == "🏁 今日のダッシュボード":
 # ──────────────────────────────────────────────
 if nav == "👁️ パドック解析":
     from core import paddock_ledger as _pl
-    st.header("👁️ パドック解析（観察タグ台帳）")
-    st.caption("自分のパドック観察(タグ)×結果を貯めて『どの観察が回収率に効くか』を"
-               "自分のデータで実証する個人検証装置。パドックの主観cueは過去データに正解が無く"
+    st.header("👁️ パドック/調教 解析（観察タグ台帳）")
+    st.caption("自分のパドック/調教の観察(タグ)×結果を貯めて『どの観察が回収率に効くか』を"
+               "自分のデータで実証する個人検証装置。主観cueは過去データに正解が無く"
                "バックテスト不可なので、ここで自前の台帳を作って実測する。")
     st.info("⚠️ **これは検証済みエッジではなく学習台帳です。** 「白い泡＝危険」等の俗説を鵜呑みに"
             "せず、タグ別の複勝率/ROIを貯めて効くタグだけを後で採用します（減点法＝走らない馬を"
             "消す方が安定）。馬体重/増減の定量はすでに検証済（買い妙味ゼロ・fade側のみ）なのでここ"
-            "では扱いません。Gemma自動タグ付け（phase B）は台帳が貯まってから追加予定。")
+            "では扱いません。Gemma 4 12B自動タグ付け（phase B）は台帳が貯まってから追加予定。")
+
+    # シーン選択(パドック / 調教)。同じ台帳に scene で同居させ、検証は scene 別に出す。
+    _scene_lbl = st.radio("対象シーン", ["👁️ パドック", "🏋️ 調教"], horizontal=True, key="pl_scene")
+    _scene = 'training' if '調教' in _scene_lbl else 'paddock'
+    _sc_jp = _pl.SCENE_LABEL[_scene]
 
     _pl_path = _pl.LEDGER_PATH
     _tab_rec, _tab_settle, _tab_stats = st.tabs(
@@ -535,44 +540,78 @@ if nav == "👁️ パドック解析":
 
     # ── 📝 観察を記録 ──
     with _tab_rec:
-        st.markdown("レースを見る前/直後に、気づいた観察をタグで記録します。"
+        st.markdown(f"**{_sc_jp}**を見る前/直後に、気づいた観察をタグで記録します。"
                     "極性（減点/加点）は表示用の仮説で、効くかは台帳が実測します。")
-        with st.form("pl_record_form", clear_on_submit=True):
+
+        # ① タグの意味(凡例)。各タグが「どういう状況か」をここで確認できる。
+        with st.expander(f"📖 タグの意味（{_sc_jp}・白い泡って何？等・クリックで開く）"):
+            for _grp in ('fade', 'buy', 'ctx'):
+                _gk = [k for k in _pl.scene_tags(_scene) if _pl.TAG_GROUP[k] == _grp]
+                if not _gk:
+                    continue
+                st.markdown(f"**【{_pl.GROUP_LABEL[_grp]}】**")
+                for _k in _gk:
+                    st.markdown(f"- **{_pl.TAG_LABEL[_k]}** … {_pl.TAG_HELP.get(_k, '')}")
+
+        with st.form(f"pl_record_form_{_scene}", clear_on_submit=True):
             _c1, _c2, _c3, _c4 = st.columns([2, 1, 1, 1])
             with _c1:
-                _pl_rid = st.text_input("レースID", key="pl_rid",
+                _pl_rid = st.text_input("レースID", key=f"pl_rid_{_scene}",
                                         help="netkeibaのレースID（例: 202606200211）")
-                _pl_name = st.text_input("馬名（任意）", key="pl_name")
+                _pl_name = st.text_input("馬名（任意）", key=f"pl_name_{_scene}")
             with _c2:
-                _pl_um = st.number_input("馬番", min_value=0, max_value=18, step=1, key="pl_um")
+                _pl_um = st.number_input("馬番", min_value=0, max_value=18, step=1, key=f"pl_um_{_scene}")
             with _c3:
-                _pl_nin = st.number_input("人気", min_value=0, max_value=18, step=1, key="pl_nin")
+                _pl_nin = st.number_input("人気", min_value=0, max_value=18, step=1, key=f"pl_nin_{_scene}")
             with _c4:
-                _pl_odds = st.number_input("単勝オッズ", min_value=0.0, step=0.1, key="pl_odds")
+                _pl_odds = st.number_input("単勝オッズ", min_value=0.0, step=0.1, key=f"pl_odds_{_scene}")
 
-            st.markdown("**観察タグ（複数選択可）**")
+            st.markdown(f"**{_sc_jp}の観察タグ（複数選択可）** — 意味は上の「📖 タグの意味」を参照")
             _picked = []
             for _grp in ('fade', 'buy', 'ctx'):
-                _opts = [k for k in _pl.TAG_ORDER if _pl.TAG_GROUP[k] == _grp]
+                _opts = [k for k in _pl.scene_tags(_scene) if _pl.TAG_GROUP[k] == _grp]
+                if not _opts:
+                    continue
                 _sel = st.multiselect(
                     f"{_pl.GROUP_LABEL[_grp]}",
                     options=_opts,
                     format_func=lambda k: _pl.TAG_LABEL[k],
-                    key=f"pl_tags_{_grp}")
+                    key=f"pl_tags_{_scene}_{_grp}")
                 _picked.extend(_sel)
-            _pl_note = st.text_input("自由メモ（任意）", key="pl_note",
+            _pl_note = st.text_input("自由メモ（任意）", key=f"pl_note_{_scene}",
                                      placeholder="例: いつもより落ち着いていた / 前走比トモ細い 等")
+
+            # ② 画像/動画の任意添付。手動タグのまま、media+人タグ+結果のペアを残す
+            #    （phase BでGemma 4の自動検出精度を測る正解データになる）。
+            _pl_files = st.file_uploader(
+                f"📎 {_sc_jp}の画像/動画を添付（任意・複数可）",
+                type=['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'mov', 'webm', 'm4v', 'avi'],
+                accept_multiple_files=True, key=f"pl_media_{_scene}")
+            st.caption("※添付は手動タグの証拠＆将来のGemma 4自動検出(phase B)の答え合わせ用データになります。"
+                       "保存先: data/paddock_media/（gitには上げません）")
+
             _submit = st.form_submit_button("➕ 記録する", type="primary")
             if _submit:
                 if not _pl_rid or not _picked:
                     st.error("レースIDと観察タグを最低1つ入れてください。")
                 else:
+                    _saved = []
+                    for _f in (_pl_files or []):
+                        try:
+                            _p = _pl.save_media(_f.getvalue(), _f.name,
+                                                race_id=_pl_rid, umaban=(_pl_um or ''))
+                            if _p:
+                                _saved.append(_p)
+                        except Exception as _me:
+                            st.warning(f"添付保存に失敗: {_f.name}（{_me}）")
                     _e = _pl.make_entry(
                         race_id=_pl_rid, umaban=(_pl_um or None), name=_pl_name,
                         ninki=(_pl_nin or None), odds=(_pl_odds or None),
-                        tags=_picked, note=_pl_note, source='manual')
+                        tags=_picked, note=_pl_note, source='manual', media=_saved,
+                        scene=_scene)
                     if _pl.add_entry(_e, path=_pl_path):
-                        st.success(f"記録しました（{_pl_name or '馬'} / タグ{len(_picked)}個）。"
+                        _mtxt = f" / 添付{len(_saved)}件" if _saved else ""
+                        st.success(f"{_sc_jp}を記録しました（{_pl_name or '馬'} / タグ{len(_picked)}個{_mtxt}）。"
                                    "レース後に『✅ 精算』で着順を入れてください。")
                     else:
                         st.error("保存に失敗しました。")
@@ -580,8 +619,9 @@ if nav == "👁️ パドック解析":
     # ── ✅ 精算 ──
     with _tab_settle:
         _led = _pl.load_ledger(_pl_path)
-        _unsettled = [e for e in _led if not e.get('settled')]
-        st.markdown(f"未精算の観察: **{len(_unsettled)}件**。着順（と分かれば確定単勝オッズ）を入れて精算します。")
+        _unsettled = [e for e in _led
+                      if not e.get('settled') and (e.get('scene') or 'paddock') == _scene]
+        st.markdown(f"未精算の{_sc_jp}観察: **{len(_unsettled)}件**。着順（と分かれば確定単勝オッズ）を入れて精算します。")
         if not _unsettled:
             st.caption("未精算の観察はありません。")
         else:
@@ -590,17 +630,30 @@ if nav == "👁️ パドック解析":
                 with st.container(border=True):
                     st.markdown(f"**{_e.get('race_id')}** / 馬番{_e.get('umaban')} "
                                 f"{_e.get('name') or ''}（{_e.get('date')}）  \n🏷️ {_tag_txt}")
+                    # 添付メディアがあれば表示(着順入力時に見返せる)
+                    for _mp in (_e.get('media') or []):
+                        _ext = os.path.splitext(_mp)[1].lower()
+                        if os.path.exists(_mp):
+                            try:
+                                if _ext in ('.mp4', '.mov', '.webm', '.m4v', '.avi'):
+                                    st.video(_mp)
+                                else:
+                                    st.image(_mp, width=320)
+                            except Exception:
+                                st.caption(f"📎 {_mp}")
+                        else:
+                            st.caption(f"📎 {_mp}（ファイル無し）")
                     _sc1, _sc2, _sc3 = st.columns([1, 1, 1])
                     with _sc1:
                         _chaku = st.number_input("着順", min_value=0, max_value=18, step=1,
-                                                 key=f"pl_set_chaku_{_i}")
+                                                 key=f"pl_set_chaku_{_scene}_{_i}")
                     with _sc2:
                         _wo = st.number_input("確定単勝オッズ（任意）", min_value=0.0, step=0.1,
-                                              key=f"pl_set_wo_{_i}")
+                                              key=f"pl_set_wo_{_scene}_{_i}")
                     with _sc3:
                         st.write("")
                         st.write("")
-                        if st.button("✅ 精算", key=f"pl_set_btn_{_i}"):
+                        if st.button("✅ 精算", key=f"pl_set_btn_{_scene}_{_i}"):
                             if not _chaku:
                                 st.error("着順を入れてください。")
                             else:
@@ -616,8 +669,9 @@ if nav == "👁️ パドック解析":
     # ── 📊 タグ別検証 ──
     with _tab_stats:
         _led = _pl.load_ledger(_pl_path)
-        _stats, _base = _pl.tag_stats(_led)
-        st.markdown(f"全観察 **{len(_led)}件** / 精算済 **{_base['settled']}件**。"
+        _stats, _base = _pl.tag_stats(_led, scene=_scene)
+        _scene_n = sum(1 for e in _led if (e.get('scene') or 'paddock') == _scene)
+        st.markdown(f"{_sc_jp}観察 **{_scene_n}件** / 精算済 **{_base['settled']}件**。"
                     f"ベース複勝率 **{_base['t3_rate']*100:.0f}%**"
                     + (f" / 平均人気 {_base['avg_ninki']:.1f}番" if _base['avg_ninki'] else ""))
         st.caption(f"判定の基準: 減点候補=複勝率がベースより十分低ければ『消しに機能』、"

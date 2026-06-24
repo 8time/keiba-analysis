@@ -125,6 +125,26 @@ def main():
         assert 'サンプル不足' in pl.verdict(s, base), "n<MIN_SAMPLEはサンプル不足"
         # 不正タグは make_entry で弾く
         assert pl.make_entry(race_id='R2', umaban=2, name='b', tags=['__bad__'])['tags'] == []
+        # ① 全タグに説明(TAG_HELP)が揃っていること
+        _missing = [k for k in pl.TAG_ORDER if not pl.TAG_HELP.get(k)]
+        assert not _missing, f"説明欠落タグ: {_missing}"
+        # ② メディア保存: 許可拡張子は保存・パスを返す/不許可は None
+        md = os.path.join(tempfile.gettempdir(), 'smoke_pl_media')
+        rel = pl.save_media(b'x', 'a.jpg', race_id='R1', umaban=1, media_dir=md)
+        assert rel and os.path.exists(os.path.join(os.getcwd(), rel)), "jpg保存"
+        assert pl.save_media(b'x', 'a.txt', media_dir=md) is None, "txtは不許可"
+        e2 = pl.make_entry(race_id='R3', umaban=3, name='c', tags=['vein'], media=[rel])
+        assert e2['media'] == [rel], "mediaがエントリに入る"
+        # ③ scene: パドック/調教が同居し、tag_statsはscene別に分離されること
+        e3 = pl.make_entry(race_id='R4', umaban=4, name='d', tags=['t_strong'],
+                           scene='training')
+        assert e3['scene'] == 'training' and pl.TAG_SCENE['t_strong'] == 'training'
+        assert pl.make_entry(race_id='R5', umaban=5, name='e', tags=[],
+                             scene='bogus')['scene'] == 'paddock', "不正sceneはpaddock"
+        # 調教タグをパドックsceneのmake_entryに入れてもkeyは保持(検証はtag_statsのscene絞りで担保)
+        assert set(pl.scene_tags('paddock')).isdisjoint(pl.scene_tags('training')), "scene分離"
+        import shutil as _sh
+        _sh.rmtree(md, ignore_errors=True)
         os.remove(p)
     check("paddock_ledger.record_settle_stats", t_paddock_ledger)
 
