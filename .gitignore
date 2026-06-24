@@ -23,3 +23,6 @@ result.txt
 
 # 消去理由ラーニング台帳(ユーザー個人データ)
 elim_reasons.json
+
+# パドック観察タグ台帳(ユーザー個人データ)
+paddock_ledger.json

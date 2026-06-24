@@ -57,7 +57,7 @@ def main():
     CORE = ['track_bias', 'value_scanner', 'bet_filter', 'trio_engine',
             'bet_optimizer', 'corrected_time', 'jockey_jv', 'ltr_ranker',
             'money', 'elim_reasons', 'elim_cross', 'score_cache', 'bloodline',
-            'axis_selector', 'pace_map']
+            'axis_selector', 'pace_map', 'paddock_ledger']
     for m in CORE:
         check(f"import core.{m}", lambda m=m: __import__(f'core.{m}', fromlist=['_']))
 
@@ -106,6 +106,27 @@ def main():
         assert vs.scanner_play_status(aw) == 'axis_warn'
         assert vs.scanner_priority(buy) > vs.scanner_priority(aw), "buy > axis_warn"
     check("value_scanner.scanner_gate", t_scanner_gate)
+
+    def t_paddock_ledger():
+        import tempfile
+        from core import paddock_ledger as pl
+        p = os.path.join(tempfile.gettempdir(), 'smoke_pl.json')
+        if os.path.exists(p):
+            os.remove(p)
+        # 記録→精算→集計が通り、極性判定が実測で動くこと(俗説の決め打ちでない)
+        pl.add_entry(pl.make_entry(race_id='R1', umaban=1, name='a', ninki=1,
+                                   odds=2.0, tags=['gait_stiff']), path=p)
+        assert pl.settle_entry('R1', 1, chaku=10, win_odds=2.0, path=p) == 1, "精算1件"
+        assert pl.settle_entry('R1', 99, chaku=1, path=p) == 0, "該当なしは0"
+        stats, base = pl.tag_stats(pl.load_ledger(p))
+        assert base['settled'] == 1, f"精算済1, got {base['settled']}"
+        s = next(x for x in stats if x['key'] == 'gait_stiff')
+        assert s['settled'] == 1 and s['group'] == 'fade'
+        assert 'サンプル不足' in pl.verdict(s, base), "n<MIN_SAMPLEはサンプル不足"
+        # 不正タグは make_entry で弾く
+        assert pl.make_entry(race_id='R2', umaban=2, name='b', tags=['__bad__'])['tags'] == []
+        os.remove(p)
+    check("paddock_ledger.record_settle_stats", t_paddock_ledger)
 
     def t_betfilter():
         from core import bet_filter as bf

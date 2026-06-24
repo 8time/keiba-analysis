@@ -367,6 +367,7 @@ with st.sidebar:
         "💰 BetSync（資金管理）",
         "🔍 Race Scanner (Batch)",
         "🧹 消去フィルター",
+        "👁️ パドック解析",
         "🤓 N氏の研究室",
         "🏇 騎手分析Pro",
         "🩸 血統SP",
@@ -513,6 +514,135 @@ if nav == "🏁 今日のダッシュボード":
         _dlg.close()
     except Exception as _de:
         st.caption(f"（台帳サマリ読込スキップ: {_de}）")
+
+# ──────────────────────────────────────────────
+# 👁️ パドック解析（観察タグ台帳・個人検証）
+# ──────────────────────────────────────────────
+if nav == "👁️ パドック解析":
+    from core import paddock_ledger as _pl
+    st.header("👁️ パドック解析（観察タグ台帳）")
+    st.caption("自分のパドック観察(タグ)×結果を貯めて『どの観察が回収率に効くか』を"
+               "自分のデータで実証する個人検証装置。パドックの主観cueは過去データに正解が無く"
+               "バックテスト不可なので、ここで自前の台帳を作って実測する。")
+    st.info("⚠️ **これは検証済みエッジではなく学習台帳です。** 「白い泡＝危険」等の俗説を鵜呑みに"
+            "せず、タグ別の複勝率/ROIを貯めて効くタグだけを後で採用します（減点法＝走らない馬を"
+            "消す方が安定）。馬体重/増減の定量はすでに検証済（買い妙味ゼロ・fade側のみ）なのでここ"
+            "では扱いません。Gemma自動タグ付け（phase B）は台帳が貯まってから追加予定。")
+
+    _pl_path = _pl.LEDGER_PATH
+    _tab_rec, _tab_settle, _tab_stats = st.tabs(
+        ["📝 観察を記録", "✅ 精算（着順入力）", "📊 タグ別検証"])
+
+    # ── 📝 観察を記録 ──
+    with _tab_rec:
+        st.markdown("レースを見る前/直後に、気づいた観察をタグで記録します。"
+                    "極性（減点/加点）は表示用の仮説で、効くかは台帳が実測します。")
+        with st.form("pl_record_form", clear_on_submit=True):
+            _c1, _c2, _c3, _c4 = st.columns([2, 1, 1, 1])
+            with _c1:
+                _pl_rid = st.text_input("レースID", key="pl_rid",
+                                        help="netkeibaのレースID（例: 202606200211）")
+                _pl_name = st.text_input("馬名（任意）", key="pl_name")
+            with _c2:
+                _pl_um = st.number_input("馬番", min_value=0, max_value=18, step=1, key="pl_um")
+            with _c3:
+                _pl_nin = st.number_input("人気", min_value=0, max_value=18, step=1, key="pl_nin")
+            with _c4:
+                _pl_odds = st.number_input("単勝オッズ", min_value=0.0, step=0.1, key="pl_odds")
+
+            st.markdown("**観察タグ（複数選択可）**")
+            _picked = []
+            for _grp in ('fade', 'buy', 'ctx'):
+                _opts = [k for k in _pl.TAG_ORDER if _pl.TAG_GROUP[k] == _grp]
+                _sel = st.multiselect(
+                    f"{_pl.GROUP_LABEL[_grp]}",
+                    options=_opts,
+                    format_func=lambda k: _pl.TAG_LABEL[k],
+                    key=f"pl_tags_{_grp}")
+                _picked.extend(_sel)
+            _pl_note = st.text_input("自由メモ（任意）", key="pl_note",
+                                     placeholder="例: いつもより落ち着いていた / 前走比トモ細い 等")
+            _submit = st.form_submit_button("➕ 記録する", type="primary")
+            if _submit:
+                if not _pl_rid or not _picked:
+                    st.error("レースIDと観察タグを最低1つ入れてください。")
+                else:
+                    _e = _pl.make_entry(
+                        race_id=_pl_rid, umaban=(_pl_um or None), name=_pl_name,
+                        ninki=(_pl_nin or None), odds=(_pl_odds or None),
+                        tags=_picked, note=_pl_note, source='manual')
+                    if _pl.add_entry(_e, path=_pl_path):
+                        st.success(f"記録しました（{_pl_name or '馬'} / タグ{len(_picked)}個）。"
+                                   "レース後に『✅ 精算』で着順を入れてください。")
+                    else:
+                        st.error("保存に失敗しました。")
+
+    # ── ✅ 精算 ──
+    with _tab_settle:
+        _led = _pl.load_ledger(_pl_path)
+        _unsettled = [e for e in _led if not e.get('settled')]
+        st.markdown(f"未精算の観察: **{len(_unsettled)}件**。着順（と分かれば確定単勝オッズ）を入れて精算します。")
+        if not _unsettled:
+            st.caption("未精算の観察はありません。")
+        else:
+            for _i, _e in enumerate(_unsettled):
+                _tag_txt = '、'.join(_pl.TAG_LABEL.get(t, t) for t in _e.get('tags') or [])
+                with st.container(border=True):
+                    st.markdown(f"**{_e.get('race_id')}** / 馬番{_e.get('umaban')} "
+                                f"{_e.get('name') or ''}（{_e.get('date')}）  \n🏷️ {_tag_txt}")
+                    _sc1, _sc2, _sc3 = st.columns([1, 1, 1])
+                    with _sc1:
+                        _chaku = st.number_input("着順", min_value=0, max_value=18, step=1,
+                                                 key=f"pl_set_chaku_{_i}")
+                    with _sc2:
+                        _wo = st.number_input("確定単勝オッズ（任意）", min_value=0.0, step=0.1,
+                                              key=f"pl_set_wo_{_i}")
+                    with _sc3:
+                        st.write("")
+                        st.write("")
+                        if st.button("✅ 精算", key=f"pl_set_btn_{_i}"):
+                            if not _chaku:
+                                st.error("着順を入れてください。")
+                            else:
+                                _n = _pl.settle_entry(_e.get('race_id'), _e.get('umaban'),
+                                                      chaku=_chaku, win_odds=(_wo or None),
+                                                      path=_pl_path)
+                                if _n:
+                                    st.success(f"精算しました（{_n}件）。")
+                                    st.rerun()
+                                else:
+                                    st.error("該当エントリが見つかりませんでした。")
+
+    # ── 📊 タグ別検証 ──
+    with _tab_stats:
+        _led = _pl.load_ledger(_pl_path)
+        _stats, _base = _pl.tag_stats(_led)
+        st.markdown(f"全観察 **{len(_led)}件** / 精算済 **{_base['settled']}件**。"
+                    f"ベース複勝率 **{_base['t3_rate']*100:.0f}%**"
+                    + (f" / 平均人気 {_base['avg_ninki']:.1f}番" if _base['avg_ninki'] else ""))
+        st.caption(f"判定の基準: 減点候補=複勝率がベースより十分低ければ『消しに機能』、"
+                   f"加点候補=予測は織込み済みなので単ROI≥100%で『買い妙味』。"
+                   f"精算{_pl.MIN_SAMPLE}件未満は『サンプル不足』。平均人気で『ただの人気薄か』を判別。")
+        if not _stats:
+            st.caption("まだ観察がありません。『📝 観察を記録』から始めてください。")
+        else:
+            import pandas as _pd
+            _rows = []
+            for _s in _stats:
+                _rows.append({
+                    'グループ': _pl.GROUP_LABEL.get(_s['group'], _s['group']),
+                    'タグ': _s['label'],
+                    '観察数': _s['n'],
+                    '精算済': _s['settled'],
+                    '複勝率': f"{_s['t3_rate']*100:.0f}%" if _s['settled'] else '-',
+                    'ベース比': f"{_s['delta_t3']*100:+.1f}pt" if _s['settled'] else '-',
+                    '単ROI': (f"{_s['roi1']*100:.0f}%" if _s['roi1'] is not None else '-'),
+                    '平均人気': (f"{_s['avg_ninki']:.1f}" if _s['avg_ninki'] else '-'),
+                    '実測判定': _pl.verdict(_s, _base),
+                })
+            st.dataframe(_pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+            st.caption("※単ROIは精算時に確定単勝オッズを入れた観察分のみで計算（無い分は母数から除外）。"
+                       "効くタグが実証できたら、そのcueだけを後で②消去エンジン/危険人気馬Vetoに反映します。")
 
 # ──────────────────────────────────────────────
 # 💰 BetSync（資金管理）タブ
