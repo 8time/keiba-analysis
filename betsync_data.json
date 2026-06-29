@@ -2,7 +2,7 @@
   "bankroll": 20000,
   "init_bet": 100,
   "target": 50,
-  "strategy": "[稼働中] 6連サバイバル",
+  "strategy": "[稼働中] ジワ上げ",
   "ticket": "3連複（15点）",
   "races": [
     {

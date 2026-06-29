@@ -564,3 +564,184 @@ def comeback_flag(bamei, before_key, db_path=None, max_lookback=3):
             return {'reason': f"差し馬場(前残り{bias['front_rate']*100:.0f}%)を前({c4}番手)で粘り{chaku}着＝不利展開を克服",
                     'run_key': rkey}
     return None
+
+
+# ──────────────────────────────────────────────
+# Phase 4: 当日バイアスダッシュボード（数値化強化）
+# ──────────────────────────────────────────────
+# JRA芝の全体平均(2018-25): front_rate≈52.5%, inner_waku≈31.5%
+_POP_FRONT = 0.525
+_POP_INNER = 0.315
+
+
+def bias_dashboard(year, monthday, jyo, surface, before_race_num, db_path=None):
+    """当日バイアスをσ単位の強度 + 信頼度 + レースごとの推移で返す。
+    app.pyのエビデンス表で呼び出し、ダッシュボード風に表示する。
+    戻り値: {
+      'summary': empirical_bias互換dict + sigma_front/sigma_inner,
+      'per_race': [{'race_num', 'front_cum', 'inner_cum', 'n'}],
+      'confidence': 0〜100,
+      'trend': 'stable'|'front_gaining'|'closer_gaining'|'inner_gaining'|'outer_gaining',
+    } or None。
+    """
+    db = db_path or JV_DB_PATH
+    if not os.path.exists(db):
+        return None
+    surf = 'ダ' if 'ダ' in str(surface) else '芝'
+    try:
+        con = sqlite3.connect(db)
+        rows = con.execute(
+            """SELECT ra.race_num, r.corner4, r.umaban, ra.shusso_tosu, r.kyakushitsu
+               FROM races ra JOIN results r ON r.race_key=ra.race_key
+               WHERE ra.year=? AND ra.monthday=? AND ra.jyo=? AND ra.surface=?
+                 AND ra.race_num < ? AND r.chakujun=1 AND r.corner4>0
+               ORDER BY ra.race_num""",
+            (str(year), str(monthday), str(jyo), surf, int(before_race_num)),
+        ).fetchall()
+        con.close()
+    except Exception:
+        return None
+    if len(rows) < 2:
+        return None
+
+    per_race = []
+    cum_front = cum_inner = cum_n = 0
+    for rnum, c4, uma, tosu, kyaku in rows:
+        tosu = tosu or 8
+        is_front = 1 if c4 <= 3 else 0
+        is_inner = 1 if uma <= max(1, tosu / 3) else 0
+        cum_front += is_front
+        cum_inner += is_inner
+        cum_n += 1
+        per_race.append({
+            'race_num': rnum,
+            'front_cum': round(cum_front / cum_n, 3),
+            'inner_cum': round(cum_inner / cum_n, 3),
+            'n': cum_n,
+        })
+
+    n = len(rows)
+    front_rate = cum_front / n
+    inner_rate = cum_inner / n
+
+    se_front = (_POP_FRONT * (1 - _POP_FRONT) / n) ** 0.5 if n > 0 else 1
+    se_inner = (_POP_INNER * (1 - _POP_INNER) / n) ** 0.5 if n > 0 else 1
+    sigma_front = (front_rate - _POP_FRONT) / se_front if se_front > 0 else 0
+    sigma_inner = (inner_rate - _POP_INNER) / se_inner if se_inner > 0 else 0
+
+    confidence = min(100, int(n / 6 * 100))
+
+    trend = 'stable'
+    if len(per_race) >= 4:
+        half = len(per_race) // 2
+        early_f = sum(1 for r in rows[:half] if r[1] <= 3) / half
+        late_f = sum(1 for r in rows[half:] if r[1] <= 3) / (n - half)
+        early_i = sum(1 for r in rows[:half] if r[2] <= max(1, (r[3] or 8) / 3)) / half
+        late_i = sum(1 for r in rows[half:] if r[2] <= max(1, (r[3] or 8) / 3)) / (n - half)
+        if late_f - early_f > 0.15:
+            trend = 'front_gaining'
+        elif early_f - late_f > 0.15:
+            trend = 'closer_gaining'
+        if late_i - early_i > 0.15:
+            trend = 'inner_gaining'
+        elif early_i - late_i > 0.15:
+            trend = 'outer_gaining'
+
+    summary = empirical_bias([{'corner4': r[1], 'umaban': r[2], 'tosu': r[3] or 8}
+                              for r in rows])
+    if summary:
+        summary['sigma_front'] = round(sigma_front, 2)
+        summary['sigma_inner'] = round(sigma_inner, 2)
+
+    return {
+        'summary': summary,
+        'per_race': per_race,
+        'confidence': confidence,
+        'trend': trend,
+    }
+
+
+def bias_stars(sigma):
+    """σ値を★表示(5段階)に変換。正=有利、負=不利。"""
+    ab = abs(sigma)
+    if ab < 0.5:
+        return '★★★'
+    if ab < 1.0:
+        return '★★★★' if sigma > 0 else '★★'
+    if ab < 1.5:
+        return '★★★★☆' if sigma > 0 else '★☆'
+    return '★★★★★' if sigma > 0 else '☆'
+
+
+def bias_dashboard_text(dash):
+    """bias_dashboard() の戻り値を1行テキストにまとめる。"""
+    if not dash or not dash.get('summary'):
+        return None
+    s = dash['summary']
+    sf = s.get('sigma_front', 0)
+    si = s.get('sigma_inner', 0)
+    conf = dash['confidence']
+
+    front_lbl = '前有利' if sf > 0.5 else '差し有利' if sf < -0.5 else 'フラット'
+    inner_lbl = '内有利' if si > 0.5 else '外有利' if si < -0.5 else '枠フラット'
+
+    trend_map = {
+        'stable': '', 'front_gaining': ' ↗前有利が強まり中',
+        'closer_gaining': ' ↗差し有利が強まり中',
+        'inner_gaining': ' ↗内有利が強まり中',
+        'outer_gaining': ' ↗外有利が強まり中',
+    }
+    trend_txt = trend_map.get(dash['trend'], '')
+
+    return (f"{front_lbl}({sf:+.1f}σ) / {inner_lbl}({si:+.1f}σ) "
+            f"[信頼度{conf}% / {s['n']}R]{trend_txt}")
+
+
+# ──────────────────────────────────────────────
+# Phase 5: 開催日目(nichi)バイアス
+# ──────────────────────────────────────────────
+# jravan.db 2018-25 芝の開催日目別平均(バックテスト済み):
+#   day1=front56.0%/inner33.7% → day7=front52.2%/inner26.4%
+_NICHI_FRONT = {
+    1: 0.560, 2: 0.537, 3: 0.551, 4: 0.511, 5: 0.505,
+    6: 0.527, 7: 0.522, 8: 0.510, 9: 0.514, 10: 0.478,
+}
+_NICHI_INNER = {
+    1: 0.337, 2: 0.326, 3: 0.326, 4: 0.310, 5: 0.332,
+    6: 0.308, 7: 0.264, 8: 0.305, 9: 0.312, 10: 0.314,
+}
+
+
+def nichi_bias(nichi, surface='芝'):
+    """開催日目から芝の傷み傾向を返す。ダートは影響なしでNone。
+    戻り値: {'nichi', 'front_expected', 'inner_expected', 'wear_label', 'note'} or None。
+    """
+    if 'ダ' in str(surface):
+        return None
+    try:
+        d = int(nichi)
+    except (TypeError, ValueError):
+        return None
+    if d < 1 or d > 12:
+        return None
+    fe = _NICHI_FRONT.get(d, 0.52)
+    ie = _NICHI_INNER.get(d, 0.31)
+    if d <= 2:
+        wear = '開幕週'
+        note = '芝が新鮮 → 内枠・先行有利が強い傾向'
+    elif d <= 4:
+        wear = '序盤'
+        note = '内側の芝がやや傷み始め → まだ先行有利'
+    elif d <= 6:
+        wear = '中盤'
+        note = '内側の傷みが進行 → 外差しが台頭し始める'
+    elif d <= 8:
+        wear = '終盤(仮柵移動期)'
+        note = '内ラチ沿い荒れ → 外枠・差し有利が増加（仮柵移動で一時リセットの可能性）'
+    else:
+        wear = '最終盤'
+        note = '馬場状態は場/天候次第（日目だけでは判断困難）'
+    return {
+        'nichi': d, 'front_expected': round(fe, 3),
+        'inner_expected': round(ie, 3), 'wear_label': wear, 'note': note,
+    }

@@ -20,6 +20,9 @@
     "Suitability (Y)",
     "AvgAgari",
     "Alert",
-    "RiskFlags"
+    "RiskFlags",
+    "LTR",
+    "WeightCarried",
+    "CorrectedT"
   ]
 }

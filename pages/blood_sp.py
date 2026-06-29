@@ -11,6 +11,7 @@
 このラボはその検証済み判定の可視化＋探索用(予測器ではない)。
 """
 import os
+import re
 import sqlite3
 import streamlit as st
 import pandas as pd
@@ -33,9 +34,9 @@ def _band(k):
         k = int(k)
     except Exception:
         return '中距離'
-    if k <= 1400:
+    if k <= 1300:
         return '短距離'
-    if k <= 1800:
+    if k <= 1899:
         return 'マイル'
     if k <= 2200:
         return '中距離'
@@ -51,14 +52,35 @@ def _ro(path):
         return None
 
 
+def _normalize_parent(name):
+    """英語名+国コード除去、ローマ数字→全角。build_blood_dict.pyと同じ正規化。"""
+    if not name:
+        return name
+    s = name.strip()
+    s = re.sub(r'\s*[\(（][^)）]{1,3}[\)）]\s*$', '', s)
+    if re.search(r'[぀-ヿ一-鿿]', s):
+        last_jp = -1
+        for i, c in enumerate(s):
+            if '぀' <= c <= 'ヿ' or '一' <= c <= '鿿' or c in '０１２３４５６７８９':
+                last_jp = i
+        if last_jp >= 0:
+            rest = s[last_jp + 1:]
+            s = s[:last_jp + 1]
+            m = re.match(r'^(IV|III|II)', rest)
+            if m:
+                s += {'IV': '４', 'III': '３', 'II': '２'}[m.group(1)]
+    return s
+
+
 def _lookup(blood, table, parent, surface, band):
     """blood_dict から (parent, surface, dist_band) の成績を引く。"""
     if not parent:
         return None
+    norm = _normalize_parent(parent)
     try:
         r = blood.execute(
             f"SELECT runs, top3, wins, place_rate, win_rate, win_roi FROM {table} "
-            f"WHERE parent=? AND surface=? AND dist_band=?", (parent, surface, band)).fetchone()
+            f"WHERE parent=? AND surface=? AND dist_band=?", (norm, surface, band)).fetchone()
     except Exception:
         return None
     if not r:

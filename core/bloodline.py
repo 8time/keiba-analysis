@@ -5,6 +5,7 @@
 blood_dict.db は scripts/build_blood_dict.py で jravan.db から構築済み。
 """
 import os
+import re
 import sqlite3
 
 _BLOOD_DB = os.path.join(
@@ -29,6 +30,26 @@ def _dist_band(kyori):
     return None
 
 
+def _normalize_parent_name(name):
+    """名前バリアント統合: 英語名+国コード除去、ローマ数字→全角"""
+    if not name:
+        return name
+    s = name.strip()
+    s = re.sub(r'\s*[\(（][^)）]{1,3}[\)）]\s*$', '', s)
+    if re.search(r'[぀-ヿ一-鿿]', s):
+        last_jp = -1
+        for i, c in enumerate(s):
+            if '぀' <= c <= 'ヿ' or '一' <= c <= '鿿' or c in '０１２３４５６７８９':
+                last_jp = i
+        if last_jp >= 0:
+            rest = s[last_jp+1:]
+            s = s[:last_jp+1]
+            m = re.match(r'^(IV|III|II)', rest)
+            if m:
+                s += {'IV': '４', 'III': '３', 'II': '２'}[m.group(1)]
+    return s
+
+
 def _normalize_surface(surface):
     if not surface:
         return None
@@ -49,12 +70,13 @@ def lookup_sire_stats(sire, surface, distance, db_path=None):
     band = _dist_band(distance)
     if not surf or not band:
         return None
+    norm_sire = _normalize_parent_name(sire)
     try:
         con = sqlite3.connect(db)
         row = con.execute(
             "SELECT runs, place_rate, win_rate, win_roi FROM sire_stats "
             "WHERE parent=? AND surface=? AND dist_band=?",
-            (sire, surf, band)
+            (norm_sire, surf, band)
         ).fetchone()
         con.close()
         if row:
@@ -73,12 +95,13 @@ def lookup_bms_stats(bms, surface, distance, db_path=None):
     band = _dist_band(distance)
     if not surf or not band:
         return None
+    norm_bms = _normalize_parent_name(bms)
     try:
         con = sqlite3.connect(db)
         row = con.execute(
             "SELECT runs, place_rate, win_rate, win_roi FROM bms_stats "
             "WHERE parent=? AND surface=? AND dist_band=?",
-            (bms, surf, band)
+            (norm_bms, surf, band)
         ).fetchone()
         con.close()
         if row:

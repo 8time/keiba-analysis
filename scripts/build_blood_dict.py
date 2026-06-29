@@ -15,13 +15,32 @@ blood_dict.sqlite（恒久資産）に書き出す。解約後もこの辞書だ
 実行: py -3.14 scripts/build_blood_dict.py
 出力: data/blood_dict.db （sire_stats / bms_stats）
 """
-import sys, io, os, sqlite3
+import sys, io, os, re, sqlite3
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'jravan.db')
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'blood_dict.db')
 
 JRA = "('01','02','03','04','05','06','07','08','09','10')"
+
+def normalize_parent_name(name):
+    """名前バリアント統合: 英語名+国コード除去、ローマ数字→全角"""
+    if not name:
+        return name
+    s = name.strip()
+    s = re.sub(r'\s*[\(（][^)）]{1,3}[\)）]\s*$', '', s)
+    if re.search(r'[぀-ヿ一-鿿]', s):
+        last_jp = -1
+        for i, c in enumerate(s):
+            if '぀' <= c <= 'ヿ' or '一' <= c <= '鿿' or c in '０１２３４５６７８９':
+                last_jp = i
+        if last_jp >= 0:
+            rest = s[last_jp+1:]
+            s = s[:last_jp+1]
+            m = re.match(r'^(IV|III|II)', rest)
+            if m:
+                s += {'IV':'４','III':'３','II':'２'}[m.group(1)]
+    return s
 
 def dist_band(kyori):
     if kyori is None: return '不明'
@@ -31,8 +50,9 @@ def dist_band(kyori):
     return '長距離'
 
 def build(parent_col, out_table, con, out):
-    """parent_col = 'sire' or 'bms'。条件別(芝ダ×距離帯)に集計"""
-    out.execute(f"""CREATE TABLE IF NOT EXISTS {out_table} (
+    """parent_col = 'sire' or 'bms'。条件別(芝ダ×距離帯)に集計。名前正規化で統合。"""
+    out.execute(f"DROP TABLE IF EXISTS {out_table}")
+    out.execute(f"""CREATE TABLE {out_table} (
         parent TEXT, surface TEXT, dist_band TEXT,
         runs INTEGER, top3 INTEGER, wins INTEGER,
         place_rate REAL, win_rate REAL, win_roi REAL,
@@ -49,7 +69,8 @@ def build(parent_col, out_table, con, out):
     """
     agg = {}
     for row in con.execute(q):
-        key = (row['parent'], row['surface'], dist_band(row['kyori']))
+        norm = normalize_parent_name(row['parent'])
+        key = (norm, row['surface'], dist_band(row['kyori']))
         a = agg.setdefault(key, [0, 0, 0, 0])  # runs, top3, wins, win_ret
         a[0] += 1
         if row['chakujun'] <= 3: a[1] += 1

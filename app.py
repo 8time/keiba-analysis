@@ -2269,6 +2269,21 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         _tb_emp = None
                     st.session_state['_tb_emp_bias'] = _tb_emp  # Vエリアbaba自動化で参照
+                    # Phase4: 当日バイアスダッシュボード（σ強度+推移）
+                    _tb_dash = None
+                    _tb_nichi = None
+                    try:
+                        if _tb_rr:
+                            _tb_dash = _tb.bias_dashboard(*_tb_rr)
+                            _tb_nichi_con = __import__('sqlite3').connect('data/jravan.db')
+                            _tb_nichi_row = _tb_nichi_con.execute(
+                                "SELECT nichi FROM races WHERE race_id=?",
+                                (race_id_input,)).fetchone()
+                            _tb_nichi_con.close()
+                            if _tb_nichi_row:
+                                _tb_nichi = _tb.nichi_bias(_tb_nichi_row[0], _tb_surf)
+                    except Exception:
+                        pass
 
                     # track_cond テーブルからクッション値・含水率を自動供給（CSV取り込み済みデータ）
                     _tc_db = {'cushion': None, 'dirt_moisture': None}
@@ -2366,7 +2381,13 @@ if nav == "🏠 Single Race Analysis":
 
                         # エビデンス行を追記（Phase2: 馬場メトリクス / Phase1: 当日バイアス・コース×馬場）
                         evidence_list.extend(_tb.cushion_evidence(_tb_surf, _cv, _mv, moisture_corner=_mc))
-                        if _tb_emp:
+                        if _tb_dash and _tb_dash.get('summary'):
+                            _ds = _tb_dash['summary']
+                            _dtxt = _tb.bias_dashboard_text(_tb_dash)
+                            evidence_list.append({"項目": "当日バイアス強度",
+                                                  "値": f"前後{_ds.get('sigma_front',0):+.1f}σ / 内外{_ds.get('sigma_inner',0):+.1f}σ",
+                                                  "ステータス": f"🔁 {_dtxt}"})
+                        elif _tb_emp:
                             evidence_list.append({"項目": "当日逆算バイアス",
                                                   "値": f"{_tb_emp['pace_label']}/{_tb_emp['lane_label']}",
                                                   "ステータス": f"🔁 {_tb_emp['evidence']}"})
@@ -2387,6 +2408,12 @@ if nav == "🏠 Single Race Analysis":
                             evidence_list.append({"項目": "コース実績バイアス",
                                                   "値": f"{_tb_cb['front_rate']*100:.0f}%先行",
                                                   "ステータス": "📚 " + _tb_cb['label']})
+                        # 開催日目バイアス（芝の傷み代理）
+                        if _tb_nichi:
+                            evidence_list.append({"項目": "開催日目",
+                                                  "値": f"{_tb_nichi['nichi']}日目({_tb_nichi['wear_label']})",
+                                                  "ステータス": f"📅 {_tb_nichi['note']}"
+                                                  f"（先行期待{_tb_nichi['front_expected']*100:.0f}%/内枠{_tb_nichi['inner_expected']*100:.0f}%）"})
                         # 前日比クッション値シフト（絶対値より前日比が重要）
                         if _tc_shift:
                             _sh = _tc_shift
@@ -2412,9 +2439,29 @@ if nav == "🏠 Single Race Analysis":
                             st.table(_ev_df.style.apply(_ev_row_style, axis=1))
                         except Exception:
                             st.table(_ev_df)
-                        if _tb_emp is None:
+                        if _tb_emp is None and not _tb_dash:
                             st.caption("※当日逆算バイアスは未表示＝このレースの当日先行レース結果がJV-VAN（jravan.db）に未取り込み。"
                                        "未来のレースや体験版の当日反映前はVエリアのバイアスで手動指定してください。")
+                        # 当日バイアス推移チャート（レース番号ごとの累積前有利率/内枠率）
+                        if _tb_dash and len(_tb_dash.get('per_race', [])) >= 3:
+                            with st.expander("📈 当日バイアス推移（レース別）", expanded=False):
+                                _br = _tb_dash['per_race']
+                                _bdf = pd.DataFrame(_br)
+                                _bdf = _bdf.rename(columns={
+                                    'race_num': 'R', 'front_cum': '前有利率(累積)',
+                                    'inner_cum': '内枠率(累積)'})
+                                _bdf = _bdf.set_index('R')
+                                st.line_chart(_bdf[['前有利率(累積)', '内枠率(累積)']], height=220)
+                                _ds2 = _tb_dash['summary']
+                                _trend_jp = {'stable': '安定', 'front_gaining': '↗前有利が強まり中',
+                                             'closer_gaining': '↗差し有利が強まり中',
+                                             'inner_gaining': '↗内有利が強まり中',
+                                             'outer_gaining': '↗外有利が強まり中'}
+                                st.caption(
+                                    f"信頼度: {_tb_dash['confidence']}% / "
+                                    f"変化: {_trend_jp.get(_tb_dash['trend'], '不明')} / "
+                                    f"基準線: 前有利52.5%・内枠31.5%（全体平均）"
+                                )
                         # 危険人気馬(逆張り消去・検証済): 外枠有利日に内枠を引いた1-3番人気
                         # ※順張り(合致馬を買う)は妙味ゼロ(priced-in)。逆張りのみ検証済エッジ。
                         if _tb_emp and _tb_emp.get('lane_label') == '外有利':
@@ -3184,6 +3231,22 @@ if nav == "🏠 Single Race Analysis":
                                         f"💬 {_pm_comment}</div>",
                                         unsafe_allow_html=True,
                                     )
+
+                                # ── 📈 フェーズ別 位置推移チャート ──
+                                try:
+                                    _pm_traj = _pmap.build_trajectory_figure(
+                                        _pm_data, title=f"📈 位置推移 — {_pm_title}")
+                                    if _pm_traj:
+                                        with st.expander("📈 フェーズ別 位置推移チャート", expanded=False):
+                                            st.plotly_chart(_pm_traj, use_container_width=True,
+                                                            key="pace_trajectory_fig")
+                                            st.caption(
+                                                "各馬の隊列順位がフェーズごとにどう変化するかを可視化。"
+                                                "🔴逃げ 🟠先行 🔵差し 🟣追込。"
+                                                "上が先頭。直線の順位は展開マップの到達イメージと同一です。"
+                                            )
+                                except Exception:
+                                    pass
 
                                 # ── 🔄 バイアス巻き返し（人気帯リフレーム版・検証反映） ──
                                 # 検証(scripts/comeback_backtest.py・2023-25)で「巻き返し穴=次走妙味」は否定。
@@ -4329,6 +4392,23 @@ if nav == "🏠 Single Race Analysis":
                             df.at[_tidx, 'ボーナス詳細'] = f"{_existing}, {_tag}" if _existing and _existing != '-' else _tag
 
 
+                    # --- 🛡️ BattleScore乖離セーフティネット ---
+                    # BattleScore top-3の馬が予測スコアtop-7圏外に落ちた場合、
+                    # top-7ラインまで引き上げて recall 漏れを防止
+                    if 'BattleScore' in df.columns and 'Projected Score' in df.columns and len(df) >= 7:
+                        _bs_sn = pd.to_numeric(df['BattleScore'], errors='coerce').fillna(0)
+                        _ps_sn = pd.to_numeric(df['Projected Score'], errors='coerce').fillna(0)
+                        _bs_top3_idx = set(_bs_sn.nlargest(3).index)
+                        _ps_7th = _ps_sn.sort_values(ascending=False).iloc[6]
+                        for _sn_idx in _bs_top3_idx:
+                            if _ps_sn.loc[_sn_idx] < _ps_7th:
+                                _gap = _ps_7th - _ps_sn.loc[_sn_idx] + 0.1
+                                df.loc[_sn_idx, 'Projected Score'] = round(_ps_7th + 0.1, 1)
+                                _existing = str(df.at[_sn_idx, 'ボーナス詳細']) if 'ボーナス詳細' in df.columns else ''
+                                _bs_r = int(_bs_sn.rank(ascending=False, method='min').loc[_sn_idx])
+                                _tag = f"🛡️戦闘力{_bs_r}位↔予測圏外:+{_gap:.1f}"
+                                df.at[_sn_idx, 'ボーナス詳細'] = f"{_existing}, {_tag}" if _existing and _existing != '-' else _tag
+
                     # チャート用データ
                     st.session_state['current_bonus_df'] = df.copy()
                     # 新タブ化で別セッションになった🧹消去フィルター/🧠MAGIから採点を読めるようディスクにも保存
@@ -4508,7 +4588,7 @@ if nav == "🏠 Single Race Analysis":
                         return base
 
                     def fmt_blood_stats(row):
-                        """父×条件の複勝率/回収率を別列に短縮表示（緑色用）。"""
+                        """父×条件の複勝率/回収率を別列に短縮表示。"""
                         def _clean(v):
                             s = str(v) if v is not None else '-'
                             return '-' if s in ('nan', 'NaN', 'None', '不明', '', '-') else s
@@ -4521,10 +4601,21 @@ if nav == "🏠 Single Race Analysis":
                         _roi_i = '🔥' if _ss['win_roi'] >= 100 else ('💰' if _ss['win_roi'] >= 85 else '')
                         return f"複{_ss['place_rate']:.0f}%/回{_ss['win_roi']:.0f}%{_roi_i}"
 
+                    def _blood_roi_val(row):
+                        def _clean(v):
+                            s = str(v) if v is not None else '-'
+                            return '-' if s in ('nan', 'NaN', 'None', '不明', '', '-') else s
+                        sire = _clean(row.get('sire'))
+                        if sire == '-':
+                            return 0.0
+                        _ss = _bl.lookup_sire_stats(sire, _tb_surf, _tb_dist)
+                        return _ss['win_roi'] if _ss else 0.0
+
                     view_df['Bloodline'] = view_df.apply(fmt_blood, axis=1)
                     view_df['BloodStats'] = view_df.apply(fmt_blood_stats, axis=1)
+                    view_df['_blood_roi'] = view_df.apply(_blood_roi_val, axis=1)
                     # 表示後に内部列を削除
-                    view_df = view_df.drop(columns=['_DirtBloodlineRank', '_DirtBloodlineBonus'], errors='ignore')
+                    view_df = view_df.drop(columns=['_DirtBloodlineRank', '_DirtBloodlineBonus', '_blood_roi'], errors='ignore')
 
                     view_df['Rank'] = range(1, len(view_df) + 1)
 
@@ -4797,14 +4888,44 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         pass
 
+                    # --- 🔥末脚指数(検証済み: 人気薄×top3で複勝+4pp/ROI+11pp。穴の相手の質) ---
+                    try:
+                        _sp_vals = {}
+                        for _, _rsp in view_df.iterrows():
+                            _usp = pd.to_numeric(_rsp.get('Umaban'), errors='coerce')
+                            if pd.isnull(_usp):
+                                continue
+                            _ksp, _ = _jjh.resolve_horse(str(_rsp.get('Name', '')))
+                            _csp = _jjh.horse_recent_context(_ksp) if _ksp else None
+                            _si_v = (_csp or {}).get('spurt_index')
+                            _si_r = (_csp or {}).get('spurt_runs', 0)
+                            if _si_v is not None and _si_r >= 2:
+                                _sp_vals[int(_usp)] = float(_si_v)
+                        if _sp_vals:
+                            _sp_sorted = sorted(_sp_vals.items(), key=lambda x: -x[1])
+                            _sp_top3 = {u for u, _ in _sp_sorted[:3]}
+                            def _sp_cell(_uu):
+                                v = _sp_vals.get(_uu)
+                                if v is None:
+                                    return '-'
+                                return ('🔥' if _uu in _sp_top3 else '') + f"{v:+.2f}"
+                            view_df['SpurtIdx'] = view_df['Umaban'].apply(
+                                lambda u: _sp_cell(int(pd.to_numeric(u, errors='coerce')))
+                                if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
+                    except Exception:
+                        pass
+
+                    # --- ⏱️調教評価(netkeiba取得済みなら表示) ---
+                    if 'TrainingEval' in df.columns:
+                        view_df['TrainingEval'] = df['TrainingEval']
+
                     # Merge previous screenshot columns with latest advanced columns
-                    # --- v2.02: 展開データ列を追加 ---
                     cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'AxisMark', 'Jockey', 'Signal',
-                            'Projected Score', 'BattleScore', 'CorrectedT', 'LTR', 'AvgPosition',
+                            'Projected Score', 'BattleScore', 'CorrectedT', 'LTR', 'SpurtIdx', 'AvgPosition',
                             'DeployScoreLabel', 'PCILabel', 'Pos600m', 'FrontCollapseEffect',
                             'DensityPenaltyLabel',
                             'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried',
-                            'Trainer', 'Bloodline', 'BloodStats', 'JockeyChange',
+                            'Trainer', 'Bloodline', 'BloodStats', 'JockeyChange', 'TrainingEval',
                             'ボーナス詳細', 'AvgPCI', 'PCIType', 'DensityScore',
                             'NIndex', 'Strength (X)', 'Suitability (Y)',
                             'SpeedIndex', 'AvgAgari', 'Alert', 'RiskFlags']
@@ -4841,10 +4962,10 @@ if nav == "🏠 Single Race Analysis":
                         "WeightCarried": "斤量", "Trainer": "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
                         "Bloodline": "血統(父/母父)", "BloodStats": "🧬血統実績(複/回)",
                         "Jockey": "騎手",
-                        "JockeyChange": "乗替", "Name": "馬名",
+                        "JockeyChange": "乗替", "TrainingEval": "⏱️調教評価", "Name": "馬名",
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
-                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
+                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "SpurtIdx": "🔥末脚指数", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス", "Waku": "枠",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
@@ -5191,9 +5312,21 @@ if nav == "🏠 Single Race Analysis":
                         if 'Trainer' in view_df.columns:
                             styled_df = styled_df.apply(color_trainer, axis=0, subset=['Trainer'])
 
+                        _blood_top3_idx = set()
+                        if '_blood_roi' in view_df.columns:
+                            _roi_col = view_df['_blood_roi']
+                            _blood_top3_idx = set(_roi_col.nlargest(3).index)
                         def color_bloodstats(s):
-                            """血統実績(複/回)は緑文字で表示。空欄は無装飾。"""
-                            return ["color:#2e7d32; font-weight:bold" if str(v).strip() else "" for v in s]
+                            """血統実績: 回収率top3=赤、それ以外=緑。"""
+                            out = []
+                            for idx, v in s.items():
+                                if not str(v).strip():
+                                    out.append("")
+                                elif idx in _blood_top3_idx:
+                                    out.append("color:#d32f2f; font-weight:bold")
+                                else:
+                                    out.append("color:#2e7d32; font-weight:bold")
+                            return out
                         if 'BloodStats' in view_df.columns:
                             styled_df = styled_df.apply(color_bloodstats, axis=0, subset=['BloodStats'])
                         
@@ -5834,14 +5967,26 @@ if nav == "🏠 Single Race Analysis":
                     _axis_umaban = []
                     if _axis_mode != '軸なし(自動)':
                         _max_ax = 2 if _axis_mode == '2軸' else 1
-                        _axis_sel = st.multiselect(f"軸馬を{_max_ax}頭選択（スコア順）", _te_choices,
-                                                   default=_te_choices[:_max_ax],
-                                                   max_selections=_max_ax, key='te_axis_sel')
-                        for _s in _axis_sel:
-                            try:
-                                _axis_umaban.append(int(_s[1:3]))
-                            except Exception:
-                                pass
+                        _ack = lambda c: f"te_ax_ck_{race_id_input}_{c[1:3]}"
+                        _ax_sig = (str(race_id_input), _axis_mode, tuple(_te_choices[:_max_ax]))
+                        if st.session_state.get('te_ax_sig') != _ax_sig:
+                            _def_set = set(_te_choices[:_max_ax])
+                            for c in _te_choices:
+                                st.session_state[_ack(c)] = (c in _def_set)
+                            st.session_state['te_ax_sig'] = _ax_sig
+                        with st.form(key=f"te_axis_form_{race_id_input}"):
+                            st.markdown(f"**軸馬（{_max_ax}頭・スコア順）**")
+                            _agrid = st.columns(2)
+                            for _i, c in enumerate(_te_choices):
+                                with _agrid[_i % 2]:
+                                    st.checkbox(c, key=_ack(c))
+                            st.form_submit_button("✅ 確定")
+                        for c in _te_choices:
+                            if st.session_state.get(_ack(c)) and len(_axis_umaban) < _max_ax:
+                                try:
+                                    _axis_umaban.append(int(c[1:3]))
+                                except Exception:
+                                    pass
 
                     _odk = f"sanrenpuku_odds_{race_id_input}"
                     if st.button("🎯 3連複オッズ取得・更新", key='te_fetch'):
@@ -5893,20 +6038,25 @@ if nav == "🏠 Single Race Analysis":
                             st.session_state[_uck(u)] = (u in _kd)
                         st.session_state[_use_init_key] = _use_sig
                     with st.popover(f"🐎 使う馬を選ぶ{_kept_src}"):
-                        st.caption("チェックした馬だけで3連複を組みます。🧹消去の残し馬は自動でON（同レースを消去側で確定した場合）。")
-                        _ub1, _ub2 = st.columns(2)
-                        if _ub1.button("全選択", key=f"te_use_all_{race_id_input}"):
+                        st.caption("チェックした馬だけで3連複を組みます。選び終わったら「✅ 確定」を押してください。")
+                        with st.form(key=f"te_horse_form_{race_id_input}"):
+                            _ugrid = st.columns(2)
+                            for _i, u in enumerate(_all_te_um):
+                                with _ugrid[_i % 2]:
+                                    st.checkbox(f"{u} {_te_name_m.get(u, '')}", key=_uck(u))
+                            _fc1, _fc2, _fc3 = st.columns(3)
+                            _btn_ok = _fc1.form_submit_button("✅ 確定")
+                            _btn_all = _fc2.form_submit_button("全選択")
+                            _btn_reset = _fc3.form_submit_button("消去残しに戻す")
+                        if _btn_all:
                             for u in _all_te_um:
                                 st.session_state[_uck(u)] = True
-                        if _ub2.button("消去残しに戻す", key=f"te_use_reset_{race_id_input}"):
+                            st.rerun()
+                        if _btn_reset:
                             _kd = set(_keep_default)
                             for u in _all_te_um:
                                 st.session_state[_uck(u)] = (u in _kd)
-                        st.divider()
-                        _ugrid = st.columns(2)
-                        for _i, u in enumerate(_all_te_um):
-                            with _ugrid[_i % 2]:
-                                st.checkbox(f"{u} {_te_name_m.get(u, '')}", key=_uck(u))
+                            st.rerun()
                     _use_um = [u for u in _all_te_um if st.session_state.get(_uck(u))]
                     st.caption((f"🐎 使う馬 {len(_use_um)}頭: " + " / ".join(f"{u}{_te_name_m.get(u, '')}" for u in _use_um))
                                if _use_um else "🐎 使う馬: 未選択（全馬で計算）")
@@ -7797,15 +7947,6 @@ if nav == "🧹 消去フィルター":
             st.markdown("#### 🎯 フォーメーション（消去エンジン連携）")
             _form_kind = st.radio("馬券種", ["3連複", "3連単"], horizontal=True, key="kf_form_kind")
             _is_tri = (_form_kind == "3連単")
-            # 列ごとに選択pill(タグ)の色を変える: 1列目=既定(赤系)/2列目=#008080/3列目=#0000ff
-            st.markdown(
-                "<style>"
-                ".st-key-kf_form_c2 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
-                ".st-key-kf_form_c3 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
-                ".st-key-kf_form_c2 span[data-baseweb=\"tag\"] *,"
-                ".st-key-kf_form_c3 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
-                "</style>",
-                unsafe_allow_html=True)
             if _is_tri:
                 st.caption("着順あり(1着-2着-3着)。✅残し上位を1着/2着、🎯穴・🛟ボーダー残しを3着候補に自動配置。"
                            "（着順固定の分だけ点数は増えます。検証済みの妙味は相手選びの方針と併用）")
@@ -7839,29 +7980,36 @@ if nav == "🧹 消去フィルター":
                 if _bu not in _def1 and _bu not in _def2 and _bu not in _def3:
                     _def3 = _def3 + [_bu]
             _all_um = [int(x) for x in _edf['馬番'].tolist()]
-            # 型・ボーダー残し頭数・レースが変わったら3列を消去エンジンの初期配置に作り直す。
-            # (multiselectのdefaultは初回描画しか効かないStreamlit仕様への対処。手動編集中は維持)
+            _ckf = lambda col, u: f"kf_ck_{col}_{race_id_input}_{u}"
             _form_sig = (str(race_id_input), _tmpl, tuple(_def1), tuple(_def2), tuple(_def3))
             if st.session_state.get('kf_form_sig') != _form_sig:
-                st.session_state['kf_form_c1'] = _def1
-                st.session_state['kf_form_c2'] = _def2
-                st.session_state['kf_form_c3'] = _def3
+                _s1, _s2, _s3 = set(_def1), set(_def2), set(_def3)
+                for u in _all_um:
+                    st.session_state[_ckf(1, u)] = (u in _s1)
+                    st.session_state[_ckf(2, u)] = (u in _s2)
+                    st.session_state[_ckf(3, u)] = (u in _s3)
                 st.session_state['kf_form_sig'] = _form_sig
             _lab_c1 = "1着" if _is_tri else "1列目 軸"
             _lab_c2 = "2着" if _is_tri else "2列目 対抗"
             _lab_c3 = "3着" if _is_tri else "3列目 押さえ(穴含む)"
-            # default= は付けない: 値は上の kf_form_sig ブロックで session_state に設定済み。
-            # (default と session_state 両方指定すると「default value but value set via Session State」警告が出る)
-            _fc1, _fc2, _fc3 = st.columns(3)
-            with _fc1:
-                _c1 = st.multiselect(_lab_c1, _all_um,
-                                     format_func=_lab, key="kf_form_c1")
-            with _fc2:
-                _c2 = st.multiselect(_lab_c2, _all_um,
-                                     format_func=_lab, key="kf_form_c2")
-            with _fc3:
-                _c3 = st.multiselect(_lab_c3, _all_um,
-                                     format_func=_lab, key="kf_form_c3")
+            with st.form(key=f"kf_form_horses_{race_id_input}"):
+                _fc1, _fc2, _fc3 = st.columns(3)
+                with _fc1:
+                    st.markdown(f"**{_lab_c1}**")
+                    for u in _all_um:
+                        st.checkbox(_lab(u), key=_ckf(1, u))
+                with _fc2:
+                    st.markdown(f"**{_lab_c2}**")
+                    for u in _all_um:
+                        st.checkbox(_lab(u), key=_ckf(2, u))
+                with _fc3:
+                    st.markdown(f"**{_lab_c3}**")
+                    for u in _all_um:
+                        st.checkbox(_lab(u), key=_ckf(3, u))
+                st.form_submit_button("✅ 確定")
+            _c1 = [u for u in _all_um if st.session_state.get(_ckf(1, u))]
+            _c2 = [u for u in _all_um if st.session_state.get(_ckf(2, u))]
+            _c3 = [u for u in _all_um if st.session_state.get(_ckf(3, u))]
             try:
                 from core import trio_engine as _te
                 import importlib as _il_te2; _il_te2.reload(_te)
@@ -7968,9 +8116,8 @@ if nav == "🧹 消去フィルター":
                     _mate1_link = [int(u) for u in _c2 if int(u) not in _axis_link]
                     _mate2_link = [int(u) for u in _c3
                                    if int(u) not in _axis_link and int(u) not in _mate1_link]
-                    st.session_state['bo_axis'] = _axis_link
-                    st.session_state['bo_mate1'] = _mate1_link
-                    st.session_state['bo_mate2'] = _mate2_link
+                    st.session_state['_bo_override'] = {'axis': _axis_link, 'mate1': _mate1_link, 'mate2': _mate2_link}
+                    st.session_state.pop('bo_horse_sig', None)
                     st.success("🎰 買い方最適化の軸・相手1・相手2に反映しました。"
                                "下の🎰パネルで「▶ ライブオッズ取得＆EV計算」を押してください。")
 
@@ -7989,13 +8136,27 @@ if nav == "🧹 消去フィルター":
                     _ax_opts = ["1軸", "2軸"] if _nag_kind in ("3連複", "3連単") else ["1軸"]
                     _nag_axn = st.radio("軸数", _ax_opts, horizontal=True, key=f"kf_nag_axn_{_nag_kind}")
                 _need_ax = 2 if _nag_axn == "2軸" else 1
-                _nag_axis = st.multiselect(f"軸（{_need_ax}頭・絞った馬から）", _nag_pool,
-                                           format_func=_lab, key="kf_nag_axis", max_selections=_need_ax)
-                _ax = [int(u) for u in _nag_axis][:_need_ax]
-                _mate_opts = [u for u in _nag_pool if u not in _ax]
-                _nag_mate = st.multiselect("相手（絞った馬から）", _mate_opts, default=_mate_opts,
-                                           format_func=_lab, key="kf_nag_mate")
-                _mt = [int(u) for u in _nag_mate if int(u) not in _ax]
+                _nck = lambda role, u: f"kf_nck_{role}_{race_id_input}_{u}"
+                _nag_sig = (str(race_id_input), _nag_kind, _nag_axn, tuple(_nag_pool))
+                if st.session_state.get('kf_nag_sig') != _nag_sig:
+                    for i, u in enumerate(_nag_pool):
+                        st.session_state[_nck('ax', u)] = (i < _need_ax)
+                        st.session_state[_nck('mt', u)] = (i >= _need_ax)
+                    st.session_state['kf_nag_sig'] = _nag_sig
+                with st.form(key=f"kf_nag_form_{race_id_input}"):
+                    _nc1, _nc2 = st.columns(2)
+                    with _nc1:
+                        st.markdown(f"**軸（{_need_ax}頭）**")
+                        for u in _nag_pool:
+                            st.checkbox(_lab(u), key=_nck('ax', u))
+                    with _nc2:
+                        st.markdown("**相手**")
+                        for u in _nag_pool:
+                            st.checkbox(_lab(u), key=_nck('mt', u))
+                    st.form_submit_button("✅ 確定")
+                _ax = [u for u in _nag_pool if st.session_state.get(_nck('ax', u))][:_need_ax]
+                _ax_set = set(_ax)
+                _mt = [u for u in _nag_pool if st.session_state.get(_nck('mt', u)) and u not in _ax_set]
                 from itertools import combinations as _comb_n, permutations as _perm_n
                 _nc = []
                 if len(_ax) >= _need_ax and _mt:
@@ -8021,9 +8182,8 @@ if nav == "🧹 消去フィルター":
                     st.dataframe(pd.DataFrame(_nrows), hide_index=True, use_container_width=True)
                     st.success(f"{_nag_kind} {_nag_axn}流し ＝ **{len(_nc)}点**（軸{len(_ax)}頭 × 相手{len(_mt)}頭）")
                     if st.button("🎰 この流しを買い方最適化へ送る（軸 / 相手）", key="kf_nag_to_bo"):
-                        st.session_state['bo_axis'] = _ax
-                        st.session_state['bo_mate1'] = _mt
-                        st.session_state['bo_mate2'] = []
+                        st.session_state['_bo_override'] = {'axis': _ax, 'mate1': _mt, 'mate2': []}
+                        st.session_state.pop('bo_horse_sig', None)
                         st.success("🎰 買い方最適化の軸・相手1に反映しました。下の🎰パネルで「▶ ライブオッズ取得＆EV計算」を。")
                 else:
                     st.info("軸と相手を選ぶと流し買い目（点数）が出ます。")
@@ -8066,48 +8226,48 @@ if nav == "🧹 消去フィルター":
                     _au = int(_anauma['馬番'])
                     if _au not in _def_mate1 and _au not in _def_mate2:
                         _def_mate2 = _def_mate2 + [_au]
-                # 相手カードのpill色をフォーメーションと揃える(相手1=#008080 / 相手2=#0000ff)
-                st.markdown(
-                    "<style>"
-                    ".st-key-bo_mate1 span[data-baseweb=\"tag\"]{background-color:#008080 !important;}"
-                    ".st-key-bo_mate2 span[data-baseweb=\"tag\"]{background-color:#0000ff !important;}"
-                    ".st-key-bo_mate1 span[data-baseweb=\"tag\"] *,"
-                    ".st-key-bo_mate2 span[data-baseweb=\"tag\"] *{color:#ffffff !important;}"
-                    "</style>",
-                    unsafe_allow_html=True)
-                # ── 入力カード(軸選択 | 計算設定) ──
-                _top_l, _top_r = st.columns([1.3, 1])
-                with _top_l:
-                    with st.container(border=True):
-                        st.markdown("**🎯 軸馬選択**")
-                        _axis = st.multiselect("軸", _all_um_bo, default=_def_axis,
-                                               format_func=_lab, key="bo_axis",
-                                               label_visibility="collapsed",
-                                               placeholder="馬を入力…")
-                with _top_r:
-                    with st.container(border=True):
-                        st.markdown("**⚙️ 計算設定**")
+                # ── 計算設定 ──
+                with st.container(border=True):
+                    st.markdown("**⚙️ 計算設定**")
+                    _bsc1, _bsc2, _bsc3 = st.columns(3)
+                    with _bsc1:
                         _budget = st.number_input("予算(円)", 100, 1000000, 3000, 100, key="bo_budget")
+                    with _bsc2:
                         _bankroll = st.number_input("総資金(ケリー基準用・円)", 1000, 100000000,
                                                     100000, 1000, key="bo_bank")
+                    with _bsc3:
                         _amode = st.selectbox("配分方式", ["kelly", "払戻均等", "均等"], key="bo_mode")
-                # ── 相手選択カード(相手1=2列目/2着・相手2=3列目/3着。横並びで詰める) ──
-                _mid_l, _mid_r = st.columns(2)
-                with _mid_l:
-                    with st.container(border=True):
-                        st.markdown("**🤝 相手馬選択1**（対抗 / 2着）")
-                        _mate1 = st.multiselect("相手1", _all_um_bo, default=_def_mate1,
-                                                format_func=_lab, key="bo_mate1",
-                                                label_visibility="collapsed",
-                                                placeholder="追加…")
-                with _mid_r:
-                    with st.container(border=True):
-                        st.markdown("**🤝 相手馬選択2**（押さえ・穴 / 3着）")
-                        _mate2 = st.multiselect("相手2", _all_um_bo, default=_def_mate2,
-                                                format_func=_lab, key="bo_mate2",
-                                                label_visibility="collapsed",
-                                                placeholder="追加…")
-                # EV計算用に相手1+相手2を統合(軸と重複は除く)
+                # ── 馬選択（チェック式） ──
+                _bock = lambda role, u: f"bo_ck_{role}_{race_id_input}_{u}"
+                _bo_ovr = st.session_state.pop('_bo_override', None)
+                _bo_sig = (str(race_id_input), tuple(_def_axis), tuple(_def_mate1), tuple(_def_mate2))
+                if _bo_ovr or st.session_state.get('bo_horse_sig') != _bo_sig:
+                    _sa = set(_bo_ovr['axis']) if _bo_ovr else set(_def_axis)
+                    _sm1 = set(_bo_ovr['mate1']) if _bo_ovr else set(_def_mate1)
+                    _sm2 = set(_bo_ovr['mate2']) if _bo_ovr else set(_def_mate2)
+                    for u in _all_um_bo:
+                        st.session_state[_bock('ax', u)] = (u in _sa)
+                        st.session_state[_bock('m1', u)] = (u in _sm1)
+                        st.session_state[_bock('m2', u)] = (u in _sm2)
+                    st.session_state['bo_horse_sig'] = _bo_sig
+                with st.form(key=f"bo_horse_form_{race_id_input}"):
+                    _fc1, _fc2, _fc3 = st.columns(3)
+                    with _fc1:
+                        st.markdown("**🎯 軸**")
+                        for u in _all_um_bo:
+                            st.checkbox(_lab(u), key=_bock('ax', u))
+                    with _fc2:
+                        st.markdown("**🤝 相手1**（対抗/2着）")
+                        for u in _all_um_bo:
+                            st.checkbox(_lab(u), key=_bock('m1', u))
+                    with _fc3:
+                        st.markdown("**🤝 相手2**（押さえ/3着）")
+                        for u in _all_um_bo:
+                            st.checkbox(_lab(u), key=_bock('m2', u))
+                    st.form_submit_button("✅ 確定")
+                _axis = [u for u in _all_um_bo if st.session_state.get(_bock('ax', u))]
+                _mate1 = [u for u in _all_um_bo if st.session_state.get(_bock('m1', u))]
+                _mate2 = [u for u in _all_um_bo if st.session_state.get(_bock('m2', u))]
                 _mate = [int(u) for u in (list(_mate1) + list(_mate2))
                          if int(u) not in [int(a) for a in _axis]]
                 _mate = list(dict.fromkeys(_mate))
