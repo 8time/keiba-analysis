@@ -4492,6 +4492,27 @@ if nav == "🏠 Single Race Analysis":
                     elif 'BattleScore' in view_df.columns:
                         view_df = view_df.sort_values(by='BattleScore', ascending=False).reset_index(drop=True)
 
+                    # ── 荒れ予報(top7信頼度) ──
+                    try:
+                        from core import value_scanner as _vs_tb
+                        _tb_olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
+                        _tb_favo = min(_tb_olist) if _tb_olist else None
+                        try:
+                            _tb_distv = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _tb_distv = None
+                        _tb_lean = _vs_tb.trio_lean(
+                            meta=meta, n_horses=len(df), fav_odds=_tb_favo,
+                            dist=_tb_distv, baba=str(meta.get('condition', '') or ''),
+                            odds_list=_tb_olist)
+                        if _tb_lean['lean'] == '②穴妙味向き':
+                            st.warning(f"⚠️ **荒れ予報: top7圏外に3着馬がいるリスク高**（lean {_tb_lean['score']:+.1f}）"
+                                       f"　{'　/　'.join(_tb_lean['pos'][:3])}")
+                        elif _tb_lean['lean'] == '本線向き':
+                            st.caption(f"🛡️ 本線向き（top7で捕獲しやすい）　{'　/　'.join(_tb_lean['neg'][:2])}")
+                    except Exception:
+                        pass
+
                     # Add time icon
                     if 'TimeIndexAvg5' in view_df.columns:
                         def add_time_icon(row):
@@ -7312,6 +7333,33 @@ if nav == "🧹 消去フィルター":
         if _erows:
             from core import elim_reasons as _er
             from core import corrected_time as _ct
+            # ── 荒れ予報(trio_lean): テーブルtop7の信頼度を事前表示 ──
+            try:
+                from core import value_scanner as _vs_kf
+                _kf_olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
+                _kf_favo = min(_kf_olist) if _kf_olist else None
+                try:
+                    _kf_distv = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                except Exception:
+                    _kf_distv = None
+                _kf_lean_res = _vs_kf.trio_lean(
+                    meta=metadata, n_horses=len(df), fav_odds=_kf_favo,
+                    dist=_kf_distv, baba=str(metadata.get('condition', '') or ''),
+                    odds_list=_kf_olist)
+                _kf_lean = _kf_lean_res['lean']
+                if _kf_lean == '②穴妙味向き':
+                    st.info(f"🎲 **荒れ予報: ②穴妙味向き**（lean {_kf_lean_res['score']:+.1f}）"
+                            f"→ top7圏外に3着馬がいるリスク高。ボーダー残し3推奨。"
+                            f"　{'　/　'.join(_kf_lean_res['pos'][:3])}")
+                elif _kf_lean == '本線向き':
+                    st.success(f"🛡️ **荒れ予報: 本線向き（堅め）**（lean {_kf_lean_res['score']:+.1f}）"
+                               f"→ top7で3着内馬を捕獲しやすい。"
+                               f"　{'　/　'.join(_kf_lean_res['neg'][:3])}")
+                else:
+                    st.caption(f"⚖️ 荒れ予報: 中立（lean {_kf_lean_res['score']:+.1f}）"
+                               f"　{'　/　'.join((_kf_lean_res['pos'] + _kf_lean_res['neg'])[:3])}")
+            except Exception:
+                pass
             _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
             _n = len(_edf)
             _keep = (_n + 1) // 2
@@ -7326,9 +7374,9 @@ if nav == "🧹 消去フィルター":
             if _border_max > 0:
                 _border_cnt = st.slider(
                     "🛟 ボーダー残し（半分カット後に戻す頭数）", 0, _border_max,
-                    min(2, _border_max), key=f"kf_border_n_{race_id_input}",
-                    help="消去ゾーン上位を相手(押さえ)に戻す。検証スイートスポット=2頭(z=3.19)。"
-                         "+3まで過小評価、+4で人気どおり以下=損。単勝軸には入れない。")
+                    min(3, _border_max), key=f"kf_border_n_{race_id_input}",
+                    help="消去ゾーン上位を相手(押さえ)に戻す。検証: +3まで過小評価(累積取りこぼし4.1%)、"
+                         "+4で人気どおり以下=損。単勝軸には入れない。")
             else:
                 _border_cnt = 0
 
@@ -7942,6 +7990,64 @@ if nav == "🧹 消去フィルター":
                     st.dataframe(pd.DataFrame(_crows), hide_index=True, use_container_width=True)
                 else:
                     st.caption("まだ記録がありません。")
+
+            # ===== 🎯 この3頭で買うなら？（券種判定）=====
+            st.markdown("#### 🎯 この3頭で買うなら？")
+            _kj_kept = [int(x) for x in _edf[_edf['判定'] == '✅残し']['馬番'].tolist()]
+            _kj_all = [int(x) for x in _edf['馬番'].tolist()]
+            _kj_names = {int(r['馬番']): str(r['馬名']) for _, r in _edf.iterrows()}
+            _kj_default = _kj_kept[:3] if len(_kj_kept) >= 3 else _kj_kept
+            _kj_sel = st.multiselect(
+                "3頭を選択（✅残し上位3頭がデフォルト）", _kj_all,
+                default=_kj_default,
+                format_func=lambda u: f"{u} {_kj_names.get(u, '')}",
+                key=f"kj_sel_{race_id_input}", max_selections=3)
+            if len(_kj_sel) == 3:
+                _kj_odds_key = f"kj_odds_{race_id_input}"
+                if st.button("📡 オッズ取得 → 券種判定", key=f"kj_fetch_{race_id_input}",
+                             use_container_width=False):
+                    with st.spinner("3連複・3連単オッズを取得中..."):
+                        try:
+                            from core import odds_arbitrage as _kj_oarb
+                            _kj_ao = _kj_oarb.fetch_all_odds(race_id_input, kinds=('win', 'trio', 'trifecta'))
+                            _kj_probs = _kj_oarb.estimate_win_probs(_kj_ao)
+                            _df_kj = st.session_state.get('df')
+                            if _df_kj is not None:
+                                for _cand in ['Projected Score', 'BattleScore', 'OguraIndex']:
+                                    if _cand in _df_kj.columns:
+                                        _sc_map = {}
+                                        for _, _r in _df_kj.iterrows():
+                                            try: _sc_map[int(_r['Umaban'])] = float(_r[_cand])
+                                            except Exception: continue
+                                        _mp = _kj_oarb.estimate_win_probs_from_scores(_sc_map, gamma=2.0)
+                                        if _mp:
+                                            _kj_probs = _mp
+                                        break
+                            _kj_res = _kj_oarb.compare_trio_vs_trifecta_multi(
+                                _kj_ao, _kj_sel[0], _kj_sel[1], _kj_sel[2], win_probs=_kj_probs)
+                            st.session_state[_kj_odds_key] = _kj_res
+                        except Exception as _kje:
+                            st.warning(f"オッズ取得エラー: {_kje}")
+                _kj_res = st.session_state.get(_kj_odds_key)
+                if _kj_res:
+                    _kj_c1, _kj_c2, _kj_c3 = st.columns(3)
+                    _kj_c1.metric("3連複 1点", f"{_kj_res['trio_odds']:.1f}倍" if _kj_res['trio_odds'] else "-")
+                    _kj_c2.metric("3連単マルチ 6点", f"{_kj_res['multi_synthetic']:.1f}倍" if _kj_res['multi_synthetic'] else "-")
+                    _kj_fx = _kj_res.get('fixed_best')
+                    _kj_c3.metric(
+                        f"1着固定 2点" + (f"（{_kj_fx['first']}番頭）" if _kj_fx else ""),
+                        f"{_kj_fx['synthetic']:.1f}倍" if _kj_fx else "-",
+                        f"確信度 {_kj_fx['prob_share']:.0%}" if _kj_fx else None)
+                    if _kj_res['verdict'] == 'trio':
+                        st.warning(f"💡 **3連複1点** を推奨: {_kj_res['reasons'][0]}")
+                    elif _kj_res['verdict'] == 'multi':
+                        st.success(f"💡 **3連単マルチ6点** に歪み: {_kj_res['reasons'][0]}")
+                    elif _kj_res['verdict'] == 'fixed':
+                        st.success(f"💡 **1着固定2点** が最効率: {_kj_res['reasons'][0]}")
+                    for _rs in _kj_res['reasons'][1:]:
+                        st.caption(f"｜{_rs}")
+            elif _kj_sel:
+                st.caption("3頭ちょうど選択してください。")
 
             # ===== 🎯 フォーメーション（消去エンジン連携）=====
             st.markdown("#### 🎯 フォーメーション（消去エンジン連携）")
