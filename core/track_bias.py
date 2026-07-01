@@ -745,3 +745,234 @@ def nichi_bias(nichi, surface='芝'):
         'nichi': d, 'front_expected': round(fe, 3),
         'inner_expected': round(ie, 3), 'wear_label': wear, 'note': note,
     }
+
+
+# ── 芝スタートのダートコース (jyo, kyori) ──
+_SHIBA_START_DIRT = {
+    ('06', 1200), ('05', 1400), ('05', 1600), ('07', 1200),
+    ('08', 1200), ('09', 1400), ('04', 1200),
+}
+
+
+def dirt_draw_signal(waku, ninki, surface, jyo=None, kyori=None,
+                     prev_dirt_waku=None, prev_dirt_lost=False):
+    """ダート枠順エッジ(scripts/dirt_blueprint_backtest.py 2021-25 検証済)。
+    戻り値: dict{'type':'boost'|'danger', 'label':str, 'detail':str} or None。
+    ──────────────────────────────────────────────
+    検証結果(残差ベース):
+      ダート外枠(6-8)×1-3番人気: 複勝残差+4.5pp(z+9.4) → 軸補強
+      ダート内枠(1-3)×4-5番人気: 複勝残差-3.9pp(z-6.0) → 危険人気
+      芝ｽﾀｰﾄ×内枠(全体): 複勝残差-1.2pp(z-4.6) → 危険増幅
+      前走ダート内枠着外→今走外枠×人気上位: 複勝残差+3.4pp(z+3.6) → 軸補強
+    """
+    if surface not in ('ダート', 'ダ'):
+        return None
+    try:
+        w = int(waku); n = int(ninki)
+    except (TypeError, ValueError):
+        return None
+
+    is_shiba_start = False
+    if jyo and kyori:
+        try:
+            is_shiba_start = (str(jyo).zfill(2), int(kyori)) in _SHIBA_START_DIRT
+        except (TypeError, ValueError):
+            pass
+
+    # ── 砂かぶりリバウンド(前走ダート内枠着外→今走外枠×人気上位) ──
+    rebound = False
+    if prev_dirt_waku is not None and prev_dirt_lost and w >= 6 and n <= 5:
+        try:
+            if int(prev_dirt_waku) <= 3:
+                rebound = True
+        except (TypeError, ValueError):
+            pass
+
+    # ── 軸補強: 外枠×1-3番人気 ──
+    if w >= 6 and n <= 3:
+        detail = 'ダート外枠(6-8)×1-3番人気＝複勝残差+4.5pp(z+9.4・検証済)'
+        if rebound:
+            detail += '＋前走内枠着外→今走外枠(+3.4pp/z+3.6)で強化'
+        return {'type': 'boost', 'label': '🟢ダート外枠軸',  'detail': detail}
+
+    # ── 危険人気: 内枠×4-5番人気 ──
+    if w <= 3 and 4 <= n <= 5:
+        detail = 'ダート内枠(1-3)×4-5番人気＝複勝残差-3.9pp(z-6.0・検証済)'
+        if is_shiba_start:
+            detail += '＋芝スタートコースで内枠はさらに不利(-1.2pp/z-4.6)'
+        return {'type': 'danger', 'label': '⚠ダート内枠危険', 'detail': detail}
+
+    # ── 芝スタート×内枠(1-3番人気もやや注意) ──
+    if is_shiba_start and w <= 3 and n <= 3:
+        return {'type': 'caution', 'label': '🟡芝ｽﾀｰﾄ内枠',
+                'detail': '芝スタートコース×内枠は全体で複勝残差-1.2pp(z-4.6)。'
+                          '1-3番人気は軸として成立するがやや減点'}
+
+    # ── 砂かぶりリバウンド単独(人気上位のみ) ──
+    if rebound:
+        return {'type': 'boost', 'label': '🟢砂かぶり解消',
+                'detail': '前走ダート内枠着外→今走外枠×人気上位＝複勝残差+3.4pp(z+3.6・検証済)'}
+
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NAR(地方)会場プロファイル — JRA-VANデータ無しでもエビデンス表に静的情報を出す
+# ══════════════════════════════════════════════════════════════════════════════
+
+_NAR_VENUE_PROFILES = {
+    '30': {'name': '門別', 'turn': '右', 'lap': 1600, 'straight': 330,
+           'note': '中箱・直線330m。差し届く場面もあるが基本は先行有利'},
+    '35': {'name': '盛岡', 'turn': '左', 'lap': 1600, 'straight': 300,
+           'note': '地方唯一の芝コース併設。ダートは砂が深く前残り傾向'},
+    '36': {'name': '水沢', 'turn': '右', 'lap': 1200, 'straight': 246,
+           'note': '小回り・直線246m。逃げ先行が極端に有利'},
+    '42': {'name': '浦和', 'turn': '右', 'lap': 1200, 'straight': 220,
+           'distance_bias': {
+               '1400': '主戦距離：超小回りにつき内枠逃げ先行が絶対的優位。直線220mで差しはほぼ届かない',
+               '1500': '1400mよりコーナー数減も依然先行絶対有利',
+               '1600': '直線220mは変わらず先行有利。長め距離でもスタミナ勝負',
+               '2000': 'スタミナ必須。それでも小回り構造上は先行馬が残りやすい',
+           },
+           'note': '超小回り・直線220m。逃げ先行が圧倒的有利。追込ほぼ届かない'},
+    '43': {'name': '船橋', 'turn': '左', 'lap': 1250, 'straight': 308,
+           'distance_bias': {
+               '1000': '南関東最短距離帯：内枠先行が有利。外枠は据置き分不利',
+               '1200': '内枠先行有利。外枠は距離損だが直線308mでやや挽回余地',
+               '1500': '内枠先行優勢も直線308mで差しも届く場面あり',
+               '1600': '直線308mを活かし差しも十分届く。末脚指数が活きる',
+               '1700': '距離延長でスタミナ要求。先行馬の粘りvs差し馬の脚',
+               '2400': '長距離：スタミナ勝負。位置取りより底力型が残りやすい',
+           },
+           'note': '小回り・直線308m。内枠先行が有利。外枠は距離損'},
+    '44': {'name': '大井', 'turn': '右', 'lap': 1600, 'straight': 386,
+           'sand': '豪州Albany産白い珪砂（2024.12〜砂厚9cm←10cm）',
+           'rain_bias': '雨天＝内が重く粘る→外枠＋外回し圧倒的有利（通常ダートと逆）',
+           'distance_bias': {
+               '1200': '短距離：先行有利。直線386mでも差しは届きにくい',
+               '1400': '内回り：内枠先行有利。コーナーまでの距離短く外枠距離損',
+               '1500': '内回り1500m：内枠＋先行が有利。逃げ馬の粘り込み注意',
+               '1600': '内回り1600m：内枠先行有利だがペース次第で差しも',
+               '1700': '外回り：枠順バイアス縮小。差しも届く',
+               '1800': '外回り：差し届く。末脚指数が活きる距離',
+               '2000': '外回り2000m：スタミナ＋パワー型。差し追込も有効',
+               '2600': '超長距離：スタミナ必須。ペース落ち→仕掛け位置がカギ',
+           },
+           'top_jockeys': ['笹川翼(350勝/2025)', '矢野貴之(310勝/2025)'],
+           'top_trainers': ['荒山勝徳(88勝/2025)'],
+           'graded_notes': {
+               '帝王賞': 'JpnI ダ2000m。JRA馬10勝/10年(3着内率41.8%)・NAR馬3着内率3.1%。'
+                         '4歳馬34.8%3着内。500kg+大型馬有利。前走5着内+4番人気以内が信頼軸',
+           },
+           'note': '地方最大級の大箱・直線386m。白い砂＝雨天時は内が重く外枠有利（通常と逆）。'
+                   '砂厚9cm（2024.12〜）でパワー型に有利化'},
+    '45': {'name': '川崎', 'turn': '左', 'lap': 1200, 'straight': 300,
+           'sand': '青森県東通村産海砂（2022〜砂厚10cm）',
+           'rain_bias': '海砂のため水はけ良好。重馬場でも極端なバイアス変化は少ない',
+           'distance_bias': {
+               '900':  '900m：ゲート〜1角が極短→内枠逃げ圧倒。外枠致命的不利',
+               '1400': '1400m：枠順差は縮小。急カーブ連続でスタミナ消耗→パワー型',
+               '1500': '1500m：枠順バイアス小。捲り＋パワー型が台頭',
+               '1600': '1600m：差しも届く。スタミナ＋コーナリング巧者有利',
+               '2000': '2000m：スタンド前でペース緩む→スタミナ先行型。末脚よりパワー',
+               '2100': '超長距離：スタミナ＋パワー必須。逃げ粘り or スタミナ差し',
+           },
+           'top_jockeys': ['野畑凌(209勝/2025)'],
+           'top_trainers': ['高月賢一(70勝/2025)'],
+           'graded_notes': {
+               'スパーキングLC': 'JpnIII ダ1600m牝馬限定。1番人気複勝率80%/連対率70%。'
+                               '外枠(6-8枠)6勝・内枠(1-3枠)4勝・枠4-5=デッドゾーン0勝。'
+                               '4-5歳中心。直線300mで先行有利',
+           },
+           'note': '小回り・直線300m・KAWASAKIカーブ（急角コーナー）。'
+                   '900mは内枠逃げ圧倒。1500m+は捲り/パワー型台頭。海砂10cm'},
+    '47': {'name': '高知', 'turn': '右', 'lap': 1100, 'straight': 200,
+           'note': '超小回り・直線200m。先行必須。差しはほぼ届かない'},
+    '48': {'name': '金沢', 'turn': '右', 'lap': 1200, 'straight': 236,
+           'note': '小回り・直線236m。先行有利。雨天時は砂が締まり前残り強化'},
+    '50': {'name': '笠松', 'turn': '左', 'lap': 1100, 'straight': 236,
+           'note': '小回り・直線236m。先行有利。1400m以下は内枠逃げが鉄板傾向'},
+    '51': {'name': '名古屋', 'turn': '左', 'lap': 1180, 'straight': 240,
+           'note': '小回り・直線240m。先行有利。水はけが良く良馬場が多い'},
+    '54': {'name': '園田', 'turn': '右', 'lap': 1051, 'straight': 213,
+           'note': '超小回り・直線213m。逃げ先行以外ほぼ来ない。内枠絶対有利'},
+    '55': {'name': '佐賀', 'turn': '右', 'lap': 1100, 'straight': 200,
+           'note': '超小回り・直線200m。逃げ先行天国。差し追込は滅多に届かない'},
+    '58': {'name': '佐賀', 'turn': '右', 'lap': 1100, 'straight': 200,
+           'note': '超小回り・直線200m。逃げ先行天国'},
+    '65': {'name': '帯広', 'turn': '直', 'lap': 200, 'straight': 200,
+           'note': 'ばんえい競馬（直線200m障害）。通常の競馬とは完全に別競技'},
+}
+
+
+def nar_venue_profile(jyo_code):
+    """NAR会場コード(2桁) → プロファイルdict or None。"""
+    return _NAR_VENUE_PROFILES.get(str(jyo_code).zfill(2))
+
+
+def nar_evidence_rows(jyo_code, surface='ダ', distance=None, race_name=None):
+    """NARレース用のエビデンス行リストを返す。jravan.db不要の静的情報。"""
+    p = nar_venue_profile(jyo_code)
+    if not p:
+        return []
+    rows = []
+    s = p['straight']
+    if s >= 350:
+        bias = '大箱 → 差しも届く'
+    elif s >= 280:
+        bias = '小回り → 先行有利'
+    else:
+        bias = '超小回り → 逃げ先行が圧倒的有利'
+
+    rows.append({
+        '項目': 'NAR会場プロファイル',
+        '値': f"{p['name']} {p['turn']}回り 1周{p['lap']}m 直線{s}m",
+        'ステータス': f"🏟 {bias}"
+    })
+    if p.get('sand'):
+        rows.append({
+            '項目': 'NAR砂質',
+            '値': p['sand'],
+            'ステータス': f"🏜 {p.get('rain_bias', '')}"
+        })
+    rows.append({
+        '項目': 'NAR会場の特徴',
+        '値': f"{'ダート' if 'ダ' in str(surface) else '芝'}",
+        'ステータス': f"📝 {p['note']}"
+    })
+    if distance and p.get('distance_bias'):
+        dist_str = str(distance)
+        tip = p['distance_bias'].get(dist_str)
+        if not tip:
+            for d_key in sorted(p['distance_bias'].keys(), key=int):
+                if int(d_key) <= int(dist_str):
+                    tip = p['distance_bias'][d_key]
+        if tip:
+            rows.append({
+                '項目': 'NAR距離別バイアス',
+                '値': f"{distance}m",
+                'ステータス': f"📐 {tip}"
+            })
+    if s <= 250:
+        rows.append({
+            '項目': 'NAR脚質バイアス',
+            '値': f"直線{s}m",
+            'ステータス': '⚠ 直線250m以下：差し追込は極端に不利。'
+                         '逃げ先行馬を軸に、人気薄の先行馬を穴候補に'
+        })
+    if p.get('top_jockeys'):
+        rows.append({
+            '項目': 'NARリーディング騎手',
+            '値': p['name'],
+            'ステータス': '🏇 ' + '／'.join(p['top_jockeys'])
+        })
+    if race_name and p.get('graded_notes'):
+        for rn, note in p['graded_notes'].items():
+            if rn in str(race_name):
+                rows.append({
+                    '項目': f'NAR重賞傾向({rn})',
+                    '値': rn,
+                    'ステータス': f"🏆 {note}"
+                })
+                break
+    return rows

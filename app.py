@@ -371,6 +371,8 @@ with st.sidebar:
         "🤓 N氏の研究室",
         "🏇 騎手分析Pro",
         "🩸 血統SP",
+        "🎯 穴馬ハンター",
+        "🏛️ 集合知",
         "💾 ロジック置き場",
         "📦 データ保管庫",
     ]
@@ -1321,6 +1323,21 @@ if nav == "💰 BetSync（資金管理）":
                                    format_func=lambda x: f"1/4ケリー(推奨)" if x == 0.25
                                    else (f"1/2ケリー" if x == 0.5 else "フルケリー"),
                                    key="bs_kelly_frac")
+            # 高ケリー率(1/2・フル)は「pの推定誤差が大きい段階での過大配分」リスクが特に大きい。
+            # Kelly基準はp(勝率)が正確という前提の上に成立し、pが少しでも過大評価だと
+            # 資金曲線が急速に悪化する(較正未検証モデル+短いベット履歴での既知の失敗パターン)。
+            if _kf > 0.25:
+                try:
+                    _kf_ledger = money.Ledger()
+                    _kf_n_settled = len(_kf_ledger.settled_rows())
+                    _kf_ledger.close()
+                except Exception:
+                    _kf_n_settled = 0
+                if _kf_n_settled < 30:
+                    st.warning(
+                        f"⚠️ 精算実績はまだ{_kf_n_settled}件。勝率(p)はこのアプリの予測モデル由来の"
+                        f"未検証値で、pが少しでも過大評価だとKelly配分は急速に膨らみます。"
+                        f"実績30件超で下の📝反省(較正チェック)が機能するまでは1/4ケリーを推奨。")
             _edf = st.data_editor(_ss['bs_kelly_df'], num_rows="dynamic",
                                   key="bs_kelly_editor", width='stretch')
             _ss['bs_kelly_df'] = _edf
@@ -1747,6 +1764,18 @@ if nav == "🏠 Single Race Analysis":
         race_url = f"https://{_dom}/race/shutuba.html?race_id={race_id_input}"
         st.markdown(f"✨ **[Netkeiba レースページを開く]({race_url})**")
 
+        # --- 南関東(大井/川崎/船橋/浦和)の場合: nankankeiba.com補完IDを受付 ---
+        _main_nar_jyo = str(race_id_input)[4:6] if len(race_id_input) >= 6 else ''
+        if _is_nar_in and _main_nar_jyo in ('42', '43', '44', '45'):
+            st.text_input(
+                "🐴 nankankeiba.com レースID (任意・PCI/展開マップ/脚質分類を有効化)",
+                key="main_nankan_id",
+                placeholder="出馬表URL末尾の16桁数字 例: 2026070120050311",
+                help="netkeiba地方競馬版には過去走の詳細(タイム/上がり3F/通過順)がなく、"
+                     "PCI・展開マップ・脚質分類が計算不能。nankankeiba.comの出馬表IDを入力すると、"
+                     "過去走データを補完してJRA版と同じ分析パイプラインを有効化する。"
+            )
+
     # Determine default profile based on Netkeiba JRA venue code (digits 4-5 of Race ID)
     default_profile_index = 2 # 2=Standard
     if len(race_id_input) >= 6:
@@ -1991,6 +2020,32 @@ if nav == "🏠 Single Race Analysis":
                         # 0. Preserve metadata before calculations wipe df.attrs
                         _saved_metadata = df.attrs.get('metadata', {}) if hasattr(df, 'attrs') else {}
 
+                        # --- [NEW] NAR(南関東)補完: nankankeiba.comの過去走をPastRunsへブリッジ ---
+                        # netkeiba地方競馬版(nar.netkeiba.com/race/shutuba.html)には
+                        # 過去走の詳細(タイム/上がり3F/通過順)が構造上存在せず、
+                        # PastRunsが常に空になりPCI/展開マップ/脚質分類が機能しない。
+                        # nankankeiba.comから同等データを取得しPastRuns形式に変換して埋める。
+                        try:
+                            _main_nk_id = st.session_state.get('main_nankan_id', '')
+                            if _main_nk_id and 'Name' in df.columns:
+                                import re as _nk_re
+                                _nk_m = _nk_re.search(r'(\d{16})', str(_main_nk_id))
+                                if _nk_m:
+                                    from core import nankan_scraper as _nk
+                                    _nk_enriched = _nk.enrich_with_nankan(df, nankan_race_id=_nk_m.group(1))
+                                    _nk_matched = 0
+                                    if 'PastRuns' not in df.columns:
+                                        df['PastRuns'] = [[] for _ in range(len(df))]
+                                    for _idx, _row in df.iterrows():
+                                        _nk_d = _nk_enriched.get(str(_row.get('Name', '')))
+                                        if _nk_d and _nk_d.get('pastruns'):
+                                            df.at[_idx, 'PastRuns'] = _nk_d['pastruns']
+                                            _nk_matched += 1
+                                    st.caption(f"🐴 nankankeiba.com 過去走補完: {_nk_matched}/{len(df)}頭 "
+                                               f"(PCI/展開マップ/脚質分類を有効化)")
+                        except Exception as _nk_e:
+                            st.warning(f"nankankeiba.com補完エラー: {_nk_e}")
+
                         # 2. Calculate
                         df = calculator.calculate_battle_score(df)
                         df = calculator.calculate_n_index(df)
@@ -2144,6 +2199,14 @@ if nav == "🏠 Single Race Analysis":
                     # 血統判定用の条件取得
                     blood_cond = df.attrs.get('bloodline_condition', '-')
                     display_cond = blood_cond.replace('_', ' ') + "m" if blood_cond != '-' else "不明"
+                    # 芝=緑 / ダート=茶 で色分け
+                    if 'ダ' in display_cond or 'ダート' in display_cond:
+                        _surf_color = '#D2691E'
+                    elif '芝' in display_cond:
+                        _surf_color = '#228B22'
+                    else:
+                        _surf_color = '#666'
+                    display_cond_html = f'<span style="color:{_surf_color}; font-weight:bold;">{display_cond}</span>'
 
                     evidence_list = [
                         {"項目": "コース条件", "値": display_cond, "ステータス": "✅ 血統カタログ連動"},
@@ -2195,7 +2258,7 @@ if nav == "🏠 Single Race Analysis":
                             <div style="display: flex; align-items: baseline; gap: 15px;">
                                 <h1 style="margin: 0; font-size: 36px; color: #333;">Race Rating: {chaos_data['rank']}{_cond_html} <span style="color:#aaa;">|</span> {df['RaceName'].iloc[0] if not df.empty else ''}</h1>
                                 <span style="font-size: 24px; color: {rank_color}; font-weight: bold;">(Score: {chaos_data.get('chaos_score', 0):.1f})</span>
-                                <span style="margin-left: auto; font-size: 20px; font-weight: bold; background: #eee; padding: 4px 12px; border-radius: 20px;">📍 {display_cond}</span>
+                                <span style="margin-left: auto; font-size: 20px; font-weight: bold; background: #eee; padding: 4px 12px; border-radius: 20px;">📍 {display_cond_html}</span>
                             </div>
                             <p style="font-size: 18px; color: #555; margin-top: 10px; line-height: 1.6;"><b>判定理由:</b> {chaos_data['reason']}</p>
                         </div>
@@ -2422,6 +2485,21 @@ if nav == "🏠 Single Race Analysis":
                             evidence_list.append({"項目": "前日比クッション値",
                                 "値": f"{_sh['today']:.1f}（前日{_sh['prev']:.1f} / Δ{_sh['delta']:+.1f}）",
                                 "ステータス": f"{_sh_icon} {_sh['turf_type']}(平均{_sh['turf_avg']}) {_sh_rel}"})
+                        # ── NAR(地方)レースの場合: JRA-VANデータ不在のフォールバック ──
+                        _nar_jyo = str(race_id_input)[4:6]
+                        try:
+                            _nar_is = int(_nar_jyo) > 10
+                        except Exception:
+                            _nar_is = False
+                        if _nar_is and not _tb_rr:
+                            _nar_rn = df['RaceName'].iloc[0] if not df.empty and 'RaceName' in df.columns else None
+                            _nar_rows = _tb.nar_evidence_rows(_nar_jyo, _tb_surf, distance=_tb_dist, race_name=_nar_rn)
+                            if _nar_rows:
+                                evidence_list.extend(_nar_rows)
+                            else:
+                                evidence_list.append({"項目": "NAR会場", "値": _nar_jyo,
+                                                      "ステータス": "📝 地方競馬（JRA-VAN非対応・バイアスデータなし）"})
+
                         _ev_df = pd.DataFrame(evidence_list)
 
                         def _ev_row_style(_row):
@@ -2430,6 +2508,8 @@ if nav == "🏠 Single Race Analysis":
                                 return ['background-color:#FFEFD5'] * len(_row)  # パパイヤホイップ
                             if _item == 'コース実績バイアス':
                                 return ['background-color:#98FB98'] * len(_row)  # ペールグリーン
+                            if _item.startswith('NAR'):
+                                return ['background-color:#E6F3FF'] * len(_row)  # 水色
                             if _item == '先行馬密集度':
                                 # ステータス列のみ赤文字
                                 return ['color:#d00000;font-weight:bold' if _c == 'ステータス' else ''
@@ -2482,6 +2562,41 @@ if nav == "🏠 Single Race Analysis":
                                                + "\n\n→ 軸からは外し、3連複の相手候補からも削ると点数効率が上がる目安。")
                             except Exception:
                                 pass
+
+                    # --- ダート枠順エッジ(dirt_blueprint_backtest.py 検証済) ---
+                    if 'ダ' in _tb_surf:
+                        try:
+                            _jyo_code = str(race_id_input)[4:6]
+                            _dd_boost = []
+                            _dd_danger = []
+                            _dd_caution = []
+                            for _, _drow in df.iterrows():
+                                _d_wk = pd.to_numeric(_drow.get('Waku') or _drow.get('waku'), errors='coerce')
+                                _d_pop = pd.to_numeric(_drow.get('Popularity') or _drow.get('ninki'), errors='coerce')
+                                _d_um = _drow.get('Umaban') or _drow.get('umaban') or '?'
+                                _d_nm = str(_drow.get('Name') or _drow.get('HorseName') or _drow.get('bamei') or '?')
+                                if pd.isnull(_d_wk) or pd.isnull(_d_pop):
+                                    continue
+                                _dds = _tb.dirt_draw_signal(
+                                    int(_d_wk), int(_d_pop), 'ダート',
+                                    jyo=_jyo_code, kyori=_tb_dist)
+                                if _dds:
+                                    _line = f"- {_d_um}番 {_d_nm}（{int(_d_pop)}番人気）: {_dds['detail']}"
+                                    if _dds['type'] == 'boost':
+                                        _dd_boost.append(_line)
+                                    elif _dds['type'] == 'danger':
+                                        _dd_danger.append(_line)
+                                    elif _dds['type'] == 'caution':
+                                        _dd_caution.append(_line)
+                            if _dd_boost:
+                                st.success("🟢 **ダート外枠軸（検証済エッジ）**\n\n" + "\n".join(_dd_boost))
+                            if _dd_danger:
+                                st.warning("⚠ **ダート内枠危険人気（検証済）**\n\n" + "\n".join(_dd_danger)
+                                           + "\n\n→ 4-5番人気が内枠のダートは複勝残差-3.9pp。軸から外す目安。")
+                            if _dd_caution:
+                                st.info("🟡 **芝スタート内枠注意**\n\n" + "\n".join(_dd_caution))
+                        except Exception:
+                            pass
 
                     # --- 血統適性サマリー（blood_dict.db） ---
                     with st.expander("🧬 血統適性（父×条件別 複勝率/回収率）", expanded=False):
@@ -4395,11 +4510,25 @@ if nav == "🏠 Single Race Analysis":
                     # --- 🛡️ BattleScore乖離セーフティネット ---
                     # BattleScore top-3の馬が予測スコアtop-7圏外に落ちた場合、
                     # top-7ラインまで引き上げて recall 漏れを防止
-                    if 'BattleScore' in df.columns and 'Projected Score' in df.columns and len(df) >= 7:
+                    # ※中央(JRA)は固定top-3/top-7のまま変更しない(既存の最適化値)。
+                    # 地方(NAR)は出走頭数が少なく固定7だと相対的に緩すぎるため、
+                    # 出走頭数比例(seed≈3/16・ライン≈40%)の版に切り替える。
+                    _sn_jyo = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
+                    try:
+                        _sn_is_nar = int(_sn_jyo) > 10
+                    except Exception:
+                        _sn_is_nar = False
+                    if _sn_is_nar:
+                        _sn_seed_n = max(1, round(len(df) * 3 / 16))
+                        _sn_line_n = min(len(df), max(_sn_seed_n + 1, round(len(df) * 0.4)))
+                    else:
+                        _sn_seed_n, _sn_line_n = 3, 7
+                    if ('BattleScore' in df.columns and 'Projected Score' in df.columns
+                            and len(df) >= _sn_line_n):
                         _bs_sn = pd.to_numeric(df['BattleScore'], errors='coerce').fillna(0)
                         _ps_sn = pd.to_numeric(df['Projected Score'], errors='coerce').fillna(0)
-                        _bs_top3_idx = set(_bs_sn.nlargest(3).index)
-                        _ps_7th = _ps_sn.sort_values(ascending=False).iloc[6]
+                        _bs_top3_idx = set(_bs_sn.nlargest(_sn_seed_n).index)
+                        _ps_7th = _ps_sn.sort_values(ascending=False).iloc[_sn_line_n - 1]
                         for _sn_idx in _bs_top3_idx:
                             if _ps_sn.loc[_sn_idx] < _ps_7th:
                                 _gap = _ps_7th - _ps_sn.loc[_sn_idx] + 0.1
@@ -7103,6 +7232,45 @@ if nav == "🧹 消去フィルター":
         df = st.session_state['kf_race_data']
         metadata = df.attrs.get('metadata', {})
 
+        # --- [NEW] NAR(南関東)補完: nankankeiba.comの過去走をPastRunsへブリッジ ---
+        # 消去エンジンのpcidev(事前平均PCI乖離)・末脚救出は df['PastRuns'] / jockey_jv
+        # (JRA-VAN)に依存しており、NARレースでは常に空/未解決のため機能しない。
+        # 🏠Single Race Analysisと同じブリッジをこのタブにも配線する。
+        _nk_enriched = {}
+        _nk_spurt_map = {}
+        _kf_jyo = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
+        if _kf_jyo in ('42', '43', '44', '45'):
+            kf_nankan_id = st.text_input(
+                "🐴 nankankeiba.com レースID (任意・PCI/末脚救出を有効化)",
+                key="kf_nankan_id",
+                placeholder="出馬表URL末尾の16桁数字 例: 2026063020050201",
+            )
+            _kf_nk_m = re.search(r'(\d{16})', str(kf_nankan_id)) if kf_nankan_id else None
+            if _kf_nk_m:
+                _kf_nk_cache_key = f"kf_nk_cache_{_kf_nk_m.group(1)}"
+                if _kf_nk_cache_key not in st.session_state:
+                    try:
+                        from core import nankan_scraper as _nk
+                        st.session_state[_kf_nk_cache_key] = _nk.enrich_with_nankan(
+                            df, nankan_race_id=_kf_nk_m.group(1))
+                    except Exception as _kf_nk_e:
+                        st.warning(f"nankankeiba.com補完エラー: {_kf_nk_e}")
+                        st.session_state[_kf_nk_cache_key] = {}
+                _nk_enriched = st.session_state[_kf_nk_cache_key]
+                if _nk_enriched:
+                    if 'PastRuns' not in df.columns:
+                        df['PastRuns'] = [[] for _ in range(len(df))]
+                    _kf_nk_matched = 0
+                    for _idx, _row in df.iterrows():
+                        _nkd = _nk_enriched.get(str(_row.get('Name', '')))
+                        if _nkd and _nkd.get('pastruns'):
+                            df.at[_idx, 'PastRuns'] = _nkd['pastruns']
+                            _kf_nk_matched += 1
+                        if _nkd and _nkd.get('spurt_index') is not None:
+                            _nk_spurt_map[str(_row.get('Name', ''))] = (
+                                _nkd['spurt_index'], _nkd.get('spurt_runs', 0))
+                    st.caption(f"🐴 nankankeiba.com 過去走補完: {_kf_nk_matched}/{len(df)}頭 "
+                               f"(PCI乖離/末脚救出を有効化)")
 
         # ===== 🎯 強適消去エンジン（検証済み）=====
         st.markdown("### 🎯 強適消去エンジン（検証済み）")
@@ -7168,6 +7336,8 @@ if nav == "🧹 消去フィルター":
                         _c0 = _jj.horse_recent_context(_kt0) if _kt0 else None
                         _si0 = (_c0 or {}).get('spurt_index')
                         _sr0 = (_c0 or {}).get('spurt_runs', 0)
+                        if _si0 is None and str(_r0.get('Name', '')) in _nk_spurt_map:
+                            _si0, _sr0 = _nk_spurt_map[str(_r0.get('Name', ''))]
                         if _si0 is not None and _sr0 >= 2:
                             try:
                                 _spurt_rank.append((int(_r0.get('Umaban')), float(_si0)))
@@ -7241,6 +7411,8 @@ if nav == "🧹 消去フィルター":
                         # (scripts/spurt_index_backtest.py 検証: 複勝13.4%/ROI77.7% ＞ ベース9.4%/66.4%)
                         _si = (_ctx or {}).get('spurt_index')
                         _sr = (_ctx or {}).get('spurt_runs', 0)
+                        if _si is None and _nm in _nk_spurt_map:
+                            _si, _sr = _nk_spurt_map[_nm]
                         _spurt = bool(_um in _spurt_top3 and _sr >= 2
                                       and pd.notnull(_pop) and _pop >= 6)
                         # 🌧️ 重・不良馬場×1番人気=構造的に危険(verified_heavy_track_bias)
@@ -7364,19 +7536,34 @@ if nav == "🧹 消去フィルター":
             _n = len(_edf)
             _keep = (_n + 1) // 2
             # 🛟ボーダー残し(=半分カットのあとN頭だけ戻す): 消去ゾーン上位(score上位の消され馬)。
-            # scripts/keepmore_backtest.py 検証(2023-25,9519R) 各戻し馬の3着内人気補正残差:
+            # 中央(JRA): scripts/keepmore_backtest.py 検証(2023-25,9519R) 各戻し馬の3着内人気補正残差:
             #   +1頭目 +0.83pt(z=1.97) / +2頭目 +1.35pt(z=3.19・最強) / +3頭目 +0.78pt(z=1.84) /
             #   +4頭目 -0.36pt(z=-0.85=人気どおり以下=損)。→ 戻す価値は+3頭目まで、+4で打ち止め。
             #   累積3着内取りこぼし: 現行14.9% → +1:10.2% → +2:6.6% → +3:4.1%。
             # ※どれも単勝ROI70%台=相手(複勝/3連複の押さえ)専用、単勝軸(✅残し上位)には入れない。
+            # 地方(NAR): scripts/nankan_keepmore_backtest.py 検証(大井5開催261R)で同じ検証をしたところ、
+            #   +1〜+4いずれも人気番号基準の残差がz≈0(+0.12/-0.15/+0.24/-0.27)で、中央のような
+            #   「過小評価(妙味)」は確認できなかった(負でもない=単純な取りこぼし防止の安全網として機能)。
+            #   → NARのボーダー残しは「妙味」ではなく「recall安全網」として扱う(頭数上限は中央と同じ式を流用)。
             _cut_zone = _n - _keep   # 消去ゾーンの頭数
             _border_max = max(0, min(3, _cut_zone - 1)) if _n >= 6 else 0  # 最低1頭は消しを残す
+            _kf_jyo_sn = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
+            try:
+                _kf_is_nar_sn = int(_kf_jyo_sn) > 10
+            except Exception:
+                _kf_is_nar_sn = False
             if _border_max > 0:
+                _border_help = (
+                    "消去ゾーン上位を相手(押さえ)に戻す。地方競馬版バックテストでは中央のような"
+                    "過小評価(妙味)は未確認(残差z≈0)。妙味目当てではなく取りこぼし防止の安全網として使う。"
+                    if _kf_is_nar_sn else
+                    "消去ゾーン上位を相手(押さえ)に戻す。検証: +3まで過小評価(累積取りこぼし4.1%)、"
+                    "+4で人気どおり以下=損。単勝軸には入れない。"
+                )
                 _border_cnt = st.slider(
                     "🛟 ボーダー残し（半分カット後に戻す頭数）", 0, _border_max,
                     min(3, _border_max), key=f"kf_border_n_{race_id_input}",
-                    help="消去ゾーン上位を相手(押さえ)に戻す。検証: +3まで過小評価(累積取りこぼし4.1%)、"
-                         "+4で人気どおり以下=損。単勝軸には入れない。")
+                    help=_border_help)
             else:
                 _border_cnt = 0
 
@@ -7464,11 +7651,16 @@ if nav == "🧹 消去フィルター":
                                   [int(x) for x in _edf[_edf['判定'] != '🧹消し']['馬番'].tolist()])
             except Exception:
                 pass
+            _border_note = (
+                "（🛟＝半分カット後に戻す。地方競馬は残差z≈0で妙味は未確認・取りこぼし防止の安全網として利用）"
+                if _kf_is_nar_sn else
+                "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）"
+            )
             st.caption(f"全{_n}頭 → ✅残し{_keep_n}頭"
                        + (f" / 🛟ボーダー残し{_border_n}頭" if _border_n else "")
                        + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
-                       + "（🛟＝半分カット後に1頭戻す。3着内取りこぼし15→10%・複勝で僅かに過小評価＝相手専用/単勝軸非推奨）")
+                       + _border_note)
             if _has_prob:
                 st.caption("単勝EV＝予測勝率×オッズ(1.0超で理論プラス)／複勝率＝P(3着内)／連対率＝P(2着内)。"
                            "**🏠の予測スコアから算出したモデル目安(未検証)**。人気薄の高EVは過信注意。"
@@ -7743,6 +7935,7 @@ if nav == "🧹 消去フィルター":
                             _field_pci = (sum(_pci_map.values()) / len(_pci_map)) if _pci_map else None
                         except Exception:
                             _field_pci = None
+                        _is_handi = bool(metadata.get('is_handicap'))
                         _xrows = []
                         for _, _r in df.iterrows():
                             _nm = str(_r.get('Name', ''))
@@ -7761,13 +7954,25 @@ if nav == "🧹 消去フィルター":
                             _mzg = re.search(r'\(([-+]?\d+)\)', str(_r.get('Weight', '') or ''))
                             if _mzg:
                                 _zg = int(_mzg.group(1))
+                            # futan (斤量) for light-handicap flag
+                            _futan_raw = None
+                            try:
+                                _wc = float(_r.get('WeightCarried', 0) or 0)
+                                if _wc > 0:
+                                    _futan_raw = int(_wc * 10)
+                            except (TypeError, ValueError):
+                                pass
                             _kt, _tc = _jjx.resolve_horse(_nm)
                             _ctx = _jjx.horse_recent_context(_kt) if _kt else None
                             _es = _jjx.horse_elim_stats(_kt) if _kt else None
+                            _xc_si = (_ctx or {}).get('spurt_index')
+                            _xc_sr = (_ctx or {}).get('spurt_runs', 0)
+                            if _xc_si is None and _nm in _nk_spurt_map:
+                                _xc_si, _xc_sr = _nk_spurt_map[_nm]
                             _fl = _exc.compute_flags(
                                 last5_top3=(_es or {}).get('last5_top3'),
-                                spurt_index=(_ctx or {}).get('spurt_index'),
-                                spurt_runs=(_ctx or {}).get('spurt_runs', 0),
+                                spurt_index=_xc_si,
+                                spurt_runs=_xc_sr,
                                 avg_c4ratio=(_es or {}).get('avg_c4ratio'),
                                 prev_date=(_ctx or {}).get('prev_date'),
                                 race_date=_rdate,
@@ -7780,6 +7985,8 @@ if nav == "🧹 消去フィルター":
                                 pm_back=bool(_um in _pm_rear),
                                 pci_dev=((_pci_map[_um] - _field_pci)
                                          if (_field_pci is not None and _um in _pci_map) else None),
+                                is_handicap=_is_handi,
+                                futan=_futan_raw,
                             )
                             _cnt = len(_fl)                       # 総重複(検証+実観測/score)
                             _vcnt = _exc.verified_count(_fl)      # 検証済みのみ(推定複勝率の根拠)
@@ -8585,15 +8792,35 @@ if nav == "🔍 Race Scanner (Batch)":
     import re as _re2
     from datetime import date as _date
 
-    # 中央(JRA)競馬場コード [4:6] と場名。地方(NAR)はこれ以外＝スキャン対象外。
+    # 中央(JRA)競馬場コード [4:6] と場名
     _JRA_CODES = {'01', '02', '03', '04', '05', '06', '07', '08', '09', '10'}
     _JRA_VENUE = {'01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
                   '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'}
+    # 地方(NAR)競馬場コード [4:6] と場名
+    _NAR_VENUE = {
+        '30': '門別', '35': '盛岡', '36': '水沢', '42': '浦和', '43': '船橋',
+        '44': '大井', '45': '川崎', '46': '金沢', '47': '笠松', '48': '名古屋',
+        '50': '園田', '51': '姫路', '54': '高知', '55': '佐賀', '65': '帯広',
+    }
+    _ALL_VENUE = {**_JRA_VENUE, **_NAR_VENUE}
+
+    # --- 中央 / 地方 切替 ---
+    _scan_region = st.radio(
+        "対象",
+        ["🏇 中央競馬 (JRA)", "🐴 地方競馬 (NAR)"],
+        horizontal=True,
+        key="scan_region",
+    )
+    _is_nar_scan = _scan_region.startswith("🐴")
+    if _is_nar_scan:
+        st.caption("地方競馬モード：netkeibaからレースデータを取得しスキャンします。"
+                   "ペース予測・騎手DB照合・黄金ライン等はJRA-VAN依存のため地方では機能しません（オッズ構造・単複乖離は動作）。"
+                   "南関東(大井・川崎・船橋・浦和)は🎯穴馬ハンターでnankankeiba.com補完が可能です。")
 
     def _venue_label(rid):
         """race_id → '函館11R' のような 場名+レース番号。"""
         s = str(rid)
-        v = _JRA_VENUE.get(s[4:6], s[4:6] if len(s) >= 6 else '?')
+        v = _ALL_VENUE.get(s[4:6], s[4:6] if len(s) >= 6 else '?')
         try:
             return f"{v}{int(s[10:12])}R"
         except Exception:
@@ -8687,14 +8914,22 @@ if nav == "🔍 Race Scanner (Batch)":
                 with st.spinner(f"{date_str} のレース一覧を取得中..."):
                     race_list = scraper.get_race_list_for_date(date_str)
                 if race_list:
-                    _jra_list = [r for r in race_list if str(r['race_id'])[4:6] in _JRA_CODES]
-                    _dropped = len(race_list) - len(_jra_list)
-                    st.session_state['scanner_auto_ids'] = [r['race_id'] for r in _jra_list]
-                    st.session_state['scanner_name_map'] = {r['race_id']: r['race_name'] for r in _jra_list}
-                    if _dropped:
-                        st.success(f"中央(JRA) {len(_jra_list)} 件を取得しました（地方競馬 {_dropped} 件は対象外として除外）。")
+                    if _is_nar_scan:
+                        _target_list = [r for r in race_list if str(r['race_id'])[4:6] not in _JRA_CODES]
+                        _other = len(race_list) - len(_target_list)
+                        _region_tag = "地方(NAR)"
+                        _other_tag = "中央(JRA)"
                     else:
-                        st.success(f"{len(_jra_list)} 件のレースを取得しました。")
+                        _target_list = [r for r in race_list if str(r['race_id'])[4:6] in _JRA_CODES]
+                        _other = len(race_list) - len(_target_list)
+                        _region_tag = "中央(JRA)"
+                        _other_tag = "地方(NAR)"
+                    st.session_state['scanner_auto_ids'] = [r['race_id'] for r in _target_list]
+                    st.session_state['scanner_name_map'] = {r['race_id']: r['race_name'] for r in _target_list}
+                    if _other:
+                        st.success(f"{_region_tag} {len(_target_list)} 件を取得しました（{_other_tag} {_other} 件は除外）。")
+                    else:
+                        st.success(f"{len(_target_list)} 件のレースを取得しました。")
                 else:
                     st.warning("この日のレースが見つかりませんでした。")
                     st.session_state['scanner_auto_ids'] = []
@@ -8764,13 +8999,19 @@ if nav == "🔍 Race Scanner (Batch)":
                     race_ids.append(m2.group(1))
 
         race_ids = list(dict.fromkeys(race_ids))  # dedupe
-        _nar_dropped = [r for r in race_ids if str(r)[4:6] not in _JRA_CODES]
-        race_ids = [r for r in race_ids if str(r)[4:6] in _JRA_CODES]
-        if _nar_dropped:
-            st.info(f"地方競馬(NAR) {len(_nar_dropped)} 件は対象外として除外しました（中央のみスキャン）。")
+        if _is_nar_scan:
+            _other_dropped = [r for r in race_ids if str(r)[4:6] in _JRA_CODES]
+            race_ids = [r for r in race_ids if str(r)[4:6] not in _JRA_CODES]
+            if _other_dropped:
+                st.info(f"中央(JRA) {len(_other_dropped)} 件は除外しました（地方のみスキャン）。")
+        else:
+            _other_dropped = [r for r in race_ids if str(r)[4:6] not in _JRA_CODES]
+            race_ids = [r for r in race_ids if str(r)[4:6] in _JRA_CODES]
+            if _other_dropped:
+                st.info(f"地方(NAR) {len(_other_dropped)} 件は除外しました（中央のみスキャン）。")
 
         if not race_ids:
-            st.warning("有効なレースIDが見つかりませんでした。12桁の数字またはURLを入力してください（中央競馬のみ対応）。")
+            st.warning("有効なレースIDが見つかりませんでした。12桁の数字またはURLを入力してください。")
         else:
             from core import value_scanner as vs
             from core import jockey_jv as jj_scan
@@ -8909,7 +9150,28 @@ if nav == "🔍 Race Scanner (Batch)":
                         if (f['has_neg'] or _dgr) and pop and pop <= 3:
                             danger_horses.append({'um': um, 'name': nm, 'pop': pop,
                                                   'why': ' / '.join(list(f['neg']) + _dgr) or '-'})
+                        # ダート枠順エッジ(検証済)
+                        if 'ダ' in str(surf):
+                            try:
+                                from core import track_bias as _tb_scan
+                                _wk_scan = int(pd.to_numeric(hr.get('Waku') or hr.get('waku'), errors='coerce'))
+                                _dds = _tb_scan.dirt_draw_signal(_wk_scan, pop, 'ダート', jyo=jyo, kyori=dist)
+                                if _dds and _dds['type'] == 'boost' and pop and 1 <= pop <= 3:
+                                    f['pos'].append('ダート外枠軸')
+                                    if not any(v['um'] == um for v in value_horses):
+                                        value_horses.append({'um': um, 'name': nm, 'pop': pop,
+                                                             'odds': od, 'why': _dds['label'],
+                                                             'div': 0, 'anchor': False})
+                                elif _dds and _dds['type'] == 'danger' and pop and 4 <= pop <= 5:
+                                    danger_horses.append({'um': um, 'name': nm, 'pop': pop,
+                                                          'why': _dds['label']})
+                            except Exception:
+                                pass
                     axis_floor = (_top3_count - _top3_severe) > 0 if _top3_count else True
+
+                    # 穴馬候補(pop≥6で検証済シグナルあり)
+                    _ana_horses = [h for h in value_horses
+                                   if h.get('pop') and h['pop'] >= 6]
 
                     # ランキング指標: 妙味馬数 と 妙味度
                     results.append({
@@ -8918,6 +9180,7 @@ if nav == "🔍 Race Scanner (Batch)":
                         "fav_odds": rv['fav_odds'], "skips": skips,
                         "value_horses": sorted(value_horses, key=lambda x: (-x['div'], -(x['odds'] or 0))),
                         "danger_horses": danger_horses, "axis_floor": axis_floor,
+                        "ana_horses": _ana_horses,
                         "n_h": n_h, "surf": surf, "dist": dist,
                         "pace_label": (_pint or {}).get('label'), "pace_z": _pace_z,
                         "lean": lean, "conds": _conds,
@@ -9020,6 +9283,15 @@ if nav == "🔍 Race Scanner (Batch)":
                         _cc = _COND_COLOR.get(_c, '#aaa')
                         cond_badge += (f'&nbsp;<span style="color:{_cc};border:1px solid {_cc};'
                                        f'border-radius:6px;padding:2px 7px;font-size:0.78em;font-weight:bold;">{_c}</span>')
+                    # 穴馬候補バッジ(pop≥6で検証済シグナルあり → 穴馬ハンター連携)
+                    ana_badge = ''
+                    _n_ana = len(r.get('ana_horses', []))
+                    if _n_ana:
+                        _ana_names = ', '.join(f"{h['name']}({h['pop']}人気)" for h in r['ana_horses'][:3])
+                        _tip_ana = (f'穴馬候補(6番人気以下×検証済シグナル): {_ana_names}'
+                                    '&#10;🎯穴馬ハンターで詳細分析できます')
+                        ana_badge = (f'&nbsp;<span title="{_tip_ana}" style="background:#1A0B2E;color:#E040FB;border:1px solid #E040FB;'
+                                     f'border-radius:6px;padding:3px 8px;font-size:0.82em;font-weight:bold;cursor:help;">🎯穴馬{_n_ana}</span>')
                     skip_badge = ''
                     if r['skips']:
                         skip_badge = (f'&nbsp;<span title="{_tip_sk}" style="background:#222;color:#aaa;border:1px solid #555;'
@@ -9063,7 +9335,7 @@ if nav == "🔍 Race Scanner (Batch)":
                         f'<a href="{_nk_url}" target="_blank" title="netkeiba.comでこのレースの出馬表を開く" '
                         f'style="text-decoration:none;color:#4FC3F7;font-weight:bold;font-size:1.05em;">🔗{_vlab}</a>'
                         f'&nbsp;<span style="font-size:1.12em;font-weight:bold;color:inherit;">{rn}</span>'
-                        f'&nbsp;&nbsp;{play_badge}&nbsp;{badge}{vh_badge}{dg_badge}{pace_badge}{cond_badge}{skip_badge}&nbsp;'
+                        f'&nbsp;&nbsp;{play_badge}&nbsp;{badge}{vh_badge}{ana_badge}{dg_badge}{pace_badge}{cond_badge}{skip_badge}&nbsp;'
                         f'<span style="color:#888;font-size:0.8em;">{r["id"]}</span>'
                     )
                     st.html(f'<div style="margin-top:14px;padding:10px 0 4px;border-top:1px solid #333;{dim}">{header_html}</div>')
@@ -9086,9 +9358,20 @@ if nav == "🔍 Race Scanner (Batch)":
                         if r['danger_horses']:
                             st.error("⚠️ 危険な人気馬:\n" + "\n".join(
                                 f"- {h['um']} {h['name']}（{h['pop']}人気）: {h['why']}" for h in r['danger_horses']))
+                        if r.get('ana_horses'):
+                            st.markdown("**🎯 穴馬候補（6番人気以下×検証済シグナル）**")
+                            for h in r['ana_horses']:
+                                mark = '★★' if h['div'] >= 2 else ('★' if h['div'] == 1 else '')
+                                if h.get('anchor'):
+                                    mark = (mark + '🛡️').strip()
+                                od = f"{h['odds']:.1f}倍" if h['odds'] else '-'
+                                pp = f"{h['pop']}人気" if h['pop'] else '-'
+                                st.markdown(f"- {mark} **{h['um']} {h['name']}**（{pp}・{od}）… {h['why']}")
+                            st.caption("穴馬ハンターで前走/条件変更/馬体など定性シグナルも含めた詳細分析ができます。")
                         if r['breakdown']:
                             st.caption("妙味度内訳: " + " / ".join(r['breakdown']))
                         st.markdown(f"✨ [このレースをシングルタブで詳細分析する](/?race_id={r['id']})"
+                                    f"　｜　🎯 [穴馬ハンターで分析](/?nav=🎯 穴馬ハンター)"
                                     f"　｜　🔗 [netkeiba.comで開く](https://race.netkeiba.com/race/shutuba.html?race_id={r['id']})")
 
 
@@ -11617,6 +11900,13 @@ if nav == "🧠 MAGI回顧":
 
 
 # ──────────────────────────────────────────────
+# 🎯 穴馬ハンター（pages/anabaka_hunter.py）
+# ──────────────────────────────────────────────
+if nav == "🎯 穴馬ハンター":
+    from pages.anabaka_hunter import render as _render_hunter
+    _render_hunter()
+
+# ──────────────────────────────────────────────
 # 🏇 騎手分析Pro（pages/jockey_pro.pyに抽出）
 # ──────────────────────────────────────────────
 if nav == "🏇 騎手分析Pro":
@@ -11629,6 +11919,13 @@ if nav == "🏇 騎手分析Pro":
 if nav == "🩸 血統SP":
     from pages.blood_sp import render as _render_blood
     _render_blood()
+
+# ──────────────────────────────────────────────
+# 🏛️ 集合知（pages/collective.py・エージェント掲示板）
+# ──────────────────────────────────────────────
+if nav == "🏛️ 集合知":
+    from pages.collective import render as _render_collective
+    _render_collective()
 
 # ──────────────────────────────────────────────
 # --- Footer ---

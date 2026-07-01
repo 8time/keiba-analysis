@@ -338,9 +338,20 @@ def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+_STALE_NAME_MATCH_YEARS = 4  # 馬名再利用ガード: 最終出走がDB最新年からこの年数以上前なら別馬とみなす
+
+
 def resolve_horse(bamei, db_path=None, before_key=None):
     """馬名から jravan の最新 (ketto_num, trainer_code) を引く。見つからなければ (None, None)。
-    ライブ(netkeiba)の馬名→JVコード橋渡し用（黄金ライン/コンビをライブ表で使うため）。"""
+    ライブ(netkeiba)の馬名→JVコード橋渡し用（黄金ライン/コンビをライブ表で使うため）。
+
+    馬名は競走引退後に再利用されることがあるため、bameiだけの一致では
+    2歳新馬などデビュー馬が同名の別(引退済み)馬に誤マッチする恐れがある
+    (例: 2026年デビュー馬が2005年に引退した同名馬のketto_numを拾う)。
+    before_key未指定(=ライブ/現在レース用途)の場合のみ、
+    最終出走がDB最新年から_STALE_NAME_MATCH_YEARS年以上前なら別馬とみなして
+    (None, None)を返す。before_key指定時(過去レースのバックテスト用途)は
+    その時点で実際に有効だった対応関係のため、このガードは適用しない。"""
     name = _norm(bamei)
     if not name or not os.path.exists(db_path or JV_DB_PATH):
         return (None, None)
@@ -351,8 +362,18 @@ def resolve_horse(bamei, db_path=None, before_key=None):
         where += " AND race_key<?"
         params.append(str(before_key))
     row = con.execute(
-        f"SELECT ketto_num, trainer_code FROM results WHERE {where} "
+        f"SELECT ketto_num, trainer_code, race_key FROM results WHERE {where} "
         f"ORDER BY race_key DESC LIMIT 1", params).fetchone()
+    if row and not before_key:
+        try:
+            latest_key = con.execute("SELECT MAX(race_key) FROM results").fetchone()[0]
+            match_year = int(str(row[2])[:4])
+            latest_year = int(str(latest_key)[:4])
+            if latest_year - match_year >= _STALE_NAME_MATCH_YEARS:
+                con.close()
+                return (None, None)
+        except (TypeError, ValueError, IndexError):
+            pass
     con.close()
     return (row[0], row[1]) if row else (None, None)
 
