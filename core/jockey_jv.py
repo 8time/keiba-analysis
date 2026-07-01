@@ -339,6 +339,7 @@ def _clamp(v, lo, hi):
 
 
 _STALE_NAME_MATCH_YEARS = 4  # 馬名再利用ガード: 最終出走がDB最新年からこの年数以上前なら別馬とみなす
+_TRAINER_CODE_UNKNOWN = '00000'  # jravan.db の「調教師不明」プレースホルダ(全体の35%・101万行が共有)
 
 
 def resolve_horse(bamei, db_path=None, before_key=None):
@@ -351,7 +352,14 @@ def resolve_horse(bamei, db_path=None, before_key=None):
     before_key未指定(=ライブ/現在レース用途)の場合のみ、
     最終出走がDB最新年から_STALE_NAME_MATCH_YEARS年以上前なら別馬とみなして
     (None, None)を返す。before_key指定時(過去レースのバックテスト用途)は
-    その時点で実際に有効だった対応関係のため、このガードは適用しない。"""
+    その時点で実際に有効だった対応関係のため、このガードは適用しない。
+
+    trainer_codeが'00000'(調教師情報未記録の穴埋め値。142,667頭が共有し
+    特定の調教師を指さない)の場合はNoneに丸める。丸めないと
+    trainer_course_winrate等がこのプレースホルダ経由で無関係な馬同士の
+    集計(例: n=6777走/勝率8%)を「その馬の厩舎成績」として誤表示する
+    (2026-07-02 NAR馬の厩舎当コース列で複数の異なる調教師が同一の
+    "?-8%(6777)"を表示するバグとして発覚・修正)。"""
     name = _norm(bamei)
     if not name or not os.path.exists(db_path or JV_DB_PATH):
         return (None, None)
@@ -375,7 +383,12 @@ def resolve_horse(bamei, db_path=None, before_key=None):
         except (TypeError, ValueError, IndexError):
             pass
     con.close()
-    return (row[0], row[1]) if row else (None, None)
+    if not row:
+        return (None, None)
+    ketto_num, trainer_code = row[0], row[1]
+    if trainer_code == _TRAINER_CODE_UNKNOWN:
+        trainer_code = None
+    return (ketto_num, trainer_code)
 
 
 def _trainer_rows(where, params, db_path=None):
