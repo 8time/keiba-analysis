@@ -865,7 +865,8 @@ def fetch_race_payouts(race_id):
         ('複勝', ('fuku', 1)), ('単勝', ('tan', 1)),
     ]
     try:
-        res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+        _pay_dom = "nar.netkeiba.com" if _is_nar(race_id) else "race.netkeiba.com"
+        res_url = f"https://{_pay_dom}/race/result.html?race_id={race_id}"
         res_html = fetch_robust_html(res_url)
         if not res_html:
             return {}
@@ -1243,7 +1244,8 @@ def fetch_popularity(race_id):
     # --- Priority 3: result.html (確定済みレース用) ---
     if not pop_map:
         logger.info("[Popularity] result.html フォールバックへ")
-        res_url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+        _res_dom = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+        res_url = f"https://{_res_dom}/race/result.html?race_id={race_id}"
         res_html = fetch_robust_html(res_url)
         if res_html:
             rsoup = BeautifulSoup(res_html, 'html.parser', from_encoding='utf-8')
@@ -1267,10 +1269,11 @@ def fetch_comprehensive_result(race_id):
         'horses': {Umaban: {'Rank': int, 'Time': float, 'Passing': str, 'Agari': float, 'Margin': float}}
     }
     """
-    url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+    _dom = "nar.netkeiba.com" if _is_nar(race_id) else "race.netkeiba.com"
+    url = f"https://{_dom}/race/result.html?race_id={race_id}"
     html = fetch_robust_html(url)
     if not html: return {}
-    
+
     soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
     res = {'race_info': {}, 'horses': {}}
     
@@ -1555,12 +1558,17 @@ def extract_trainer_fallback(row):
         a_tag = t_td.find('a')
         if a_tag: return normalize_trainer_name(a_tag.get_text(strip=True))
         return normalize_trainer_name(t_td.get_text(strip=True))
-    
-    # 2. Inside shutuba_past.html, trainer is under <div class="Horse05"> or in an <a> tag with /trainer/ href
+
+    # 2. Inside shutuba_past.html, trainer is under <a> tag with /trainer/ href
     trainer_a = row.find('a', href=re.compile(r'/trainer/'))
     if trainer_a:
         return normalize_trainer_name(trainer_a.get_text(strip=True))
-        
+
+    # 3. NAR shutuba_past: trainer link is commented out, but text is in Horse05 dt/div
+    horse05 = row.find(['dt', 'div'], class_='Horse05')
+    if horse05:
+        return normalize_trainer_name(horse05.get_text(strip=True))
+
     return None
 
 def extract_trainer(row):
@@ -1708,23 +1716,19 @@ def get_race_data(race_id, use_storage=True):
     # Determine JRA vs NAR
     is_nar = _is_nar(race_id)
 
-    if is_nar:
-        # NAR uses shutuba.html on nar subdomain
-        url = f"https://nar.netkeiba.com/race/shutuba.html?race_id={race_id}"
-    else:
-        # JRA uses shutuba_past.html for better historic data coverage
-        url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
-        
+    domain = "nar.netkeiba.com" if is_nar else "race.netkeiba.com"
+    url = f"https://{domain}/race/shutuba_past.html?race_id={race_id}"
+
     logger.info(f"Fetching {'NAR' if is_nar else 'JRA'} Race Data: {url}")
     html = fetch_robust_html(url)
     if not html: return pd.DataFrame()
-    
+
     soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-    
+
     # Check if we got an empty entry table (happens if shutuba_past.html isn't ready)
-    if not is_nar and not soup.find('tr', class_='HorseList'):
+    if not soup.find('tr', class_='HorseList'):
         logger.info("shutuba_past.html appears empty or not ready. Falling back to standard shutuba.html.")
-        url_fallback = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+        url_fallback = f"https://{domain}/race/shutuba.html?race_id={race_id}"
         html_fallback = fetch_robust_html(url_fallback)
         if html_fallback:
             html = html_fallback
@@ -1869,7 +1873,22 @@ def get_race_data(race_id, use_storage=True):
 
         # Jockey
         j_td = row.find('td', class_=re.compile(r'Jockey|jockey'))
-        h_data['Jockey'] = j_td.find('a').text.strip() if j_td and j_td.find('a') else ""
+        if j_td and j_td.find('a'):
+            h_data['Jockey'] = j_td.find('a').text.strip()
+        elif j_td:
+            from bs4 import NavigableString, Comment
+            for child in j_td.children:
+                if isinstance(child, Comment):
+                    continue
+                if isinstance(child, NavigableString):
+                    name = child.strip().replace('\n', '')
+                    if name and len(name) >= 2 and not re.match(r'^[\d.]+$', name):
+                        h_data['Jockey'] = name
+                        break
+            if not h_data.get('Jockey'):
+                h_data['Jockey'] = ""
+        else:
+            h_data['Jockey'] = ""
         
         # Trainer (厩舎)
         # modified to return None instead of '-' on fail
@@ -2134,7 +2153,8 @@ def fetch_result_odds_pop(race_id):
       td[10] = 単勝オッズ (Odds Txt_R)
       td[11] = 上がり3F
     """
-    url = f"https://race.netkeiba.com/race/result.html?race_id={race_id}"
+    _domain = "nar.netkeiba.com" if _is_nar(race_id) else "race.netkeiba.com"
+    url = f"https://{_domain}/race/result.html?race_id={race_id}"
     html = fetch_robust_html(url)
     res_odds = {}
     res_pop  = {}
@@ -2199,7 +2219,8 @@ def fetch_shutuba_data(race_id):
     """
     Scrapes detailed horse info from shutuba.html and newspaper.html for bloodline.
     """
-    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+    domain = "nar.netkeiba.com" if _is_nar(race_id) else "race.netkeiba.com"
+    url = f"https://{domain}/race/shutuba.html?race_id={race_id}"
     logger.info(f"Fetching shutuba data from: {url}")
     
     html = fetch_robust_html(url)
@@ -2289,7 +2310,7 @@ def fetch_shutuba_data(race_id):
     time.sleep(1.2)
     
     # Try to get Bloodline from newspaper.html as fallback/enrichment
-    news_url = f"https://race.netkeiba.com/race/newspaper.html?race_id={race_id}"
+    news_url = f"https://{domain}/race/newspaper.html?race_id={race_id}"
     logger.info(f"Fetching bloodline data from: {news_url}")
     news_html = fetch_robust_html(news_url)
     if news_html:
