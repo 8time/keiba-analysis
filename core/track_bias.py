@@ -767,6 +767,9 @@ def dirt_draw_signal(waku, ninki, surface, jyo=None, kyori=None,
     """
     if surface not in ('ダート', 'ダ'):
         return None
+    # NAR(地方)はJRA検証済みz値が成立しない(大井3197頭: z+0.32/-0.94, NAR未実証)
+    if jyo and str(jyo).zfill(2) in _NAR_VENUE_PROFILES:
+        return None
     try:
         w = int(waku); n = int(ninki)
     except (TypeError, ValueError):
@@ -959,6 +962,14 @@ def nar_evidence_rows(jyo_code, surface='ダ', distance=None, race_name=None):
             '値': f"直線{s}m",
             'ステータス': '⚠ 直線250m以下：差し追込は極端に不利。'
                          '逃げ先行馬を軸に、人気薄の先行馬を穴候補に'
+        })
+    # 川崎の内枠バイアス(検証済: inner×1-3人気 z+2.55/+8.5pp, inner全体 z+2.22/+3.8pp)
+    if str(jyo_code).zfill(2) == '45':
+        rows.append({
+            '項目': 'NAR枠順バイアス(検証済)',
+            '値': '川崎 内枠有利',
+            'ステータス': '🟢 内枠×1-3人気=複勝残差+8.5pp(z+2.55)。'
+                         '超小回り構造で内枠が有利(JRAの外枠優位と逆)'
         })
     if p.get('top_jockeys'):
         rows.append({
