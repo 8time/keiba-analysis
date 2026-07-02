@@ -38,6 +38,7 @@
 | 🏛️ 集合知(エージェント掲示板) | LLMペルソナがDB実データで討論→自信度重み合議 | 🟡 | pages/collective.py | — |
 | ├ 🧠 Brier加重合議 | 過去成績(◎的中)で当たらないペルソナの票を減衰(λ加重)。台帳n<50は均等縮退で安全稼働 | 🟢 | カード8・agent_forum.agent_weights/weighted_consensus(λ0=均等・空台帳=均等をsmoke担保)+scripts/forum_weight_backtest.py | 2026-07-02 |
 | ├ 🔗 エージェント相関診断 | 人格の予想相関で冗長/独立を可視化(アンサンブルは低相関でのみ効く)。結果不要=予想だけで測定。高相関=多様性なし警告 | 🟢 | agent_forum.agent_pick_correlation(◎3/○2/▲1スコアのPearson・smoke)。[[project_magi_consensus]]偽アンサンブルの罠を数値化 | 2026-07-02 |
+| ├ 👥 人格・情報を選ぶ | 人数自動でなく特定人格を選択(各人格=情報の切り口=血統/展開/騎手/オッズ…)。切り口の重複=相関警告で脱相関を誘導 | 🟢 | agent_forum.agent_roster/agents_by_ids(smoke)。相関診断とセットで多様な集合知を組む | 2026-07-02 |
 | 💰 BetSync 回顧(⑥) | 負けの自動分類=運用事故(Gate無視/危険軸/危険人気含み)＋設計ミス(盲目②/本線点数過多/トリガミ設計)＋想定内ブレ。買い目メタは3連複エンジンから自動補完 | 🟢 | money.classify_loss/loss_breakdown＋score_cache.write_buy/read_buy | 2026-06-24 |
 | 🏇 騎手分析Pro | 当場/当距離/黄金ライン等 | 🟡 | [[project_jockey_jv]] | — |
 | ├ resolve_horse同名馬誤マッチ修正 | 引退済み同名馬への誤マッチをbefore_key未指定時のみ最終出走年ガードで排除+trainer_code='00000'(調教師不明プレースホルダ・101万行共有)をNoneに丸め、無関係な調教師同士の同一集計表示バグを修正 | ✅ | [[project_jockey_jv]] | 2026-07-02 |

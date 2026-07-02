@@ -696,6 +696,47 @@ _FOCUS = ['オッズの歪み', '過去成績', 'コース実績', '距離実績
           '前走内容', 'ローテーション', '同条件相性', '相手関係', '展開利']
 
 
+# 各knowledge_fnが与える「情報の切り口」ラベル(人格選択UIで多様性=脱相関を見える化)
+_KNOWLEDGE_FOCUS = {
+    '_knowledge_conservative': '人気・リスク',
+    '_knowledge_longshot': '穴・オッズ歪み',
+    '_knowledge_blood': '血統',
+    '_knowledge_pace': '展開・ペース',
+    '_knowledge_data': 'データ・統計',
+    '_knowledge_training': '調教',
+    '_knowledge_waku': '枠順・コース',
+    '_knowledge_roi': '回収率・オッズ乖離',
+    '_knowledge_jockey': '騎手',
+    '_knowledge_contrarian': '逆張り',
+}
+
+
+def _agent_focus(ag):
+    fn = ag.get('knowledge_fn')
+    return _KNOWLEDGE_FOCUS.get(getattr(fn, '__name__', ''), '総合')
+
+
+def agent_roster():
+    """選択可能な名前付き人格の名簿。戻り: [{id,name,icon,focus}]。
+    focus=その人格が与える情報の切り口(=多様性の軸)。同じfocusを並べると相関が上がる。"""
+    out = []
+    for ag in (BASE_AGENTS + _EXTRA_AGENTS):
+        out.append({'id': ag['id'], 'name': ag['name'], 'icon': ag.get('icon', '🤖'),
+                    'focus': _agent_focus(ag)})
+    return out
+
+
+def agents_by_ids(ids, models=None):
+    """指定id(順序保持)の人格だけで討論班を組む。人格・情報の切り口をユーザーが選ぶ用。
+    未知idは無視。models複数なら異種モデルを割当。"""
+    lut = {ag['id']: ag for ag in (BASE_AGENTS + _EXTRA_AGENTS)}
+    agents = [dict(lut[i]) for i in (ids or []) if i in lut]
+    if models and len(models) > 1:
+        for k, ag in enumerate(agents):
+            ag['model'] = models[k % len(models)]
+    return agents
+
+
 def generate_agents(n=5, csv_text='', meta=None, models=None):
     """n体のエージェントリストを生成。modelsが複数あれば異種混合で割り当て。"""
     agents = list(BASE_AGENTS[:min(n, len(BASE_AGENTS))])

@@ -59,13 +59,36 @@ def render():
     # ── 設定 ──
     _all_models = _af.get_available_models()
 
+    _roster = _af.agent_roster()
+    _pick_mode = st.radio(
+        "人格の選び方", ['人数で自動', '人格を選ぶ（情報の切り口で多様化）'],
+        horizontal=True, key="cf_agent_mode",
+        help="『人格を選ぶ』で情報の切り口(血統/展開/騎手/オッズ…)が異なる人格を組めば"
+             "予想が脱相関しアンサンブル(合議)が効く。同じ切り口を並べると相関が上がり無意味")
+    _selected_ids = None
     _c1, _c2 = st.columns([1, 1])
-    with _c1:
-        _n_agents = st.slider("エージェント数", 3, 50, 5, key="cf_n_agents",
-                              help="5=基本 / 15=全専門家 / 16+=分科会方式自動発動")
     with _c2:
         _use_multi_model = st.checkbox("モデル異種混合", value=False, key="cf_multi_model",
                                        help="複数モデルを混ぜて多様性を高める(Wisdom of Crowds)")
+    if _pick_mode.startswith('人数'):
+        with _c1:
+            _n_agents = st.slider("エージェント数", 3, 50, 5, key="cf_n_agents",
+                                  help="5=基本 / 15=全専門家 / 16+=分科会方式自動発動")
+    else:
+        with _c1:
+            _lbl2id = {f"{a['icon']} {a['name']}（{a['focus']}）": a['id'] for a in _roster}
+            _def_ids = {'ken', 'taku', 'kei', 'riku', 'mari'}
+            _defaults = [k for k, v in _lbl2id.items() if v in _def_ids]
+            _picked = st.multiselect(
+                "参加する人格（情報の切り口が被らないほど脱相関＝合議が効く）",
+                list(_lbl2id.keys()), default=_defaults, key="cf_pick_agents")
+            _selected_ids = [_lbl2id[k] for k in _picked]
+        _n_agents = max(1, len(_selected_ids))
+        # 情報の切り口の多様性を見える化(同じ切り口の重複=相関上昇の警告)
+        _focuses = [next(a['focus'] for a in _roster if a['id'] == i) for i in _selected_ids]
+        _uniq = sorted(set(_focuses))
+        st.caption(f"🔗 情報の切り口: {'/'.join(_uniq)}（{len(_uniq)}種）"
+                   + ("　⚠ 同じ切り口が重複＝予想が相関しやすい" if len(_uniq) < len(_focuses) else "　🟢 全て異なる切り口=良い多様性"))
 
     if _use_multi_model and len(_all_models) > 1:
         _selected_models = st.multiselect(
@@ -95,10 +118,15 @@ def render():
             if _r_with_result:
                 st.caption(f"📚 回顧学習: 直近{len(_r_with_result)}戦の記録あり → 各エージェントのsystem promptに自動注入中")
 
-    # エージェント生成（モデル混合対応）
-    _agents = _af.generate_agents(
-        _n_agents,
-        models=_selected_models if (_use_multi_model and len(_selected_models) > 1) else None)
+    # エージェント生成（人格選択 or 人数自動・モデル混合対応）
+    _mdls = _selected_models if (_use_multi_model and len(_selected_models) > 1) else None
+    if _selected_ids is not None:
+        _agents = _af.agents_by_ids(_selected_ids, models=_mdls)
+        if not _agents:
+            st.warning("人格を1体以上選んでください（暫定で基本5人格を使用）。")
+            _agents = _af.generate_agents(5, models=_mdls)
+    else:
+        _agents = _af.generate_agents(_n_agents, models=_mdls)
 
     with st.expander(f"👥 エージェント一覧 ({len(_agents)}体)", expanded=False):
         _ag_cols = st.columns(min(3, max(1, len(_agents))))

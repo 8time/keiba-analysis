@@ -228,6 +228,19 @@ def main():
             pass
     check("score_cache.write_gate/read_gate", t_gate_cache)
 
+    def t_agent_roster():
+        from core import agent_forum as af
+        r = af.agent_roster()
+        assert len(r) >= 10 and all('focus' in a and 'id' in a for a in r), "名簿にfocus/id"
+        # 情報の切り口ラベルが付く(多様性=脱相関の軸)
+        _foc = {a['id']: a['focus'] for a in r}
+        assert _foc.get('kei') == '血統' and _foc.get('jin') == '騎手'
+        # 選択班: 指定id順・未知は無視
+        sel = af.agents_by_ids(['taku', 'zzz', 'kei'])
+        assert [a['id'] for a in sel] == ['taku', 'kei']
+        assert af.agents_by_ids([]) == []
+    check("agent_forum.agent_roster/agents_by_ids", t_agent_roster)
+
     def t_agent_correlation():
         from core import agent_forum as af
         # 空台帳=データ不足note・n_races0
