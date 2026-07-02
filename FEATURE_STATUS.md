@@ -50,4 +50,4 @@
 - **PCIは完全終了**（2026-07-02・scripts/pci_course_shape_backtest.py）: 単体PCI乖離=priced-in([[verified_pci_pricedin]])、巻き返し穴=誤り([[verified_comeback_overbet]])に続き、動画の「PCI傾向×コース形状(O字/U字)」交互作用も holdout2025で C=+0.30pp/z=+0.20（train z0.65・2026 z1.65）とゲートz2.0未達。PCI由来のエッジは軸・相手・消去いずれも無し。
 - **当日バイアス逆張り(危険人気)のrealtime強化**は却下（2026-07-02・カード2・scripts/intraday_bias_backtest.py）: pooled z-3.8は楽観的でholdout2025 z-1.77/2026崩落。既存danger_popular_innerは弱fadeとして残すが強化しない([[verified_emp_bias_danger]])。
 - **ボーダー3のフラグ消去による代替**は却下（2026-07-02・カード3・scripts/elim_frontier_backtest.py）: フラグは人気に織込み済みでW>0はこぼし悪化。ボーダーは代替不能・撤去しない([[verified_keepone_border]])。
-- **馬主・馬主×厩舎は織込み済み**（2026-07-02・カード4パイロット・scripts/owner_roi_backtest.py）: netkeiba horse_id==ketto_numでowner_id取得(4000頭)→高-低コントラストz-0.52/+0.92でpriced-in、ROI全帯<100。厩舎全体勝率と同型([[verified_owner_pricedin]])。②地方中央使い分けのみ未検証で残る。
+- **馬主・馬主×厩舎・地方中央使い分けは織込み済み**（2026-07-02・カード4・scripts/owner_roi_backtest.py+venue_switch_backtest.py）: 馬主=高-低コントラストz-0.52/+0.92、前走NAR(地方帰り)=holdout z-1.91(むしろ過剰人気・ROI42-59%)。全てpriced-in。厩舎全体勝率と同型([[verified_owner_pricedin]])。
