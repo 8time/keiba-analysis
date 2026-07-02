@@ -3287,6 +3287,53 @@ if nav == "🏠 Single Race Analysis":
                                     'jockey': str(_pm_r.get('Jockey', '') or ''),
                                     'trainer': str(_pm_r.get('Trainer', '') or ''),
                                 })
+
+                            # --- 🤝 netkeiba AI展開予測(4コーナー)との照合(表示のみ・エッジ主張なし) ---
+                            # netkeiba「AI展開予測」の4コーナー隊列帯と、当アプリ展開マップの到達位置帯を
+                            # 前40%/後35%で比較。両AIが同帯なら🏆(前=有利)/💀(後=危険)を点灯する。
+                            # 展開恩恵はpriced-in([[verified_tenkai_priced_in]])のため合意の可視化のみ。
+                            try:
+                                st.markdown("**🤝 netkeiba AI展開予測との照合（4コーナー隊列 × 到達位置）**")
+                                st.caption("netkeibaのAI展開予測『4コーナー隊列』と当アプリの到達位置を"
+                                           "前40%/後35%の帯で比較。両AIが同帯なら 🏆(前=有利) / 💀(後=危険)。"
+                                           "※展開恩恵はpriced-inのため合意の可視化のみ・エッジ主張なし。")
+                                _nkt_key = f"nkt_bands_{race_id_input}"
+                                if st.button("🔄 netkeiba AI展開を取得して照合", key=f"btn_nkt_{race_id_input}"):
+                                    with st.spinner("netkeiba AI展開予測を取得中..."):
+                                        try:
+                                            from core import ai_tenkai as _ait
+                                            st.session_state[_nkt_key] = _ait.corner4_bands(race_id_input)
+                                        except Exception as _nkt_e:
+                                            st.session_state[_nkt_key] = {}
+                                            st.warning(f"netkeiba AI展開の取得に失敗: {_nkt_e}")
+                                if st.session_state.get(_nkt_key):
+                                    from core import ai_tenkai as _ait
+                                    _nkt_bands = st.session_state[_nkt_key]
+                                    _app_left = {h['umaban']: h['score'] for h in _pm_horses}
+                                    _app_bands = _ait.band_by_left(_app_left)
+                                    _icons = _ait.agreement_icons(_nkt_bands, _app_bands)
+                                    _nkt_rows = []
+                                    for _h in sorted(_pm_horses, key=lambda x: x['umaban']):
+                                        _u = _h['umaban']
+                                        _nkt_rows.append({
+                                            '馬番': _u, '馬名': _h['name'],
+                                            'アプリ帯': _app_bands.get(_u, '—'),
+                                            'netkeiba4角': _nkt_bands.get(_u, '—'),
+                                            '合意': _icons.get(_u, ''),
+                                        })
+                                    st.dataframe(pd.DataFrame(_nkt_rows), hide_index=True,
+                                                 use_container_width=True)
+                                    _n_win = sum(1 for v in _icons.values() if v == '🏆')
+                                    _n_dan = sum(1 for v in _icons.values() if v == '💀')
+                                    st.caption(f"🏆 有利位置一致 {_n_win}頭 ／ 💀 危険位置一致 {_n_dan}頭")
+                                elif _nkt_key in st.session_state:
+                                    st.caption("netkeiba AI展開予測の位置データが取得できませんでした"
+                                               "（未公開レース/AI展開非対応の可能性）。")
+                                st.markdown("---")
+                            except Exception as _nkt_outer:
+                                import logging as _lg
+                                _lg.getLogger(__name__).warning(f"[AITenkai] {_nkt_outer}")
+
                             # 距離: metadata → CurrentDistance 列の順でフォールバック
                             _pm_dist = meta.get('distance')
                             if not _pm_dist and 'CurrentDistance' in df.columns and not df.empty:

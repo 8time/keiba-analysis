@@ -440,6 +440,30 @@ def main():
             ('浦和', '船橋', '大井', '川崎'), "南関場コード名が誤り(42浦和/43船橋/44大井/45川崎)"
     check("NAR過去走ブリッジの関数契約", t_nankan_contract)
 
+    def t_ai_tenkai():
+        # netkeiba AI展開予測(4コーナー)照合の帯分類/合意アイコン(ネットワーク非依存)
+        from core import ai_tenkai as ait
+        # 埋め込みJS+アイコンの最小フィクスチャ(左%小=前/大=後)
+        html = (
+            '<span class="HorseIcon Color01" id="Horse1">x</span>'
+            '<span class="HorseIcon Color01" id="Horse2">x</span>'
+            '<span class="HorseIcon Color01" id="Horse3">x</span>'
+            '<script>function updateHorsePosition(){'
+            "switch(c){case 'Corner03':"
+            '$("#Horse1").css({top:"0%",left:\'10%\'});'
+            '$("#Horse2").css({top:"0%",left:\'50%\'});'
+            '$("#Horse3").css({top:"0%",left:\'90%\'});break;}'
+            '出遅れ率チェック}</script>'
+        )
+        pos = ait.parse_tenkai_positions(html)
+        assert pos.get(1, {}).get('corner4') == 10.0, f"parse失敗 {pos}"
+        assert pos.get(3, {}).get('corner4') == 90.0
+        bands = ait.band_by_left({1: 10.0, 2: 50.0, 3: 90.0})
+        assert bands[1] == '前' and bands[3] == '後', f"帯分類誤り {bands}"
+        icons = ait.agreement_icons({1: '前', 2: '中', 3: '後'}, {1: '前', 2: '後', 3: '後'})
+        assert icons[1] == '🏆' and icons[3] == '💀' and icons[2] == '', f"合意アイコン誤り {icons}"
+    check("netkeiba AI展開照合(帯/合意)", t_ai_tenkai)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():

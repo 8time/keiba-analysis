@@ -22,6 +22,7 @@
 | ├ 🔵補正T | 直近7走×同馬場の最高/100・top3に🔵 | ✅ | [[verified_corrected_time]] | — |
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |
 | ├ 展開MAP/Vマトリクス | テン速力でペース想定・隊列・荒れ寄り判定 | 🟡 | 展開恩恵はpriced-in([[verified_tenkai_priced_in]]) | — |
+| ├─ T4:netkeiba AI展開予測 4角照合 | netkeiba出馬表の「AI展開予測」4コーナー隊列(#Horse{馬番}のleft%=static JS埋込)を抽出→アプリ到達位置と前40%/後35%帯で比較→両AI同帯なら🏆(前)/💀(後)。展開MAP expander内・ボタン起動・JRA/NAR両対応 | 🟢 | core/ai_tenkai.py(parse_tenkai_positions/band_by_left/agreement_icons)。実査=大井7/3 R11で4角帯抽出10/10・脚質と方向一致(先行=前/追込=後)。表示のみ・エッジ主張なし | 2026-07-03 |
 | ├ 騎手・厩舎脚質傾向を隊列に反映(表示用) | jockey_tactics/trainer_tactics(逃げ先行率)→道中ポジションprior小重み。corner履歴無い馬(NAR/新馬)で効くフォールバック | 🟢 | pace_map.tactics_forward(w0.15)。**表示精度のみ・エッジ主張なし**(ペース圧力の荒れ予測は⑧と重複と検証済) | 2026-07-02 |
 | ├ 🎯3連複おすすめエンジン | 決着タイプ判定→本線/②パターン＋lean連動の可変点数(本線8/②10/中立8)＋本線トリガミ警告 | 🟢 | trio_lean配線＋可変点数(4d81226) | 2026-06-24 |
 | ├ ●大穴/⚠荒れ寄り(オッズ本命不在) | 決着タイプ判定にコンピ大穴の単勝オッズ等価フラグ(fav1/上位拮抗/live30)を表示。穴相手戦略の適用先を選ぶレース選択器 | ✅ | [[verified_arare_entropy]](2025 z10.9・大穴z5.5/2026 z8.0・ハンデ/16頭と独立)。value_scanner.no_favorite_flag / scripts/arare_entropy_backtest.py | 2026-07-02 |
