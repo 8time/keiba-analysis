@@ -302,6 +302,18 @@ def main():
         assert m['A']['mark'] == '◎' and m['A']['conf'] == 78.7, f"NAR1番人気◎, got {m['A']}"
     check("axis_selector.NAR較正(POP_FUKU_NAR)", t_axis_nar)
 
+    def t_magi_done_check():
+        from core import magi_chat as mc
+        led = [{'ts': '2026-07-01 10:00', 'race_id': 'R1', 'place': '東京', 'name': 'A', 'learning': {}},
+               {'ts': '2026-07-02 09:00', 'race_id': 'R1', 'place': '東京', 'name': 'A', 'learning': {}},
+               {'ts': '2026-07-02 11:00', 'race_id': 'R2', 'place': '京都', 'name': 'B', 'learning': {}}]
+        assert len(mc.races_done('R1', led)) == 2, "R1は2回回顧済み"
+        assert mc.races_done('R9', led) == [], "未回顧は空(二度手間警告なし)"
+        rr = mc.recent_races(led)
+        r1 = next(x for x in rr if x['race_id'] == 'R1')
+        assert r1['count'] == 2 and rr[0]['race_id'] == 'R2', "集約カウント+最新ts順"
+    check("magi_chat.races_done/recent_races", t_magi_done_check)
+
     def t_verify_queue():
         import tempfile
         from core import verify_queue as vq

@@ -11058,11 +11058,29 @@ if nav == "🧠 MAGI回顧":
             st.session_state.setdefault('magi_user_name', '')
             st.text_input("あなたの呼び名（任意・3人がこの名前で呼びます）", key='magi_user_name',
                           placeholder="例: たけし / 馬主さん")
+            # 📋 回顧済みレース一覧(二度手間防止・入力前に確認)
+            try:
+                _done_list = mc.recent_races(limit=15)
+                if _done_list:
+                    with st.expander(f"📋 回顧済みレース {len(_done_list)}件（重複防止・クリックで確認）"):
+                        for _d in _done_list:
+                            _cnt = f"×{_d['count']}" if _d['count'] > 1 else ''
+                            st.caption(f"`{_d['race_id']}` {_d['date']} {_d['place']} {_d['name']} "
+                                       f"— {_d['ts']}回顧 {_cnt}")
+            except Exception:
+                pass
             with st.form("osh_start_form", clear_on_submit=False):
                 _rid_in = st.text_input("レースID", placeholder="例: 202406050811", label_visibility="collapsed")
                 _go = st.form_submit_button("▶ 審議開始", type="primary", use_container_width=True)
             if _go and _rid_in and _rid_in.strip():
                 _rid = _rid_in.strip()
+                # ⚠ 既に回顧済みなら警告(二度手間防止・続行は可)
+                _prev = mc.races_done(_rid)
+                if _prev:
+                    _lp = _prev[-1]
+                    st.warning(f"⚠ このレースは既に **{len(_prev)}回** 回顧済み"
+                               f"（最終 {_lp['ts']} / {_lp.get('place','')} {_lp.get('name','')}）。"
+                               "二度手間なら別レースへ。あえて再回顧するならこのまま進行します。")
                 with st.spinner("レース結果を読み込み中..."):
                     _df_o = pd.DataFrame()
                     # Tier2: SRAで解析済みなら完全df(Vエリア/末脚/強適/消去込み)を優先採用

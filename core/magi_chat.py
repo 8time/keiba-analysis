@@ -412,6 +412,36 @@ def _load_ledger():
         return []
 
 
+def races_done(race_id, ledger=None):
+    """指定race_idの回顧記録(実施日時ts/レース日/場/レース名)を返す。二度手間防止用。"""
+    if ledger is None:
+        ledger = _load_ledger()
+    rid = str(race_id).strip()
+    return [{'ts': r.get('ts', ''), 'date': r.get('date', ''),
+             'place': r.get('place', ''), 'name': r.get('name', '')}
+            for r in ledger if str(r.get('race_id', '')).strip() == rid]
+
+
+def recent_races(ledger=None, limit=20):
+    """回顧済みレースをrace_id単位で集約(最新ts順)。戻り: [{race_id,date,place,name,ts,count}]。"""
+    if ledger is None:
+        ledger = _load_ledger()
+    agg = {}
+    for r in ledger:
+        rid = str(r.get('race_id', '')).strip()
+        if not rid:
+            continue
+        e = agg.setdefault(rid, {'race_id': rid, 'date': '', 'place': '',
+                                 'name': '', 'ts': '', 'count': 0})
+        e['count'] += 1
+        if r.get('ts', '') >= e['ts']:            # 最新tsのメタを保持
+            e['ts'] = r.get('ts', '')
+            e['date'] = r.get('date', '') or e['date']
+            e['place'] = r.get('place', '') or e['place']
+            e['name'] = r.get('name', '') or e['name']
+    return sorted(agg.values(), key=lambda x: x['ts'], reverse=True)[:limit]
+
+
 def is_quarantined(tag):
     t = str(tag)
     return any(kw in t for kw in _QUARANTINE_KEYWORDS)
