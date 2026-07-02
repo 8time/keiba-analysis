@@ -3207,6 +3207,15 @@ if nav == "🏠 Single Race Analysis":
                                 })
                             if _ss_results:
                                 _ss_df = pd.DataFrame(_ss_results).sort_values("最終予測", ascending=False)
+                                # 消去クロスの スト1(係数≤0.98)/スト2(最終予測 下から3) 用に保存
+                                try:
+                                    _ss_bot3 = set(_ss_df.nsmallest(min(3, len(_ss_df)), "最終予測")["馬番"])
+                                    st.session_state[f"_ss_stress_{race_id_input}"] = {
+                                        int(_sr['馬番']): {'coef': float(_sr['ストレス係数']),
+                                                          'bottom3': _sr['馬番'] in _ss_bot3}
+                                        for _sr in _ss_results}
+                                except Exception:
+                                    pass
 
                                 def _style_stress(val):
                                     f_val = float(val)
@@ -8003,10 +8012,29 @@ if nav == "🧹 消去フィルター":
                         "<b>同じレースを採点</b>してください"
                         "（採点テーブルの馬番がこのレースと一致すると自動で取り込みます）。</div>",
                         unsafe_allow_html=True)
-                _tg_default = []
                 _all_names_ec = df['Name'].astype(str).tolist() if 'Name' in df.columns else []
+                # ⏱️調教分析でC以下(TrainingEval/Score/oikiri)の馬を自動選択(地方は調教データ無しで空)
+                _tg_default = []
+                try:
+                    _oik_rev_ec = st.session_state.get(f"oikiri_rev_{race_id_input}", {}) or {}
+                    _gr_from_ec = {100.0: 'A', 70.0: 'B', 40.0: 'C', 10.0: 'D'}
+                    for _, _tr in df.iterrows():
+                        _tnm = str(_tr.get('Name', ''))
+                        _tev = str(_tr.get('TrainingEval', '') or '').strip()
+                        if not _tev:
+                            _tts = pd.to_numeric(_tr.get('TrainingScore'), errors='coerce')
+                            if pd.notnull(_tts):
+                                _tev = _gr_from_ec.get(float(_tts), '')
+                        if not _tev:
+                            _tu = pd.to_numeric(_tr.get('Umaban'), errors='coerce')
+                            if pd.notnull(_tu):
+                                _tev = (_oik_rev_ec.get(int(_tu), {}) or {}).get('rank', '')
+                        if _tev and _tev.upper()[:1] in ('C', 'D', 'E', 'F') and _tnm in _all_names_ec:
+                            _tg_default.append(_tnm)
+                except Exception:
+                    _tg_default = []
                 _tg_sel = st.multiselect(
-                    "調教C以下の馬（任意・あなたの実観測を加算）", _all_names_ec, default=_tg_default,
+                    "調教C以下の馬（自動=⏱️調教のC以下・手動追加可）", _all_names_ec, default=_tg_default,
                     key=f"kf_excross_train_{race_id_input}",
                     help="調教評価はjravan.dbに過去データが無く検証不可。実観測フラグとして重複数に+1加算します。")
                 _exc_clicked = st.button("▶ 消去クロステーブルを作成", key="kf_excross_run")
@@ -8042,6 +8070,8 @@ if nav == "🧹 消去フィルター":
                         except Exception:
                             _field_pci = None
                         _is_handi = bool(metadata.get('is_handicap'))
+                        # 🐎Stress Analystの係数/最終予測(スト1/スト2フラグ用・先にStress表を開くと入る)
+                        _ss_stress = st.session_state.get(f"_ss_stress_{race_id_input}", {}) or {}
                         _xrows = []
                         for _, _r in df.iterrows():
                             _nm = str(_r.get('Name', ''))
@@ -8089,6 +8119,9 @@ if nav == "🧹 消去フィルター":
                                 battle_low=bool(_use_score and _battle_low.get(_um)),
                                 proj_low=bool(_use_score and _proj_low.get(_um)),
                                 pm_back=bool(_um in _pm_rear),
+                                stress1=bool((_ss_stress.get(_um) or {}).get('coef') is not None
+                                             and (_ss_stress.get(_um) or {}).get('coef', 1.0) <= 0.98),
+                                stress2=bool((_ss_stress.get(_um) or {}).get('bottom3')),
                                 pci_dev=((_pci_map[_um] - _field_pci)
                                          if (_field_pci is not None and _um in _pci_map) else None),
                                 is_handicap=_is_handi,

@@ -158,6 +158,18 @@ def main():
         os.remove(p)
     check("paddock_ledger.record_settle_stats", t_paddock_ledger)
 
+    def t_elim_stress():
+        from core import elim_cross as ec
+        # スト1/スト2フラグ: 点灯するが band(推定複勝率)には算入しない(UNVERIFIED)
+        f = ec.compute_flags(stress1=True, stress2=True)
+        assert 'stress1' in f and 'stress2' in f, "スト1/2点灯"
+        assert ec.FLAG_LABEL['stress1'] == 'スト1' and ec.FLAG_LABEL['stress2'] == 'スト2'
+        assert 'stress1' in ec.UNVERIFIED and 'stress2' in ec.UNVERIFIED, "band非算入"
+        # 検証数はstressを除外(zogen+age8のみ=2)
+        f2 = ec.compute_flags(zogen=20, age=9, stress1=True, stress2=True)
+        assert ec.verified_count(f2) == 2, f"stressはband非算入, got {ec.verified_count(f2)}"
+    check("elim_cross.スト1/スト2(band非算入)", t_elim_stress)
+
     def t_betfilter():
         from core import bet_filter as bf
         out = bf.annotate_bets(

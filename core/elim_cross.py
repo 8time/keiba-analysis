@@ -35,6 +35,8 @@ FLAG_DEFS = [
     ('battle',  '総合力下位',  '🏠Single Race Analysisの総合戦闘力が下位30%(検証不可・人気内包)'),
     ('proj',    '予測下位',    '🏠Single Race Analysisの予測スコアが下位30%(検証不可・人気内包)'),
     ('pmback',  '展開後方',    '展開MAPで最終直線に後方の馬(出馬数依存5〜8頭・予測。展開はpriced-in＝検証不可)'),
+    ('stress1', 'スト1',       '🐎Stressの係数≤0.98(検証済デバフ: 小柄×馬体減/芝×後方/馬体増)'),
+    ('stress2', 'スト2',       '🐎Stressの最終予測が全馬中 下から3以内'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
@@ -42,7 +44,7 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 # 検証DBに無い=歴史的バックテスト不可のフラグ。これらは推定複勝率(BAND)の算定から除外する。
 #  ・train: 調教評価(過去データがDBに無い)
 #  ・battle/proj: ライブ生成スコアで再構築不可、かつ人気/オッズを内包し他フラグと相関
-UNVERIFIED = {'train', 'battle', 'proj', 'pmback'}
+UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2'}
 # BAND(推定複勝率)の根拠となる検証済みフラグのみ
 VERIFIED_ORDER = [k for k in FLAG_DEFS_ORDER if k not in UNVERIFIED]
 
@@ -90,7 +92,7 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
                   prev_dist=None, cur_dist=None, zogen=None, age=None,
                   training_grade=None, include_train=True,
                   battle_low=False, proj_low=False, pci_dev=None, pm_back=False,
-                  is_handicap=False, futan=None):
+                  is_handicap=False, futan=None, stress1=False, stress2=False):
     """1頭の点灯フラグ集合(set of key)を返す。すべて pre-race 情報のみ。
     引数は app 側で ctx/horse_elim_stats/出馬表から渡す。"""
     f = set()
@@ -142,4 +144,8 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
         f.add('proj')
     if pm_back:
         f.add('pmback')
+    if stress1:
+        f.add('stress1')
+    if stress2:
+        f.add('stress2')
     return f
