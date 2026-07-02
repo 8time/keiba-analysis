@@ -4949,7 +4949,13 @@ if nav == "🏠 Single Race Analysis":
                                 'prev_win_margin': _tm.get(_nm, {}).get('awm'),
                                 'sire': str(_dr.get('sire', '') or ''),
                                 'sexage': str(_dr.get('SexAge', '') or '')})
-                        _ax = _axs.axis_marks(_ax_horses)
+                        # NAR(地方)は人気決着が中央より強い→NAR実測較正(POP_FUKU_NAR)で軸を素直に人気上位へ
+                        _ax_is_nar = False
+                        try:
+                            _ax_is_nar = int(str(race_id_input)[4:6]) > 10
+                        except Exception:
+                            _ax_is_nar = False
+                        _ax = _axs.axis_marks_nar(_ax_horses) if _ax_is_nar else _axs.axis_marks(_ax_horses)
                         _uma2mark = {}
                         for _h in _ax_horses:
                             _info = _ax.get(_h['name'], {})

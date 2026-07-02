@@ -241,6 +241,18 @@ def main():
         assert not okp, "PCI仮説は隔離される"
     check("hypothesis_schema.folk隔離", t_hypothesis_schema)
 
+    def t_axis_nar():
+        from core import axis_selector as ax
+        # NAR較正: 1番人気は実測78.7%(JRA70.1%より高く評価)・人気基準固定(odds無視)
+        assert ax.axis_confidence_nar(1) == 78.7, f"NAR1番人気=78.7, got {ax.axis_confidence_nar(1)}"
+        assert ax.axis_confidence(1) == 70.1, "JRA側は不変(70.1)"
+        # NARはoddsを渡しても人気基準(地方はオッズ市場薄い)
+        assert ax.axis_confidence_nar(1, odds=1.5) == 78.7, "NARはodds無視で人気基準"
+        # 軸マーク: 1番人気に◎が付く
+        m = ax.axis_marks_nar([{'name': 'A', 'pop': 1}, {'name': 'B', 'pop': 2}, {'name': 'C', 'pop': 5}])
+        assert m['A']['mark'] == '◎' and m['A']['conf'] == 78.7, f"NAR1番人気◎, got {m['A']}"
+    check("axis_selector.NAR較正(POP_FUKU_NAR)", t_axis_nar)
+
     def t_verify_queue():
         import tempfile
         from core import verify_queue as vq

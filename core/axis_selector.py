@@ -31,6 +31,10 @@ ODDS_FUKU = [
 ]
 # 人気別 実複勝率(%) — オッズ欠損時のフォールバック
 POP_FUKU = {1: 70.1, 2: 56.0, 3: 44.2, 4: 34.6, 5: 26.6, 6: 20.6, 7: 15.4, 8: 11.7}
+# NAR(地方)専用 人気別 実複勝率(%) — jravan.db 南関含む地方2023-25・各n≈7000で実測。
+# 地方はJRAより「チョーク(人気決着)」: 上位人気が堅く(1番人気78.7%>JRA70.1%)、人気薄は飛ぶ。
+# NARはオッズ欠損=常に人気基準。JRA表を使うと1番人気を過小評価し軸が動きやすくなる為、専用表で較正。
+POP_FUKU_NAR = {1: 78.7, 2: 61.2, 3: 47.0, 4: 35.9, 5: 26.3, 6: 18.8, 7: 14.0, 8: 9.7}
 
 ATSU_MARGIN = 1.0       # 圧勝とみなす前走着差(秒)
 ATSU_DEMERIT = 5.0      # オッズ基準時の圧勝=過剰人気の軽い減点(pp)
@@ -56,9 +60,8 @@ def _odds_fuku(o):
     return ODDS_FUKU[-1][1]
 
 
-def axis_confidence(pop, odds=None, prev_win_margin=None):
-    """1頭の推定3着内信頼度(%)を返す。軸候補外(人気なし/MAX超)は None。
-    オッズがあればオッズ基準、無ければ人気基準。"""
+def _axis_conf(pop, table, odds=None, prev_win_margin=None):
+    """内部: 人気別複勝率テーブル table を使って信頼度を算出(JRA/NAR共通ロジック)。"""
     try:
         p = int(pop)
     except (TypeError, ValueError):
@@ -74,7 +77,7 @@ def axis_confidence(pop, odds=None, prev_win_margin=None):
         if atsu:
             conf -= ATSU_DEMERIT          # オッズ統制下では圧勝は過剰人気=軽い減点
     elif p is not None:
-        conf = POP_FUKU.get(p, max(8.0, 70.0 - (p - 1) * 11.0))
+        conf = table.get(p, max(8.0, table.get(1, 70.0) - (p - 1) * 11.0))
         if atsu:
             conf += ATSU_POP_BONUS        # 人気基準時のみ順位内交絡で加点が有効
     else:
@@ -82,16 +85,26 @@ def axis_confidence(pop, odds=None, prev_win_margin=None):
     return round(max(0.0, min(conf, 95.0)), 1)
 
 
-def axis_marks(horses):
-    """horses: [{'name','pop','odds'(任意),'prev_win_margin'(任意)}]
-    戻り: {name: {'mark': '◎'/'〇'/'▲'/'', 'conf': float|None, 'atsu': bool}}
-    """
+def axis_confidence(pop, odds=None, prev_win_margin=None):
+    """1頭の推定3着内信頼度(%)を返す(JRA/中央)。軸候補外(人気なし/MAX超)は None。
+    オッズがあればオッズ基準、無ければ人気基準(POP_FUKU)。"""
+    return _axis_conf(pop, POP_FUKU, odds, prev_win_margin)
+
+
+def axis_confidence_nar(pop, odds=None, prev_win_margin=None):
+    """NAR(地方)版。NAR実測の複勝率表(POP_FUKU_NAR)を人気基準で使う。
+    地方はオッズ市場が中央ほど厚くなく、NAR較正は人気ベースなので odds は使わず人気基準に固定。
+    地方は人気決着傾向が強く、JRA表だと1番人気(実78.7%)を過小評価する為の較正。"""
+    return _axis_conf(pop, POP_FUKU_NAR, None, prev_win_margin)
+
+
+def _marks(horses, conf_fn):
     out = {}
     scored = []
     for h in horses:
         nm = str(h.get('name', ''))
         pwm = h.get('prev_win_margin')
-        conf = axis_confidence(h.get('pop'), h.get('odds'), pwm)
+        conf = conf_fn(h.get('pop'), h.get('odds'), pwm)
         atsu = (pwm is not None and pwm >= ATSU_MARGIN)
         out[nm] = {'mark': '', 'conf': conf, 'atsu': atsu}
         if conf is not None:
@@ -103,3 +116,16 @@ def axis_marks(horses):
         if conf >= FLOOR[mk]:
             out[nm]['mark'] = mk
     return out
+
+
+def axis_marks(horses):
+    """horses: [{'name','pop','odds'(任意),'prev_win_margin'(任意)}]
+    戻り: {name: {'mark': '◎'/'〇'/'▲'/'', 'conf': float|None, 'atsu': bool}}(JRA/中央)
+    """
+    return _marks(horses, axis_confidence)
+
+
+def axis_marks_nar(horses):
+    """NAR(地方)版の軸マーク。POP_FUKU_NARで較正した信頼度で◎〇▲を付す。
+    地方は1番人気が堅い(78.7%)ので軸は素直に人気上位へ。JRA較正スコアに引っ張らせない。"""
+    return _marks(horses, axis_confidence_nar)
