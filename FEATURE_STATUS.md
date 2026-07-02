@@ -10,6 +10,7 @@
 | 🏠 Single Race Analysis | レースID/URL入力→出馬表取得→強適Ranking表示 | 🟡 | — | — |
 | ├ NAR(地方競馬)PastRunsブリッジ | nankankeiba.com過去走→PastRuns形式変換でPCI/展開マップ/脚質分類をNARでも有効化 | ✅ | [[project_nankan_scraper]]+[[verified_nankan_pci_spurt_backtest]](大井5開催263R/3197頭・z2.35) | 2026-07-02 |
 | ├ NAR会場プロファイル(大井/川崎/船橋/浦和) | 場コード修正(42/43/44/45=浦和/船橋/大井/川崎)＋距離別枠順バイアス/砂質/雨天バイアス/リーディング | 🟢 | [[project_nankan_scraper]] | 2026-07-02 |
+| ├ NAR軸/シグナル較正 | ①軸=NAR実測POP_FUKU_NAR(1番人気78.7%>JRA70.1%)で過小評価修正 ②🔬シグナル列を南関でも機能(scrape_raceはrace_id取得でNAR自動判定) ③LTR(JRA学習)はNAR分布外で抑制 | 🟢 | axis_marks_nar/_fetch_daily_signals(NAR分岐)/LTR NARゲート。診断=NAR1番人気複勝率78.7%実測 | 2026-07-02 |
 | ├ 🛡️BattleScore乖離セーフティネット NAR比例化 | 中央固定top3/top7→NAR出走頭数比例(seed≈3/16・line≈40%)、中央側は完全不変 | ✅ | [[project_nar_recall_proportional]] | 2026-07-02 |
 | ├ 強適Ranking Table | 予測スコア/戦闘力/補正T/LTR/適性を列表示・列順保存 | 🟢 | CorrectedT/LTRヘッダ修正(077cfeb/ab0d15f) | 2026-06-23 |
 | ├ 🎯軸馬候補◎〇▲ | 人気別複勝率＋圧勝🔨＋危険人気Vetoで軸提示(危険は降格/⚠) | ✅ | [[verified_ohtani_trap]]＋danger_gate(P0) | 2026-06-23 |

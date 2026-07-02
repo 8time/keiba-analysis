@@ -182,7 +182,9 @@ def get_netkeiba_domain(race_id):
 # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
 @st.cache_data(ttl=600, show_spinner=False)
 def _fetch_daily_signals(rid: str, race_date_str: str):
-    """当日の全JRAレースをスキャンしてシグナルmap {umaban: {marks,j_dc,t_bullet}} を返す。
+    """当日の全レース(対象がJRAならJRA中央01-10/NARなら地方>10)をスキャンし
+    シグナルmap {umaban: {marks,j_dc,t_bullet}} を返す。scrape_raceはrace_idで
+    実データ取得(get_race_dataがNAR自動判定)する為、南関等の地方でも機能する。
     race_date_str: YYYYMMDD 形式の実際のカレンダー日付"""
     try:
         from core.scraper import get_race_list_for_date
@@ -190,13 +192,22 @@ def _fetch_daily_signals(rid: str, race_date_str: str):
         race_list = get_race_list_for_date(race_date_str)
         if not race_list:
             return {}
-        # JRA中央のみ (venue 01-10)
+        # 対象レースと同じ"世界"(JRA中央 or NAR地方)の当日レースをスキャン。
+        # 地方はvenue>10。スキャナはrace_idで実データ取得(get_race_dataがNAR自動判定)する為、
+        # URLドメインは無関係だが、明示的に正しいドメインを付す(nar/race)。
+        _tgt_vc = rid[4:6] if len(str(rid)) == 12 else '99'
+        _tgt_is_nar = _tgt_vc.isdigit() and int(_tgt_vc) > 10
+        _dom = "nar.netkeiba.com" if _tgt_is_nar else "race.netkeiba.com"
         urls = []
         for r in race_list:
             r_id = r['race_id'] if isinstance(r, dict) else str(r)
             vc = r_id[4:6] if len(r_id) == 12 else '99'
-            if vc.isdigit() and 1 <= int(vc) <= 10:
-                urls.append(f"https://race.netkeiba.com/race/shutuba.html?race_id={r_id}")
+            if not vc.isdigit():
+                continue
+            _v = int(vc)
+            _in_scope = (_v > 10) if _tgt_is_nar else (1 <= _v <= 10)
+            if _in_scope:
+                urls.append(f"https://{_dom}/race/shutuba.html?race_id={r_id}")
         if not urls:
             return {}
         df_sig, _, _ = run_scan_with_signals(urls=urls, entity='both', min_patterns=1, output_csv=None)
@@ -5015,9 +5026,16 @@ if nav == "🏠 Single Race Analysis":
                         pass
 
                     # --- LTRランキングスコア(LightGBM LambdaRank・検証済みエッジ統合) ---
+                    # ⚠NAR(地方)は抑制: LTRはJRA学習=NAR会場は分布外(jyo_code/厩舎当場特徴が未学習)。
+                    #   JRA専用スコアがNARの軸を引っ張るのを防ぐ(地方は人気較正=軸較正POP_FUKU_NARに委ねる)。
+                    _ltr_is_nar = False
+                    try:
+                        _ltr_is_nar = int(str(race_id_input)[4:6]) > 10
+                    except Exception:
+                        _ltr_is_nar = False
                     try:
                         from core import ltr_ranker as _ltr
-                        if _ltr.available():
+                        if _ltr.available() and not _ltr_is_nar:
                             _ltr_meta = st.session_state.get('race_metadata', {})
                             _ltr_hs = []
                             for _, _lr in view_df.iterrows():
