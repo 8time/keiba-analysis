@@ -442,6 +442,37 @@ def recent_races(ledger=None, limit=20):
     return sorted(agg.values(), key=lambda x: x['ts'], reverse=True)[:limit]
 
 
+def retro_calendar(ledger=None):
+    """回顧をレース日(YYYY-MM-DD)ごとに集約=カレンダー可視化用。
+    戻り: {'by_date': {日付: [{race_id,place,name,count,ts}]}, 'undated': [同形式]}。
+    同じ日に違うレースが並ぶ。日付はrecordの'date'を正規化(不明はundatedへ)。"""
+    import re as _re
+    if ledger is None:
+        ledger = _load_ledger()
+    by_date, undated = {}, {}
+    for r in ledger:
+        rid = str(r.get('race_id', '')).strip()
+        if not rid:
+            continue
+        m = _re.match(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', str(r.get('date', '')).strip())
+        if m:
+            key = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+            bucket = by_date.setdefault(key, {})
+        else:
+            bucket = undated
+        e = bucket.setdefault(rid, {'race_id': rid, 'place': '', 'name': '',
+                                    'count': 0, 'ts': ''})
+        e['count'] += 1
+        if r.get('ts', '') >= e['ts']:
+            e['ts'] = r.get('ts', '')
+            e['place'] = r.get('place', '') or e['place']
+            e['name'] = r.get('name', '') or e['name']
+    out = {k: sorted(v.values(), key=lambda x: (x['place'], x['name']))
+           for k, v in by_date.items()}
+    return {'by_date': out,
+            'undated': sorted(undated.values(), key=lambda x: x['ts'], reverse=True)}
+
+
 def is_quarantined(tag):
     t = str(tag)
     return any(kw in t for kw in _QUARANTINE_KEYWORDS)

@@ -11058,15 +11058,49 @@ if nav == "🧠 MAGI回顧":
             st.session_state.setdefault('magi_user_name', '')
             st.text_input("あなたの呼び名（任意・3人がこの名前で呼びます）", key='magi_user_name',
                           placeholder="例: たけし / 馬主さん")
-            # 📋 回顧済みレース一覧(二度手間防止・入力前に確認)
+            # 📅 回顧カレンダー(二度手間防止・日をクリックで内訳)
             try:
-                _done_list = mc.recent_races(limit=15)
-                if _done_list:
-                    with st.expander(f"📋 回顧済みレース {len(_done_list)}件（重複防止・クリックで確認）"):
-                        for _d in _done_list:
-                            _cnt = f"×{_d['count']}" if _d['count'] > 1 else ''
-                            st.caption(f"`{_d['race_id']}` {_d['date']} {_d['place']} {_d['name']} "
-                                       f"— {_d['ts']}回顧 {_cnt}")
+                import calendar as _calmod
+                _cal = mc.retro_calendar()
+                _bd = _cal['by_date']
+                _n_total = sum(sum(x['count'] for x in v) for v in _bd.values()) \
+                    + sum(x['count'] for x in _cal['undated'])
+                if _bd or _cal['undated']:
+                    with st.expander(f"📅 回顧カレンダー（重複防止・{_n_total}件）"):
+                        _months = sorted({d[:7] for d in _bd}, reverse=True)
+                        if _months:
+                            _sel_m = st.selectbox("月", _months, key="magi_cal_month")
+                            _yy, _mm = int(_sel_m[:4]), int(_sel_m[5:7])
+                            st.caption("📝=回顧あり。日をクリックで内訳（同じ日でも違うレースは別々に表示）")
+                            _hd = st.columns(7)
+                            for _i, _w in enumerate(['月', '火', '水', '木', '金', '土', '日']):
+                                _hd[_i].markdown(
+                                    f"<div style='text-align:center;color:#888;font-size:.8em'>{_w}</div>",
+                                    unsafe_allow_html=True)
+                            for _week in _calmod.Calendar(firstweekday=0).monthdayscalendar(_yy, _mm):
+                                _cols = st.columns(7)
+                                for _i, _day in enumerate(_week):
+                                    if _day == 0:
+                                        _cols[_i].write("")
+                                        continue
+                                    _dk = f"{_yy:04d}-{_mm:02d}-{_day:02d}"
+                                    _rc = _bd.get(_dk)
+                                    if _rc:
+                                        if _cols[_i].button(f"{_day} 📝{len(_rc)}", key=f"mcal_{_dk}"):
+                                            st.session_state['magi_cal_sel'] = _dk
+                                    else:
+                                        _cols[_i].markdown(
+                                            f"<div style='text-align:center;color:#ccc'>{_day}</div>",
+                                            unsafe_allow_html=True)
+                            _seld = st.session_state.get('magi_cal_sel')
+                            if _seld and _seld in _bd:
+                                st.markdown(f"**🗓 {_seld} の回顧**")
+                                for _x in _bd[_seld]:
+                                    _c = f"×{_x['count']}" if _x['count'] > 1 else ''
+                                    st.caption(f"`{_x['race_id']}` {_x['place']} {_x['name']} {_c}")
+                        if _cal['undated']:
+                            st.caption("📌 日付不明: " + " / ".join(
+                                f"{u['place']}{u['name']}(`{u['race_id']}`)" for u in _cal['undated'][:10]))
             except Exception:
                 pass
             with st.form("osh_start_form", clear_on_submit=False):

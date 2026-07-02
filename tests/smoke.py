@@ -314,6 +314,21 @@ def main():
         assert r1['count'] == 2 and rr[0]['race_id'] == 'R2', "集約カウント+最新ts順"
     check("magi_chat.races_done/recent_races", t_magi_done_check)
 
+    def t_magi_calendar():
+        from core import magi_chat as mc
+        led = [{'ts': '2026-07-01 10:00', 'race_id': 'R1', 'date': '2026/06/05', 'place': '東京', 'name': '安田', 'learning': {}},
+               {'ts': '2026-07-02 09:00', 'race_id': 'R1', 'date': '2026/06/05', 'place': '東京', 'name': '安田', 'learning': {}},
+               {'ts': '2026-07-02 09:30', 'race_id': 'R2', 'date': '2026/06/05', 'place': '東京', 'name': '別R', 'learning': {}},
+               {'ts': '2026-07-02 12:00', 'race_id': 'R9', 'date': '', 'place': '?', 'name': '無日付', 'learning': {}}]
+        c = mc.retro_calendar(led)
+        # 同じ日(6/5)に違うレースが別々に並ぶ
+        assert '2026-06-05' in c['by_date'] and len(c['by_date']['2026-06-05']) == 2
+        _r1 = next(x for x in c['by_date']['2026-06-05'] if x['race_id'] == 'R1')
+        assert _r1['count'] == 2, "同一レースの複数回顧はcount集約"
+        # 日付不明はundatedへ(カレンダーに置けないもの)
+        assert len(c['undated']) == 1 and c['undated'][0]['race_id'] == 'R9'
+    check("magi_chat.retro_calendar", t_magi_calendar)
+
     def t_verify_queue():
         import tempfile
         from core import verify_queue as vq
