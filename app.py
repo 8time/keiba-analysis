@@ -5029,8 +5029,8 @@ if nav == "🏠 Single Race Analysis":
                         pass
 
                     # --- LTRランキングスコア(LightGBM LambdaRank・検証済みエッジ統合) ---
-                    # ⚠NAR(地方)は抑制: LTRはJRA学習=NAR会場は分布外(jyo_code/厩舎当場特徴が未学習)。
-                    #   JRA専用スコアがNARの軸を引っ張るのを防ぐ(地方は人気較正=軸較正POP_FUKU_NARに委ねる)。
+                    # NAR(地方)は専用モデル(ltr_nar・南関で学習/recall@7 人気+2.38pp)を使用。
+                    #   JRA学習モデルは地方で分布外の為、get_scoresが会場コードでモデルを自動切替。
                     _ltr_is_nar = False
                     try:
                         _ltr_is_nar = int(str(race_id_input)[4:6]) > 10
@@ -5038,7 +5038,8 @@ if nav == "🏠 Single Race Analysis":
                         _ltr_is_nar = False
                     try:
                         from core import ltr_ranker as _ltr
-                        if _ltr.available() and not _ltr_is_nar:
+                        _ltr_ok = _ltr.available_nar() if _ltr_is_nar else _ltr.available()
+                        if _ltr_ok:
                             _ltr_meta = st.session_state.get('race_metadata', {})
                             _ltr_hs = []
                             for _, _lr in view_df.iterrows():

@@ -290,6 +290,16 @@ def main():
         assert c['leader'] == 1, f"score低=前=leader1, got {c['leader']}"
     check("pace_map.tactics_forward(表示用)", t_pace_tactics)
 
+    def t_ltr_nar():
+        from core import ltr_ranker as lr
+        # NAR専用モデルのルーティング契約(available_nar/_load_nar)
+        assert isinstance(lr.available_nar(), bool)
+        if lr.available_nar():
+            m, meta = lr._load_nar()
+            assert m is not None and 'features' in meta, "NARモデルとmeta読込"
+            assert 'log_odds' not in meta['features'], "NARはlog_odds除外(win_odds無)"
+    check("ltr_ranker.NAR専用モデル分岐", t_ltr_nar)
+
     def t_axis_nar():
         from core import axis_selector as ax
         # NAR較正: 1番人気は実測78.7%(JRA70.1%より高く評価)・人気基準固定(odds無視)

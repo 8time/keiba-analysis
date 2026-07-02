@@ -14,14 +14,23 @@ import numpy as np
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODEL_PATH = os.path.join(_ROOT, 'data', 'ltr_model.lgb')
 _META_PATH = os.path.join(_ROOT, 'data', 'ltr_meta.json')
+# NAR(南関)専用モデル(資料p5セグメント・JRA学習は地方で分布外の為の別モデル)
+_MODEL_NAR_PATH = os.path.join(_ROOT, 'data', 'ltr_nar_model.lgb')
+_META_NAR_PATH = os.path.join(_ROOT, 'data', 'ltr_nar_meta.json')
 _JV_DB = os.path.join(_ROOT, 'data', 'jravan.db')
 
 _model = None
 _meta = None
+_model_nar = None
+_meta_nar = None
 
 
 def available():
     return os.path.exists(_MODEL_PATH) and os.path.exists(_META_PATH)
+
+
+def available_nar():
+    return os.path.exists(_MODEL_NAR_PATH) and os.path.exists(_META_NAR_PATH)
 
 
 def _load():
@@ -36,6 +45,22 @@ def _load():
         with open(_META_PATH, 'r', encoding='utf-8') as f:
             _meta = json.load(f)
         return _model, _meta
+    except Exception:
+        return None, None
+
+
+def _load_nar():
+    global _model_nar, _meta_nar
+    if _model_nar is not None:
+        return _model_nar, _meta_nar
+    if not available_nar():
+        return None, None
+    try:
+        import lightgbm as lgb
+        _model_nar = lgb.Booster(model_file=_MODEL_NAR_PATH)
+        with open(_META_NAR_PATH, 'r', encoding='utf-8') as f:
+            _meta_nar = json.load(f)
+        return _model_nar, _meta_nar
     except Exception:
         return None, None
 
@@ -167,7 +192,12 @@ def get_scores(horses, race_info):
     race_info: {surface, kyori, field_size, baba, is_handicap, jyo, race_num, cushion, dirt_moisture}
     Returns {umaban(int): score(float)} or None.
     """
-    model, meta = _load()
+    # NAR(地方・jyo>10)は専用モデル、中央はJRAモデル。特徴量計算は共通(下でrowsに全部積む)
+    _jyo_n = int(race_info.get('jyo') or 0)
+    if _jyo_n > 10:
+        model, meta = _load_nar()
+    else:
+        model, meta = _load()
     if model is None:
         return None
     try:
