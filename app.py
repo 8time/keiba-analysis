@@ -10963,19 +10963,31 @@ if nav == "🧠 MAGI回顧":
                     st.caption("**蓄積中**: " + " / ".join(f"{t}({v['count']}/3)" for t, v in _growing.items()))
                 if not _ledger_tags:
                     st.info("まだ記録なし。おしゃべりルームでレース回顧を行うとタグが蓄積されます。")
-                # 🧪 検証キューに送る（カード7=俗説を隔離し検証可能仮説だけを抽出）
+                # 🧪 検証候補欄（カード7=俗説隔離＋ロジック置き場へ番号付き登録）
                 st.markdown("---")
-                if st.button("🧪 検証キューに送る（俗説を隔離し検証可能仮説だけ抽出）",
+                st.markdown("**🧪 検証候補**（3回以上出た非俗説タグ。**自動実装はしない**・"
+                            "番号付きでロジック置き場に残し、後で見返してClaudeに渡し→holdout検証）")
+                try:
+                    from core import verify_queue as _vq
+                    _already = _vq.list_candidates()
+                    if _already:
+                        st.caption("📋 登録済み: " + " / ".join(
+                            f"【検証候補{c['num']:05d}】{c['tag']}[{c['status']}]" for c in _already[-8:]))
+                except Exception:
+                    _vq = None
+                if st.button("📥 検証候補をロジック置き場に登録（俗説を隔離し番号付与）",
                              key="magi_hyp_export"):
                     _hx = mc.hypothesis_export()
-                    if _hx['exported']:
-                        st.success(f"✅ 検証可能仮説 {len(_hx['exported'])}件（holdoutゲートで採否判定・自動デプロイなし）")
-                        for _c in _hx['exported']:
-                            st.markdown(f"- **{_c['name']}**（{_c['role']}／{_c['band']}人気）— {_c['note']}")
+                    _newnums = _vq.register(_hx['exported']) if (_vq and _hx['exported']) else []
+                    if _newnums:
+                        st.success(f"✅ {len(_newnums)}件をロジック置き場に登録（自動実装なし・holdoutで採否）: "
+                                   + " / ".join(f"【検証候補{n:05d}】{t}" for n, t in _newnums))
+                    elif _hx['exported']:
+                        st.info("新規登録なし（該当タグは登録済み）。ロジック置き場で確認できます。")
                     else:
-                        st.info("検証キューに送れる仮説なし（3回以上たまった非俗説タグがまだありません）。")
+                        st.info("登録できる検証候補なし（3回以上たまった非俗説タグがまだありません）。")
                     if _hx['isolated']:
-                        st.caption("🚫 隔離（俗説）: " + " / ".join(
+                        st.caption("🚫 隔離（俗説・候補にしない）: " + " / ".join(
                             f"{x['tag']}→{x['reason']}" for x in _hx['isolated'][:8]))
     except Exception:
         import core.magi_chat as mc

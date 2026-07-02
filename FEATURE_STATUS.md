@@ -32,7 +32,7 @@
 | 💰 BetSync(資金管理) | ガードレール/多肢ケリー/破産確率/台帳・Brier＋Gate判定別ROI(#8) | 🟢 | [[project_betsync_money]]＋roi_by_gate | 2026-06-24 |
 | 🐎 Stress Analyst | 馬体/馬場×血統の減衰(リーク無し版) | ✅ | [[verified_stress_debuff]] | — |
 | 🧠 MAGI回顧 | 3人格おしゃべり学習／合議ゲート | 🟡 | [[project_magi_oshaberi]][[project_magi_consensus]] | — |
-| ├ 🧪 検証キュー(仮説パイプライン) | 回顧タグ→俗説隔離→検証可能仮説へ変換(3回ルールの下流)。自動デプロイ無・holdoutゲートが採否 | 🟢 | カード7・core/hypothesis_schema.py(俗説100%隔離をsmokeで担保)+magi_chat.hypothesis_export | 2026-07-02 |
+| ├ 🧪 検証候補→ロジック置き場登録 | 回顧タグ(3回以上・非俗説)を【検証候補NNNNN】でロジック置き場に番号付き永続化。**自動実装せず**人間レビュー→Claude→holdout検証の入口 | 🟢 | カード7+要望・core/verify_queue.py(番号/重複防止smoke)+hypothesis_schema(俗説隔離)+magi_chat.hypothesis_export | 2026-07-02 |
 | 🏛️ 集合知(エージェント掲示板) | LLMペルソナがDB実データで討論→自信度重み合議 | 🟡 | pages/collective.py | — |
 | ├ 🧠 Brier加重合議 | 過去成績(◎的中)で当たらないペルソナの票を減衰(λ加重)。台帳n<50は均等縮退で安全稼働 | 🟢 | カード8・agent_forum.agent_weights/weighted_consensus(λ0=均等・空台帳=均等をsmoke担保)+scripts/forum_weight_backtest.py | 2026-07-02 |
 | 💰 BetSync 回顧(⑥) | 負けの自動分類=運用事故(Gate無視/危険軸/危険人気含み)＋設計ミス(盲目②/本線点数過多/トリガミ設計)＋想定内ブレ。買い目メタは3連複エンジンから自動補完 | 🟢 | money.classify_loss/loss_breakdown＋score_cache.write_buy/read_buy | 2026-06-24 |

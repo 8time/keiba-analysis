@@ -241,6 +241,28 @@ def main():
         assert not okp, "PCI仮説は隔離される"
     check("hypothesis_schema.folk隔離", t_hypothesis_schema)
 
+    def t_verify_queue():
+        import tempfile
+        from core import verify_queue as vq
+        p = os.path.join(tempfile.gettempdir(), 'smoke_vq.json')
+        if os.path.exists(p):
+            os.remove(p)
+        # 番号採番＋重複防止＋俗説は呼び手(hypothesis_export)で除外済み前提
+        cands = [{'name': '厩舎当コース好調', 'role': '妙味', 'band': '6+', 'note': 'x'},
+                 {'name': '末脚top3×人気薄', 'role': '相手', 'band': '6+', 'note': 'y'}]
+        added = vq.register(cands, path=p)
+        assert [n for n, _ in added] == [1, 2], f"連番採番, got {added}"
+        # 再登録は重複しない
+        again = vq.register(cands, path=p)
+        assert again == [], "重複登録しない"
+        # 新規タグは次番号
+        more = vq.register([{'name': '新タグZ'}], path=p)
+        assert more == [(3, '新タグZ')], f"次番号=3, got {more}"
+        lst = vq.list_candidates(path=p)
+        assert len(lst) == 3 and lst[0]['num'] == 1 and lst[0]['status'] == '未検証'
+        os.remove(p)
+    check("verify_queue.register(番号/重複防止)", t_verify_queue)
+
     def t_agent_weights():
         from core import agent_forum as af
         # カード8安全性: 空台帳→{}、λ=0→均等
