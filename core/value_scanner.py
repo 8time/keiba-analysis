@@ -258,6 +258,36 @@ def odds_gap_anchors(odds_by_um, ratio=2.0, max_rank=6, max_odds=30.0):
     return anchors
 
 
+def no_favorite_flag(odds_list):
+    """オッズ本命不在フラグ（日刊コンピ『大谷式大穴』の単勝オッズ等価再現）。
+
+    大谷式(黒丸): コンピ1位≤79 & コンピ1-3位差<15 & 単勝30倍未満10頭。
+    これを単勝オッズで等価変換:
+      fav1  = 最人気オッズ         （抜けた本命不在 = fav1が高い）
+      ratio31 = 3番人気/1番人気オッズ（上位拮抗 = ratioが小さい）
+      live30 = 単勝30倍未満の頭数   （手広い）
+
+    検証(scripts/arare_entropy_backtest.py・閾値はtrain2021-24で凍結):
+      2025 holdout 荒れ率(=3着内にオッズ順6位以下混入):
+        広域   fav1≥2.5 & ratio31≤3.0 & live30≥8  → +18.7pp z10.9 (非ハンデ×10-15頭でもz6.5)
+        大穴   fav1≥3.0 & ratio31≤2.0 & live30≥10 → 荒れ83.4% +19.2pp z5.5
+      2026確認 z8.0/z5.2。既存のハンデ/16頭フラグと独立。
+
+    ※これはオッズ由来＝ROIエッジではなく「穴相手戦略の適用先を選ぶレース選択器」。
+    戻り値: None / '⚠荒れ寄り' / '●大穴'（大穴は荒れ寄りの部分集合なので先に判定）。"""
+    vals = sorted(float(o) for o in (odds_list or []) if o and float(o) > 0)
+    if len(vals) < 3:
+        return None
+    fav1 = vals[0]
+    ratio31 = vals[2] / fav1 if fav1 > 0 else 999.0
+    live30 = sum(1 for o in vals if o < 30.0)
+    if fav1 >= 3.0 and ratio31 <= 2.0 and live30 >= 10:
+        return '●大穴'
+    if fav1 >= 2.5 and ratio31 <= 3.0 and live30 >= 8:
+        return '⚠荒れ寄り'
+    return None
+
+
 # ───────────────────────── 馬ごとの＋/−ファクター(消去エンジンと同一) ─────────────────────────
 def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=None,
                         date_val='', gap_anchor=False):

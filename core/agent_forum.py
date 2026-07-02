@@ -995,6 +995,79 @@ def extract_agent_picks(all_posts):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# エージェントBrier加重（カード8=進化的集合知・当たらないペルソナを減衰）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def agent_track_record(records=None):
+    """各エージェントの精算済み成績を集計。
+    ◎(honmei)が3着内なら hit=1。Brier=平均(1-hit)（p=1のカテゴリ予測のBrier）。
+    戻り値: {agent_id: {'n','hits','hit_rate','brier'}}。台帳空なら {}。"""
+    if records is None:
+        records = load_retrospective(100)
+    acc = {}
+    for rec in records:
+        if not rec.get('result'):
+            continue
+        for ag_id, picks in (rec.get('agent_picks') or {}).items():
+            if 'hit' not in picks:
+                continue
+            d = acc.setdefault(ag_id, {'n': 0, 'hits': 0})
+            d['n'] += 1
+            d['hits'] += 1 if picks['hit'] else 0
+    out = {}
+    for ag_id, d in acc.items():
+        hr = d['hits'] / d['n'] if d['n'] else 0.0
+        out[ag_id] = {'n': d['n'], 'hits': d['hits'], 'hit_rate': hr, 'brier': 1.0 - hr}
+    return out
+
+
+def agent_weights(records=None, lam=1.0, prior_n=10):
+    """Brier加重 w_i ∝ exp(-λ·Brier_i)。低nはプール平均へ収縮(prior_n擬似数)。
+    ⚠ 安全性: λ=0 で全員均等・台帳が空でも全員均等(=単純平均に縮退)。
+    戻り値: {agent_id: weight}（合計1に正規化）。台帳空なら {}（呼び手が均等扱い）。"""
+    tr = agent_track_record(records)
+    if not tr or lam <= 0:
+        # 均等（台帳無し or λ=0）。keyだけは返す。
+        n = len(tr)
+        return {ag: 1.0 / n for ag in tr} if n else {}
+    pooled_brier = sum(d['brier'] * d['n'] for d in tr.values()) / max(
+        sum(d['n'] for d in tr.values()), 1)
+    raw = {}
+    for ag, d in tr.items():
+        # 収縮Brier: 実測とプール平均を n:prior_n で混合
+        sb = (d['brier'] * d['n'] + pooled_brier * prior_n) / (d['n'] + prior_n)
+        raw[ag] = __import__('math').exp(-lam * sb)
+    s = sum(raw.values()) or 1.0
+    return {ag: w / s for ag, w in raw.items()}
+
+
+def weighted_consensus(all_posts, weights=None):
+    """aggregate_predictions のエージェント重み付き版(カード8)。
+    weights={agent_id: w}。未知/欠損エージェントは平均重みで中立。
+    weights=None or 空 → 全員均等(=aggregate_predictionsと同結果)。
+    戻り値: aggregate_predictions と同形式の sorted[(um, dict)]。"""
+    weights = weights or {}
+    default_w = (sum(weights.values()) / len(weights)) if weights else 1.0
+    votes = {}
+    for p in all_posts:
+        text = p.get('content', '')
+        conf_weight = _parse_confidence(text) / 100.0
+        aw = weights.get(p.get('agent_id', p.get('name', '')), default_w)
+        for mark, key, base_weight in [('◎', 'honmei', 3), ('○', 'taikou', 2), ('▲', 'anaume', 1)]:
+            m = re.search(rf'{mark}\s*(\d+)\s*番', text) or re.search(rf'{mark}(\d+)', text)
+            if not m:
+                continue
+            um = int(m.group(1))
+            v = votes.setdefault(um, {'honmei': 0, 'taikou': 0, 'anaume': 0,
+                                      'total': 0, 'weighted': 0.0, 'agents': []})
+            v[key] += 1
+            v['total'] += base_weight
+            v['weighted'] += base_weight * conf_weight * aw
+            v['agents'].append(f"{p.get('icon', '')}{mark}")
+    return sorted(votes.items(), key=lambda x: -x[1]['weighted'])
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 分科会方式 (Divide-and-Conquer) — 15体超の大規模討論用
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

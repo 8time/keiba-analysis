@@ -83,6 +83,16 @@ def main():
         assert r['lean'] == '②穴妙味向き', f"ハンデ16頭短距離道悪→②期待, got {r['lean']}"
     check("value_scanner.trio_lean", t_lean)
 
+    def t_no_favorite():
+        from core import value_scanner as vs
+        # 大谷等価: fav1≥3.0 & odds3/odds1≤2.0 & 30倍未満≥10頭 → ●大穴
+        assert vs.no_favorite_flag([3.5, 5.0, 6.0] + [8.0] * 8) == '●大穴'
+        # 抜けた本命(fav1=1.5)がいる→フラグ無し
+        assert vs.no_favorite_flag([1.5, 3.0, 10.0] + [40.0] * 5) is None
+        # 頭数不足・空はNone(クラッシュしない)
+        assert vs.no_favorite_flag([]) is None and vs.no_favorite_flag([2.0, 3.0]) is None
+    check("value_scanner.no_favorite_flag", t_no_favorite)
+
     def t_baba_code():
         from core import value_scanner as vs
         # 馬場コードは 1=良/2=稍重/3=重/4=不良(off-by-one再発防止)
@@ -217,6 +227,32 @@ def main():
         except Exception:
             pass
     check("score_cache.write_gate/read_gate", t_gate_cache)
+
+    def t_hypothesis_schema():
+        from core import hypothesis_schema as hs
+        # カード7機能ゲート: 俗説は隔離、検証済みエッジは通す
+        assert hs.is_folk_belief('初ブリ')[0] is True, "初ブリは俗説"
+        assert hs.is_folk_belief('PCI適性')[0] is True, "PCIは俗説(完全終了)"
+        assert hs.is_folk_belief('巻き返し狙い')[0] is True, "巻き返しは俗説"
+        assert hs.is_folk_belief('末脚top3×6人気以下')[0] is False, "末脚は検証済みで通す"
+        ok, _ = hs.validate_hypothesis(hs.make_hypothesis('厩舎当コース勝率', role='妙味'))
+        assert ok, "妥当な仮説は通る"
+        okp, _ = hs.validate_hypothesis(hs.make_hypothesis('PCI傾向マッチ'))
+        assert not okp, "PCI仮説は隔離される"
+    check("hypothesis_schema.folk隔離", t_hypothesis_schema)
+
+    def t_agent_weights():
+        from core import agent_forum as af
+        # カード8安全性: 空台帳→{}、λ=0→均等
+        assert af.agent_weights([]) == {}, "空台帳は{}"
+        recs = [{'result': {'top3': [1, 2, 3]},
+                 'agent_picks': {'a': {'honmei': 1, 'hit': True},
+                                 'b': {'honmei': 9, 'hit': False}}}]
+        w0 = af.agent_weights(recs, lam=0)
+        assert abs(w0['a'] - w0['b']) < 1e-9, "λ=0は均等(単純平均に縮退)"
+        w = af.agent_weights(recs, lam=3.0)
+        assert w['a'] > w['b'], "的中エージェントの重みが大きい"
+    check("agent_forum.agent_weights(安全縮退)", t_agent_weights)
 
     def t_danger_gate():
         from core import danger_gate as dg

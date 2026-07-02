@@ -481,9 +481,13 @@ if nav == "🏁 今日のダッシュボード":
     try:
         _dlg = _dmoney.Ledger()
         _drep = _dlg.report()
+        _dpend = _dlg.pending_count()
+        if _dpend:
+            st.warning(f"📬 未精算ベットが **{_dpend}件** あります。"
+                       "💰 BetSync → 📒 収支台帳 → 🔄自動精算 で結果を反映してください。")
         if 'note' in _drep:
-            st.info("まだ精算済みベットがありません。💰 BetSync で予測→結果を記録すると、"
-                    "ここに回収率・最大DD・回顧すべき負けが出ます。")
+            st.info("まだ精算済みベットがありません。🧹消去フィルターで分析後「📒台帳に即記録」→"
+                    "レース後に💰BetSync→🔄自動精算。ここに回収率・回顧が出ます。")
         else:
             _m1, _m2, _m3, _m4 = st.columns(4)
             _m1.metric("記録数", f"{_drep['bets']}件")
@@ -1530,20 +1534,50 @@ if nav == "💰 BetSync（資金管理）":
                             st.rerun()
                         else:
                             st.warning("レースIDを入力してください。")
-                with st.form("bs_led_settle", clear_on_submit=True):
-                    st.markdown("**② 結果を精算**")
-                    sc1, sc2 = st.columns(2)
-                    _s_rid = sc1.text_input("レースID", value=(_ss.get('bs_ev_feed') or {}).get('race_id', ''),
-                                            key="bs_led_srid")
-                    _s_win = sc2.number_input("1着馬番", 1, 18, 1, key="bs_led_swin")
-                    _s_pay = st.number_input("単勝配当（100円あたり）", 0, 1000000, 0, 10, key="bs_led_spay")
-                    if st.form_submit_button("✅ 結果を精算"):
-                        if _s_rid.strip():
-                            _lg.settle(_s_rid.strip(), int(_s_win), int(_s_pay))
-                            st.success("精算しました。")
+                # ② 自動精算（未精算レースの結果をスクレイピングで取得）
+                _pend = _lg.pending_races()
+                if _pend:
+                    st.markdown(f"**② 自動精算** — 未精算 {len(_pend)} レース")
+                    _ap1, _ap2 = st.columns([3, 1])
+                    with _ap1:
+                        st.caption("レースID: " + ", ".join(f"`{r}`" for r in _pend[:10])
+                                   + (f" 他{len(_pend)-10}件" if len(_pend) > 10 else ""))
+                    with _ap2:
+                        if st.button("🔄 全レース自動精算", key="bs_led_autosettle"):
+                            _as_ok, _as_skip = 0, 0
+                            for _arid in _pend:
+                                try:
+                                    _asr = _lg.auto_settle_race(_arid)
+                                    if _asr:
+                                        _as_ok += 1
+                                        st.toast(f"✅ {_arid}: {_asr['winner']}番 ¥{_asr['payout']}")
+                                    else:
+                                        _as_skip += 1
+                                except Exception:
+                                    _as_skip += 1
+                            if _as_ok:
+                                st.success(f"{_as_ok}レース精算完了" +
+                                           (f"（{_as_skip}件は未確定）" if _as_skip else ""))
+                            else:
+                                st.info("確定済みレースが見つかりませんでした（まだ発走前？）")
                             st.rerun()
-                        else:
-                            st.warning("レースIDを入力してください。")
+                else:
+                    st.markdown("**② 結果を精算** — 未精算レースなし")
+
+                with st.expander("手動精算（レースIDと結果を入力）"):
+                    with st.form("bs_led_settle", clear_on_submit=True):
+                        sc1, sc2 = st.columns(2)
+                        _s_rid = sc1.text_input("レースID", value=(_ss.get('bs_ev_feed') or {}).get('race_id', ''),
+                                                key="bs_led_srid")
+                        _s_win = sc2.number_input("1着馬番", 1, 18, 1, key="bs_led_swin")
+                        _s_pay = st.number_input("単勝配当（100円あたり）", 0, 1000000, 0, 10, key="bs_led_spay")
+                        if st.form_submit_button("✅ 結果を精算"):
+                            if _s_rid.strip():
+                                _lg.settle(_s_rid.strip(), int(_s_win), int(_s_pay))
+                                st.success("精算しました。")
+                                st.rerun()
+                            else:
+                                st.warning("レースIDを入力してください。")
                 if st.button("🗑️ 台帳を全消去（デモデータ削除）", key="bs_led_reset"):
                     _lg.con.execute("DELETE FROM bets")
                     _lg.con.commit()
@@ -6095,6 +6129,15 @@ if nav == "🏠 Single Race Analysis":
                         st.caption("※検証(scripts/trio_lean_validate.py 2021-25): 本線向き→実本線42.5%/②型13.0%、"
                                    "②穴妙味向き→②型35.0%/本線25.4%（母集団31.2/27.9%）と決着タイプを分離。"
                                    "判別子=ハンデ/頭数/距離/道悪/上位オッズの割れ具合。")
+                        # ── オッズ本命不在フラグ(コンピ大穴の等価再現・検証済) ──
+                        _nofav = _vs_te.no_favorite_flag(_olist)
+                        if _nofav == '●大穴':
+                            st.warning(f"{_nofav}（本命不在）：抜けた本命がおらず上位拮抗＋手広い。"
+                                       "3着内に人気薄(6番人気以下)が混入する率83%(2025-26実測)。"
+                                       "→ 穴相手戦略(🔥末脚救出/②穴妙味)の適用先。")
+                        elif _nofav == '⚠荒れ寄り':
+                            st.caption(f"{_nofav}（本命不在ぎみ）：荒れ混入率77%(2025実測 z10.9)。"
+                                       "相手は広めに。")
                     except Exception as _le:
                         st.caption(f"（決着タイプ判定スキップ: {_le}）")
 
@@ -8653,6 +8696,29 @@ if nav == "🧹 消去フィルター":
                             _sc.write_kelly_bridge(_ev_feed_dict)
                     except Exception:
                         pass
+                    # 📒 台帳に即記録（BetSyncへ移動不要）
+                    _qfeed = _ss.get('bs_ev_feed')
+                    if _qfeed and _qfeed.get('rows'):
+                        try:
+                            _qlg = money.Ledger()
+                            _qexists = _qlg.con.execute(
+                                "SELECT COUNT(*) FROM bets WHERE race_id=?",
+                                (_qfeed['race_id'],)).fetchone()[0]
+                            if _qexists:
+                                st.caption(f"📒 台帳: レース {_qfeed['race_id']} は記録済み({_qexists}件)")
+                            else:
+                                if st.button("📒 台帳に即記録（全頭Brier較正用）",
+                                             key="sra_quick_ledger"):
+                                    for _qr in _qfeed['rows']:
+                                        _qlg.record_prediction(
+                                            _qfeed['race_id'], int(_qr['umaban']),
+                                            str(_qr.get('bamei', '')),
+                                            float(_qr['p']), float(_qr['odds']), 100)
+                                    st.success(f"{len(_qfeed['rows'])}頭を台帳に記録しました")
+                                    st.rerun()
+                            _qlg.close()
+                        except Exception:
+                            pass
                     _types = [('tan', '単勝'), ('fuku', '複勝'), ('umaren', '馬連'), ('wide', 'ワイド'), ('trio', '3連複')]
                     _summary, _all_bets = [], []
                     _missing = []
@@ -10897,6 +10963,20 @@ if nav == "🧠 MAGI回顧":
                     st.caption("**蓄積中**: " + " / ".join(f"{t}({v['count']}/3)" for t, v in _growing.items()))
                 if not _ledger_tags:
                     st.info("まだ記録なし。おしゃべりルームでレース回顧を行うとタグが蓄積されます。")
+                # 🧪 検証キューに送る（カード7=俗説を隔離し検証可能仮説だけを抽出）
+                st.markdown("---")
+                if st.button("🧪 検証キューに送る（俗説を隔離し検証可能仮説だけ抽出）",
+                             key="magi_hyp_export"):
+                    _hx = mc.hypothesis_export()
+                    if _hx['exported']:
+                        st.success(f"✅ 検証可能仮説 {len(_hx['exported'])}件（holdoutゲートで採否判定・自動デプロイなし）")
+                        for _c in _hx['exported']:
+                            st.markdown(f"- **{_c['name']}**（{_c['role']}／{_c['band']}人気）— {_c['note']}")
+                    else:
+                        st.info("検証キューに送れる仮説なし（3回以上たまった非俗説タグがまだありません）。")
+                    if _hx['isolated']:
+                        st.caption("🚫 隔離（俗説）: " + " / ".join(
+                            f"{x['tag']}→{x['reason']}" for x in _hx['isolated'][:8]))
     except Exception:
         import core.magi_chat as mc
     # === MAGI おしゃべりルーム (EVANGELION風 左右2分割) ===

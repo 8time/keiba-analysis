@@ -400,6 +400,20 @@ def _show_ranking(ranking, _af, race_id, meta_text, session_posts=None):
         _consensus += f" / **▲ {_t[0]}番**（{_t[1]['weighted']:.1f}pt）"
     st.success(f"🏆 {_consensus}")
 
+    # 🧠 Brier加重合議（カード8=過去成績で当たらないペルソナの票を自動で軽くする）
+    if session_posts:
+        try:
+            _w = _af.agent_weights()  # 台帳から。精算済み成績が無ければ {}
+            if _w:  # 成績がある時だけ表示（無ければ均等=上と同じなので出さない）
+                _wc = _af.weighted_consensus(session_posts, _w)
+                if _wc:
+                    _wtop = " / ".join(f"{um}番({v['weighted']:.1f}pt)" for um, v in _wc[:3])
+                    st.info(f"🧠 **Brier加重合議（成績反映版）**: {_wtop}\n\n"
+                            "※過去に当てたペルソナの票を重く・外し続けたペルソナを軽くした版。"
+                            "上の均等版と食い違う時は、成績の裏付けがある加重版を優先。")
+        except Exception:
+            pass
+
     # 回顧学習に保存
     if race_id and session_posts and st.button("💾 この予測を回顧学習に保存", key="cf_save_retro"):
         consensus_data = {

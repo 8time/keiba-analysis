@@ -368,6 +368,32 @@ class Ledger:
                 rules.append(f"{band}: 較正良好(予測{pred_avg * 100:.0f}%≒実際{actual * 100:.0f}%) 回収{roi:.0f}%")
         return rules
 
+    def pending_races(self):
+        """未精算のレースIDリスト(古い順)"""
+        return [r[0] for r in self.con.execute(
+            "SELECT DISTINCT race_id FROM bets WHERE settled=0 ORDER BY ts")]
+
+    def pending_count(self):
+        """未精算ベット件数"""
+        return self.con.execute("SELECT COUNT(*) FROM bets WHERE settled=0").fetchone()[0]
+
+    def auto_settle_race(self, race_id):
+        """スクレイパーでrace_idの結果を取得し自動精算。
+        戻り値: {'winner': umaban, 'payout': 100円あたり配当, 'settled': n} or None"""
+        unsettled = self.con.execute(
+            "SELECT COUNT(*) FROM bets WHERE race_id=? AND settled=0",
+            (race_id,)).fetchone()[0]
+        if unsettled == 0:
+            return None
+        from core.scraper import fetch_race_payouts
+        payouts = fetch_race_payouts(race_id)
+        if not payouts or 'tan' not in payouts or not payouts['tan']:
+            return None
+        winner = payouts['tan'][0]['combo'][0]
+        win_payout = int(payouts['tan'][0]['odds'] * 100)
+        self.settle(race_id, winner, win_payout)
+        return {'winner': winner, 'payout': win_payout, 'settled': unsettled}
+
     def close(self):
         try:
             self.con.close()

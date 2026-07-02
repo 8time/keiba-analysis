@@ -17,6 +17,7 @@
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |
 | ├ 展開MAP/Vマトリクス | テン速力でペース想定・隊列・荒れ寄り判定 | 🟡 | 展開恩恵はpriced-in([[verified_tenkai_priced_in]]) | — |
 | ├ 🎯3連複おすすめエンジン | 決着タイプ判定→本線/②パターン＋lean連動の可変点数(本線8/②10/中立8)＋本線トリガミ警告 | 🟢 | trio_lean配線＋可変点数(4d81226) | 2026-06-24 |
+| ├ ●大穴/⚠荒れ寄り(オッズ本命不在) | 決着タイプ判定にコンピ大穴の単勝オッズ等価フラグ(fav1/上位拮抗/live30)を表示。穴相手戦略の適用先を選ぶレース選択器 | ✅ | [[verified_arare_entropy]](2025 z10.9・大穴z5.5/2026 z8.0・ハンデ/16頭と独立)。value_scanner.no_favorite_flag / scripts/arare_entropy_backtest.py | 2026-07-02 |
 | ├ 🎯妙味度/根拠 | 価格帯×穴脚エッジで🎯・根拠ラベル表示 | ✅ | [[verified_tansho_roi_efficient]] | 2026-06-23 |
 | ├ 🎯馬連/馬単エンジン | 高配当検知・軸流し＋危険軸Veto(自動軸が危険1番を回避) | 🟢 | pair_gate_backtest#6(Veto前後ROI不変=安全装置・参考ツール) | 2026-06-24 |
 | ├ 🎰EV配分/多肢ケリー | EV>1馬に配分・破産確率 | 🟡 | EVは未検証目安。精算30件未満+1/4ケリー超で警告表示追加(2026-07-02) | — |
@@ -31,6 +32,9 @@
 | 💰 BetSync(資金管理) | ガードレール/多肢ケリー/破産確率/台帳・Brier＋Gate判定別ROI(#8) | 🟢 | [[project_betsync_money]]＋roi_by_gate | 2026-06-24 |
 | 🐎 Stress Analyst | 馬体/馬場×血統の減衰(リーク無し版) | ✅ | [[verified_stress_debuff]] | — |
 | 🧠 MAGI回顧 | 3人格おしゃべり学習／合議ゲート | 🟡 | [[project_magi_oshaberi]][[project_magi_consensus]] | — |
+| ├ 🧪 検証キュー(仮説パイプライン) | 回顧タグ→俗説隔離→検証可能仮説へ変換(3回ルールの下流)。自動デプロイ無・holdoutゲートが採否 | 🟢 | カード7・core/hypothesis_schema.py(俗説100%隔離をsmokeで担保)+magi_chat.hypothesis_export | 2026-07-02 |
+| 🏛️ 集合知(エージェント掲示板) | LLMペルソナがDB実データで討論→自信度重み合議 | 🟡 | pages/collective.py | — |
+| ├ 🧠 Brier加重合議 | 過去成績(◎的中)で当たらないペルソナの票を減衰(λ加重)。台帳n<50は均等縮退で安全稼働 | 🟢 | カード8・agent_forum.agent_weights/weighted_consensus(λ0=均等・空台帳=均等をsmoke担保)+scripts/forum_weight_backtest.py | 2026-07-02 |
 | 💰 BetSync 回顧(⑥) | 負けの自動分類=運用事故(Gate無視/危険軸/危険人気含み)＋設計ミス(盲目②/本線点数過多/トリガミ設計)＋想定内ブレ。買い目メタは3連複エンジンから自動補完 | 🟢 | money.classify_loss/loss_breakdown＋score_cache.write_buy/read_buy | 2026-06-24 |
 | 🏇 騎手分析Pro | 当場/当距離/黄金ライン等 | 🟡 | [[project_jockey_jv]] | — |
 | ├ resolve_horse同名馬誤マッチ修正 | 引退済み同名馬への誤マッチをbefore_key未指定時のみ最終出走年ガードで排除+trainer_code='00000'(調教師不明プレースホルダ・101万行共有)をNoneに丸め、無関係な調教師同士の同一集計表示バグを修正 | ✅ | [[project_jockey_jv]] | 2026-07-02 |
@@ -41,3 +45,8 @@
 ## 既知の制約（テストで"仕様"として扱う）
 - 血統: JV-VANマスタ2023-07凍結→2024-26馬はnetkeibaバックフィル中([[project_jravan_setup]])。ライブは scraped sire優先で発火。
 - 買い方でROIは控除を抜けない（追い上げ/穴厚/エッジ流し全て✗）= 馬選別でなく見送り/点数/券種で守る([[verified_tansho_roi_efficient]])。
+
+## 検証済み却下（再提案・再実装しない・恒久決着）
+- **PCIは完全終了**（2026-07-02・scripts/pci_course_shape_backtest.py）: 単体PCI乖離=priced-in([[verified_pci_pricedin]])、巻き返し穴=誤り([[verified_comeback_overbet]])に続き、動画の「PCI傾向×コース形状(O字/U字)」交互作用も holdout2025で C=+0.30pp/z=+0.20（train z0.65・2026 z1.65）とゲートz2.0未達。PCI由来のエッジは軸・相手・消去いずれも無し。
+- **当日バイアス逆張り(危険人気)のrealtime強化**は却下（2026-07-02・カード2・scripts/intraday_bias_backtest.py）: pooled z-3.8は楽観的でholdout2025 z-1.77/2026崩落。既存danger_popular_innerは弱fadeとして残すが強化しない([[verified_emp_bias_danger]])。
+- **ボーダー3のフラグ消去による代替**は却下（2026-07-02・カード3・scripts/elim_frontier_backtest.py）: フラグは人気に織込み済みでW>0はこぼし悪化。ボーダーは代替不能・撤去しない([[verified_keepone_border]])。

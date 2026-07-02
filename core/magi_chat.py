@@ -454,3 +454,29 @@ def tag_summary(ledger=None):
     for t, c in counts.items():
         out[t] = {'count': c, 'quarantined': is_quarantined(t), 'ready': c >= 3 and not is_quarantined(t)}
     return dict(sorted(out.items(), key=lambda x: -x[1]['count']))
+
+
+def hypothesis_export(ledger=None):
+    """回顧台帳の学習タグ→検証可能仮説へ変換(カード7)。
+    3回ルール/隔離ガードレールの下流。ready(3回以上・非俗説)タグのみを
+    hypothesis_schemaで検証し、通ったものだけ『検証キュー候補』にする。
+    戻り値: {'exported':[候補dict...], 'isolated':[{'tag','reason'}...]}。
+    ⚠ここは投入資格の門番のみ。採否はauto_feature_search/backtestのholdoutが決める。"""
+    from core import hypothesis_schema as hs
+    summ = tag_summary(ledger)
+    exported, isolated = [], []
+    for tag, info in summ.items():
+        # 二重の隔離: magiの俗説キーワード + hypothesis_schemaの却下リスト
+        folk, reason = hs.is_folk_belief(tag)
+        if info['quarantined'] or folk:
+            isolated.append({'tag': tag, 'reason': reason or '俗説隔離(magi台帳)'})
+            continue
+        if not info['ready']:
+            continue  # 3回未満は投入資格なし
+        hyp = hs.make_hypothesis(tag, note=f'MAGI回顧{info["count"]}回')
+        ok, why = hs.validate_hypothesis(hyp)
+        if ok:
+            exported.append(hs.to_feature_candidate(hyp))
+        else:
+            isolated.append({'tag': tag, 'reason': why})
+    return {'exported': exported, 'isolated': isolated}
