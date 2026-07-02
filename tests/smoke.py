@@ -228,6 +228,25 @@ def main():
             pass
     check("score_cache.write_gate/read_gate", t_gate_cache)
 
+    def t_agent_correlation():
+        from core import agent_forum as af
+        # 空台帳=データ不足note・n_races0
+        r0 = af.agent_pick_correlation([])
+        assert r0['n_races'] == 0 and r0['mean_corr'] is None and 'データ不足' in r0['note']
+        # 同予想ペア(A=B)は正相関で高honmei一致、逆張りCは負相関(独立)
+        recs = [{'agent_picks': {'A': {'honmei': h, 'taikou': t, 'anaume': a},
+                                 'B': {'honmei': h, 'taikou': t, 'anaume': a},
+                                 'C': {'honmei': c, 'taikou': c2, 'anaume': c3}}}
+                for (h, t, a, c, c2, c3) in [(1, 2, 3, 8, 7, 6), (4, 5, 6, 12, 11, 10),
+                                             (1, 3, 5, 9, 8, 7)]]
+        res = af.agent_pick_correlation(recs)
+        pd_ = {tuple(sorted((p['a'], p['b']))): p for p in res['pairs']}
+        assert pd_[('A', 'B')]['corr'] > 0.9 and pd_[('A', 'B')]['honmei_agree'] == 1.0
+        assert pd_[('A', 'C')]['corr'] < 0, "逆張りは負相関(独立)"
+        # 冗長度: Cが最も独立(平均相関が最小)
+        assert res['redundancy']['C'] < res['redundancy']['A']
+    check("agent_forum.agent_pick_correlation", t_agent_correlation)
+
     def t_hypothesis_schema():
         from core import hypothesis_schema as hs
         # カード7機能ゲート: 俗説は隔離、検証済みエッジは通す

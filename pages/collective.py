@@ -323,6 +323,33 @@ def render():
                                         st.session_state.get(_K2, []) +
                                         st.session_state.get(_K3, [])))
 
+            # 🔗 エージェント相関診断: 人格が冗長(高相関)ならアンサンブルの意味が薄い
+            with st.expander("🔗 エージェント相関診断（多様性チェック）", expanded=False):
+                st.caption("アンサンブル(合議)が効くのは各人格が**独立した誤り**をする時だけ(記事の"
+                           "『効かない条件=全モデルが同じ誤差』)。予想が高相関=冗長=平均する意味が薄い。"
+                           "結果は不要=過去の予想だけで測れます。")
+                try:
+                    _corr = _af.agent_pick_correlation()
+                    if _corr['n_races'] < 3 or _corr['mean_corr'] is None:
+                        st.info(f"📊 {_corr['note']}（現在 {_corr['n_races']} レース分）")
+                    else:
+                        _mc = _corr['mean_corr']
+                        _col = "🔴" if _mc >= 0.7 else "🟠" if _mc >= 0.4 else "🟢"
+                        st.metric("平均ペア相関", f"{_col} {_mc:+.2f}",
+                                  help="0.7以上=冗長(多様性なし) / 0.4未満=良い多様性")
+                        _red = _corr['redundancy']
+                        if _red:
+                            _sorted = sorted(_red.items(), key=lambda x: x[1])
+                            st.markdown(f"🟢 **最も独立**: {_sorted[0][0]}（平均相関{_sorted[0][1]:+.2f}）"
+                                        f"　/　🔴 **最も冗長**: {_sorted[-1][0]}（{_sorted[-1][1]:+.2f}）")
+                        _hi = [p for p in _corr['pairs'] if p['corr'] is not None and p['corr'] >= 0.7]
+                        if _hi:
+                            st.warning("⚠ 高相関ペア(冗長)＝どちらかは要らない or 直交エッジに紐付け直し: "
+                                       + " / ".join(f"{p['a']}↔{p['b']}({p['corr']:+.2f})" for p in _hi[:6]))
+                        st.caption(_corr['note'])
+                except Exception as _ce:
+                    st.caption(f"（相関診断スキップ: {_ce}）")
+
             if _K3 in st.session_state:
                 with st.expander("📈 ラウンド別推移", expanded=False):
                     for rnd_label, rnd_key in [("R1", _K1), ("R2", _K2), ("R3", _K3)]:

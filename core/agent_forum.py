@@ -1041,6 +1041,89 @@ def agent_weights(records=None, lam=1.0, prior_n=10):
     return {ag: w / s for ag, w in raw.items()}
 
 
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 3:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sx = sum((a - mx) ** 2 for a in xs)
+    sy = sum((b - my) ** 2 for b in ys)
+    if sx <= 0 or sy <= 0:
+        return None  # どちらか定数=相関定義不能
+    cov = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
+    return cov / (sx ** 0.5 * sy ** 0.5)
+
+
+def agent_pick_correlation(records=None):
+    """エージェント同士の予想相関を測る(アンサンブルが効くのは低相関の時=記事の効かない条件)。
+    ◎=3/○=2/▲=1でスコア化し、ペアの"どちらかが印を付けた馬"上でPearson相関を蓄積。
+    結果(hit)は不要=予想だけで測れる。戻り値:
+      {'pairs':[{a,b,corr,honmei_agree,n}], 'redundancy':{agent:平均相関},
+       'mean_corr':float|None, 'n_races':int, 'note':str}。
+    高相関(>0.7)=人格が冗長=平均する意味が薄い([[project_magi_consensus]]偽アンサンブルの罠)。"""
+    from collections import defaultdict as _dd
+    if records is None:
+        records = load_retrospective(100)
+    pair_cells = _dd(list)      # (a,b) -> [(scoreA,scoreB)...]
+    pair_honmei = _dd(lambda: [0, 0])
+    n_races = 0
+    for rec in records:
+        picks = rec.get('agent_picks') or {}
+        ags = [a for a in picks
+               if any(picks[a].get(k) for k in ('honmei', 'taikou', 'anaume'))]
+        if len(ags) < 2:
+            continue
+        n_races += 1
+
+        def _score(a):
+            d = {}
+            for mark, val in (('honmei', 3), ('taikou', 2), ('anaume', 1)):
+                u = picks[a].get(mark)
+                if u:
+                    try:
+                        d[int(u)] = val
+                    except (TypeError, ValueError):
+                        pass
+            return d
+        sc = {a: _score(a) for a in ags}
+        for i in range(len(ags)):
+            for j in range(i + 1, len(ags)):
+                a, b = sorted((ags[i], ags[j]))
+                ua, ub = sc[a], sc[b]
+                uni = set(ua) | set(ub)          # どちらかが印を付けた馬(ペア固有)
+                if len(uni) < 3:
+                    continue
+                for u in uni:
+                    pair_cells[(a, b)].append((ua.get(u, 0), ub.get(u, 0)))
+                ha, hb = picks[a].get('honmei'), picks[b].get('honmei')
+                if ha and hb:
+                    pair_honmei[(a, b)][1] += 1
+                    if str(ha) == str(hb):
+                        pair_honmei[(a, b)][0] += 1
+
+    pairs = []
+    red = _dd(lambda: [0.0, 0])
+    for (a, b), cells in pair_cells.items():
+        r = _pearson([c[0] for c in cells], [c[1] for c in cells])
+        hm = pair_honmei[(a, b)]
+        pairs.append({'a': a, 'b': b, 'corr': r,
+                      'honmei_agree': (hm[0] / hm[1]) if hm[1] else None, 'n': hm[1]})
+        if r is not None:
+            for x in (a, b):
+                red[x][0] += r
+                red[x][1] += 1
+    pairs.sort(key=lambda p: (p['corr'] is None, -(p['corr'] or 0)))
+    redundancy = {a: (v[0] / v[1]) for a, v in red.items() if v[1]}
+    corrs = [p['corr'] for p in pairs if p['corr'] is not None]
+    mean_corr = sum(corrs) / len(corrs) if corrs else None
+    note = ('データ不足(数レース分の予想を集合知で保存すると相関が出ます)'
+            if n_races < 3 or not corrs else
+            '相関>0.7=人格が冗長=平均の効果薄→同データのLLM人格を増やさず直交エッジに紐付けよ')
+    return {'pairs': pairs, 'redundancy': redundancy, 'mean_corr': mean_corr,
+            'n_races': n_races, 'note': note}
+
+
 def weighted_consensus(all_posts, weights=None):
     """aggregate_predictions のエージェント重み付き版(カード8)。
     weights={agent_id: w}。未知/欠損エージェントは平均重みで中立。
