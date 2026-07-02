@@ -2651,7 +2651,8 @@ if nav == "🏠 Single Race Analysis":
                             for _, _brow in df.iterrows():
                                 _b_sire = str(_brow.get('sire') or '-')
                                 _b_bms = str(_brow.get('broodmareSire') or '-')
-                                _b_name = str(_brow.get('HorseName') or _brow.get('bamei') or '?')
+                                _b_name = str(_brow.get('HorseName') or _brow.get('Name')
+                                              or _brow.get('bamei') or '?')
                                 _b_num = _brow.get('Umaban') or _brow.get('umaban') or '?'
                                 _ss = _bl2.lookup_sire_stats(_b_sire, _tb_surf, _tb_dist)
                                 _bs = _bl2.lookup_bms_stats(_b_bms, _tb_surf, _tb_dist)
@@ -2676,7 +2677,38 @@ if nav == "🏠 Single Race Analysis":
                                 _bl_rows.append(_row)
                             if _bl_rows:
                                 _bl_df = pd.DataFrame(_bl_rows)
-                                st.dataframe(_bl_df, use_container_width=True, hide_index=True)
+                                # 各数値列の上位3を色付け＋馬場シフト有利馬の馬名を色付け
+                                try:
+                                    def _blnum(v):
+                                        try:
+                                            return float(str(v).replace('%', ''))
+                                        except (TypeError, ValueError):
+                                            return float('nan')
+                                    _bl_numcols = [c for c in ['父複勝率', '父単回収', '母父複勝率',
+                                                               '母父単回収', '父走数'] if c in _bl_df.columns]
+                                    _bl_topcol = ['background-color:#3a2e00;color:#FFD54F;font-weight:bold',
+                                                  'background-color:#2e2a10;color:#FFE082',
+                                                  'background-color:#26240f;color:#FFF3C4']
+
+                                    def _bl_topn(col):
+                                        _v = col.map(_blnum)
+                                        _t = list(_v.nlargest(3).index) if _v.notna().any() else []
+                                        _rk = {ix: r for r, ix in enumerate(_t)}
+                                        return [_bl_topcol[_rk[i]] if i in _rk else '' for i in col.index]
+
+                                    def _bl_name(col):
+                                        return ['color:#4FC3F7;font-weight:bold'
+                                                if str(_bl_df.at[i, '馬場シフト']) not in ('-', 'None', '')
+                                                else '' for i in col.index]
+                                    _bl_sty = _bl_df.style
+                                    for _bc in _bl_numcols:
+                                        _bl_sty = _bl_sty.apply(_bl_topn, subset=[_bc])
+                                    if '馬名' in _bl_df.columns and '馬場シフト' in _bl_df.columns:
+                                        _bl_sty = _bl_sty.apply(_bl_name, subset=['馬名'])
+                                    st.dataframe(_bl_sty, use_container_width=True, hide_index=True)
+                                    st.caption("🟡各項目の上位3頭（濃→薄=1→3位）／🔵馬名=馬場シフトで有利な血統")
+                                except Exception:
+                                    st.dataframe(_bl_df, use_container_width=True, hide_index=True)
                                 if _tc_shift and _tc_shift['shift'] != '±0':
                                     _shift_label = {'+':"硬化[+]→ディープ系・キズナ・レイデオロ活性",
                                                     '△':"軟化[△]→ND系・キタサンブラック活性"}
