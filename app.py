@@ -5013,7 +5013,8 @@ if nav == "🏠 Single Race Analysis":
                             if pd.isnull(_uhn):
                                 continue
                             _kth, _ = _jjh.resolve_horse(str(_rh.get('Name', '')))
-                            _fg = _cth.get_figure(_kth, _surf_h) if _kth else None
+                            # 該当馬場のfigが無ければ利用可能なfigにフォールバック(消去表と一致)
+                            _fg = (_cth.get_figure(_kth, _surf_h) or _cth.get_figure(_kth, None)) if _kth else None
                             _ct_best[int(_uhn)] = (_fg or {}).get('fig')
                         _ct_ranks = _cth.field_ranks(_ct_best)
 
@@ -7550,7 +7551,9 @@ if nav == "🧹 消去フィルター":
                             surface=_surf, dirt_runs=(_ctx or {}).get('dirt_runs'),
                             topswap=_topswap))
                         # 補正タイム(H7=直近7走×同一馬場の最高・負=速い／検証: 本命補強+穴の相手に有効)
-                        _figd = _ct.get_figure(_kt, _surf) if _kt else None
+                        # 該当馬場のfigが無ければ利用可能なfigにフォールバック(強適表と同じ寛容さ)。
+                        # NAR(ダート専用)馬にsurface='芝'が渡ると fig_shiba=None で'-'になる不整合を修正。
+                        _figd = (_ct.get_figure(_kt, _surf) or _ct.get_figure(_kt, None)) if _kt else None
                         _ctbest = (_figd or {}).get('fig')
                         # 確率列(Projected Scoreがある時だけ) EV=p*odds / 複勝=P(3着内) / 連対=P(2着内)
                         _p = _winp.get(_um)
