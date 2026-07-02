@@ -3224,6 +3224,9 @@ if nav == "🏠 Single Race Analysis":
                                     'name': str(_pm_r.get('Name', '')),
                                     'score': float(_pm_sc),
                                     'style': _pm_plm.get(_pm_u) or _pmap.style_from_score(float(_pm_sc)),
+                                    # 騎手・厩舎の脚質傾向を隊列予測に反映(表示精度・エッジ主張なし)
+                                    'jockey': str(_pm_r.get('Jockey', '') or ''),
+                                    'trainer': str(_pm_r.get('Trainer', '') or ''),
                                 })
                             # 距離: metadata → CurrentDistance 列の順でフォールバック
                             _pm_dist = meta.get('distance')

@@ -17,6 +17,7 @@
 | ├ 🔵補正T | 直近7走×同馬場の最高/100・top3に🔵 | ✅ | [[verified_corrected_time]] | — |
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |
 | ├ 展開MAP/Vマトリクス | テン速力でペース想定・隊列・荒れ寄り判定 | 🟡 | 展開恩恵はpriced-in([[verified_tenkai_priced_in]]) | — |
+| ├ 騎手・厩舎脚質傾向を隊列に反映(表示用) | jockey_tactics/trainer_tactics(逃げ先行率)→道中ポジションprior小重み。corner履歴無い馬(NAR/新馬)で効くフォールバック | 🟢 | pace_map.tactics_forward(w0.15)。**表示精度のみ・エッジ主張なし**(ペース圧力の荒れ予測は⑧と重複と検証済) | 2026-07-02 |
 | ├ 🎯3連複おすすめエンジン | 決着タイプ判定→本線/②パターン＋lean連動の可変点数(本線8/②10/中立8)＋本線トリガミ警告 | 🟢 | trio_lean配線＋可変点数(4d81226) | 2026-06-24 |
 | ├ ●大穴/⚠荒れ寄り(オッズ本命不在) | 決着タイプ判定にコンピ大穴の単勝オッズ等価フラグ(fav1/上位拮抗/live30)を表示。穴相手戦略の適用先を選ぶレース選択器 | ✅ | [[verified_arare_entropy]](2025 z10.9・大穴z5.5/2026 z8.0・ハンデ/16頭と独立)。value_scanner.no_favorite_flag / scripts/arare_entropy_backtest.py | 2026-07-02 |
 | ├ 🎯妙味度/根拠 | 価格帯×穴脚エッジで🎯・根拠ラベル表示 | ✅ | [[verified_tansho_roi_efficient]] | 2026-06-23 |

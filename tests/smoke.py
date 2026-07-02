@@ -241,6 +241,23 @@ def main():
         assert not okp, "PCI仮説は隔離される"
     check("hypothesis_schema.folk隔離", t_hypothesis_schema)
 
+    def t_pace_tactics():
+        from core import pace_map as pm
+        # 騎手・厩舎脚質傾向→位置prior(0=前..1=後)。前受け型ほど小さい
+        f_forward = pm.tactics_forward('川田将雅')   # 先行48.8%=前
+        f_mid = pm.tactics_forward('吉村誠之')       # 中団寄り
+        assert f_forward is not None and f_mid is not None
+        assert f_forward < f_mid, f"前受け型が前(小)であるべき got {f_forward} vs {f_mid}"
+        # データ無しはNone(既存挙動を壊さない)＋厩舎注釈付きでもヒット
+        assert pm.tactics_forward('架空騎手', '架空厩舎') is None
+        assert pm.tactics_forward(None, '矢作芳人 ?-8%(6777)') is not None
+        # 騎手/厩舎なしでも build_pace_context は従来通り
+        c = pm.build_pace_context([{'umaban': 1, 'name': 'A', 'score': 0.1},
+                                   {'umaban': 2, 'name': 'B', 'score': 0.8}],
+                                  distance=1600, surface='芝')
+        assert c['leader'] == 1, f"score低=前=leader1, got {c['leader']}"
+    check("pace_map.tactics_forward(表示用)", t_pace_tactics)
+
     def t_axis_nar():
         from core import axis_selector as ax
         # NAR較正: 1番人気は実測78.7%(JRA70.1%より高く評価)・人気基準固定(odds無視)

@@ -609,12 +609,45 @@ _PACE_TUNE = {
     'w_kyaku': 0.20,    # 脚質コード平均位置
     'w_score': 0.25,    # app由来の脚質スコア（フォールバック）
     'ten_z_k': 0.16,    # テン速力 z → frac 係数
+    'w_tactics': 0.15,  # 騎手・厩舎の脚質傾向prior（表示用の隊列精度改善・小さく保つ）
     # 相互作用（pos4 への補正・小さく保つ）
     'int_leader_cap': 0.05,   # ハナ馬をこの値以下へ
     'int_contested': 0.03,    # ハイで番手争い馬を後退
     'int_slow_pow': 1.04,     # スローの前残り誇張指数
     'int_adjacent': 0.0,      # 同型隣接ペナルティ
 }
+
+
+_TAC_ANCHOR = {'逃げ': 0.06, '先行': 0.30, '中団': 0.60, '後方': 0.88}
+
+
+def tactics_forward(jockey=None, trainer=None):
+    """騎手・厩舎の脚質傾向(core/jockey_tactics・trainer_tactics)→道中ポジションprior
+    (0=前〜1=後)。**表示用**: 展開MAPの隊列を鋭くするだけでエッジ主張はしない
+    (ペース圧力の荒れ予測は⑧オッズ本命不在と重複=priced-inと検証済・
+    [[verified_tenkai_priced_in]]/scripts/pace_pressure_arare_backtest.py)。
+    データ無しは None(既存挙動を変えない)。"""
+    def _pos(d):
+        if not d:
+            return None
+        s = sum(d.get(k, 0) for k in _TAC_ANCHOR)
+        if s <= 0:
+            return None
+        return sum(d.get(k, 0) * a for k, a in _TAC_ANCHOR.items()) / s
+    jp = tp = None
+    try:
+        from core.jockey_tactics import get_jockey_tactics
+        jp = _pos(get_jockey_tactics(jockey)) if jockey else None
+    except Exception:
+        jp = None
+    try:
+        from core.trainer_tactics import get_trainer_tactics
+        tp = _pos(get_trainer_tactics(trainer)) if trainer else None
+    except Exception:
+        tp = None
+    if jp is not None and tp is not None:
+        return jp * 0.6 + tp * 0.4       # 騎手が作戦の主体→重め
+    return jp if jp is not None else tp
 
 
 def build_pace_context(horses, profiles=None, distance=None, surface=None,
@@ -673,6 +706,11 @@ def build_pace_context(horses, profiles=None, distance=None, surface=None,
         if sc is not None:
             parts.append(float(sc))
             weights.append(t['w_score'] if parts else 1.0)
+        # 騎手・厩舎の脚質傾向prior(表示用・小重み)。corner履歴が無い馬(NAR/新馬)ほど相対的に効く
+        tac = tactics_forward(h.get('jockey'), h.get('trainer'))
+        if tac is not None and t.get('w_tactics'):
+            parts.append(tac)
+            weights.append(t['w_tactics'])
         forward[u] = (sum(p * w for p, w in zip(parts, weights)) / sum(weights)
                       if parts else 0.5)
     ctx['forward'] = {u: round(v, 3) for u, v in forward.items()}
