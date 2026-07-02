@@ -1813,12 +1813,13 @@ if nav == "🏠 Single Race Analysis":
         _main_nar_jyo = str(race_id_input)[4:6] if len(race_id_input) >= 6 else ''
         if _is_nar_in and _main_nar_jyo in ('42', '43', '44', '45'):
             st.text_input(
-                "🐴 nankankeiba.com レースID (任意・PCI/展開マップ/脚質分類を有効化)",
+                "🐴 nankankeiba.com レースID (通常は自動導出・手入力で上書き可)",
                 key="main_nankan_id",
-                placeholder="出馬表URL末尾の16桁数字 例: 2026070120050311",
+                placeholder="自動導出に失敗する場合のみ 16桁数字 例: 2026070120050311",
                 help="netkeiba地方競馬版には過去走の詳細(タイム/上がり3F/通過順)がなく、"
-                     "PCI・展開マップ・脚質分類が計算不能。nankankeiba.comの出馬表IDを入力すると、"
-                     "過去走データを補完してJRA版と同じ分析パイプラインを有効化する。"
+                     "PCI・展開マップ・脚質分類が計算不能。通常は開催日から自動で"
+                     "nankankeiba.comのレースIDを導出し過去走を補完する。"
+                     "導出に失敗した場合のみ、出馬表URL末尾の16桁を手入力する。"
             )
 
     # Determine default profile based on Netkeiba JRA venue code (digits 4-5 of Race ID)
@@ -2071,23 +2072,40 @@ if nav == "🏠 Single Race Analysis":
                         # PastRunsが常に空になりPCI/展開マップ/脚質分類が機能しない。
                         # nankankeiba.comから同等データを取得しPastRuns形式に変換して埋める。
                         try:
-                            _main_nk_id = st.session_state.get('main_nankan_id', '')
-                            if _main_nk_id and 'Name' in df.columns:
+                            _main_nar_jyo2 = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
+                            _is_nankan_sra = _main_nar_jyo2 in ('42', '43', '44', '45')
+                            _nk_race_id = None
+                            _nk_auto = False
+                            if _is_nankan_sra and 'Name' in df.columns:
                                 import re as _nk_re
-                                _nk_m = _nk_re.search(r'(\d{16})', str(_main_nk_id))
+                                from core import nankan_scraper as _nk
+                                # (1) 手入力があれば優先
+                                _main_nk_id = st.session_state.get('main_nankan_id', '')
+                                _nk_m = _nk_re.search(r'(\d{16})', str(_main_nk_id)) if _main_nk_id else None
                                 if _nk_m:
-                                    from core import nankan_scraper as _nk
-                                    _nk_enriched = _nk.enrich_with_nankan(df, nankan_race_id=_nk_m.group(1))
-                                    _nk_matched = 0
-                                    if 'PastRuns' not in df.columns:
-                                        df['PastRuns'] = [[] for _ in range(len(df))]
-                                    for _idx, _row in df.iterrows():
-                                        _nk_d = _nk_enriched.get(str(_row.get('Name', '')))
-                                        if _nk_d and _nk_d.get('pastruns'):
-                                            df.at[_idx, 'PastRuns'] = _nk_d['pastruns']
-                                            _nk_matched += 1
-                                    st.caption(f"🐴 nankankeiba.com 過去走補完: {_nk_matched}/{len(df)}頭 "
-                                               f"(PCI/展開マップ/脚質分類を有効化)")
+                                    _nk_race_id = _nk_m.group(1)
+                                else:
+                                    # (2) 手入力なし → 開催カレンダーからnankan race_idを自動導出
+                                    _nk_date = str(_saved_metadata.get('date_val', '')) if _saved_metadata else ''
+                                    if _nk_date:
+                                        _nk_race_id = _nk.derive_nankan_race_id(race_id_input, _nk_date)
+                                        _nk_auto = bool(_nk_race_id)
+                            if _nk_race_id:
+                                _nk_enriched = _nk.enrich_with_nankan(df, nankan_race_id=_nk_race_id)
+                                _nk_matched = 0
+                                if 'PastRuns' not in df.columns:
+                                    df['PastRuns'] = [[] for _ in range(len(df))]
+                                for _idx, _row in df.iterrows():
+                                    _nk_d = _nk_enriched.get(str(_row.get('Name', '')))
+                                    if _nk_d and _nk_d.get('pastruns'):
+                                        df.at[_idx, 'PastRuns'] = _nk_d['pastruns']
+                                        _nk_matched += 1
+                                _nk_src = "自動導出" if _nk_auto else "手入力ID"
+                                st.caption(f"🐴 nankankeiba.com 過去走補完({_nk_src} `{_nk_race_id}`): "
+                                           f"{_nk_matched}/{len(df)}頭 (PCI/展開マップ/脚質分類を有効化)")
+                            elif _is_nankan_sra:
+                                st.caption("🐴 nankankeiba.com 自動導出に失敗（カレンダー未掲載/日付不明）。"
+                                           "サイドバーに16桁レースIDを手入力すると過去走を補完します。")
                         except Exception as _nk_e:
                             st.warning(f"nankankeiba.com補完エラー: {_nk_e}")
 
@@ -7354,18 +7372,29 @@ if nav == "🧹 消去フィルター":
         _kf_jyo = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
         if _kf_jyo in ('42', '43', '44', '45'):
             kf_nankan_id = st.text_input(
-                "🐴 nankankeiba.com レースID (任意・PCI/末脚救出を有効化)",
+                "🐴 nankankeiba.com レースID (通常は自動導出・手入力で上書き可)",
                 key="kf_nankan_id",
-                placeholder="出馬表URL末尾の16桁数字 例: 2026063020050201",
+                placeholder="自動導出に失敗する場合のみ、出馬表URL末尾の16桁数字を入力",
             )
             _kf_nk_m = re.search(r'(\d{16})', str(kf_nankan_id)) if kf_nankan_id else None
+            _kf_nk_race_id = None
             if _kf_nk_m:
-                _kf_nk_cache_key = f"kf_nk_cache_{_kf_nk_m.group(1)}"
+                _kf_nk_race_id = _kf_nk_m.group(1)
+            else:
+                try:
+                    from core import nankan_scraper as _nk
+                    _kf_date = str(metadata.get('date_val', '')) if metadata else ''
+                    if _kf_date:
+                        _kf_nk_race_id = _nk.derive_nankan_race_id(race_id_input, _kf_date)
+                except Exception:
+                    _kf_nk_race_id = None
+            if _kf_nk_race_id:
+                _kf_nk_cache_key = f"kf_nk_cache_{_kf_nk_race_id}"
                 if _kf_nk_cache_key not in st.session_state:
                     try:
                         from core import nankan_scraper as _nk
                         st.session_state[_kf_nk_cache_key] = _nk.enrich_with_nankan(
-                            df, nankan_race_id=_kf_nk_m.group(1))
+                            df, nankan_race_id=_kf_nk_race_id)
                     except Exception as _kf_nk_e:
                         st.warning(f"nankankeiba.com補完エラー: {_kf_nk_e}")
                         st.session_state[_kf_nk_cache_key] = {}

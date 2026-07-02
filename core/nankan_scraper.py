@@ -25,7 +25,16 @@ NANKAN_VENUES = {
     "浦和": "42", "船橋": "43", "大井": "44", "川崎": "45",
 }
 
+# netkeiba地方場コード → nankankeiba内部場コード(16桁race_id/14桁program_idの[8:10])
+# 実査で確定(2026-07 calendar): 18浦和/19船橋/20大井/21川崎
+NETKEIBA_TO_NANKAN_VENUE = {
+    "42": "18", "43": "19", "44": "20", "45": "21",
+}
+
 _last_request_ts = [0.0]
+
+# 月別開催カレンダー(program_id)キャッシュ: {'YYYYMM': {(date8, venue2): program14}}
+_month_program_cache = {}
 
 
 def _throttle():
@@ -46,6 +55,88 @@ def _fetch(url):
     except Exception as e:
         logger.warning(f"[nankan] fetch failed: {url} → {e}")
         return None
+
+
+def _fetch_text(url):
+    """Shift_JISページを取得しデコード済みHTML文字列を返す(正規表現パース用)。"""
+    _throttle()
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        return resp.content.decode("shift_jis", errors="replace")
+    except Exception as e:
+        logger.warning(f"[nankan] fetch failed: {url} → {e}")
+        return None
+
+
+# ──────────────────────── 開催カレンダー / race_id自動導出 ────────────────────────
+
+def fetch_month_programs(yyyymm):
+    """月別開催カレンダーから、その月の全開催のprogram_id(14桁)を取得。
+
+    program_id構造: date(8) + venue(2) + kaiji(2) + day(2)
+    戻り値: dict {(date8:str, venue2:str): program14:str}
+    (例: {('20260701','20'): '20260701200503', ...})
+    月単位でキャッシュするため、同一開催日の複数レース分析でも取得は1回のみ。
+    """
+    yyyymm = str(yyyymm)
+    if yyyymm in _month_program_cache:
+        return _month_program_cache[yyyymm]
+
+    result = {}
+    html = _fetch_text(f"{_BASE}/calendar/{yyyymm}.do")
+    if html:
+        for pid in re.findall(r"/program/(\d{14})\.do", html):
+            if pid == "00000000000000":
+                continue  # フォームのプレースホルダ
+            date8, venue2 = pid[:8], pid[8:10]
+            result[(date8, venue2)] = pid
+    _month_program_cache[yyyymm] = result
+    return result
+
+
+def derive_nankan_race_id(netkeiba_race_id, date_yyyymmdd):
+    """netkeiba地方レースID + 開催日付 から、nankankeiba 16桁race_idを自動導出。
+
+    これにより「🐴nankankeiba.com レースID」の手入力なしに過去走補完が可能になる。
+    netkeiba_race_id: 12桁(YYYY + jyo2 + kaiji2 + day2 + race2)。例 '202644070112'
+    date_yyyymmdd: 実開催日(scraperのdate_valから)。例 '20260701'
+    戻り値: nankan 16桁race_id(str) or None
+
+    導出: nankankeibaのkaiji/dayはnetkeibaと異なるため、開催カレンダーから
+    date+venueに一致するprogram_id(=date+venue+kaiji+day)を引き、race番号を付す。
+    """
+    s = re.sub(r"\D", "", str(netkeiba_race_id or ""))
+    if len(s) < 12:
+        return None
+    jyo = s[4:6]
+    race_num = s[10:12]
+    venue = NETKEIBA_TO_NANKAN_VENUE.get(jyo)
+    if not venue:
+        return None
+
+    date8 = re.sub(r"\D", "", str(date_yyyymmdd or ""))[:8]
+    if len(date8) != 8:
+        return None
+
+    programs = fetch_month_programs(date8[:6])
+    program_id = programs.get((date8, venue))
+    if not program_id:
+        return None
+    return f"{program_id}{race_num}"
+
+
+def fetch_program_races(program_id):
+    """開催プログラム(1日1場)ページから、その日の全レースの16桁race_idを取得。
+
+    program_id: 14桁(date8+venue2+kaiji2+day2)。fetch_month_programsの値。
+    戻り値: list[str] (16桁race_id、レース番号昇順)
+    """
+    html = _fetch_text(f"{_BASE}/program/{str(program_id)}.do")
+    if not html:
+        return []
+    ids = sorted(set(re.findall(r"/syousai/(\d{16})\.do", html)))
+    return ids
 
 
 def _safe_float(v, default=0.0):
@@ -504,8 +595,16 @@ def match_horses_by_name(netkeiba_names, nankan_entries):
 
 
 def _normalize_name(name):
-    """馬名を正規化。全角→半角変換なし(カタカナのまま)、空白除去。"""
-    return re.sub(r"[\s　]+", "", str(name or "")).strip()
+    """馬名を正規化。NFKC(全角英数→半角/半角カナ→全角カナ)＋空白/中黒/括弧注記除去。
+
+    netkeiba と nankankeiba で表記(全半角・中黒・"(地)"等の注記)が揺れても
+    照合できるようにする。カタカナ本体は保持。
+    """
+    import unicodedata
+    s = unicodedata.normalize("NFKC", str(name or ""))
+    s = re.sub(r"[（(][^）)]*[）)]", "", s)   # (中同名)/(地) 等の注記を除去
+    s = re.sub(r"[\s　・･]+", "", s)            # 空白・中黒
+    return s.strip()
 
 
 # ──────────────────────────── 統合関数: netkeiba補完 ────────────────────────────

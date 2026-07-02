@@ -423,6 +423,18 @@ def main():
             assert hasattr(sc, fn), f"score_cache.{fn} 欠落"
     check("dashboard/⑥回顧の関数契約", t_dashboard_contract)
 
+    def t_nankan_contract():
+        # NAR過去走ブリッジ(SRA/消去エンジンが依存)の関数存在＋venue導出ロジック保証
+        from core import nankan_scraper as nk
+        for fn in ('derive_nankan_race_id', 'fetch_month_programs',
+                   'fetch_program_races', 'fetch_entries', 'fetch_horse_history',
+                   'runs_to_pastruns', 'enrich_with_nankan'):
+            assert hasattr(nk, fn), f"nankan_scraper.{fn} 欠落(NAR過去走補完破壊)"
+        # netkeiba地方場コード→nankan内部場コード(実査確定値)
+        assert nk.NETKEIBA_TO_NANKAN_VENUE == {'42': '18', '43': '19', '44': '20', '45': '21'}, \
+            "NAR venueマッピング破損(race_id自動導出が壊れる)"
+    check("NAR過去走ブリッジの関数契約", t_nankan_contract)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():
