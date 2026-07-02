@@ -380,9 +380,11 @@ def fetch_race_meta(race_id: str) -> dict:
         'grade': '',
     }
 
+    from core.scraper import _is_nar as _is_nar_meta
+    _meta_dom = "nar.netkeiba.com" if _is_nar_meta(race_id) else "race.netkeiba.com"
     urls_to_try = [
-        f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}",
-        f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}",
+        f"https://{_meta_dom}/race/shutuba_past.html?race_id={race_id}",
+        f"https://{_meta_dom}/race/shutuba.html?race_id={race_id}",
         f"https://db.netkeiba.com/race/{race_id}/",
     ]
     html = None
@@ -1454,6 +1456,48 @@ def extract_jockey_ids_from_race(race_id: str) -> List[dict]:
 
     logger.info(f"[JockeyAnalyzer] 出馬表: {len(unique_entries)}頭抽出 (race_id={race_id})")
     sorted_entries = sorted(unique_entries, key=lambda x: x['umaban'])
+
+    # ── NAR補完: 南関等の出馬表は騎手/厩舎がリンクでなくプレーンテキストのため
+    #    上のセレクタ(td.Jockey a)では空になる。NAR対応済のget_race_dataで
+    #    騎手名/厩舎名/馬名/人気/オッズを馬番照合で補完する(One-Pushの「?」対策)。 ──
+    try:
+        if is_nar and any(not e.get('jockey_name') for e in sorted_entries):
+            from core.scraper import get_race_data as _grd_nar
+            _gdf = _grd_nar(race_id, use_storage=False)
+            if _gdf is not None and not _gdf.empty and 'Umaban' in _gdf.columns:
+                _by_um = {}
+                for _, _r in _gdf.iterrows():
+                    _u = pd.to_numeric(_r.get('Umaban'), errors='coerce')
+                    if pd.notnull(_u):
+                        _by_um[int(_u)] = _r
+                _bad = ('-', '', 'nan', 'None', '不明')
+                for e in sorted_entries:
+                    _r = _by_um.get(e['umaban'])
+                    if _r is None:
+                        continue
+                    if not e.get('jockey_name'):
+                        _jn = str(_r.get('Jockey', '') or '').strip()
+                        if _jn and _jn not in _bad:
+                            e['jockey_name'] = _jn
+                    if not e.get('trainer_name'):
+                        _tn = str(_r.get('Trainer', '') or '').strip()
+                        if _tn and _tn not in _bad:
+                            e['trainer_name'] = _tn
+                    if not e.get('horse_name'):
+                        _hn = str(_r.get('Name', '') or '').strip()
+                        if _hn and _hn not in _bad:
+                            e['horse_name'] = _hn
+                    if e.get('popularity', 99) >= 99:
+                        _p = pd.to_numeric(_r.get('Popularity'), errors='coerce')
+                        if pd.notnull(_p) and int(_p) < 99:
+                            e['popularity'] = int(_p)
+                    if not e.get('odds'):
+                        _o = pd.to_numeric(_r.get('Odds'), errors='coerce')
+                        if pd.notnull(_o) and 0 < float(_o) < 9999:
+                            e['odds'] = float(_o)
+                logger.info(f"[JockeyAnalyzer] NAR補完: get_race_dataで騎手/厩舎を補完 (race_id={race_id})")
+    except Exception as _nar_e:
+        logger.warning(f"[JockeyAnalyzer] NAR騎手/厩舎補完失敗: {_nar_e}")
 
     # ── オッズAPI補完: 人気/オッズがHTMLから取れなかった場合、リアルタイムAPIで上書き ──
     try:

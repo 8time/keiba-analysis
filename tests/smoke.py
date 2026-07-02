@@ -433,6 +433,11 @@ def main():
         # netkeiba地方場コード→nankan内部場コード(実査確定値)
         assert nk.NETKEIBA_TO_NANKAN_VENUE == {'42': '18', '43': '19', '44': '20', '45': '21'}, \
             "NAR venueマッピング破損(race_id自動導出が壊れる)"
+        # 南関の場コード名(scraper.VENUE_NAMES)がtrack_bias/nankan_scraperと一致すること
+        # (過去に42大井/44船橋の誤りがOne-Pushの会場別騎手成績を破壊した回帰の再発防止)
+        from core.scraper import VENUE_NAMES as _VN
+        assert (_VN.get('42'), _VN.get('43'), _VN.get('44'), _VN.get('45')) == \
+            ('浦和', '船橋', '大井', '川崎'), "南関場コード名が誤り(42浦和/43船橋/44大井/45川崎)"
     check("NAR過去走ブリッジの関数契約", t_nankan_contract)
 
     # ── Phase4: DB健全性 ──
