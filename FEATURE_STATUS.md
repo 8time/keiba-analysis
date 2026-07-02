@@ -10,6 +10,8 @@
 | 🏠 Single Race Analysis | レースID/URL入力→出馬表取得→強適Ranking表示 | 🟡 | — | — |
 | ├ NAR(地方競馬)PastRunsブリッジ | nankankeiba.com過去走→PastRuns形式変換でPCI/展開マップ/脚質分類をNARでも有効化 | ✅ | [[project_nankan_scraper]]+[[verified_nankan_pci_spurt_backtest]](大井5開催263R/3197頭・z2.35) | 2026-07-02 |
 | ├─ nankan race_id自動導出(T1) | 手入力なしで開催カレンダー(/calendar/YYYYMM.do)からnankan16桁race_idを導出→純地方馬含む全出走馬の過去走を自動補完。venue=18浦和/19船橋/20大井/21川崎(実査確定)。手入力で上書き可 | 🟢 | nankan_scraper.derive_nankan_race_id/fetch_month_programs。実査=大井7/1 R1で12/12頭PastRuns充足。SRA+消去エンジンの両導線に配線 | 2026-07-03 |
+| ├─ T5確認:NARシグナル列/展開適合度/PCI | get_race_dataがNAR shutubaでJockey/Trainer取得(J◎/T●機能)。T1充足でDeployScore/PCILabelが全馬算出 | 🟢 | 実査=大井7/3 R11でJockey('中山遥'等)/Trainer('大井・栗田'等)/DeployScore(41.9〜52.0差別化)/PCIType 10/10充足 | 2026-07-03 |
+| ├─ T3確認:純地方馬の順位妥当性 | T1前=空PastRunsでBattleScore全馬0.0一律(データ飢餓で誤沈)→T1後=54.9〜74.9に差別化。補正Tはjravan在籍NAR馬(大半)で10/10解決・非在籍の新馬/直近純地方馬のみ'-'(検証済NAR補正T無しのため捏造せず) | 🟢 | 実査=大井7/3 R11 BattleScore std0.00→5.31・補正T 10/10(フェスティヴルディ含む)。resolve_horseがNAR名でketto解決 | 2026-07-03 |
 | ├ NAR会場プロファイル(大井/川崎/船橋/浦和) | 場コード修正(42/43/44/45=浦和/船橋/大井/川崎)＋距離別枠順バイアス/砂質/雨天バイアス/リーディング | 🟢 | [[project_nankan_scraper]] | 2026-07-02 |
 | ├ NAR軸/シグナル較正 | ①軸=NAR実測POP_FUKU_NAR(1番人気78.7%>JRA70.1%)で過小評価修正 ②🔬シグナル列を南関でも機能(scrape_raceはrace_id取得でNAR自動判定) ③🤖検証AI=NAR専用LTRモデル(南関学習・人気+2.38pp)に切替 | 🟢 | axis_marks_nar/_fetch_daily_signals(NAR分岐)/ltr_ranker会場コードでモデル自動切替。診断=NAR1番人気複勝率78.7%実測 | 2026-07-02 |
 | ├ NAR専用LTRモデル(資料p5セグメント) | JRA学習LTRは地方で分布外→南関42-45だけで別LightGBM学習。holdout2025 win recall@7=人気+2.38pp(JRA版+0.9ppより大・地方は騎手が効く) | 🟢 | scripts/build_ltr_nar.py(NAR特徴=log_odds/cushion等除外)+ltr_ranker._load_nar。data/ltr_nar_model.lgbはbuild scriptで再生成 | 2026-07-02 |
