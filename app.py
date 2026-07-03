@@ -5057,8 +5057,8 @@ if nav == "🏠 Single Race Analysis":
                                     _mk = '🔴' if _cwr >= 0.20 else '🟠' if _cwr >= 0.14 else ''
                                     _cw_txt = f"{_cwr:.0%}{_mk}" + (f"({_rn})" if _rn >= 10 else f"({_rn}少)")
                                 else:
-                                    _cw_txt = '当ｺｰｽ-'
-                                _suffix = f" {_rank or '?'}-{_cw_txt}"
+                                    _cw_txt = '当ｺｰｽ無'
+                                _suffix = f" {_rank or '?'}{_cw_txt}"
                                 _trc_map[_nm] = {'suffix': _suffix, 'rank': _rank,
                                                  'buri': _buri, 'fade': _fade, 'awm': _awm}
                         except Exception:
@@ -5372,7 +5372,7 @@ if nav == "🏠 Single Race Analysis":
                         "Rank": "順位", "Umaban": "馬番", "Popularity": "人気",
                         "Odds": "単勝オッズ", "OddsGap": "オッズ断層",
                         "SexAge": "性別/年齢", "WeightHistory": "当日馬体重(増減)",
-                        "WeightCarried": "斤量", "Trainer": "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
+                        "WeightCarried": "斤量", "Trainer": "厩舎(ﾗﾝｸ/当ｺｰｽ勝率)",
                         "Bloodline": "血統(父/母父)", "BloodStats": "🧬血統実績(複/回)",
                         "Jockey": "騎手",
                         "JockeyChange": "乗替", "TrainingEval": "⏱️調教評価", "Name": "馬名",
@@ -5559,9 +5559,10 @@ if nav == "🏠 Single Race Analysis":
                         "WeightHistory": st.column_config.TextColumn("当日馬体重(増減)"),
                         "WeightCarried": st.column_config.TextColumn("斤量"),
                         "Trainer": st.column_config.TextColumn(
-                            "厩舎(ﾗﾝｸ-当ｺｰｽ勝率)",
-                            help="ﾗﾝｸ=全体3年勝率(A≥14%/B≥10%/C≥7%/D)。"
-                                 "当ｺｰｽ=今回の競馬場×馬場の3年勝率。🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。"),
+                            "厩舎(ﾗﾝｸ/当ｺｰｽ勝率)",
+                            help="例『A16%🟠(219)』=全体3年勝率ランクA(A≥14%/B≥10%/C≥7%/D)・"
+                                 "当コース(今回の競馬場×馬場)3年勝率16%・()内は当コース出走数219走。"
+                                 "🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。(N少)=10走未満。"),
                         "Bloodline": st.column_config.TextColumn("血統(父/母父)", width="large"),
                         "BloodStats": st.column_config.TextColumn("🧬血統実績(複/回)", width="small",
                                  help="父×今回条件(馬場/距離)の複勝率/単勝回収率(blood_dict.db)。🔥=回収率≥100% 💰=≥85%"),
