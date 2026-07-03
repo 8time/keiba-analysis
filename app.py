@@ -8253,23 +8253,26 @@ if nav == "🧹 消去フィルター":
                                           if (_ctx_mc and _kt) else None,
                                 '_jt3': _jt3,
                             })
-                        # --- 両列最下位(botcross)/多列弱点(multiweak): レース内で複数列がワースト級 ---
+                        # --- 両列最下位(botcross)/多列弱点(multiweak)/人気下位/騎手下位/展開2 ---
                         # (検証: botcross=誤消去2.5%/multiweak=6.0%。単独列はpriced-inで弱いが交差は強い消去)
-                        _bc_ums = _exc.bottom_both_umabans(
-                            [{'um': r['馬番'], 'spurt': r.get('_sp'), 'c4': r.get('_c4')}
-                             for r in _xrows])
-                        # multiweak: 4列を『大きいほど下位』に揃えて渡す(末脚は高いほど良いので符号反転)
-                        _mw_ums = _exc.multiweak_umabans([{'um': r['馬番'], 'cols': {
-                            'spurt': (-(r['_sp']) if r.get('_sp') is not None else None),
-                            'pos': r.get('_c4'), 'form': r.get('_form'),
-                            'ctime': r.get('_ctime'),
-                        }} for r in _xrows])
-                        # 人気下位(人気番号が大きいほど下位)/騎手実績下位(通算複勝率が低いほど下位)
-                        _pl_ums = _exc.worst_k_umabans(
-                            [{'um': r['馬番'], 'pop': r.get('人気')} for r in _xrows], 'pop')
-                        _jl_ums = _exc.worst_k_umabans(
-                            [{'um': r['馬番'], 'j': r.get('_jt3')} for r in _xrows], 'j',
-                            higher_worse=False)
+                        # getattrガード: 起動中Streamlitが旧elim_crossをキャッシュしていても落とさない(要再起動)
+                        try:
+                            _bb = getattr(_exc, 'bottom_both_umabans', None)
+                            _mw = getattr(_exc, 'multiweak_umabans', None)
+                            _wk = getattr(_exc, 'worst_k_umabans', None)
+                            _bc_ums = _bb([{'um': r['馬番'], 'spurt': r.get('_sp'), 'c4': r.get('_c4')}
+                                           for r in _xrows]) if _bb else set()
+                            _mw_ums = _mw([{'um': r['馬番'], 'cols': {
+                                'spurt': (-(r['_sp']) if r.get('_sp') is not None else None),
+                                'pos': r.get('_c4'), 'form': r.get('_form'),
+                                'ctime': r.get('_ctime'),
+                            }} for r in _xrows]) if _mw else set()
+                            _pl_ums = _wk([{'um': r['馬番'], 'pop': r.get('人気')} for r in _xrows],
+                                          'pop') if _wk else set()
+                            _jl_ums = _wk([{'um': r['馬番'], 'j': r.get('_jt3')} for r in _xrows],
+                                          'j', higher_worse=False) if _wk else set()
+                        except Exception:
+                            _bc_ums = _mw_ums = _pl_ums = _jl_ums = set()
                         for r in _xrows:
                             _add = set()
                             if r['馬番'] in _bc_ums:
@@ -8389,9 +8392,13 @@ if nav == "🧹 消去フィルター":
                     _disp_cols = ['馬番', '馬名'] + _flag_cols + ['重複']
                     # 過信しない列(赤背景×黄文字ヘッダ): 総合力下位/予測下位/展開後方(検証不可)＋
                     # PCI乖離/人気下位/騎手実績下位(検証したが人気織込み=実質エッジ弱・相手絞りの実務軸)。
-                    _caution_labels = {_exc.FLAG_LABEL[k] for k in _exc.CAUTION_KEYS if k in _exc.FLAG_LABEL}
+                    # getattrガード: 起動中Streamlitが旧elim_crossをキャッシュしていても落とさない
+                    # (新属性CAUTION_KEYS/BLUE_KEYS無しの旧版なら空=色付けだけスキップ。要アプリ再起動)
+                    _caution_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'CAUTION_KEYS', set())
+                                       if k in _exc.FLAG_LABEL}
                     # 展開2(netkeiba AI照合の💀)= 青背景×黄文字ヘッダ。
-                    _blue_labels = {_exc.FLAG_LABEL[k] for k in _exc.BLUE_KEYS if k in _exc.FLAG_LABEL}
+                    _blue_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'BLUE_KEYS', set())
+                                    if k in _exc.FLAG_LABEL}
                     try:
                         # 表示用に列名装飾(△=検証不可)＋重複→🔴重複。ヘッダ色は列位置で指定。
                         _rename = {}
