@@ -8130,6 +8130,11 @@ if nav == "🧹 消去フィルター":
                             _cdist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
                         except Exception:
                             _cdist = None
+                        _csurf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else None
+                        try:
+                            from core import corrected_time as _ctx_mc
+                        except Exception:
+                            _ctx_mc = None
                         # --- 事前平均PCI(過去走ベース)とフィールド平均からの乖離(検証済 pcidev フラグ用) ---
                         _pci_map = {}   # 馬番 -> 事前平均PCI
                         try:
@@ -8212,19 +8217,36 @@ if nav == "🧹 消去フィルター":
                                 '検証数': _vcnt,
                                 '推定複勝率': _exc.band_fukusho(_vcnt),
                                 '_lit': [k for k in _exc.FLAG_DEFS_ORDER if k in _fl],  # 点灯フラグkey一覧(○マトリクス用)
-                                '_sp': _xc_si, '_c4': (_es or {}).get('avg_c4ratio'),  # 両列最下位判定用
+                                # 両列最下位/多列弱点 判定用(レース内ランク・大きいほど下位)
+                                '_sp': _xc_si, '_c4': (_es or {}).get('avg_c4ratio'),
+                                '_form': (_es or {}).get('avg_chaku_ratio'),
+                                '_ctime': (_ctx_mc.get_figure(_kt, _csurf) or {}).get('fig')
+                                          if (_ctx_mc and _kt) else None,
                             })
-                        # --- 両列最下位(botcross): 上り3F・平均位置がともにレース内ワースト3級 ---
-                        # (検証: 複勝2-5%・誤消去2.5%。単独列はpriced-inで弱いが両列交差は強い消去)
+                        # --- 両列最下位(botcross)/多列弱点(multiweak): レース内で複数列がワースト級 ---
+                        # (検証: botcross=誤消去2.5%/multiweak=6.0%。単独列はpriced-inで弱いが交差は強い消去)
                         _bc_ums = _exc.bottom_both_umabans(
                             [{'um': r['馬番'], 'spurt': r.get('_sp'), 'c4': r.get('_c4')}
                              for r in _xrows])
+                        # multiweak: 4列を『大きいほど下位』に揃えて渡す(末脚は高いほど良いので符号反転)
+                        _mw_ums = _exc.multiweak_umabans([{'um': r['馬番'], 'cols': {
+                            'spurt': (-(r['_sp']) if r.get('_sp') is not None else None),
+                            'pos': r.get('_c4'), 'form': r.get('_form'),
+                            'ctime': r.get('_ctime'),
+                        }} for r in _xrows])
                         for r in _xrows:
-                            if r['馬番'] in _bc_ums and 'botcross' not in r['_lit']:
+                            _add = set()
+                            if r['馬番'] in _bc_ums:
+                                _add.add('botcross')
+                            if r['馬番'] in _mw_ums:
+                                _add.add('multiweak')
+                            _new = (set(r['_lit']) | _add) - set(r['_lit']) if _add else set()
+                            if _new:
                                 r['_lit'] = [k for k in _exc.FLAG_DEFS_ORDER
-                                             if k in set(r['_lit']) | {'botcross'}]
-                                r['フラグ数'] = r['フラグ数'] + 1
-                            r.pop('_sp', None); r.pop('_c4', None)
+                                             if k in set(r['_lit']) | _add]
+                                r['フラグ数'] = r['フラグ数'] + len(_new)
+                            for _tmp in ('_sp', '_c4', '_form', '_ctime'):
+                                r.pop(_tmp, None)
                         st.session_state[_xkey] = _xrows
                 _xrows = st.session_state.get(_xkey, [])
                 # --- 📊で残った馬(✅/🛟残し − 📊で外した馬)のみを対象にする ---
@@ -8297,9 +8319,9 @@ if nav == "🧹 消去フィルター":
                     _xdf = pd.DataFrame(_mat)
                     _flag_cols = [_exc.FLAG_LABEL[k] for k in _active]
                     # 検証不可フラグ(調教/総合力/予測)の列ヘッダは△印で区別。
-                    # botcrossはBAND較正外だが独立検証済のため△を付けない(誤解防止)。
+                    # botcross/multiweakはBAND較正外だが独立検証済のため△を付けない(誤解防止)。
                     _unv_cols = {_exc.FLAG_LABEL[k] for k in _active
-                                 if k in _exc.UNVERIFIED and k != 'botcross'}
+                                 if k in _exc.UNVERIFIED and k not in ('botcross', 'multiweak')}
 
                     def _dup_color(s):  # 重複数(赤系グラデ)
                         out = []

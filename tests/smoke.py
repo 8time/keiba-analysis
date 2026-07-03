@@ -481,6 +481,14 @@ def main():
         assert ec.bottom_both_umabans(horses[:5]) == set(), "小頭数で両列最下位を出してはいけない"
         # botcrossはBAND較正から除外(verified_countに入らない)
         assert 'botcross' in ec.UNVERIFIED and 'botcross' in ec.FLAG_LABEL
+        # multiweak: 4列中3列以上でワースト(大きいほど下位に揃えて渡す)
+        mh = [{'um': u, 'cols': {'spurt': u, 'pos': u, 'form': u, 'ctime': (11 - u)}}
+              for u in range(1, 11)]
+        # spurt/pos/form は um大ほど下位→ワースト3=um10,9,8。ctimeは逆(um1,2,3)。
+        # → um8,9,10 が spurt/pos/form の3列でワースト = multiweak
+        mw = ec.multiweak_umabans(mh, k=3, need=3)
+        assert mw == {8, 9, 10}, f"multiweak誤り {mw}"
+        assert 'multiweak' in ec.UNVERIFIED and 'multiweak' in ec.FLAG_LABEL
     check("消去クロス 両列最下位(botcross)", t_botcross)
 
     # ── Phase4: DB健全性 ──

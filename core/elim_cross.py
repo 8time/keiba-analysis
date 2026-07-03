@@ -39,6 +39,8 @@ FLAG_DEFS = [
     ('stress2', 'スト2',       '🐎Stressの最終予測が全馬中 下から3以内'),
     ('botcross', '両列最下位',  '上り3F(末脚)と平均位置がレース内でともにワースト3級(検証済: 複勝率2-5%・'
                                '誤消去2.5%=97.5%安全。単独列は人気織込みで弱いが両列交差は強い消去)'),
+    ('multiweak', '多列弱点',   '末脚/平均位置/近走着順/補正Tの4列のうち3列以上でレース内ワースト3級'
+                               '(検証済: 複勝率6.7%・誤消去6.0%=94%安全・約0.9頭/R。botcrossより広く消せる)'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
@@ -47,11 +49,12 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 # 後付けフラグはBANDに入れない(=二重計上を避ける)。
 #  ・train: 調教評価(過去データがDBに無い)
 #  ・battle/proj: ライブ生成スコアで再構築不可、かつ人気/オッズを内包し他フラグと相関
-#  ・botcross: 独立検証済(複勝2-5%)だがBAND較正外。slow3f/backの相対版で二重計上になるため除外。
-UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2', 'botcross'}
+#  ・botcross/multiweak: 独立検証済だがBAND較正外。既存列の相対版で二重計上になるため除外。
+UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2', 'botcross', 'multiweak'}
 
 BOTCROSS_K = 3  # レース内ワースト何頭を『両列最下位』の消去候補とみなすか(検証はK=3)
 BOTCROSS_MIN_FIELD = 8  # これ未満の頭数では両列交差を判定しない(小頭数の過剰消去防止)
+MULTIWEAK_NEED = 3  # 4列中いくつでワースト入りしたら『多列弱点』とするか(検証はneed=3)
 # BAND(推定複勝率)の根拠となる検証済みフラグのみ
 VERIFIED_ORDER = [k for k in FLAG_DEFS_ORDER if k not in UNVERIFIED]
 
@@ -174,3 +177,25 @@ def bottom_both_umabans(horses, k=BOTCROSS_K, min_field=BOTCROSS_MIN_FIELD):
     sp_bot = {h['um'] for h in sorted(sp, key=lambda h: h['spurt'])[:k]}
     c4_bot = {h['um'] for h in sorted(c4, key=lambda h: -h['c4'])[:k]}
     return sp_bot & c4_bot
+
+
+def multiweak_umabans(horses, k=BOTCROSS_K, need=MULTIWEAK_NEED, min_field=BOTCROSS_MIN_FIELD):
+    """4列(末脚/平均位置/近走着順/補正T)のうち need 列以上でレース内ワーストk級の馬番集合。
+
+    horses: [{'um':馬番, 'cols':{'spurt':v,'pos':v,'form':v,'ctime':v}}] で
+    各値は『大きいほど下位(悪い)』に揃えて渡す(欠損はNone=その列は不参加)。
+    検証(scripts/elim_multicol_backtest.py): ≥3列ワースト3=複勝6.7%・誤消去6.0%・約0.9頭/R。
+    botcross(2列交差)より広く消せる中程度の安全消去。
+    """
+    keys = set()
+    for h in horses:
+        keys |= set((h.get('cols') or {}).keys())
+    cnt = {}
+    for c in keys:
+        valid = [h for h in horses if (h.get('cols') or {}).get(c) is not None]
+        if len(valid) < min_field:
+            continue
+        valid.sort(key=lambda h: -h['cols'][c])
+        for h in valid[:k]:
+            cnt[h['um']] = cnt.get(h['um'], 0) + 1
+    return {u for u, v in cnt.items() if v >= need}

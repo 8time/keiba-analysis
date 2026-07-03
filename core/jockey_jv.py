@@ -653,12 +653,16 @@ def horse_elim_stats(ketto_num, before_key=None, db_path=None):
         f"WHERE {where} ORDER BY r.race_key DESC LIMIT 5", params).fetchall()
     con.close()
     if not rows:
-        return {'last5_top3': [], 'avg_c4ratio': None, 'c4_n': 0, 'runs': 0}
+        return {'last5_top3': [], 'avg_c4ratio': None, 'c4_n': 0, 'runs': 0,
+                'avg_chaku_ratio': None}
     last5 = [1 if (c and c <= 3) else 0 for (c, _, _) in rows]
     ratios = [c4 / st for (_, c4, st) in rows[:3] if c4 and st]
     avg_c4 = (sum(ratios) / len(ratios)) if ratios else None
+    # 近走着順(着順/頭数)の直近3走平均=近走成績の下位判定(0=1着相当,1=最下位相当)
+    chr = [c / st for (c, _, st) in rows[:3] if c and st]
+    avg_chaku = (sum(chr) / len(chr)) if chr else None
     return {'last5_top3': last5, 'avg_c4ratio': avg_c4,
-            'c4_n': len(ratios), 'runs': len(rows)}
+            'c4_n': len(ratios), 'runs': len(rows), 'avg_chaku_ratio': avg_chaku}
 
 
 def jockey_factor_by_name(jockey_name, horse_name=None, venue=None, distance=None,

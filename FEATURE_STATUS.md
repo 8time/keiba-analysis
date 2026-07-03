@@ -34,6 +34,7 @@
 | ├ 強適消去エンジン | 半分消去＋穴1頭救出＋危険人気馬検知 | ✅ | [[project_elimination_engine]] | — |
 | ├ 消去クロステーブル | 来にくさフラグ重複→複勝率低下の可視化 | ✅ | 重複数で単調低下 | — |
 | ├─ 両列最下位(botcross)フラグ | 上り3F(末脚)と平均位置がレース内ともにワースト3級の馬を消去候補フラグ化。単独列は人気織込みで弱いが両列交差は強い消去 | ✅ | scripts/elim_column_rank_backtest.py: 両列ワースト複勝率2.1%(2021-25)/2.2%(holdout2025)・誤消去2.5%=97.5%安全。単独列は残差-0.6〜-1.0pp(priced-in)。elim_cross.bottom_both_umabans。BAND較正外 | 2026-07-03 |
+| ├─ 多列弱点(multiweak)フラグ | 末脚/平均位置/近走着順/補正Tの4列中3列以上でレース内ワースト3級。botcrossより広く消せる中安全消去 | ✅ | scripts/elim_multicol_backtest.py: ≥3列複勝6.7%・誤消去6.0%=94%安全・約0.9頭/R。単独列は全て-0.4〜-1.5pp(priced-in)。安全に3頭消せる単一条件は無い(~1頭/Rが安全上限)。elim_cross.multiweak_umabans+jockey_jv.horse_elim_stats(avg_chaku_ratio) | 2026-07-03 |
 | ├ 3連複フォーメーション | ✅残し→軸/対抗、🎯穴→押さえ自動配置 | 🟢 | kf_form警告修正(2ca7a8c) | 2026-06-23 |
 | ├ netkeibaレースリンク | 入力欄直下に出馬表リンク | 🟢 | (2ca7a8c) | 2026-06-23 |
 | 🔍 Race Scanner (Batch) | 日付→全レース取得→『買える順』(✅買える/⏸見送り/△様子見)で並替 | 🟢 | ③Gate化・決着タイプ強化版 | 2026-06-24 |
