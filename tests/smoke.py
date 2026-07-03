@@ -399,6 +399,11 @@ def main():
         # axis_demote: severity>=2はマーク置換
         assert dg.axis_demote('◎ 60%', r).startswith('⚠危険'), "severity>=2でマーク置換"
         assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
+        # 半年休み明けはソフト理由: 単独では危険にしない(精度低・NAR誤爆対策)
+        assert dg.danger_veto(ninki=1, layoff_days=200)['severity'] == 0, "休み明け単独は危険にしない"
+        # 他の硬い理由と重なった時のみ算入
+        _rs = dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)
+        assert _rs['severity'] == 2 and '半年休み明け' in _rs['reasons'], f"休明+硬でstack, got {_rs}"
     check("danger_gate.danger_veto / axis_demote", t_danger_gate)
 
     # ── Phase3.5: 実行時バグ/契約ガード(py_compileでは拾えない) ──
