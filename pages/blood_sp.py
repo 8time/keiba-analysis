@@ -132,7 +132,73 @@ def render():
                 "SELECT r.umaban, r.ketto_num, r.bamei, r.chakujun, r.ninki "
                 "FROM results r WHERE r.race_id=? AND r.chakujun>0 ORDER BY r.umaban", (rid,)).fetchall()
             if not race or not horses:
-                st.warning("そのレースIDは jravan.db に見つかりません（未取込 or 入力ミス）。過去の中央レースで試してください。")
+                # ── ライブ/未取込フォールバック: jravan.db未取込(直近レース・当日レース等)でも
+                #    main.get_bloodline_data(netkeiba出馬表を直接scrape)はjravan非依存で
+                #    sire/broodmareSireを返すため、血統スコアだけは表示できる。
+                #    実着順との的中チェックは(未出走 or 結果未取込のため)非表示。
+                _fb_ok = False
+                try:
+                    from core.scraper import get_race_data as _fb_grd
+                    import main as _fb_main
+                    _fdf = _fb_grd(rid, use_storage=False)
+                    if _fdf is not None and not _fdf.empty and 'Umaban' in _fdf.columns:
+                        _fsurf_raw = str(_fdf['CurrentSurface'].iloc[0]) if 'CurrentSurface' in _fdf.columns else ''
+                        _fsurf = '芝' if '芝' in _fsurf_raw else ('ダート' if _fsurf_raw else None)
+                        _fdist = None
+                        try:
+                            _fdist = int(pd.to_numeric(_fdf['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _fdist = None
+                        _fmeta = _fdf.attrs.get('metadata', {}) or {}
+                        _fname = _fmeta.get('RaceName', '') or rid
+                        _bres = _fb_main.get_bloodline_data(rid, track_override=_fsurf, dist_override=_fdist)
+                        _bdata = (_bres or {}).get('data', [])
+                        if _bdata:
+                            _fb_ok = True
+                            _fband = _band(_fdist)
+                            st.info("⚠️ jravan.db未取込（直近/当日レース）のためnetkeibaからライブ取得して表示中。"
+                                    "実着順との的中チェックはできません。")
+                            st.markdown(f"**{_fname}**　{_fsurf or '?'}{_fdist or '?'}m（{_fband}）　{len(_bdata)}頭")
+                            _pop_map = {}
+                            for _, _pr in _fdf.iterrows():
+                                try:
+                                    _pu = int(pd.to_numeric(_pr.get('Umaban'), errors='coerce'))
+                                except Exception:
+                                    continue
+                                _pop_map[_pu] = _pr.get('Popularity')
+                            _frows = []
+                            for _d in _bdata:
+                                try:
+                                    _fum = int(_d.get('number'))
+                                except (TypeError, ValueError):
+                                    continue
+                                _fsire = _d.get('sire') or '-'
+                                _fbms = _d.get('broodmareSire') or '-'
+                                _fs = _lookup(blood, 'sire_stats', _fsire, _fsurf, _fband)
+                                _fb_ = _lookup(blood, 'bms_stats', _fbms, _fsurf, _fband)
+                                _fs_adj = _fs['adj_place'] if _fs else _POP_PLACE
+                                _fb_adj = _fb_['adj_place'] if _fb_ else _POP_PLACE
+                                _fscore = (w_sire * _fs_adj + w_bms * _fb_adj) * 100
+                                _fpop = _pop_map.get(_fum)
+                                _frows.append({
+                                    '馬番': _fum, '馬名': _d.get('name', ''),
+                                    '父': _fsire, '母父': _fbms,
+                                    '父複勝%(n)': f"{_fs['place_rate']:.0f}%({_fs['runs']})" if _fs else '-',
+                                    '母父複勝%(n)': f"{_fb_['place_rate']:.0f}%({_fb_['runs']})" if _fb_ else '-',
+                                    '血統スコア': round(_fscore, 1),
+                                    '人気': _fpop if _fpop and _fpop < 90 else '-',
+                                })
+                            _fdf2 = (pd.DataFrame(_frows).sort_values('血統スコア', ascending=False)
+                                     .reset_index(drop=True))
+                            _fdf2.insert(0, '血統順', range(1, len(_fdf2) + 1))
+                            st.dataframe(_fdf2, hide_index=True, use_container_width=True)
+                            st.caption("血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
+                                       "ライブ取得版のため道悪判定・馬場情報は非表示。")
+                except Exception as _fb_e:
+                    st.caption(f"ライブ取得フォールバックエラー: {_fb_e}")
+                if not _fb_ok:
+                    st.warning("そのレースIDは jravan.db に見つからず、ライブ取得にも失敗しました"
+                               "（レースID・出馬表の公開状況をご確認ください）。")
             else:
                 surface, kyori, rname, _bsh, _bdt, _yr, _md, _jyo = race
                 band = _band(kyori)
