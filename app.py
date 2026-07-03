@@ -2276,6 +2276,17 @@ if nav == "🏠 Single Race Analysis":
                         {"項目": "クラス", "値": meta.get('class', '-'), "ステータス": "✅ 実力勝負（最高峰重賞）" if any(g in str(meta.get('class', '')) for g in ['G1', 'G2', 'G3', 'GI', 'GII', 'GIII']) else ("✅ 実力勝負（紛れ少）" if 'オープン' in str(meta.get('class', '')) else ("✅ 正常（実力準拠）" if any(c in str(meta.get('class', '')) for c in ['1勝クラス', '2勝クラス', '3勝クラス']) else ("⚠️ 荒れ警戒（能力未確定）" if any(c in str(meta.get('class', '')) for c in ['新馬', '未勝利']) else "✅ 一般競走"))) if meta.get('class', '-') != '-' else "情報なし"},
                         {"項目": "斤量ルール", "値": meta.get('weight_rule', '-'), "ステータス": "⚠️ ハンデ戦: 波乱リスク高" if meta.get('is_handicap') else "✅ 定量/馬齢"},
                     ]
+                    # 場×人気の軸信頼度(検証済コースバイアス: 東京芝1-3人気+3.7pp/小倉芝-3.0pp)
+                    try:
+                        from core import blood_course as _bc_ev
+                        _ev_surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else ''
+                        _ev_vf = _bc_ev.venue_fav_note(str(race_id_input)[4:6], _ev_surf, 1)
+                        if _ev_vf:
+                            evidence_list.append({
+                                "項目": "コース軸信頼度", "値": _ev_vf['detail'],
+                                "ステータス": _ev_vf['flag'] + "(検証済・軸マークに🏟️表示)"})
+                    except Exception:
+                        pass
                     
                     # Holding days logic with regex to support venue prefix
                     hd = meta.get('holding_days', '-')
@@ -3267,6 +3278,15 @@ if nav == "🏠 Single Race Analysis":
                     with st.expander("🗺️ 展開マップ（コーナー別 想定位置取り）", expanded=False):
                         try:
                             from core import pace_map as _pmap
+                            # 場×人気の軸信頼度(検証済コースバイアス)を展開文脈として表示
+                            try:
+                                from core import blood_course as _bc_pm
+                                _pm_surf0 = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else ''
+                                _pm_vf = _bc_pm.venue_fav_note(str(race_id_input)[4:6], _pm_surf0, 1)
+                                if _pm_vf:
+                                    st.caption(f"🏟️ コース軸信頼度: {_pm_vf['detail']}（検証済・展開でなく場×人気の複勝残差）")
+                            except Exception:
+                                pass
                             _pm_psm = _pace.get('position_score_map', {}) if '_pace' in dir() else {}
                             _pm_plm = _pace.get('positional_map', {}) if '_pace' in dir() else {}
                             _pm_horses = []
@@ -5109,6 +5129,15 @@ if nav == "🏠 Single Race Analysis":
                                 _txt = _dg.axis_demote(_txt, _vr)
                             except Exception:
                                 pass
+                            # 場×人気の軸信頼度(検証済コースバイアス: 東京芝+3.7pp/小倉芝-3.0pp)
+                            try:
+                                from core import blood_course as _bcx
+                                _vf = _bcx.venue_fav_note(
+                                    str(race_id_input)[4:6], _dg_surf, _h.get('pop'))
+                                if _vf:
+                                    _txt += ('🏟️↑' if _vf['shift'] > 0 else '🏟️↓')
+                            except Exception:
+                                pass
                             try:
                                 _uma2mark[int(_h['umaban'])] = _txt
                             except Exception:
@@ -5147,6 +5176,56 @@ if nav == "🏠 Single Race Analysis":
                         view_df['CorrectedT'] = view_df['Umaban'].apply(
                             lambda u: _ct_cell(int(pd.to_numeric(u, errors='coerce')))
                             if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
+                    except Exception:
+                        pass
+
+                    # --- 🏇騎手力/乗替(JPower) 列: 『騎手のみの力』偏差値＋前走騎手との差分 ---
+                    # 検証=scripts/jockey_power_backtest.py(五分位単調・holdout持続)。
+                    # 乗替差分は表示のみ(差分自体のエッジは未検証)。NAR専業騎手はオッズ未収録で'-'。
+                    try:
+                        _jpw_key = f"jpower_col_{race_id_input}"
+                        if _jpw_key not in st.session_state:
+                            from core import jockey_jv as _jjp
+                            _jp_cache = {}
+
+                            def _jp_of(_jn):
+                                if not _jn:
+                                    return None
+                                if _jn not in _jp_cache:
+                                    _full = _jjp.resolve_jockey_name(_jn)
+                                    _jp_cache[_jn] = (_jjp.jockey_power(_full).get('jpower'), _full)
+                                return _jp_cache[_jn]
+
+                            _jp_cells = {}
+                            for _, _rj in view_df.iterrows():
+                                _ujn = pd.to_numeric(_rj.get('Umaban'), errors='coerce')
+                                if pd.isnull(_ujn):
+                                    continue
+                                _cur_nm = str(_rj.get('Jockey', '') or '')
+                                _cur = _jp_of(_cur_nm)
+                                if not _cur or _cur[0] is None:
+                                    _jp_cells[int(_ujn)] = '-'
+                                    continue
+                                _cell = f"{_cur[0]:.0f}"
+                                # 前走騎手(jravan)との乗替差分
+                                try:
+                                    _ktj, _ = _jjp.resolve_horse(str(_rj.get('Name', '')))
+                                    _pvj = (_jjp.horse_recent_context(_ktj) or {}).get('prev_jockey') if _ktj else None
+                                    if _pvj and _pvj != _cur[1]:
+                                        _pv = _jp_of(_pvj)
+                                        if _pv and _pv[0] is not None:
+                                            _d = _cur[0] - _pv[0]
+                                            _arw = '▲' if _d >= 3 else ('▽' if _d <= -3 else '→')
+                                            _cell += f"({_arw}{_d:+.0f})"
+                                except Exception:
+                                    pass
+                                _jp_cells[int(_ujn)] = _cell
+                            st.session_state[_jpw_key] = _jp_cells
+                        _jp_cells = st.session_state.get(_jpw_key, {})
+                        if _jp_cells:
+                            view_df['JPower'] = view_df['Umaban'].apply(
+                                lambda u: _jp_cells.get(int(pd.to_numeric(u, errors='coerce')), '-')
+                                if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
                     except Exception:
                         pass
 
@@ -5254,7 +5333,7 @@ if nav == "🏠 Single Race Analysis":
                         view_df['TrainingEval'] = df['TrainingEval']
 
                     # Merge previous screenshot columns with latest advanced columns
-                    cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'AxisMark', 'Jockey', 'Signal',
+                    cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'AxisMark', 'Jockey', 'JPower', 'Signal',
                             'Projected Score', 'BattleScore', 'CorrectedT', 'LTR', 'SpurtIdx', 'AvgPosition',
                             'DeployScoreLabel', 'PCILabel', 'Pos600m', 'FrontCollapseEffect',
                             'DensityPenaltyLabel',
@@ -5299,6 +5378,7 @@ if nav == "🏠 Single Race Analysis":
                         "JockeyChange": "乗替", "TrainingEval": "⏱️調教評価", "Name": "馬名",
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
+                        "JPower": "🏇騎手力(乗替)",
                         "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "SpurtIdx": "🔥末脚指数", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス", "Waku": "枠",
                         "BattleScore": "🔥総合戦闘力",
@@ -5542,6 +5622,11 @@ if nav == "🏠 Single Race Analysis":
                         "LTR": st.column_config.TextColumn(
                             "🤖検証AI",
                             help="LightGBM LambdaRankの予測順位スコア(検証済みエッジ統合・Win recall@7=0.936)"),
+                        "JPower": st.column_config.TextColumn(
+                            "🏇騎手力(乗替)",
+                            help="騎手のみの力の偏差値(50=平均・オッズ期待値比を偏差値化・検証済で持続)。"
+                                 "()内=前走騎手との差分: ▲+3以上=鞍上強化/▽-3以下=弱化/→=同等(差分は表示のみ・未検証)。"
+                                 "NAR専業騎手はオッズ未収録で'-'"),
                     }
 
                     try:
