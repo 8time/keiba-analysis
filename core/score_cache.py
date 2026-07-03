@@ -85,6 +85,40 @@ def read_rear(race_id):
         return None
 
 
+def _tenkai_danger_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.tenkai2.json")
+
+
+def write_tenkai_danger(race_id, umaban_set):
+    """netkeiba AI展開照合の💀(危険位置一致=両AIが後方帯で合意)馬番を保存(🧹消去クロスから参照)。"""
+    if not race_id:
+        return
+    try:
+        ums = sorted(int(u) for u in (umaban_set or []) if u is not None)
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_tenkai_danger_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'dan': ums},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_tenkai_danger(race_id):
+    """{馬番(int), ...} or None。"""
+    if not race_id:
+        return None
+    p = _tenkai_danger_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return set(int(u) for u in (data.get('dan') or []))
+    except Exception:
+        return None
+
+
 def _gate_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(_DIR, f"{rid}.gate.json")

@@ -502,6 +502,12 @@ def main():
         assert wj == {1, 2, 3}, f"騎手下位誤り {wj}"
         for k in ('poplow', 'jlow'):
             assert k in ec.UNVERIFIED and k in ec.CAUTION_KEYS and k in ec.FLAG_LABEL
+        # 展開2(netkeiba照合💀・青ヘッダ)＋ディスク橋渡し
+        assert 'tenkai2' in ec.UNVERIFIED and 'tenkai2' in ec.BLUE_KEYS and 'tenkai2' in ec.FLAG_LABEL
+        from core import score_cache as _sc
+        _rid = '__smoke_t2__'
+        _sc.write_tenkai_danger(_rid, {3, 7})
+        assert _sc.read_tenkai_danger(_rid) == {3, 7}, "展開2ディスク橋渡し不整合"
     check("消去クロス 両列最下位(botcross)", t_botcross)
 
     # ── Phase4: DB健全性 ──

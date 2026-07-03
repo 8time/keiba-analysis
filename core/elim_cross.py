@@ -46,6 +46,9 @@ FLAG_DEFS = [
     ('jlow',     '騎手実績下位', 'レース内で騎手の通算複勝率が最も低い側3頭(検証: 複勝率11.5%・残差-0.5pp)。'
                                '判断は通算複勝率が最適=直近成績/連敗は予測に効かない(検証済の誤謬)。'
                                'これも人気に相関する実務軸で独立エッジは弱い'),
+    ('tenkai2',  '展開2',       'netkeiba AI展開予測との照合で💀(危険位置一致)=netkeibaの4コーナー隊列と'
+                               'アプリの到達位置が"ともに後方帯"で合意した馬。展開後方と意味は重なるが'
+                               '2つのAIの合意点。🏠SRAの🤝照合を実行すると点灯(展開恩恵はpriced-in・表示補助)'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
@@ -58,9 +61,11 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 #  ・poplow/jlow: 市場評価(人気)・騎手実績=priced-in軸。相手絞りの実務軸だがBAND(独立弱点の
 #    重ね)には入れない(人気そのものを重複に足すと重複が人気を追うだけになるため)。
 UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2',
-              'botcross', 'multiweak', 'poplow', 'jlow'}
+              'botcross', 'multiweak', 'poplow', 'jlow', 'tenkai2'}
 # 『過信しない列』= 重複には数えるが独立エッジでない(表示で赤背景×黄文字にする)。
 CAUTION_KEYS = {'battle', 'proj', 'pmback', 'pcidev', 'poplow', 'jlow'}
+# 『展開2』(netkeiba AI照合の💀)= ヘッダを青背景×黄文字にする列。
+BLUE_KEYS = {'tenkai2'}
 
 BOTCROSS_K = 3  # レース内ワースト何頭を『両列最下位』の消去候補とみなすか(検証はK=3)
 BOTCROSS_MIN_FIELD = 8  # これ未満の頭数では両列交差を判定しない(小頭数の過剰消去防止)

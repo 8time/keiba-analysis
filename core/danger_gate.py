@@ -7,9 +7,10 @@
 - 道悪×サンデー瞬発/ステゴ系(verified_baba_blood の FADE)
 - 外有利日×内枠×1-3番人気(verified_emp_bias_danger)
 - 牝×冬春fade(feedback_folk_signals_overbet)
-- トップ騎手乗替/斤量比≥12.6%/前走逃げ(project_elimination_engine dangerfav検証)
-- 半年休み明けは『ソフト理由』=検証済-7ppだが単独の絶対複勝率45-60%と高く精度が低い
-  (＋NARはjravan直近が疎で誤爆)ため、他の硬い危険理由がある時のみseverityに算入
+- トップ騎手乗替/斤量比≥12.6%(project_elimination_engine dangerfav検証)
+- 『ソフト理由』(他に硬い危険がある時のみseverityに算入・単独では非表示):
+  半年休み明け(-7ppだが絶対複勝率45-60%と高く精度低・NARはjravan疎で誤爆)/
+  前走逃げ(dangerfav残差+0.005≒0で単独では弱い)
 - Stressはリーク無しの3つのみ(verified_stress_debuff): 小柄×馬体減/芝×後方ぐせ/馬体増
 
 severity = 該当した危険理由数。使い分け(検証台帳の相対de-rank方針):
@@ -97,7 +98,8 @@ def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
     # 絶対複勝率は45〜60%(1番人気は60%)と高く単独では"来る"ことが多い＝精度が低い。
     # 加えてNAR/直近レースはjravanの収録が疎で休養日数を過大算出し誤爆する。
     # → 他に硬い危険理由がある時のみ severity に算入(単独では0＝表示しない)。
-    _SOFT = {'半年休み明け'}
+    # 前走逃げも同様に単独では弱い(dangerfav検証 残差+0.005≒0)=ソフト理由。
+    _SOFT = {'半年休み明け', '前走逃げ'}
     hard = [r for r in reasons if r not in _SOFT]
     soft = [r for r in reasons if r in _SOFT]
     final = hard + (soft if hard else [])

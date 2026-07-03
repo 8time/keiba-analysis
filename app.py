@@ -3312,6 +3312,14 @@ if nav == "🏠 Single Race Analysis":
                                     _app_left = {h['umaban']: h['score'] for h in _pm_horses}
                                     _app_bands = _ait.band_by_left(_app_left)
                                     _icons = _ait.agreement_icons(_nkt_bands, _app_bands)
+                                    # 💀(危険位置一致)を🧹消去クロス『展開2』へディスク橋渡し
+                                    try:
+                                        from core import score_cache as _sc_t2
+                                        _sc_t2.write_tenkai_danger(
+                                            race_id_input,
+                                            {u for u, v in _icons.items() if v == '💀'})
+                                    except Exception:
+                                        pass
                                     _nkt_rows = []
                                     for _h in sorted(_pm_horses, key=lambda x: x['umaban']):
                                         _u = _h['umaban']
@@ -8132,6 +8140,11 @@ if nav == "🧹 消去フィルター":
                             _pm_rear = _scx2.read_rear(race_id_input) or set()
                         except Exception:
                             _pm_rear = set()
+                        # netkeiba AI展開照合の💀(危険位置一致)→『展開2』フラグ(SRAで🤝照合実行時に保存)
+                        try:
+                            _t2_dan = _scx2.read_tenkai_danger(race_id_input) or set()
+                        except Exception:
+                            _t2_dan = set()
                         _rdate = str(metadata.get('date_val', '') or '')
                         try:
                             _cdist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
@@ -8267,6 +8280,8 @@ if nav == "🧹 消去フィルター":
                                 _add.add('poplow')
                             if r['馬番'] in _jl_ums:
                                 _add.add('jlow')
+                            if r['馬番'] in _t2_dan:
+                                _add.add('tenkai2')
                             _new = _add - set(r['_lit'])
                             if _new:
                                 r['_lit'] = [k for k in _exc.FLAG_DEFS_ORDER
@@ -8375,6 +8390,8 @@ if nav == "🧹 消去フィルター":
                     # 過信しない列(赤背景×黄文字ヘッダ): 総合力下位/予測下位/展開後方(検証不可)＋
                     # PCI乖離/人気下位/騎手実績下位(検証したが人気織込み=実質エッジ弱・相手絞りの実務軸)。
                     _caution_labels = {_exc.FLAG_LABEL[k] for k in _exc.CAUTION_KEYS if k in _exc.FLAG_LABEL}
+                    # 展開2(netkeiba AI照合の💀)= 青背景×黄文字ヘッダ。
+                    _blue_labels = {_exc.FLAG_LABEL[k] for k in _exc.BLUE_KEYS if k in _exc.FLAG_LABEL}
                     try:
                         # 表示用に列名装飾(△=検証不可)＋重複→🔴重複。ヘッダ色は列位置で指定。
                         _rename = {}
@@ -8383,8 +8400,9 @@ if nav == "🧹 消去フィルター":
                         _rename['重複'] = '🔴重複'
                         _dispdf = _xdf[_disp_cols].rename(columns=_rename)
                         _flag_disp = [_rename[c] for c in _flag_cols]
-                        # 馬番/馬名(先頭2列)の後にフラグ列 → caution列の表示位置
+                        # 馬番/馬名(先頭2列)の後にフラグ列 → caution/blue列の表示位置
                         _caution_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _caution_labels]
+                        _blue_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _blue_labels]
                         _sty = _dispdf.style.hide(axis='index')
                         _sty = _sty.apply(_dup_color, subset=['🔴重複'])
                         if _flag_disp:
@@ -8404,6 +8422,11 @@ if nav == "🧹 消去フィルター":
                             _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
                                                 'props': [('background-color', '#c0392b'), ('color', '#ffff00'),
                                                           ('font-weight', 'bold')]})
+                        # 展開2(netkeiba AI照合💀)のヘッダ = 青背景×黄文字
+                        for _p in _blue_pos:
+                            _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
+                                                'props': [('background-color', '#1565C0'), ('color', '#ffff00'),
+                                                          ('font-weight', 'bold')]})
                         _sty = _sty.set_table_styles(_tbl_styles, overwrite=False)
                         st.markdown(f'<div style="overflow-x:auto">{_sty.to_html()}</div>',
                                     unsafe_allow_html=True)
@@ -8418,7 +8441,9 @@ if nav == "🧹 消去フィルター":
                                "🟥赤背景×黄文字のヘッダ列(総合力下位/予測下位/展開後方/PCI乖離/人気下位/騎手実績下位)は"
                                "**過信しない列**＝重複には数えるが、これらが重複の主因なら消さない判断もできる。"
                                "人気下位=市場評価そのもの/騎手実績下位=通算複勝率(直近成績・連敗は予測に効かない検証済)"
-                               "/PCI乖離=人気織込み。いずれも実務の相手絞り軸だが独立エッジは弱い。")
+                               "/PCI乖離=人気織込み。いずれも実務の相手絞り軸だが独立エッジは弱い。"
+                               "🟦青背景×黄文字の『展開2』=netkeiba AI展開照合の💀(両AIが後方帯で合意)。"
+                               "🏠SRAの🤝照合を実行すると点灯(未実行なら空)。")
                     _heavy = _xdf[_xdf['重複'] >= 4]
                     if not _heavy.empty:
                         st.error("🧹 消去候補（弱点重複4つ以上）: "
