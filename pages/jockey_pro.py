@@ -226,7 +226,7 @@ def render():
                             _fb_rows.append({
                                 "馬番": e.get('umaban'), "騎手": jk,
                                 "馬": e.get('horse_name', ''), "人気": e.get('popularity', 99),
-                                "騎手力": _fb_jp.get('jpower') if _fb_jp.get('jpower') is not None else "-",
+                                "騎手力": f"{_fb_jp['jpower']:.1f}" if _fb_jp.get('jpower') is not None else "-",
                                 "全体勝率": f"{ov['win']*100:.0f}%",
                                 "全体複勝": f"{ov['top3']*100:.0f}%",
                                 f"{_fb_venue or '当場'}連対": (
@@ -275,7 +275,7 @@ def render():
                     _combo = (f"{hcombo['top3']*100:.0f}%/{hcombo['rides']}走" if hcombo['rides'] > 0 else "初")
                     _jrows.append({
                         "馬番": um, "騎手": jk, "馬": bamei, "人気": ninki,
-                        "騎手力": _jp.get('jpower') if _jp.get('jpower') is not None else "-",
+                        "騎手力": f"{_jp['jpower']:.1f}" if _jp.get('jpower') is not None else "-",
                         "全体勝率": f"{ov['win']*100:.0f}%", "全体複勝": f"{ov['top3']*100:.0f}%",
                         f"{_venue}連対": f"{vstat.get('top2',0)*100:.0f}%/{vstat.get('rides',0)}走",
                         "黄金ライン(対調教師)": _gold,
@@ -729,7 +729,7 @@ def render():
                     _jn3 = _jjv3.resolve_jockey_name(_e.get('jockey_name', ''))
                     _jpr = _jjv3.jockey_power(_jn3) if _jn3 else {}
                     if _jpr.get('jpower') is not None:
-                        _jpw = _jpr['jpower']
+                        _jpw = f"{_jpr['jpower']:.1f}"
                 except Exception:
                     pass
                 scored.append({
