@@ -120,6 +120,11 @@ def render():
     st.subheader(f"{race_name}　{surface}{dist}m　{n_horses}頭")
 
     # ── Race Scanner連携: レースレベルの荒れ度+決着タイプ ──
+    vs = None
+    try:
+        from core import value_scanner as vs
+    except Exception:
+        vs = None
     _rv_label = None
     if vs:
         _odds_all = [_safe_float(r.get('Odds')) for _, r in df.iterrows()
@@ -166,12 +171,6 @@ def render():
     _tb = None
     try:
         from core import track_bias as _tb
-    except Exception:
-        pass
-
-    vs = None
-    try:
-        from core import value_scanner as vs
     except Exception:
         pass
 
