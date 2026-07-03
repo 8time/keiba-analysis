@@ -21,6 +21,11 @@ try:
 except Exception:
     _tb = None
 
+try:
+    from core import blood_course as _bc
+except Exception:
+    _bc = None
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _JV_DB = os.path.join(_ROOT, 'data', 'jravan.db')
 _BLOOD_DB = os.path.join(_ROOT, 'data', 'blood_dict.db')
@@ -96,8 +101,10 @@ def render():
     st.caption("血統だけでどこまで当たるかを試す実験場。父(種牡馬)・母父(BMS)の条件別成績で出走馬を"
                "『血統スコア』順に並べ、実着順と見比べます。"
                "⚠血統は予測(着順当て)には完全に織込み済み(検証: 父×馬場cond2・母父/ニックスcond6とも"
-               "LTRに上乗せ無し)。唯一の妙味は『道悪×血統×人気上位』(検証済→track_biasに配線済)。"
-               "下表の『道悪判定』列がその検証済みシグナル。")
+               "LTRに上乗せ無し)。**血統×コース形状(直線長/坂)・父×当該場コース適性も織込み済み**"
+               "(scripts/blood_course_backtest.py: 生き残りは全て場の効果の交絡・父×場tierは残差≈0)。"
+               "実在する妙味は①『道悪×血統×人気上位』(道悪判定列・track_bias配線済) "
+               "②『場×人気の軸信頼度』=東京芝1-3人気+3.7pp/小倉芝-3.0pp(コース軸補正列・血統ではなく場の効果)。")
 
     blood = _ro(_BLOOD_DB)
     jv = _ro(_JV_DB)
@@ -143,6 +150,13 @@ def render():
                     _moist = None
                 _mtxt = f"・含水{_moist:.1f}%" if _moist is not None else ""
                 st.markdown(f"**{rname or rid}**　{surface}{kyori}m（{band}）　馬場:{baba}{_mtxt}　{len(horses)}頭")
+                # ── 検証済み: 場×人気の軸信頼度(コースバイアス・血統ではない) ──
+                _vfn = _bc.venue_fav_note(_jyo, surface, ninki=1) if _bc else None
+                if _vfn:
+                    (st.success if _vfn['shift'] > 0 else st.warning)(
+                        f"{_vfn['flag']} {_vfn['detail']} — このコースの1-3番人気は"
+                        f"人気(頭数補正後)より複勝{_vfn['shift']:+.1f}pp"
+                        f"（検証済・血統ではなく場の効果）")
                 rows = []
                 for um, ketto, bamei, chaku, ninki in horses:
                     h = jv.execute("SELECT sire, bms FROM horses WHERE ketto_num=? LIMIT 1", (str(ketto),)).fetchone()
@@ -162,12 +176,22 @@ def render():
                             _dm = _tb.dirt_moisture_bloodtype(sire, _moist)
                             if _dm:
                                 _verdict = _dm['flag']
+                    # 父系統(大系統・アンカー遡上)。表示用=血統×コースはpriced-in検証済
+                    _line = _bc.sire_line(sire) if (_bc and sire) else '-'
+                    # 場×人気の軸補正(1-3番人気のみ・検証済コースバイアス)
+                    _axnote = ''
+                    if _bc and ninki and 1 <= int(ninki) <= 3:
+                        _vf = _bc.venue_fav_note(_jyo, surface, ninki)
+                        if _vf:
+                            _axnote = _vf['flag']
                     rows.append({
-                        '馬番': um, '馬名': bamei, '父': sire or '-', '母父': bms or '-',
+                        '馬番': um, '馬名': bamei, '父': sire or '-', '父系統': _line,
+                        '母父': bms or '-',
                         '父複勝%(n)': f"{s['place_rate']:.0f}%({s['runs']})" if s else '-',
                         '母父複勝%(n)': f"{b['place_rate']:.0f}%({b['runs']})" if b else '-',
                         '血統スコア': round(score, 1),
                         '道悪判定': _verdict,
+                        'コース軸補正': _axnote or '-',
                         '人気': ninki if ninki and ninki < 90 else '-',
                         '着順': chaku,
                     })
@@ -194,9 +218,11 @@ def render():
                              hide_index=True, use_container_width=True)
                 st.caption("黄=1着 / 緑=2-3着。血統順と着順がどれだけ一致するか観察。"
                            "血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
+                           "『父系統』=アンカー遡上の大系統(表示用・系統×コースは織込み済で単独エッジなし)。"
                            "『道悪判定』🟢道悪軸=ダ重不良でシニミニ系等が好走(危険人気から免除)/"
                            "⚠瞬発系道悪=芝重不良でディープ・ステゴ系の人気馬は割引(検証済)。"
-                           "※この妙味は人気上位(1-3番人気)で検証。良/稍重では発火しません。")
+                           "『コース軸補正』=場×人気の検証済シグナル(東京芝1-3人気🟢+3.7pp・全年+/"
+                           "小倉芝⚠-3.0pp)。※道悪判定は良/稍重では発火しません。")
 
     # ── タブB: 種牡馬/母父の条件別成績しらべ ──
     with tabB:

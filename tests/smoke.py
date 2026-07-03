@@ -510,6 +510,20 @@ def main():
         assert _sc.read_tenkai_danger(_rid) == {3, 7}, "展開2ディスク橋渡し不整合"
     check("消去クロス 両列最下位(botcross)", t_botcross)
 
+    def t_blood_course():
+        # 血統SP強化: 父系統遡上+場×人気軸信頼度(検証済コースバイアス)の契約
+        from core import blood_course as bc
+        assert bc.sire_line('シニスターミニスター') == 'APインディ系', "手動辞書が壊れた"
+        assert bc.sire_line(None) == 'その他'
+        # 検証済みの場×人気: 東京芝1-3人気=+/小倉芝=-のみ。人気薄はNone
+        v = bc.venue_fav_note('05', '芝', 1)
+        assert v and v['shift'] > 0, f"東京芝fav欠落 {v}"
+        k = bc.venue_fav_note('10', '芝', 3)
+        assert k and k['shift'] < 0, f"小倉芝fav欠落 {k}"
+        assert bc.venue_fav_note('05', '芝', 6) is None, "人気薄に発火してはいけない"
+        assert bc.venue_fav_note('06', '芝', 1) is None, "非配線の場(中山z-2.05境界)に発火してはいけない"
+    check("血統×コース(blood_course)の契約", t_blood_course)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():

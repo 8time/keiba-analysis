@@ -41,6 +41,7 @@
 | ├ NAR(地方)対応 | 単複乖離/断層/荒れ度(オッズ系)は元々動作。jravan在籍NAR馬(ketto解決10/10実査)は末脚救出/初ダート/牝フェード/黄金ラインも機能。horse_value_factorsで騎手名を自動名寄せ(略記→完全名)。過去走系(PCI/展開)はSRAで南関自動補完 | 🟢 | value_scanner.horse_value_factors+jockey_jv.resolve_jockey_name。バッチのPastRuns一括補完はスクレイプ過大かつscannerはjravan ctx参照のため非採用 | 2026-07-03 |
 | 👁️ パドック解析 | パドック/調教の観察タグ台帳(scene切替・記録→精算→タグ別複勝率/単ROI/ベース比)。タグ説明凡例＋画像/動画の任意添付。主観cueの個人検証装置 | 🟢 | core/paddock_ledger.py(lib不要JSON台帳・scene=paddock/training・TAG_HELP・save_media)。定量は検証済([[verified_paddock_weight]])で除外。添付=Gemma 4 12B(動画対応)自動タグ(phase B)の答え合わせ用 | 2026-06-24 |
 | 🩸 血統SP | レースID→血統スコア順＋道悪判定／種牡馬しらべ | 🟢 | 道悪判定追加・小数第一位 | 2026-06-23 |
+| ├─ 血統×コース強化(父系統+コース軸補正) | 父系統列(アンカー遡上の大系統・同名馬は生年最新で曖昧性回避)＋『コース軸補正』列＋レースバナー。血統×コース形状/父×場適性は検証で織込み済→表示のみ。実在エッジ=場×人気軸信頼度: 東京芝1-3人気+3.7pp(頭数補正後z+4.5・全年+・holdout z+2.2)/小倉芝-3.0pp(z-2.9)。中山z-2.05境界=非配線 | ✅ | scripts/blood_course_backtest.py(T1系統×直線長/T2系統×坂=交絡で崩落・T3父×場tier=残差≈0/低適性穴はholdout崩落)＋core/blood_course.py。smoke契約テスト有 | 2026-07-03 |
 | 💰 BetSync(資金管理) | ガードレール/多肢ケリー/破産確率/台帳・Brier＋Gate判定別ROI(#8) | 🟢 | [[project_betsync_money]]＋roi_by_gate | 2026-06-24 |
 | 🐎 Stress Analyst | 馬体/馬場×血統の減衰(リーク無し版) | ✅ | [[verified_stress_debuff]] | — |
 | 🧠 MAGI回顧 | 3人格おしゃべり学習／合議ゲート | 🟡 | [[project_magi_oshaberi]][[project_magi_consensus]] | — |
