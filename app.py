@@ -5055,7 +5055,7 @@ if nav == "🏠 Single Race Analysis":
                                 if _cs and _cs.get('runs', 0) > 0:
                                     _cwr = _cs['win_rate']; _rn = _cs['runs']
                                     _mk = '🔴' if _cwr >= 0.20 else '🟠' if _cwr >= 0.14 else ''
-                                    _cw_txt = f"{_cwr:.0%}{_mk}" + (f"({_rn})" if _rn >= 10 else f"({_rn}少)")
+                                    _cw_txt = f"{_cwr:.0%}{_mk}" + (f"({_rn}走)" if _rn >= 10 else f"({_rn}走少)")
                                 else:
                                     _cw_txt = '当ｺｰｽ無'
                                 _suffix = f" {_rank or '?'}{_cw_txt}"
@@ -5560,9 +5560,9 @@ if nav == "🏠 Single Race Analysis":
                         "WeightCarried": st.column_config.TextColumn("斤量"),
                         "Trainer": st.column_config.TextColumn(
                             "厩舎(ﾗﾝｸ/当ｺｰｽ勝率)",
-                            help="例『A16%🟠(219)』=全体3年勝率ランクA(A≥14%/B≥10%/C≥7%/D)・"
+                            help="例『A16%🟠(219走)』=全体3年勝率ランクA(A≥14%/B≥10%/C≥7%/D)・"
                                  "当コース(今回の競馬場×馬場)3年勝率16%・()内は当コース出走数219走。"
-                                 "🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。(N少)=10走未満。"),
+                                 "🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。(N走少)=10走未満。"),
                         "Bloodline": st.column_config.TextColumn("血統(父/母父)", width="large"),
                         "BloodStats": st.column_config.TextColumn("🧬血統実績(複/回)", width="small",
                                  help="父×今回条件(馬場/距離)の複勝率/単勝回収率(blood_dict.db)。🔥=回収率≥100% 💰=≥85%"),
