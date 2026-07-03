@@ -352,6 +352,52 @@ def jockey_usm(jockey_name, expected, db_path=None, before_key=None, n=150):
     return usm_calibrated([(c, o) for _, c, o, *_ in runs if o], expected)
 
 
+# ── 騎手力(JPower): 『騎手のみの力』の偏差値 ──
+# オッズは馬の質(＋騎手の市場評価)を織り込むため、オッズ期待値に対する実複勝の
+# 上振れ(USM)が騎手固有の寄与に最も近い。検証(scripts/jockey_power_backtest.py):
+# 直近500騎乗の縮小USM五分位はtrain2021-24で単調(-1.02→+0.78pp)・holdout2025でも
+# 方向維持(Q4 +0.75pp z+2.0 / Q1 -0.72pp)=実力として持続。ただし効果量は小さく
+# 大半は織込み済み→予測器でなく『レース内の騎手比較』表示用。
+_JP_EXPECTED3 = {'~3.0': 0.705, '3-10': 0.422, '10-30': 0.205, '30~': 0.054}  # 2016-20較正
+JPOWER_MEAN = 99.63   # 縮小USMの母集団平均(2021-24騎乗重み)
+JPOWER_SD = 8.71      # 同SD
+JPOWER_K = 100        # 縮小の疑似騎乗数
+JPOWER_WINDOW = 500   # USM算出窓(直近騎乗数)
+JPOWER_MIN_RIDES = 150  # これ未満は偏差値を出さない(ノイズ)
+
+
+def jockey_power(jockey_name, db_path=None, before_key=None):
+    """騎手のみの力(JPower偏差値・50=平均)。そのレース時点(before_key)以前の
+    直近500騎乗で、オッズ期待値に対する複勝上振れ(縮小USM)を偏差値化。
+    戻り値: {'jpower': float|None, 'usm': float|None, 'rides': int}"""
+    name = _norm(jockey_name)
+    out = {'jpower': None, 'usm': None, 'rides': 0}
+    if not name or not os.path.exists(db_path or JV_DB_PATH):
+        return out
+    con = _con(db_path)
+    runs = _fetch_runs(con.cursor(), name, before_key=before_key, limit=JPOWER_WINDOW)
+    con.close()
+    a = e = 0.0
+    n = 0
+    for _, c, o, *_ in runs:
+        if not o:
+            continue
+        exp = _JP_EXPECTED3.get(_odds_band(o))
+        if exp is None:
+            continue
+        a += 1 if 0 < c <= 3 else 0
+        e += exp
+        n += 1
+    out['rides'] = n
+    if n < JPOWER_MIN_RIDES or e <= 0:
+        return out
+    ebar = e / n
+    usm = (a + JPOWER_K * ebar) / (e + JPOWER_K * ebar) * 100.0
+    out['usm'] = round(usm, 1)
+    out['jpower'] = round(50 + 10 * (usm - JPOWER_MEAN) / JPOWER_SD, 1)
+    return out
+
+
 def losing_streak_leaders(db_path=None, recent_days=14, min_recent=8, top=15):
     """直近に騎乗している騎手の中から、現在の連敗数が多い順にピックアップする。
     ※連敗は次走勝率を上げも下げもしない（検証済・ギャンブラーの誤謬）。あくまで参考表示。

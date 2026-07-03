@@ -524,6 +524,17 @@ def main():
         assert bc.venue_fav_note('06', '芝', 1) is None, "非配線の場(中山z-2.05境界)に発火してはいけない"
     check("血統×コース(blood_course)の契約", t_blood_course)
 
+    def t_jockey_power():
+        # 騎手力(JPower): 『騎手のみの力』偏差値の契約(検証=scripts/jockey_power_backtest.py)
+        from core import jockey_jv as jj
+        assert hasattr(jj, 'jockey_power'), "jockey_jv.jockey_power欠落(騎手Pro騎手力列が壊れる)"
+        # 存在しない騎手→jpower=None(クラッシュしない)
+        r = jj.jockey_power('存在シナイ騎手XYZ')
+        assert r['jpower'] is None and r['rides'] == 0, f"未知騎手の縮退失敗 {r}"
+        # 較正定数(検証済みの値から大きく逸脱したら再較正が必要)
+        assert 95 < jj.JPOWER_MEAN < 105 and 5 < jj.JPOWER_SD < 15, "JPower較正定数が異常"
+    check("騎手力(jockey_power)の契約", t_jockey_power)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():

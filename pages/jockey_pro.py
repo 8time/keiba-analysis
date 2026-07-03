@@ -221,9 +221,12 @@ def render():
                                                     trainer_code=None, expected=_jj_exp,
                                                     before_key=None)
                             mom = _jj.momentum(jk, before_key=None)
+                            _fb_jp = (_jj.jockey_power(jk)
+                                      if hasattr(_jj, 'jockey_power') else {'jpower': None})
                             _fb_rows.append({
                                 "馬番": e.get('umaban'), "騎手": jk,
                                 "馬": e.get('horse_name', ''), "人気": e.get('popularity', 99),
+                                "騎手力": _fb_jp.get('jpower') if _fb_jp.get('jpower') is not None else "-",
                                 "全体勝率": f"{ov['win']*100:.0f}%",
                                 "全体複勝": f"{ov['top3']*100:.0f}%",
                                 f"{_fb_venue or '当場'}連対": (
@@ -238,6 +241,7 @@ def render():
                                  .drop(columns=['_sort']))
                         st.dataframe(_fbdf, hide_index=True, use_container_width=True)
                         st.caption("フォールバック指標は騎手名で全履歴集計（未来レースのためリーク無し）。"
+                                   "騎手力はオッズ収録のあるJRA騎乗ベースの偏差値(50=平均)＝NAR専業騎手は'-'(jravanのNARオッズが未収録のため)。"
                                    "USM=人気に対する実複勝率(100超=人気以上)・騎手係数=検証済みエッジのみ。"
                                    "馬コンビ/黄金ラインは血統番号/調教師コードが要るため取込後に表示されます。")
                         _fb_done = True
@@ -261,6 +265,9 @@ def render():
                     fac = _jj.jockey_factor(jk, venue=_venue, distance=_kyori,
                                             trainer_code=tr, expected=_jj_exp, before_key=_rk)
                     usm = _jj.jockey_usm(jk, _jj_exp, before_key=_rk)
+                    # 騎手力(JPower偏差値): そのレース時点の『騎手のみの力』(検証済・比較用)
+                    _jp = (_jj.jockey_power(jk, before_key=_rk)
+                           if hasattr(_jj, 'jockey_power') else {'jpower': None})
                     # 🥇🥇=連対40%以上(検証で勝ち+2pp/連対+3pp の最強)・🥇=30-40%
                     _gmark = ("🥇🥇" if tcombo['rides'] >= 15 and tcombo['top2'] >= 0.40
                               else "🥇" if tcombo['rides'] >= 15 and tcombo['top2'] >= 0.30 else "")
@@ -268,6 +275,7 @@ def render():
                     _combo = (f"{hcombo['top3']*100:.0f}%/{hcombo['rides']}走" if hcombo['rides'] > 0 else "初")
                     _jrows.append({
                         "馬番": um, "騎手": jk, "馬": bamei, "人気": ninki,
+                        "騎手力": _jp.get('jpower') if _jp.get('jpower') is not None else "-",
                         "全体勝率": f"{ov['win']*100:.0f}%", "全体複勝": f"{ov['top3']*100:.0f}%",
                         f"{_venue}連対": f"{vstat.get('top2',0)*100:.0f}%/{vstat.get('rides',0)}走",
                         "黄金ライン(対調教師)": _gold,
@@ -279,7 +287,10 @@ def render():
                     })
                 _jdf = pd.DataFrame(_jrows).sort_values('_sort', ascending=False).drop(columns=['_sort'])
                 st.dataframe(_jdf, hide_index=True, use_container_width=True)
-                st.caption("USM=人気(オッズ期待値)に対し実際の複勝率が何%か（100超=人気以上に走らせる＝騎手の実力）。"
+                st.caption("**騎手力**=『騎手のみの力』の偏差値(50=平均)。オッズ(=馬の質＋市場の騎手評価)に対する"
+                           "直近500騎乗の複勝上振れをそのレース時点で偏差値化。検証済(五分位で単調・holdout2025でも"
+                           "上位帯+0.8pp/下位帯-0.7pp持続)。ただし効果量は小さく大半は織込み済=予測でなく騎手比較用。"
+                           "USM=人気(オッズ期待値)に対し実際の複勝率が何%か（100超=人気以上に走らせる＝騎手の実力）。"
                            "🥇🥇=黄金ライン最強(対調教師15走以上・連対40%以上＝検証で勝ち+2pp/連対+3pp人気以上)・🥇=30-40%。"
                            "騎手係数=検証で『人気以上に来る』と確認できたUSM・場相性・黄金ラインのみで構成"
                            "（連敗/調子は予測力ゼロのため不採用）。")
@@ -711,6 +722,16 @@ def render():
                     else:
                         _kagenten_str += f" (フラグ: +{_flag_bonus_val:.1f})"
 
+                # 騎手力(JPower偏差値・jravan): NAR略記名はresolve_jockey_nameで名寄せ
+                _jpw = '-'
+                try:
+                    from core import jockey_jv as _jjv3
+                    _jn3 = _jjv3.resolve_jockey_name(_e.get('jockey_name', ''))
+                    _jpr = _jjv3.jockey_power(_jn3) if _jn3 else {}
+                    if _jpr.get('jpower') is not None:
+                        _jpw = _jpr['jpower']
+                except Exception:
+                    pass
                 scored.append({
                     '_umaban': _e.get('umaban', 0),
                     '_score': _sc,
@@ -720,6 +741,7 @@ def render():
                     '馬番': _e.get('umaban', ''),
                     '馬名': _e.get('horse_name', ''),
                     '騎手': _e.get('jockey_name', ''),
+                    '騎手力': _jpw,
                     '厩舎': _e.get('trainer_name', ''),
                     '人気': _e.get('popularity', 99) if _e.get('popularity', 99) < 99 else '—',
                     'オッズ': f"{_e.get('odds', 0):.1f}" if _e.get('odds', 0) > 0 else '—',
@@ -769,12 +791,14 @@ def render():
             # ── ランキング表 ──
             st.subheader("📊 騎手ランキング（騎手の力・調子の数値化）")
             st.caption("このレースで『馬に勝たせてもらっている』のか『馬の力を引き出している』のかを見る列に絞り込み。"
+                       "**騎手力**=『騎手のみの力』の偏差値(50=平均・jravan直近500騎乗のオッズ期待値比を偏差値化・"
+                       "検証済: 五分位単調＋holdout2025持続。馬の質を市場価格で剥がした純粋比較)。"
                        "**USM(馬力絞り出しメーター)**=単勝オッズ帯ごとの平均成績から推定した期待値に対し実際の成績が何%か。"
                        "100%超=人気以上に走らせる＝騎手の実力／100%割れ=取りこぼし。"
                        "単=勝ち切る力 / 連=2着内に入れる力 / 複=3着内に残す力。"
                        "PRB=ライバルを上回った割合(0.5平均)・PW指数=騎乗の強さ・単回収%=コース単勝回収率。")
 
-            _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '厩舎',
+            _display_cols = ['順位', '評価', '馬番', '馬名', '騎手', '騎手力', '厩舎',
                              '人気', 'オッズ', 'PRB', 'PW指数',
                              '単勝USM', '連対USM', '複勝USM', '単回収%', '総合スコア']
             _df_rank = pd.DataFrame(scored)[_display_cols]
