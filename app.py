@@ -8212,7 +8212,19 @@ if nav == "🧹 消去フィルター":
                                 '検証数': _vcnt,
                                 '推定複勝率': _exc.band_fukusho(_vcnt),
                                 '_lit': [k for k in _exc.FLAG_DEFS_ORDER if k in _fl],  # 点灯フラグkey一覧(○マトリクス用)
+                                '_sp': _xc_si, '_c4': (_es or {}).get('avg_c4ratio'),  # 両列最下位判定用
                             })
+                        # --- 両列最下位(botcross): 上り3F・平均位置がともにレース内ワースト3級 ---
+                        # (検証: 複勝2-5%・誤消去2.5%。単独列はpriced-inで弱いが両列交差は強い消去)
+                        _bc_ums = _exc.bottom_both_umabans(
+                            [{'um': r['馬番'], 'spurt': r.get('_sp'), 'c4': r.get('_c4')}
+                             for r in _xrows])
+                        for r in _xrows:
+                            if r['馬番'] in _bc_ums and 'botcross' not in r['_lit']:
+                                r['_lit'] = [k for k in _exc.FLAG_DEFS_ORDER
+                                             if k in set(r['_lit']) | {'botcross'}]
+                                r['フラグ数'] = r['フラグ数'] + 1
+                            r.pop('_sp', None); r.pop('_c4', None)
                         st.session_state[_xkey] = _xrows
                 _xrows = st.session_state.get(_xkey, [])
                 # --- 📊で残った馬(✅/🛟残し − 📊で外した馬)のみを対象にする ---
@@ -8284,8 +8296,10 @@ if nav == "🧹 消去フィルター":
                         _mat.append(_row)
                     _xdf = pd.DataFrame(_mat)
                     _flag_cols = [_exc.FLAG_LABEL[k] for k in _active]
-                    # 検証不可フラグ(調教/総合力/予測)の列ヘッダは△印で区別
-                    _unv_cols = {_exc.FLAG_LABEL[k] for k in _active if k in _exc.UNVERIFIED}
+                    # 検証不可フラグ(調教/総合力/予測)の列ヘッダは△印で区別。
+                    # botcrossはBAND較正外だが独立検証済のため△を付けない(誤解防止)。
+                    _unv_cols = {_exc.FLAG_LABEL[k] for k in _active
+                                 if k in _exc.UNVERIFIED and k != 'botcross'}
 
                     def _dup_color(s):  # 重複数(赤系グラデ)
                         out = []
@@ -9052,8 +9066,9 @@ if nav == "🔍 Race Scanner (Batch)":
     _is_nar_scan = _scan_region.startswith("🐴")
     if _is_nar_scan:
         st.caption("地方競馬モード：netkeibaからレースデータを取得しスキャンします。"
-                   "ペース予測・騎手DB照合・黄金ライン等はJRA-VAN依存のため地方では機能しません（オッズ構造・単複乖離は動作）。"
-                   "南関東(大井・川崎・船橋・浦和)は🎯穴馬ハンターでnankankeiba.com補完が可能です。")
+                   "オッズ構造・単複乖離・オッズ断層・荒れ度は動作。JRA-VAN在籍のNAR馬は"
+                   "末脚救出・初ダート・牝フェード・黄金ライン(騎手名は自動で名寄せ)も機能します。"
+                   "PCI/展開マップ等の過去走系は🏠Single Race Analysisで南関自動補完(nankankeiba)されます。")
 
     def _venue_label(rid):
         """race_id → '函館11R' のような 場名+レース番号。"""

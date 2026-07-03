@@ -469,6 +469,20 @@ def main():
         assert icons[1] == '🏆' and icons[3] == '💀' and icons[2] == '', f"合意アイコン誤り {icons}"
     check("netkeiba AI展開照合(帯/合意)", t_ai_tenkai)
 
+    def t_botcross():
+        # 消去クロス 両列最下位(botcross): 上り3F最下位∩平均位置最下位(検証済K=3)
+        from core import elim_cross as ec
+        # 10頭: um1が末脚も位置もワースト、um2は末脚のみワースト
+        horses = [{'um': u, 'spurt': (u * 0.1), 'c4': (1.0 - u * 0.08)} for u in range(1, 11)]
+        # spurt昇順ワースト3=um1,2,3 / c4降順(大)ワースト3=um1,2,3 → 交差=1,2,3
+        bc = ec.bottom_both_umabans(horses, k=3)
+        assert bc == {1, 2, 3}, f"botcross交差誤り {bc}"
+        # 小頭数(min_field未満)は判定しない
+        assert ec.bottom_both_umabans(horses[:5]) == set(), "小頭数で両列最下位を出してはいけない"
+        # botcrossはBAND較正から除外(verified_countに入らない)
+        assert 'botcross' in ec.UNVERIFIED and 'botcross' in ec.FLAG_LABEL
+    check("消去クロス 両列最下位(botcross)", t_botcross)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():

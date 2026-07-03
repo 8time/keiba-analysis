@@ -37,14 +37,21 @@ FLAG_DEFS = [
     ('pmback',  '展開後方',    '展開MAPで最終直線に後方の馬(出馬数依存5〜8頭・予測。展開はpriced-in＝検証不可)'),
     ('stress1', 'スト1',       '🐎Stressの係数≤0.98(検証済デバフ: 小柄×馬体減/芝×後方/馬体増)'),
     ('stress2', 'スト2',       '🐎Stressの最終予測が全馬中 下から3以内'),
+    ('botcross', '両列最下位',  '上り3F(末脚)と平均位置がレース内でともにワースト3級(検証済: 複勝率2-5%・'
+                               '誤消去2.5%=97.5%安全。単独列は人気織込みで弱いが両列交差は強い消去)'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
 FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
-# 検証DBに無い=歴史的バックテスト不可のフラグ。これらは推定複勝率(BAND)の算定から除外する。
+# 推定複勝率(BAND)の算定から除外するフラグ。BANDは元の8検証フラグの重複数で較正済のため、
+# 後付けフラグはBANDに入れない(=二重計上を避ける)。
 #  ・train: 調教評価(過去データがDBに無い)
 #  ・battle/proj: ライブ生成スコアで再構築不可、かつ人気/オッズを内包し他フラグと相関
-UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2'}
+#  ・botcross: 独立検証済(複勝2-5%)だがBAND較正外。slow3f/backの相対版で二重計上になるため除外。
+UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2', 'botcross'}
+
+BOTCROSS_K = 3  # レース内ワースト何頭を『両列最下位』の消去候補とみなすか(検証はK=3)
+BOTCROSS_MIN_FIELD = 8  # これ未満の頭数では両列交差を判定しない(小頭数の過剰消去防止)
 # BAND(推定複勝率)の根拠となる検証済みフラグのみ
 VERIFIED_ORDER = [k for k in FLAG_DEFS_ORDER if k not in UNVERIFIED]
 
@@ -149,3 +156,21 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
     if stress2:
         f.add('stress2')
     return f
+
+
+def bottom_both_umabans(horses, k=BOTCROSS_K, min_field=BOTCROSS_MIN_FIELD):
+    """レース内で『上り3F(末脚)も平均位置も ともにワーストk級』の馬番集合を返す。
+
+    horses: [{'um':馬番, 'spurt':spurt_index(0-1,高=好末脚 or None),
+              'c4':avg_c4ratio(0-1,高=後方 or None)}, ...] (レース全馬)
+    末脚下位 = spurt_index が小さい方からk頭。位置下位 = c4ratio が大きい方からk頭。
+    その積集合(両方でワースト)を返す。検証: 複勝率2-5%・誤消去2.5%
+    (scripts/elim_column_rank_backtest.py / holdout2025)。単独列はpriced-inで弱い。
+    """
+    sp = [h for h in horses if h.get('spurt') is not None]
+    c4 = [h for h in horses if h.get('c4') is not None]
+    if len(sp) < min_field or len(c4) < min_field:
+        return set()
+    sp_bot = {h['um'] for h in sorted(sp, key=lambda h: h['spurt'])[:k]}
+    c4_bot = {h['um'] for h in sorted(c4, key=lambda h: -h['c4'])[:k]}
+    return sp_bot & c4_bot
