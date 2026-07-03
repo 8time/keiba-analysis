@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""消去クロス強化・第2弾 — 複数の"強適列"の下位を交差/積み上げすると
-どれが安全に3頭以上消せるか(jravan.db・leak-free)。
+"""消去クロス強化・拡張版 — 強適表の各"列"の下位を交差/積み上げ(重複)すると
+どれが独立に効くか・どれが安全に消せるか(jravan.db・leak-free)。
 
-対象列(すべてレース以前の過去走のみ=hindsight漏れ防止):
+ユーザーの使い方=クロステーブルの「重複」列を見て脳内で交差判断している。
+→ 各列の下位が『人気以上に来ない(独立シグナル)』か、重複を増やすと安全消去に
+なるかを定量化する。単一条件で消すのではなく重複(stacking)が本質。
+
+列(すべてレース前情報のみ=hindsight漏れ防止・大きいほど下位に符号を揃える):
   spurt 末脚    = 過去走の上がり3F順位比率の平均(高=遅)
   pos   平均位置 = 過去走の4角通過/頭数の平均(高=後方)
+  ten   テン位置 = 過去走の1角通過/頭数の平均(高=テンが遅い/後方)
   form  近走着順 = 過去走の着順/頭数の平均(高=着順悪い)
-  ctime 補正T   = 過去走の補正タイム(baseline=同(馬場,距離)中央値→当日馬場補正)の
-                  ベスト(最速)。下位=そのベストが遅い側(値が大)。
-
-各列で"レース内ワースト3頭"を出し、単独/全ペア交差/『N列以上でワースト』の
-複勝率・人気残差・誤消去率(3着内馬を消す率)・平均消去頭数/レースを比較する。
+  ctime 補正T   = 過去走の補正タイム(同(馬場,距離)中央値→当日馬場補正)のベスト(高=遅)
+  bweight 馬体重 = 当日馬体重(小さいほど下位=符号反転)
+  zogen 体重減   = 当日増減(マイナス=減=下位=符号反転)
 
 実行: python scripts/elim_multicol_backtest.py
 """
@@ -21,8 +24,12 @@ from itertools import combinations
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'jravan.db')
 
-COLS = ['spurt', 'pos', 'form', 'ctime']
-JP = {'spurt': '末脚', 'pos': '平均位置', 'form': '近走着順', 'ctime': '補正T'}
+# 過去走集計で作る列 と 当日属性の列
+HIST_COLS = ['spurt', 'pos', 'ten', 'form', 'ctime']
+CUR_COLS = ['bweight', 'zogen']
+COLS = HIST_COLS + CUR_COLS
+JP = {'spurt': '末脚', 'pos': '平均位置', 'ten': 'テン位置', 'form': '近走着順',
+      'ctime': '補正T', 'bweight': '馬体重小', 'zogen': '体重減'}
 
 
 def dk(y, m):
@@ -46,8 +53,8 @@ def build():
     con.row_factory = sqlite3.Row
     rows = con.execute(
         "SELECT r.race_key rk, r.year y, r.monthday md, r.jyo jyo, r.ketto_num kt, "
-        "r.bamei nm, r.chakujun ch, r.ninki nk, r.ato3f a3, r.corner4 c4, r.time tm, "
-        "ra.surface sf, ra.kyori ki, ra.shusso_tosu st "
+        "r.chakujun ch, r.ninki nk, r.ato3f a3, r.corner1 c1, r.corner4 c4, r.time tm, "
+        "r.bataiju bw, r.zogen zg, ra.surface sf, ra.kyori ki, ra.shusso_tosu st "
         "FROM results r JOIN races ra ON ra.race_key=r.race_key "
         "WHERE CAST(r.year AS INTEGER) >= 2014").fetchall()
     con.close()
@@ -55,8 +62,7 @@ def build():
     for r in rows:
         by_race[r['rk']].append(r)
 
-    # 補正タイム: baseline(surface,kyori)中央値 → raw_dev → track_bias(day,jyo,surf)中央値 → corrected
-    recs = []  # per run dict
+    recs = []
     by_sk = defaultdict(list)
     for rk, rs in by_race.items():
         d = dk(rs[0]['y'], rs[0]['md'])
@@ -68,8 +74,9 @@ def build():
             if not x['ch'] or x['ch'] <= 0:
                 continue
             sec = to_sec(x['tm'])
-            rec = {'rk': rk, 'd': d, 'jyo': x['jyo'], 'sf': x['sf'], 'ki': x['ki'],
-                   'kt': x['kt'], 'a3r': arank.get(x['kt']),
+            rec = {'d': d, 'jyo': x['jyo'], 'sf': x['sf'], 'ki': x['ki'], 'kt': x['kt'],
+                   'a3r': arank.get(x['kt']),
+                   'c1r': (x['c1'] / n) if (x['c1'] and n) else None,
                    'c4r': (x['c4'] / n) if (x['c4'] and n) else None,
                    'chr': (x['ch'] / n) if n else None, 'sec': sec, 'corr': None}
             recs.append(rec)
@@ -79,11 +86,9 @@ def build():
     by_dj = defaultdict(list)
     for r in recs:
         b = base_sk.get((r['sf'], r['ki']))
-        if r['sec'] and b is not None:
-            r['rawdev'] = r['sec'] - b
+        r['rawdev'] = (r['sec'] - b) if (r['sec'] and b is not None) else None
+        if r['rawdev'] is not None:
             by_dj[(r['d'], r['jyo'], r['sf'])].append(r['rawdev'])
-        else:
-            r['rawdev'] = None
     tb = {k: median(v) for k, v in by_dj.items() if v}
     for r in recs:
         if r['rawdev'] is not None:
@@ -100,18 +105,14 @@ def build():
 def pre(hist, kt, d, n=5, minr=2):
     h = hist.get(kt)
     if not h:
-        return {c: None for c in COLS}
+        return {c: None for c in HIST_COLS}
     past = [x for x in h if x['d'] < d][-n:]
-    ar = [x['a3r'] for x in past if x['a3r'] is not None]
-    cr = [x['c4r'] for x in past if x['c4r'] is not None]
-    fr = [x['chr'] for x in past if x['chr'] is not None]
+    def avg(key):
+        v = [x[key] for x in past if x[key] is not None]
+        return (sum(v) / len(v)) if len(v) >= minr else None
     co = [x['corr'] for x in past if x['corr'] is not None]
-    return {
-        'spurt': (sum(ar) / len(ar)) if len(ar) >= minr else None,
-        'pos':   (sum(cr) / len(cr)) if len(cr) >= minr else None,
-        'form':  (sum(fr) / len(fr)) if len(fr) >= minr else None,
-        'ctime': (min(co)) if len(co) >= minr else None,  # ベスト補正(最速)。下位=大
-    }
+    return {'spurt': avg('a3r'), 'pos': avg('c4r'), 'ten': avg('c1r'),
+            'form': avg('chr'), 'ctime': (min(co) if len(co) >= minr else None)}
 
 
 def main():
@@ -135,13 +136,10 @@ def main():
     base = {p: (s[0] / s[1] if s[1] else 0) for p, s in pop_top3.items()}
 
     K = args.k
-    # 集計器: name -> [top3, n, exp]  / miss: name -> [races_with_placer, races] / elim頭数
     grp = defaultdict(lambda: [0, 0, 0.0])
     miss = defaultdict(lambda: [0, 0])
-    elim_horses = defaultdict(int)  # 消去した延べ頭数
+    elim_h = defaultdict(int)
     n_races = 0
-
-    higher_worse = {'spurt': True, 'pos': True, 'form': True, 'ctime': True}
 
     for rk, rs in by_race.items():
         if not (args.test_from <= int(rs[0]['y']) <= args.test_to):
@@ -154,71 +152,62 @@ def main():
             if not r['nk'] or not r['ch'] or r['ch'] <= 0:
                 continue
             m = pre(hist, r['kt'], d)
+            # 当日属性(大きいほど下位に符号反転)
+            m['bweight'] = (-(r['bw']) if (r['bw'] and r['bw'] > 0) else None)
+            m['zogen'] = (-(r['zg']) if (r['zg'] is not None) else None)
             H.append({'pop': int(r['nk']), 't3': 1 if r['ch'] <= 3 else 0, **m})
         if len(H) < args.min_field:
             continue
         n_races += 1
-        # 各列のワーストK集合(値が大きい方からK・欠損は除外)
         botset = {}
         for c in COLS:
             valid = [h for h in H if h[c] is not None]
             if len(valid) < args.min_field:
-                botset[c] = None
-                continue
+                botset[c] = None; continue
             valid.sort(key=lambda h: -h[c])
             botset[c] = set(id(h) for h in valid[:K])
 
-        def agg(name, ids, placer_capable=True):
+        def agg(name, ids):
             if ids is None:
                 return
             members = [h for h in H if id(h) in ids]
             g = grp[name]
             for h in members:
                 g[0] += h['t3']; g[1] += 1; g[2] += base.get(h['pop'], 0)
-            elim_horses[name] += len(members)
-            mm = miss[name]
-            mm[1] += 1
+            elim_h[name] += len(members)
+            mm = miss[name]; mm[1] += 1
             if any(h['t3'] for h in members):
                 mm[0] += 1
 
-        # 単独
         for c in COLS:
             agg('単:' + JP[c], botset[c])
-        # 全ペア交差
-        for a, b in combinations(COLS, 2):
-            if botset[a] is not None and botset[b] is not None:
-                agg(f'交差:{JP[a]}×{JP[b]}', botset[a] & botset[b])
-        # 『N列以上でワースト』union(重み=ワースト列数)
+        # 重複(ワースト列数)→ union閾値
         cnt = defaultdict(int)
         for c in COLS:
             if botset[c]:
                 for i in botset[c]:
                     cnt[i] += 1
-        for thr in (2, 3):
-            ids = {i for i, v in cnt.items() if v >= thr}
-            agg(f'≥{thr}列でワースト{K}', ids)
+        for thr in (2, 3, 4):
+            agg(f'重複≥{thr}(ワースト{K})', {i for i, v in cnt.items() if v >= thr})
 
     def show(names, title):
         print(f"\n=== {title} (test{args.test_from}-{args.test_to}/{args.min_field}頭+/{n_races:,}R/K={K}) ===")
-        print(f"{'条件':<22}{'延頭数':>7}{'複勝率':>8}{'人気期待':>9}{'残差':>8}{'誤消去率':>9}{'消去/R':>8}")
+        print(f"{'条件':<20}{'延頭数':>7}{'複勝率':>8}{'人気期待':>9}{'残差':>8}{'誤消去率':>9}{'消去/R':>8}")
         for nm in names:
             g = grp.get(nm)
             if not g or g[1] == 0:
-                print(f"{nm:<22}  (該当なし)"); continue
+                print(f"{nm:<20}  (該当なし)"); continue
             t3, n, exp = g
             mm = miss[nm]
-            fr = 100 * t3 / n
-            ex = 100 * exp / n
+            fr = 100 * t3 / n; ex = 100 * exp / n
             missr = 100 * mm[0] / mm[1] if mm[1] else 0
-            per = elim_horses[nm] / n_races
-            print(f"{nm:<22}{n:>7,}{fr:>7.1f}%{ex:>8.1f}%{fr-ex:>+7.1f}pp{missr:>8.1f}%{per:>7.2f}")
+            print(f"{nm:<20}{n:>7,}{fr:>7.1f}%{ex:>8.1f}%{fr-ex:>+7.1f}pp{missr:>8.1f}%{elim_h[nm]/n_races:>7.2f}")
 
-    show(['単:' + JP[c] for c in COLS], '単独列ワーストK(参考)')
-    show([f'交差:{JP[a]}×{JP[b]}' for a, b in combinations(COLS, 2)], '2列交差ワーストK')
-    show([f'≥2列でワースト{K}', f'≥3列でワースト{K}'], 'N列以上でワースト(積み上げ union)')
-    print("\n[読み方] 残差<0=人気以上に来ない。誤消去率=その群を消したレースで3着内馬を含んだ率"
-          "(低いほど安全)。消去/R=1レース平均で消える頭数。安全に3頭消したいなら"
-          "『誤消去率が低くかつ消去/Rが大きい』条件を選ぶ。")
+    # 残差が負(=人気以上に来ない)ほど独立シグナル。priced-inは≈0。
+    show(['単:' + JP[c] for c in COLS], '各列ワーストK 単独(独立シグナル判定=残差<0)')
+    show([f'重複≥{t}(ワースト{K})' for t in (2, 3, 4)], '重複(ワースト列数)→複勝率(stacking)')
+    print("\n[結論の読み方] 単独で残差が明確に負の列ほど『重複に足す価値』がある。"
+          "重複が増えるほど複勝率↓・誤消去率↓なら、重複列は安全な消去の物差しになっている。")
 
 
 if __name__ == '__main__':
