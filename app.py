@@ -8189,6 +8189,15 @@ if nav == "🧹 消去フィルター":
                             _kt, _tc = _jjx.resolve_horse(_nm)
                             _ctx = _jjx.horse_recent_context(_kt) if _kt else None
                             _es = _jjx.horse_elim_stats(_kt) if _kt else None
+                            # 騎手 通算複勝率(騎手実績下位フラグ用・50騎乗以上のみ信頼)
+                            _jt3 = None
+                            try:
+                                _jn_x = _jjx.resolve_jockey_name(str(_r.get('Jockey', '') or ''))
+                                _jbs = _jjx.jockey_base_stats(_jn_x) if _jn_x else None
+                                if _jbs and _jbs.get('overall', {}).get('rides', 0) >= 50:
+                                    _jt3 = _jbs['overall']['top3']
+                            except Exception:
+                                _jt3 = None
                             _xc_si = (_ctx or {}).get('spurt_index')
                             _xc_sr = (_ctx or {}).get('spurt_runs', 0)
                             if _xc_si is None and _nm in _nk_spurt_map:
@@ -8229,6 +8238,7 @@ if nav == "🧹 消去フィルター":
                                 '_form': (_es or {}).get('avg_chaku_ratio'),
                                 '_ctime': (_ctx_mc.get_figure(_kt, _csurf) or {}).get('fig')
                                           if (_ctx_mc and _kt) else None,
+                                '_jt3': _jt3,
                             })
                         # --- 両列最下位(botcross)/多列弱点(multiweak): レース内で複数列がワースト級 ---
                         # (検証: botcross=誤消去2.5%/multiweak=6.0%。単独列はpriced-inで弱いが交差は強い消去)
@@ -8241,18 +8251,28 @@ if nav == "🧹 消去フィルター":
                             'pos': r.get('_c4'), 'form': r.get('_form'),
                             'ctime': r.get('_ctime'),
                         }} for r in _xrows])
+                        # 人気下位(人気番号が大きいほど下位)/騎手実績下位(通算複勝率が低いほど下位)
+                        _pl_ums = _exc.worst_k_umabans(
+                            [{'um': r['馬番'], 'pop': r.get('人気')} for r in _xrows], 'pop')
+                        _jl_ums = _exc.worst_k_umabans(
+                            [{'um': r['馬番'], 'j': r.get('_jt3')} for r in _xrows], 'j',
+                            higher_worse=False)
                         for r in _xrows:
                             _add = set()
                             if r['馬番'] in _bc_ums:
                                 _add.add('botcross')
                             if r['馬番'] in _mw_ums:
                                 _add.add('multiweak')
-                            _new = (set(r['_lit']) | _add) - set(r['_lit']) if _add else set()
+                            if r['馬番'] in _pl_ums:
+                                _add.add('poplow')
+                            if r['馬番'] in _jl_ums:
+                                _add.add('jlow')
+                            _new = _add - set(r['_lit'])
                             if _new:
                                 r['_lit'] = [k for k in _exc.FLAG_DEFS_ORDER
                                              if k in set(r['_lit']) | _add]
                                 r['フラグ数'] = r['フラグ数'] + len(_new)
-                            for _tmp in ('_sp', '_c4', '_form', '_ctime'):
+                            for _tmp in ('_sp', '_c4', '_form', '_ctime', '_jt3'):
                                 r.pop(_tmp, None)
                         st.session_state[_xkey] = _xrows
                 _xrows = st.session_state.get(_xkey, [])
@@ -8353,9 +8373,8 @@ if nav == "🧹 消去フィルター":
 
                     _disp_cols = ['馬番', '馬名'] + _flag_cols + ['重複']
                     # 過信しない列(赤背景×黄文字ヘッダ): 総合力下位/予測下位/展開後方(検証不可)＋
-                    # PCI乖離(検証済だが人気織込み=実質エッジ無し[[verified_pci_pricedin]]・残差-0.5pp)。
-                    _caution_keys = {'battle', 'proj', 'pmback', 'pcidev'}
-                    _caution_labels = {_exc.FLAG_LABEL[k] for k in _caution_keys if k in _exc.FLAG_LABEL}
+                    # PCI乖離/人気下位/騎手実績下位(検証したが人気織込み=実質エッジ弱・相手絞りの実務軸)。
+                    _caution_labels = {_exc.FLAG_LABEL[k] for k in _exc.CAUTION_KEYS if k in _exc.FLAG_LABEL}
                     try:
                         # 表示用に列名装飾(△=検証不可)＋重複→🔴重複。ヘッダ色は列位置で指定。
                         _rename = {}
@@ -8396,9 +8415,10 @@ if nav == "🧹 消去フィルター":
                         st.dataframe(_xdf[_disp_cols], hide_index=True, use_container_width=True, column_config=_colcfg)
                     st.caption("○＝その弱点が点灯。**🔴重複**＝○の総数(多いほど来にくい)。"
                                "△印の列(調教C以下/総合力下位/予測下位)は検証不可(人気内包)＝重複には乗るが推定複勝率には算入しない。"
-                               "🟥赤背景×黄文字のヘッダ列(総合力下位/予測下位/展開後方/PCI乖離)は"
-                               "**過信しない列**＝重複には数えるが、これらが重複の主因なら消さない判断もできる"
-                               "(PCI乖離は検証で人気織込み=実質エッジ無し)。")
+                               "🟥赤背景×黄文字のヘッダ列(総合力下位/予測下位/展開後方/PCI乖離/人気下位/騎手実績下位)は"
+                               "**過信しない列**＝重複には数えるが、これらが重複の主因なら消さない判断もできる。"
+                               "人気下位=市場評価そのもの/騎手実績下位=通算複勝率(直近成績・連敗は予測に効かない検証済)"
+                               "/PCI乖離=人気織込み。いずれも実務の相手絞り軸だが独立エッジは弱い。")
                     _heavy = _xdf[_xdf['重複'] >= 4]
                     if not _heavy.empty:
                         st.error("🧹 消去候補（弱点重複4つ以上）: "

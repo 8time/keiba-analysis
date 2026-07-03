@@ -41,6 +41,11 @@ FLAG_DEFS = [
                                '誤消去2.5%=97.5%安全。単独列は人気織込みで弱いが両列交差は強い消去)'),
     ('multiweak', '多列弱点',   '末脚/平均位置/近走着順/補正Tの4列のうち3列以上でレース内ワースト3級'
                                '(検証済: 複勝率6.7%・誤消去6.0%=94%安全・約0.9頭/R。botcrossより広く消せる)'),
+    ('poplow',   '人気下位',    'レース内で人気が最も無い側3頭(市場評価が最も低い)。複勝率は最低(3.2%)だが'
+                               '残差-0.6pp=ほぼ人気織込み＝市場の見立てそのもの。相手絞りの実務軸だが独立エッジではない'),
+    ('jlow',     '騎手実績下位', 'レース内で騎手の通算複勝率が最も低い側3頭(検証: 複勝率11.5%・残差-0.5pp)。'
+                               '判断は通算複勝率が最適=直近成績/連敗は予測に効かない(検証済の誤謬)。'
+                               'これも人気に相関する実務軸で独立エッジは弱い'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
@@ -50,7 +55,12 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 #  ・train: 調教評価(過去データがDBに無い)
 #  ・battle/proj: ライブ生成スコアで再構築不可、かつ人気/オッズを内包し他フラグと相関
 #  ・botcross/multiweak: 独立検証済だがBAND較正外。既存列の相対版で二重計上になるため除外。
-UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2', 'botcross', 'multiweak'}
+#  ・poplow/jlow: 市場評価(人気)・騎手実績=priced-in軸。相手絞りの実務軸だがBAND(独立弱点の
+#    重ね)には入れない(人気そのものを重複に足すと重複が人気を追うだけになるため)。
+UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2',
+              'botcross', 'multiweak', 'poplow', 'jlow'}
+# 『過信しない列』= 重複には数えるが独立エッジでない(表示で赤背景×黄文字にする)。
+CAUTION_KEYS = {'battle', 'proj', 'pmback', 'pcidev', 'poplow', 'jlow'}
 
 BOTCROSS_K = 3  # レース内ワースト何頭を『両列最下位』の消去候補とみなすか(検証はK=3)
 BOTCROSS_MIN_FIELD = 8  # これ未満の頭数では両列交差を判定しない(小頭数の過剰消去防止)
@@ -177,6 +187,19 @@ def bottom_both_umabans(horses, k=BOTCROSS_K, min_field=BOTCROSS_MIN_FIELD):
     sp_bot = {h['um'] for h in sorted(sp, key=lambda h: h['spurt'])[:k]}
     c4_bot = {h['um'] for h in sorted(c4, key=lambda h: -h['c4'])[:k]}
     return sp_bot & c4_bot
+
+
+def worst_k_umabans(horses, value_key, k=BOTCROSS_K, min_field=BOTCROSS_MIN_FIELD, higher_worse=True):
+    """単一指標(value_key)でレース内ワーストk頭の馬番集合を返す(人気下位/騎手実績下位用)。
+
+    horses: [{'um':馬番, value_key:値 or None}]。higher_worse=Trueなら値が大きいほど下位。
+    値Noneは除外。有効頭数がmin_field未満なら判定しない(小頭数の過剰消去防止)。
+    """
+    valid = [h for h in horses if h.get(value_key) is not None]
+    if len(valid) < min_field:
+        return set()
+    valid.sort(key=lambda h: (-h[value_key] if higher_worse else h[value_key]))
+    return {h['um'] for h in valid[:k]}
 
 
 def multiweak_umabans(horses, k=BOTCROSS_K, need=MULTIWEAK_NEED, min_field=BOTCROSS_MIN_FIELD):
