@@ -5651,6 +5651,10 @@ if nav == "🏠 Single Race Analysis":
                         "LTR": st.column_config.TextColumn(
                             "🤖検証AI",
                             help="LightGBM LambdaRankの予測順位スコア(検証済みエッジ統合・Win recall@7=0.936)"),
+                        "SpurtIdx": st.column_config.TextColumn(
+                            "🔥末脚指数",
+                            help="上がり3F偏差ベースの末脚力(高いほど良い)。🔥=レース内top3。"
+                                 "検証: 人気薄(6番人気以下)×末脚top3で複勝+4pp/ROI+11pp(穴の相手の質)"),
                         "JPower": st.column_config.TextColumn(
                             "🏇騎手力(乗替)",
                             help="騎手のみの力の偏差値(50=平均・オッズ期待値比を偏差値化・検証済で持続)。"

@@ -53,13 +53,30 @@ def _all_jockey_names(db_path=None):
     return _JOCKEY_NAMES_CACHE
 
 
-def resolve_jockey_name(name, db_path=None):
-    """ライブ出馬表の略記騎手名(例:中山遥)をjravanの完全名(例:中山遥人)へ前方一致で解決。
+import re as _re_jj
 
-    NAR出馬表は騎手名を短縮表示するためjravanと完全一致せず成績が0になる。
-    完全一致があればそれ、無ければ略記名を接頭辞に持つ最頻の完全名を返す(表示/集計用)。
+# 見習い騎手の減量記号(先頭に付く)。jravanの騎手名には付かないため剥がす。
+_JOCKEY_DECO = '☆★▲△▽▼◇◆○●◎◯□■'
+
+
+def _strip_jockey_deco(name):
+    """騎手名の装飾を除去: 先頭の見習い減量記号(☆▲△等)＋外国人イニシャル(C./Ｃ./J.等)。
+    netkeiba出馬表は '☆団野' 'Ｃ.ルメール' のように表示するがjravanは '団野大成' 'ルメール'。"""
+    s = str(name or '').strip()
+    s = s.lstrip(_JOCKEY_DECO + ' 　')
+    # 先頭のイニシャル(半角/全角英字+ドット): C. / Ｃ. / J. / Ｍ．
+    s = _re_jj.sub(r'^[A-Za-zＡ-Ｚａ-ｚ][.．]\s*', '', s)
+    return s
+
+
+def resolve_jockey_name(name, db_path=None):
+    """ライブ出馬表の騎手名(略記/減量記号/イニシャル付き)をjravanの完全名へ解決。
+
+    例: 中山遥→中山遥人 / ☆団野→団野大成 / Ｃ.ルメール→ルメール。
+    NAR出馬表は騎手名を短縮表示、netkeibaは見習い記号/外国人イニシャルを付すため
+    jravanと完全一致せず成績が0になる。装飾を剥がし、完全一致→無ければ前方一致(最頻)。
     """
-    nm = _norm(name)
+    nm = _norm(_strip_jockey_deco(name))
     if not nm:
         return name
     names = _all_jockey_names(db_path)
