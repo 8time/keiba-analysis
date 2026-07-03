@@ -8345,27 +8345,53 @@ if nav == "🧹 消去フィルター":
                         return (['background-color:#e9ecef;color:#adb5bd'] * len(_row)) if _ex else ([''] * len(_row))
 
                     _disp_cols = ['馬番', '馬名'] + _flag_cols + ['重複']
-                    _colcfg = {
-                        '馬番': st.column_config.NumberColumn('馬番', width='small'),
-                        '人気': st.column_config.NumberColumn('人気', width='small'),
-                        '重複': st.column_config.NumberColumn('🔴重複', help="点灯した来にくさフラグの総数(○の数)。多いほど3着内率が下がる"),
-                        '検証': st.column_config.NumberColumn('検証', width='small', help="うちjravan.dbで検証済みのフラグ数。推定複勝率はこの数だけで算定"),
-                        '推定複勝率': st.column_config.TextColumn('推定複勝率', help="検証数→絶対複勝率(検証値)。人気と相関＝妙味判定ではない"),
-                    }
-                    for _fc in _flag_cols:
-                        _lbl = ('△' + _fc) if _fc in _unv_cols else _fc
-                        _colcfg[_fc] = st.column_config.TextColumn(_lbl, width='small')
+                    # 過信しない列(赤背景×黄文字ヘッダ): 総合力下位/予測下位/展開後方(検証不可)＋
+                    # PCI乖離(検証済だが人気織込み=実質エッジ無し[[verified_pci_pricedin]]・残差-0.5pp)。
+                    _caution_keys = {'battle', 'proj', 'pmback', 'pcidev'}
+                    _caution_labels = {_exc.FLAG_LABEL[k] for k in _caution_keys if k in _exc.FLAG_LABEL}
                     try:
-                        _sty = _xdf[_disp_cols].style.apply(_dup_color, subset=['重複'])
-                        if _flag_cols:
-                            _sty = _sty.apply(_maru_color, subset=_flag_cols)
+                        # 表示用に列名装飾(△=検証不可)＋重複→🔴重複。ヘッダ色は列位置で指定。
+                        _rename = {}
+                        for _fc in _flag_cols:
+                            _rename[_fc] = ('△' + _fc) if _fc in _unv_cols else _fc
+                        _rename['重複'] = '🔴重複'
+                        _dispdf = _xdf[_disp_cols].rename(columns=_rename)
+                        _flag_disp = [_rename[c] for c in _flag_cols]
+                        # 馬番/馬名(先頭2列)の後にフラグ列 → caution列の表示位置
+                        _caution_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _caution_labels]
+                        _sty = _dispdf.style.hide(axis='index')
+                        _sty = _sty.apply(_dup_color, subset=['🔴重複'])
+                        if _flag_disp:
+                            _sty = _sty.apply(_maru_color, subset=_flag_disp)
                         if _x2ums:
                             _sty = _sty.apply(_gray_x2, axis=1)
-                        st.dataframe(_sty, hide_index=True, use_container_width=True, column_config=_colcfg)
+                        _tbl_styles = [
+                            {'selector': 'table', 'props': [('border-collapse', 'collapse'),
+                                                            ('width', '100%'), ('font-size', '12px')]},
+                            {'selector': 'th', 'props': [('padding', '5px 7px'), ('border', '1px solid #ddd'),
+                                                         ('background-color', '#f1f3f5'), ('white-space', 'nowrap')]},
+                            {'selector': 'td', 'props': [('padding', '3px 7px'), ('border', '1px solid #eee'),
+                                                         ('text-align', 'center')]},
+                        ]
+                        # 過信しない列のヘッダ = 赤背景×黄文字
+                        for _p in _caution_pos:
+                            _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
+                                                'props': [('background-color', '#c0392b'), ('color', '#ffff00'),
+                                                          ('font-weight', 'bold')]})
+                        _sty = _sty.set_table_styles(_tbl_styles, overwrite=False)
+                        st.markdown(f'<div style="overflow-x:auto">{_sty.to_html()}</div>',
+                                    unsafe_allow_html=True)
                     except Exception:
+                        _colcfg = {'馬番': st.column_config.NumberColumn('馬番', width='small'),
+                                   '重複': st.column_config.NumberColumn('🔴重複')}
+                        for _fc in _flag_cols:
+                            _colcfg[_fc] = st.column_config.TextColumn(('△' + _fc) if _fc in _unv_cols else _fc, width='small')
                         st.dataframe(_xdf[_disp_cols], hide_index=True, use_container_width=True, column_config=_colcfg)
                     st.caption("○＝その弱点が点灯。**🔴重複**＝○の総数(多いほど来にくい)。"
-                               "△印の列(調教C以下/総合力下位/予測下位)は検証不可(人気内包)＝重複には乗るが推定複勝率には算入しない。")
+                               "△印の列(調教C以下/総合力下位/予測下位)は検証不可(人気内包)＝重複には乗るが推定複勝率には算入しない。"
+                               "🟥赤背景×黄文字のヘッダ列(総合力下位/予測下位/展開後方/PCI乖離)は"
+                               "**過信しない列**＝重複には数えるが、これらが重複の主因なら消さない判断もできる"
+                               "(PCI乖離は検証で人気織込み=実質エッジ無し)。")
                     _heavy = _xdf[_xdf['重複'] >= 4]
                     if not _heavy.empty:
                         st.error("🧹 消去候補（弱点重複4つ以上）: "
