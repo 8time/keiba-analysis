@@ -111,6 +111,30 @@ def lookup_bms_stats(bms, surface, distance, db_path=None):
     return None
 
 
+_BS_POP_PLACE = 0.25  # 複勝率の母集団平均(縮小推定の事前値)
+_BS_SHRINK_K = 20     # 縮小係数(少サンプルの血統を母集団へ寄せる)
+
+
+def _adj_place(stats):
+    """条件別複勝率を縮小推定(サンプル少は母集団0.25へ寄せる)。統計無しは母集団。"""
+    if not stats or not stats.get('runs'):
+        return _BS_POP_PLACE
+    runs = stats['runs']
+    top3 = stats.get('place_rate', 0.0) / 100.0 * runs
+    return (top3 + _BS_SHRINK_K * _BS_POP_PLACE) / (runs + _BS_SHRINK_K)
+
+
+def blood_score(sire, bms, surface, distance, w_sire=0.6):
+    """血統SP(pages/blood_sp.py)と同一の『血統スコア』を返す(0〜100目安)。
+    父×条件・母父×条件の縮小複勝率を重み付き合成。統計が無い側は母集団0.25。
+    ※血統×コースは検証で織込み済み([[verified_blood_course]])=表示/相対比較用でエッジ主張なし。"""
+    ss = lookup_sire_stats(sire, surface, distance)
+    bs = lookup_bms_stats(bms, surface, distance)
+    w_bms = 1.0 - w_sire
+    score = (w_sire * _adj_place(ss) + w_bms * _adj_place(bs)) * 100.0
+    return round(score, 1)
+
+
 def bloodline_label(sire, bms, surface, distance):
     """父と母父の適性をまとめた表示文字列を返す。
     例: '父キズナ 芝マイル 複27.6% 回78.5% (1907走) / 母父ディープ 複35.5%'"""

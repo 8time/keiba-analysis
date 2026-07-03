@@ -525,6 +525,10 @@ def main():
         assert bc.venue_fav_note('05', '芝', 6) is None, "人気薄に発火してはいけない"
         assert bc.venue_fav_note('06', '芝', 1) is None, "非配線の場(中山=holdout崩落)に発火してはいけない"
         assert bc.venue_fav_note('44', 'ダ', 1) is None, "大井は非配線(holdout逆符号)"
+        # 血統スコア(血統SP=strong table/血統適性共用)。統計無しは母集団0.25*100=25.0
+        from core import bloodline as _bll
+        assert _bll.blood_score('存在しない父', '存在しない母父', '芝', 1600) == 25.0, "血統スコア母集団既定値"
+        assert isinstance(_bll.blood_score('ディープインパクト', 'Mineshaft', '芝', 1600), float)
     check("血統×コース(blood_course)の契約", t_blood_course)
 
     def t_jockey_power():

@@ -2714,6 +2714,11 @@ if nav == "🏠 Single Race Analysis":
                                 _ss = _bl2.lookup_sire_stats(_b_sire, _tb_surf, _tb_dist)
                                 _bs = _bl2.lookup_bms_stats(_b_bms, _tb_surf, _tb_dist)
                                 _row = {'馬番': _b_num, '馬名': _b_name, '父': _b_sire, '母父': _b_bms}
+                                # 🧬血統スコア(血統SPと同一式)。レース内top3の行を後で#fff0f5に。
+                                try:
+                                    _row['血統スコア'] = _bl2.blood_score(_b_sire, _b_bms, _tb_surf, _tb_dist)
+                                except Exception:
+                                    _row['血統スコア'] = 25.0
                                 if _ss:
                                     _row['父複勝率'] = f"{_ss['place_rate']:.1f}%"
                                     _row['父単回収'] = f"{_ss['win_roi']:.0f}%"
@@ -2757,13 +2762,26 @@ if nav == "🏠 Single Race Analysis":
                                         return ['color:#4FC3F7;font-weight:bold'
                                                 if str(_bl_df.at[i, '馬場シフト']) not in ('-', 'None', '')
                                                 else '' for i in col.index]
+                                    # 血統スコア レース内top3の行 → #fff0f5(黒字)。先に敷いて上に既存色を重ねる。
+                                    _bl_score_top3 = set()
+                                    if '血統スコア' in _bl_df.columns:
+                                        _bl_sv = pd.to_numeric(_bl_df['血統スコア'], errors='coerce')
+                                        if _bl_sv.notna().any():
+                                            _bl_score_top3 = set(_bl_sv.nlargest(3).index)
+
+                                    def _bl_score_rowbg(_row):
+                                        return (['background-color:#fff0f5;color:#000'] * len(_row)
+                                                if _row.name in _bl_score_top3 else [''] * len(_row))
                                     _bl_sty = _bl_df.style
+                                    if _bl_score_top3:
+                                        _bl_sty = _bl_sty.apply(_bl_score_rowbg, axis=1)
                                     for _bc in _bl_numcols:
                                         _bl_sty = _bl_sty.apply(_bl_topn, subset=[_bc])
                                     if '馬名' in _bl_df.columns and '馬場シフト' in _bl_df.columns:
                                         _bl_sty = _bl_sty.apply(_bl_name, subset=['馬名'])
                                     st.dataframe(_bl_sty, use_container_width=True, hide_index=True)
-                                    st.caption("🟡各項目の上位3頭（濃→薄=1→3位）／🔵馬名=馬場シフトで有利な血統")
+                                    st.caption("🟡各項目の上位3頭（濃→薄=1→3位）／🔵馬名=馬場シフトで有利な血統／"
+                                               "🩷ピンク行=血統スコア(父×条件複勝率の縮小合成)レース内top3")
                                 except Exception:
                                     st.dataframe(_bl_df, use_container_width=True, hide_index=True)
                                 if _tc_shift and _tc_shift['shift'] != '±0':
@@ -4981,6 +4999,31 @@ if nav == "🏠 Single Race Analysis":
                     view_df['Bloodline'] = view_df.apply(fmt_blood, axis=1)
                     view_df['BloodStats'] = view_df.apply(fmt_blood_stats, axis=1)
                     view_df['_blood_roi'] = view_df.apply(_blood_roi_val, axis=1)
+
+                    # --- 🧬血統スコア(血統SP=pages/blood_sp.pyと同一式)をレース内で計算し、
+                    #     上位3頭のBloodlineに 🧬(score)🔥 を付与＋赤字表示(検証:血統×コースは
+                    #     織込み済み[[verified_blood_course]]=予測スコアには足さず表示連携のみ) ---
+                    _blood_score_top3_idx = set()
+                    try:
+                        def _bs_of(_row):
+                            def _c(v):
+                                s = str(v) if v is not None else '-'
+                                return None if s in ('nan', 'NaN', 'None', '不明', '', '-') else s
+                            _s = _c(_row.get('sire')); _b = _c(_row.get('broodmareSire'))
+                            if _s is None and _b is None:
+                                return None
+                            return _bl.blood_score(_s, _b, _tb_surf, _tb_dist)
+                        _bscore = view_df.apply(_bs_of, axis=1)
+                        _bscore_num = pd.to_numeric(_bscore, errors='coerce')
+                        if _bscore_num.notna().any():
+                            _blood_score_top3_idx = set(_bscore_num.nlargest(3).index)
+                        for _ix in _blood_score_top3_idx:
+                            _sc = _bscore.get(_ix)
+                            _btxt = str(view_df.at[_ix, 'Bloodline'])
+                            if _sc is not None and _btxt not in ('-', 'nan', 'None', ''):
+                                view_df.at[_ix, 'Bloodline'] = _btxt + f" 🧬({_sc})🔥"
+                    except Exception:
+                        _blood_score_top3_idx = set()
                     # 表示後に内部列を削除
                     view_df = view_df.drop(columns=['_DirtBloodlineRank', '_DirtBloodlineBonus', '_blood_roi'], errors='ignore')
 
@@ -5591,7 +5634,10 @@ if nav == "🏠 Single Race Analysis":
                             help="例『A16%🟠(219走)』=全体3年勝率ランクA(A≥14%/B≥10%/C≥7%/D)・"
                                  "当コース(今回の競馬場×馬場)3年勝率16%・()内は当コース出走数219走。"
                                  "🔴≥20%/🟠≥14%は検証で妙味あり(全体勝率は市場織込み済)。(N走少)=10走未満。"),
-                        "Bloodline": st.column_config.TextColumn("血統(父/母父)", width="large"),
+                        "Bloodline": st.column_config.TextColumn("血統(父/母父)", width="large",
+                            help="父/母父。末尾『🧬(数値)🔥』＝血統スコア(父×条件複勝率の縮小合成・血統SPと同一)が"
+                                 "レース内top3の馬＝血統テキストを赤字で強調。※血統×コースは検証で織込み済み"
+                                 "([[verified_blood_course]])＝予測スコアには加算せず表示連携のみ。"),
                         "BloodStats": st.column_config.TextColumn("🧬血統実績(複/回)", width="small",
                                  help="父×今回条件(馬場/距離)の複勝率/単勝回収率(blood_dict.db)。🔥=回収率≥100% 💰=≥85%"),
                         "Jockey": st.column_config.TextColumn("騎手"),
@@ -5781,7 +5827,14 @@ if nav == "🏠 Single Race Analysis":
                             return out
                         if 'BloodStats' in view_df.columns:
                             styled_df = styled_df.apply(color_bloodstats, axis=0, subset=['BloodStats'])
-                        
+
+                        def color_bloodline(s):
+                            """血統スコアtop3の血統テキストを赤字に(🧬マーカー付き馬)。"""
+                            return ['color:#d32f2f; font-weight:bold' if idx in _blood_score_top3_idx
+                                    else '' for idx in s.index]
+                        if 'Bloodline' in view_df.columns and _blood_score_top3_idx:
+                            styled_df = styled_df.apply(color_bloodline, axis=0, subset=['Bloodline'])
+
                         if 'AvgPCI' in view_df.columns:
                             styled_df = styled_df.apply(color_pci, axis=0, subset=['AvgPCI'])
 
