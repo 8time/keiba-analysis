@@ -28,6 +28,51 @@ def _con(db_path=None):
     return sqlite3.connect(db_path or JV_DB_PATH)
 
 
+_JOCKEY_NAMES_CACHE = None  # [(norm_name, count)] 降順
+
+
+def _all_jockey_names(db_path=None):
+    """jravanの騎手名一覧(正規化,騎乗数)をキャッシュして返す。"""
+    global _JOCKEY_NAMES_CACHE
+    if _JOCKEY_NAMES_CACHE is not None:
+        return _JOCKEY_NAMES_CACHE
+    dbp = db_path or JV_DB_PATH
+    if not os.path.exists(dbp):
+        _JOCKEY_NAMES_CACHE = []
+        return _JOCKEY_NAMES_CACHE
+    con = _con(db_path)
+    try:
+        rows = con.execute(
+            "SELECT jockey_name, COUNT(*) c FROM results "
+            "WHERE jockey_name IS NOT NULL AND jockey_name<>'' GROUP BY jockey_name").fetchall()
+    except Exception:
+        rows = []
+    finally:
+        con.close()
+    _JOCKEY_NAMES_CACHE = sorted(((_norm(n), c) for n, c in rows if n), key=lambda x: -x[1])
+    return _JOCKEY_NAMES_CACHE
+
+
+def resolve_jockey_name(name, db_path=None):
+    """ライブ出馬表の略記騎手名(例:中山遥)をjravanの完全名(例:中山遥人)へ前方一致で解決。
+
+    NAR出馬表は騎手名を短縮表示するためjravanと完全一致せず成績が0になる。
+    完全一致があればそれ、無ければ略記名を接頭辞に持つ最頻の完全名を返す(表示/集計用)。
+    """
+    nm = _norm(name)
+    if not nm:
+        return name
+    names = _all_jockey_names(db_path)
+    if not names:
+        return nm
+    if any(n == nm for n, _ in names):
+        return nm
+    pref = [(n, c) for n, c in names if n.startswith(nm)]
+    if pref:
+        return max(pref, key=lambda x: x[1])[0]
+    return nm
+
+
 def _rate_block(rows):
     """rows: [(chakujun, win_odds, tosu), ...] → 集計dict。"""
     n = len(rows)
@@ -104,8 +149,14 @@ def jockey_base_stats(jockey_name, venue=None, distance=None, db_path=None,
 
 
 # 場コード→名（pace_map と重複だが独立運用のため再定義）
+# NAR(地方)も含む: 42浦和/43船橋/44大井/45川崎はscraper.VENUE_NAMES/track_biasと一致(実査確定)。
+# これが無いとNARレースで_venue_name=''となり当該場の騎手成績が全走混入して壊れる。
 _VENUE = {'01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
-          '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'}
+          '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉',
+          '30': '門別', '35': '盛岡', '36': '水沢', '42': '浦和', '43': '船橋',
+          '44': '大井', '45': '川崎', '46': '船橋', '47': '高知', '48': '金沢',
+          '50': '笠松', '51': '名古屋', '54': '園田', '55': '佐賀', '58': '佐賀',
+          '65': '帯広'}
 
 
 def _venue_name(jyo):

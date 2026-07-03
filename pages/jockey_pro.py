@@ -188,8 +188,64 @@ def render():
                 st.caption(f"DB参照エラー: {_je}")
 
             if not _jrow:
-                st.info("このレースIDは jravan.db に未取り込みです（未来のレースや体験版の反映前）。"
-                        "過去のレースIDでお試しください。連敗ピックアップは上の表で確認できます。")
+                # ── NAR未取込レースのフォールバック: ライブ出走表(NAR対応済)＋jravan騎手履歴 ──
+                # jravan.dbは地方の直近レースが未取込だが、騎手の過去成績(名前キー)は在る。
+                # ライブ出馬表から騎手名を取り、before_key無し(=全履歴)で指標を算出する。
+                _fb_done = False
+                try:
+                    from core import jockey_analyzer as _ja_fb
+                    _fb_ents = _ja_fb.extract_jockey_ids_from_race(_jj_rid)
+                    _fb_meta = _ja_fb.fetch_race_meta(_jj_rid)
+                    _fb_venue = _fb_meta.get('venue', '') or _jj._venue_name(str(_jj_rid)[4:6])
+                    _fb_dist = _fb_meta.get('distance') or None
+                    _fb_ents = [e for e in (_fb_ents or []) if e.get('jockey_name')]
+                    if _fb_ents:
+                        st.warning("⚠️ このレースIDは jravan.db に未取り込みです。"
+                                   "**ライブ出馬表＋jravan騎手履歴**でフォールバック算出します"
+                                   "（騎手全体成績・USM・騎手係数は名前キーで有効。"
+                                   "当該馬コンビ/黄金ライン(対調教師)は取込後に有効化）。")
+                        st.markdown(f"**{_fb_meta.get('race_name','') or ''} "
+                                    f"{_fb_venue}{_fb_meta.get('surface','')}"
+                                    f"{_fb_dist or ''}{'m' if _fb_dist else ''}**"
+                                    f"（{len(_fb_ents)}頭・フォールバック）")
+                        _fb_rows = []
+                        for e in _fb_ents:
+                            _jk_raw = e.get('jockey_name', '')
+                            # NAR出馬表は騎手名を短縮するためjravan完全名へ前方一致で解決
+                            jk = _jj.resolve_jockey_name(_jk_raw)
+                            base = _jj.jockey_base_stats(jk, venue=_fb_venue, distance=_fb_dist,
+                                                         before_key=None)
+                            ov = base['overall']; vstat = base['venue'] or {}
+                            usm = _jj.jockey_usm(jk, _jj_exp, before_key=None)
+                            fac = _jj.jockey_factor(jk, venue=_fb_venue, distance=_fb_dist,
+                                                    trainer_code=None, expected=_jj_exp,
+                                                    before_key=None)
+                            mom = _jj.momentum(jk, before_key=None)
+                            _fb_rows.append({
+                                "馬番": e.get('umaban'), "騎手": jk,
+                                "馬": e.get('horse_name', ''), "人気": e.get('popularity', 99),
+                                "全体勝率": f"{ov['win']*100:.0f}%",
+                                "全体複勝": f"{ov['top3']*100:.0f}%",
+                                f"{_fb_venue or '当場'}連対": (
+                                    f"{vstat.get('top2',0)*100:.0f}%/{vstat.get('rides',0)}走"
+                                    if vstat.get('rides', 0) else "-"),
+                                "USM複勝(100=平均)": usm['top3_usm'] if usm['top3_usm'] else "-",
+                                "騎手係数": fac['mult'],
+                                "調子(連敗/hot)": f"連{mom.get('lose_streak','-')}/{mom.get('hot',0):+.2f}",
+                                "_sort": fac['mult'],
+                            })
+                        _fbdf = (pd.DataFrame(_fb_rows).sort_values('_sort', ascending=False)
+                                 .drop(columns=['_sort']))
+                        st.dataframe(_fbdf, hide_index=True, use_container_width=True)
+                        st.caption("フォールバック指標は騎手名で全履歴集計（未来レースのためリーク無し）。"
+                                   "USM=人気に対する実複勝率(100超=人気以上)・騎手係数=検証済みエッジのみ。"
+                                   "馬コンビ/黄金ラインは血統番号/調教師コードが要るため取込後に表示されます。")
+                        _fb_done = True
+                except Exception as _fb_e:
+                    st.caption(f"フォールバック取得エラー: {_fb_e}")
+                if not _fb_done:
+                    st.info("このレースIDは jravan.db に未取り込みです（未来のレースや体験版の反映前）。"
+                            "過去のレースIDでお試しください。連敗ピックアップは上の表で確認できます。")
             elif _jentries:
                 _rk, _jyo, _kyori, _surf, _rname = _jrow
                 _venue = _jj._venue_name(_jyo)

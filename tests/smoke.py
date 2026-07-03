@@ -438,6 +438,11 @@ def main():
         from core.scraper import VENUE_NAMES as _VN
         assert (_VN.get('42'), _VN.get('43'), _VN.get('44'), _VN.get('45')) == \
             ('浦和', '船橋', '大井', '川崎'), "南関場コード名が誤り(42浦和/43船橋/44大井/45川崎)"
+        # jockey_jv: NAR会場名解決＋略記騎手名リゾルバ(One-Push/Scanner NARフォールバックが依存)
+        from core import jockey_jv as _jjv
+        assert _jjv._venue_name('44') == '大井' and _jjv._venue_name('43') == '船橋', \
+            "jockey_jv._venue_nameがNAR会場を解決できない(騎手成績の場別が壊れる)"
+        assert hasattr(_jjv, 'resolve_jockey_name'), "jockey_jv.resolve_jockey_name欠落(NAR略記名の名寄せ)"
     check("NAR過去走ブリッジの関数契約", t_nankan_contract)
 
     def t_ai_tenkai():

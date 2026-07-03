@@ -296,6 +296,12 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     jj : core.jockey_jv モジュール。戻り値: dict。"""
     name = str(row.get('Name', '') or '')
     jky = str(row.get('Jockey', '') or '')
+    # NAR出馬表は騎手名を短縮するため、jravan完全名へ前方一致で解決してから
+    # 騎手名キーの指標(黄金ライン/乗替)に使う(JRAは完全一致でそのまま)。
+    try:
+        jky = jj.resolve_jockey_name(jky) if hasattr(jj, 'resolve_jockey_name') else jky
+    except Exception:
+        pass
     sa = str(row.get('SexAge', '') or '')
     pop = _num(row.get('Popularity'))
     odds = _num(row.get('Odds'))

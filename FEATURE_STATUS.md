@@ -14,6 +14,7 @@
 | ├─ T3確認:純地方馬の順位妥当性 | T1前=空PastRunsでBattleScore全馬0.0一律(データ飢餓で誤沈)→T1後=54.9〜74.9に差別化。補正Tはjravan在籍NAR馬(大半)で10/10解決・非在籍の新馬/直近純地方馬のみ'-'(検証済NAR補正T無しのため捏造せず) | 🟢 | 実査=大井7/3 R11 BattleScore std0.00→5.31・補正T 10/10(フェスティヴルディ含む)。resolve_horseがNAR名でketto解決 | 2026-07-03 |
 | ├ NAR会場プロファイル(大井/川崎/船橋/浦和) | 場コード修正(42/43/44/45=浦和/船橋/大井/川崎)＋距離別枠順バイアス/砂質/雨天バイアス/リーディング | 🟢 | [[project_nankan_scraper]] | 2026-07-02 |
 | ├─ T2:One-Push(騎手Pro)NAR対応 | analyze_raceを南関対応。extract_jockey_ids_from_raceがNAR出馬表(騎手/厩舎がリンク無しプレーンテキスト)でget_race_data補完→騎手/厩舎/馬名を表示。fetch_race_metaもNARドメイン化。scraper.VENUE_NAMESの南関場コード誤り(42大井/44船橋)を修正 | 🟢 | 実査=大井7/3 R11でOne-Push騎手10/10・厩舎10/10充足(中山遥/大井・栗田等)。venue=大井正常。smoke=VENUE_NAMES南関名の回帰ガード追加 | 2026-07-03 |
+| ├─ レース単位騎手指標 NAR未取込フォールバック | jravan.db未取込レースはライブ出馬表(NAR対応)＋jravan騎手履歴で指標算出。jockey_jv._venue_nameにNAR会場追加(場別成績修復)＋resolve_jockey_nameで略記名(中山遥→中山遥人)を前方一致名寄せ | 🟢 | 実査=大井7/3の騎手が名寄せで解決(和田譲→和田譲治2000走・大井855走等)。馬コンビ/黄金ラインは血統番号/調教師コード要のため取込後 | 2026-07-03 |
 | ├ NAR軸/シグナル較正 | ①軸=NAR実測POP_FUKU_NAR(1番人気78.7%>JRA70.1%)で過小評価修正 ②🔬シグナル列を南関でも機能(scrape_raceはrace_id取得でNAR自動判定) ③🤖検証AI=NAR専用LTRモデル(南関学習・人気+2.38pp)に切替 | 🟢 | axis_marks_nar/_fetch_daily_signals(NAR分岐)/ltr_ranker会場コードでモデル自動切替。診断=NAR1番人気複勝率78.7%実測 | 2026-07-02 |
 | ├ NAR専用LTRモデル(資料p5セグメント) | JRA学習LTRは地方で分布外→南関42-45だけで別LightGBM学習。holdout2025 win recall@7=人気+2.38pp(JRA版+0.9ppより大・地方は騎手が効く) | 🟢 | scripts/build_ltr_nar.py(NAR特徴=log_odds/cushion等除外)+ltr_ranker._load_nar。data/ltr_nar_model.lgbはbuild scriptで再生成 | 2026-07-02 |
 | ├ 🛡️BattleScore乖離セーフティネット NAR比例化 | 中央固定top3/top7→NAR出走頭数比例(seed≈3/16・line≈40%)、中央側は完全不変 | ✅ | [[project_nar_recall_proportional]] | 2026-07-02 |
@@ -35,6 +36,7 @@
 | ├ 3連複フォーメーション | ✅残し→軸/対抗、🎯穴→押さえ自動配置 | 🟢 | kf_form警告修正(2ca7a8c) | 2026-06-23 |
 | ├ netkeibaレースリンク | 入力欄直下に出馬表リンク | 🟢 | (2ca7a8c) | 2026-06-23 |
 | 🔍 Race Scanner (Batch) | 日付→全レース取得→『買える順』(✅買える/⏸見送り/△様子見)で並替 | 🟢 | ③Gate化・決着タイプ強化版 | 2026-06-24 |
+| ├ NAR(地方)対応 | 単複乖離/断層/荒れ度(オッズ系)は元々動作。jravan在籍NAR馬(ketto解決10/10実査)は末脚救出/初ダート/牝フェード/黄金ラインも機能。horse_value_factorsで騎手名を自動名寄せ(略記→完全名)。過去走系(PCI/展開)はSRAで南関自動補完 | 🟢 | value_scanner.horse_value_factors+jockey_jv.resolve_jockey_name。バッチのPastRuns一括補完はスクレイプ過大かつscannerはjravan ctx参照のため非採用 | 2026-07-03 |
 | 👁️ パドック解析 | パドック/調教の観察タグ台帳(scene切替・記録→精算→タグ別複勝率/単ROI/ベース比)。タグ説明凡例＋画像/動画の任意添付。主観cueの個人検証装置 | 🟢 | core/paddock_ledger.py(lib不要JSON台帳・scene=paddock/training・TAG_HELP・save_media)。定量は検証済([[verified_paddock_weight]])で除外。添付=Gemma 4 12B(動画対応)自動タグ(phase B)の答え合わせ用 | 2026-06-24 |
 | 🩸 血統SP | レースID→血統スコア順＋道悪判定／種牡馬しらべ | 🟢 | 道悪判定追加・小数第一位 | 2026-06-23 |
 | 💰 BetSync(資金管理) | ガードレール/多肢ケリー/破産確率/台帳・Brier＋Gate判定別ROI(#8) | 🟢 | [[project_betsync_money]]＋roi_by_gate | 2026-06-24 |
