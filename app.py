@@ -3321,8 +3321,15 @@ if nav == "🏠 Single Race Analysis":
                                             'netkeiba4角': _nkt_bands.get(_u, '—'),
                                             '合意': _icons.get(_u, ''),
                                         })
-                                    st.dataframe(pd.DataFrame(_nkt_rows), hide_index=True,
-                                                 use_container_width=True)
+                                    _nkt_df = pd.DataFrame(_nkt_rows)
+                                    def _nkt_dan_row(_r):  # 💀(危険位置一致)の行を薄紫で塗る
+                                        return (['background-color:#DCC2FF'] * len(_r)
+                                                if _r.get('合意') == '💀' else [''] * len(_r))
+                                    try:
+                                        st.dataframe(_nkt_df.style.apply(_nkt_dan_row, axis=1),
+                                                     hide_index=True, use_container_width=True)
+                                    except Exception:
+                                        st.dataframe(_nkt_df, hide_index=True, use_container_width=True)
                                     _n_win = sum(1 for v in _icons.values() if v == '🏆')
                                     _n_dan = sum(1 for v in _icons.values() if v == '💀')
                                     st.caption(f"🏆 有利位置一致 {_n_win}頭 ／ 💀 危険位置一致 {_n_dan}頭")
