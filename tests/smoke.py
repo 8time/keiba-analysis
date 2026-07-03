@@ -520,8 +520,11 @@ def main():
         assert v and v['shift'] > 0, f"東京芝fav欠落 {v}"
         k = bc.venue_fav_note('10', '芝', 3)
         assert k and k['shift'] < 0, f"小倉芝fav欠落 {k}"
+        assert bc.venue_fav_note('02', '芝', 2) and bc.venue_fav_note('02', '芝', 2)['shift'] < 0, "函館芝fav欠落"
+        assert bc.venue_fav_note('45', 'ダ', 1) and bc.venue_fav_note('45', 'ダ', 1)['shift'] < 0, "川崎ダfav欠落"
         assert bc.venue_fav_note('05', '芝', 6) is None, "人気薄に発火してはいけない"
-        assert bc.venue_fav_note('06', '芝', 1) is None, "非配線の場(中山z-2.05境界)に発火してはいけない"
+        assert bc.venue_fav_note('06', '芝', 1) is None, "非配線の場(中山=holdout崩落)に発火してはいけない"
+        assert bc.venue_fav_note('44', 'ダ', 1) is None, "大井は非配線(holdout逆符号)"
     check("血統×コース(blood_course)の契約", t_blood_course)
 
     def t_jockey_power():
