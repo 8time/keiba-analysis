@@ -5616,6 +5616,56 @@ if nav == "🏠 Single Race Analysis":
                                 "「⚙ 列順設定」→「デフォルト」で全列に戻せます。")
                         view_df = view_df.iloc[:, 0:0]
 
+                    # ── 📌 重複列（右端に追加表示）─────────────────────── #
+                    # 項目が多く右へスクロールすると馬番/馬名が画面外に消えて
+                    # どの馬のデータか分からなくなる問題への対処。選んだ列を
+                    # テーブル右端にもう一度表示する(参照用・色付けなしの素の複製)。
+                    _dup_prefs_key = 'sra_col_dup_right'
+                    if _dup_prefs_key not in st.session_state:
+                        try:
+                            with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                _saved_dup = _json_sra.load(_f).get('single_race_col_dup_right', [])
+                        except Exception:
+                            _saved_dup = []
+                        st.session_state[_dup_prefs_key] = [c for c in _saved_dup if c in view_df.columns]
+
+                    def _persist_sra_dup(_dup_list):
+                        try:
+                            try:
+                                with open(_prefs_path_sra, 'r', encoding='utf-8') as _f:
+                                    _p = _json_sra.load(_f)
+                            except Exception:
+                                _p = {}
+                            _p['single_race_col_dup_right'] = list(_dup_list)
+                            with open(_prefs_path_sra, 'w', encoding='utf-8') as _f:
+                                _json_sra.dump(_p, _f, ensure_ascii=False, indent=2)
+                            return True
+                        except Exception:
+                            return False
+
+                    _dup_options_display = [_col_to_display.get(c, c) for c in view_df.columns]
+                    _dup_prev_cols = [c for c in st.session_state.get(_dup_prefs_key, []) if c in view_df.columns]
+                    _dup_selected_display = st.multiselect(
+                        "📌 重複列（右端に追加表示）",
+                        _dup_options_display,
+                        default=[_col_to_display.get(c, c) for c in _dup_prev_cols],
+                        key="sra_dup_multiselect",
+                        help="選んだ列をテーブルの右端にもう一度表示します。項目数が多く右へスクロールしても、"
+                             "馬番・馬名などがどの馬の行か分からなくならないようにできます（例: 馬番/馬名を選択）。"
+                    )
+                    _dup_selected_cols = [c for c in view_df.columns
+                                          if _col_to_display.get(c, c) in _dup_selected_display]
+                    if _dup_selected_cols != _dup_prev_cols:
+                        st.session_state[_dup_prefs_key] = _dup_selected_cols
+                        _persist_sra_dup(_dup_selected_cols)
+
+                    _dup_col_map = {}  # 複製列名 -> 元列名
+                    for _dc in _dup_selected_cols:
+                        _dup_name = f"{_dc}__dup_right"
+                        view_df[_dup_name] = view_df[_dc].astype(str)
+                        _dup_col_map[_dup_name] = _dc
+                    # ──────────────────────────────────────────────────── #
+
                     column_config = {
                         "Rank": st.column_config.NumberColumn("Rank"),
                         "Waku": st.column_config.TextColumn("枠", help="内(1-3), 外(6-8)の区分を表示"),
@@ -5707,6 +5757,11 @@ if nav == "🏠 Single Race Analysis":
                                  "()内=前走騎手との差分: ▲+3以上=鞍上強化/▽-3以下=弱化/→=同等(差分は表示のみ・未検証)。"
                                  "NAR専業騎手はオッズ未収録で'-'"),
                     }
+                    # 📌重複列(右端)のcolumn_configを動的追加(素の複製・ヘッダに📌+元ラベル)
+                    for _dup_name, _dc in _dup_col_map.items():
+                        _dup_label = _col_to_display.get(_dc, _dc)
+                        column_config[_dup_name] = st.column_config.TextColumn(
+                            f"📌{_dup_label}", help=f"{_dup_label}の複製（右端固定・横スクロール時の参照用）")
 
                     try:
                         def color_battlescore(s):
