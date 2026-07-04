@@ -69,12 +69,20 @@ def _strip_jockey_deco(name):
     return s
 
 
+def _is_subseq(short, longer):
+    """shortの各文字がlonger内に順序通り現れるか(部分列判定)。"""
+    it = iter(longer)
+    return all(ch in it for ch in short)
+
+
 def resolve_jockey_name(name, db_path=None):
     """ライブ出馬表の騎手名(略記/減量記号/イニシャル付き)をjravanの完全名へ解決。
 
-    例: 中山遥→中山遥人 / ☆団野→団野大成 / Ｃ.ルメール→ルメール。
+    例: 中山遥→中山遥人 / ☆団野→団野大成 / Ｃ.ルメール→ルメール / 鮫島駿→鮫島克駿。
     NAR出馬表は騎手名を短縮表示、netkeibaは見習い記号/外国人イニシャルを付すため
-    jravanと完全一致せず成績が0になる。装飾を剥がし、完全一致→無ければ前方一致(最頻)。
+    jravanと完全一致せず成績が0になる。装飾を剥がし、完全一致→前方一致(最頻)→
+    それでも見つからなければ「途中の1文字が抜けている」略記(鮫島駿→鮫島克駿のように
+    本来の名前の途中に文字が挿入されている)を部分列一致で救済(最頻)。
     """
     nm = _norm(_strip_jockey_deco(name))
     if not nm:
@@ -87,6 +95,14 @@ def resolve_jockey_name(name, db_path=None):
     pref = [(n, c) for n, c in names if n.startswith(nm)]
     if pref:
         return max(pref, key=lambda x: x[1])[0]
+    # 前方一致で拾えない中間文字省略の救済(誤爆防止に先頭/末尾一致・文字数差<=2・2文字以上限定)
+    if len(nm) >= 2:
+        fuzzy = [(n, c) for n, c in names
+                 if len(n) > len(nm) and len(n) - len(nm) <= 2
+                 and n[0] == nm[0] and n[-1] == nm[-1]
+                 and _is_subseq(nm, n)]
+        if fuzzy:
+            return max(fuzzy, key=lambda x: x[1])[0]
     return nm
 
 

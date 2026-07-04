@@ -11,7 +11,18 @@ from_odds/sniper)を1つに統合する中核ロジック。
 
 人気=Popularity<=pop_th、穴=ana_lo<=Popularity<=ana_hi。
 """
+import re
 from itertools import combinations
+
+# 妙味シグナル判定(alert文字列の部分一致)。前半=従来のAlert列マーカー(🔥ダークホース/🎯指数上位/🚀上がり)。
+# 後半=🟣荒れ予報6シグナル(scripts/arare_signal_backtest.py train2021-24/holdout2025で
+# 『荒れ予報×人気8+の複勝』を単独で押し上げると検証済):
+#   🔵補正T top3(z+10.4) / 🧬血統スコアtop3(z+7.6) / 🧬血統回収100%+(z+6.4) /
+#   ⚡33ラップ適合(z+2.6) / 🔥末脚top3(z+2.3) / 👑騎手力top3(z+3.8)。
+# 単一絵文字だとAlert列の別用途と衝突するため、新規分は複数文字プレフィックスで照合。
+_VAL_SIGS = ('🔥', '🎯', '🚀', '妙味', '乖離', '🔵補正T', '🧬血統', '⚡33', '👑騎手')
+# 🧩シグナル重複マーカー('🧩2重複'等・app.py側で6シグナルの同時発火数を付与)
+_COMBO_RE = re.compile(r'🧩(\d+)重複')
 
 # パターン別の狙い目オッズ価格帯（倍）
 # 本線=人気上位2頭以上を必ず含む形＝鉄板(37%)+①(46%)を同時カバー=83%(検証 trio_selector_backtest.py)。
@@ -152,9 +163,16 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         _sig_ana = 0
         for u in trio:
             al = str(by[u].get('alert', '') or '')
-            if u in ana_set and any(s in al for s in ('🔥', '🎯', '🚀', '妙味', '乖離')):
+            if u in ana_set and any(s in al for s in _VAL_SIGS):
                 bonus += _val_boost
                 _sig_ana += 1
+            # 🧩シグナル重複穴: 6シグナルの同時発火は単独より強い
+            # (arare_signal_backtest holdout combo2+ z+9.2 / combo3+ z+8.2)。
+            # 検証は『荒れレース×人気薄の複勝』のため ②妙味×穴 に限定して加点。
+            if pattern == '②妙味' and u in ana_set:
+                _mc = _COMBO_RE.search(al)
+                if _mc:
+                    bonus += 14.0 if int(_mc.group(1)) >= 3 else 10.0
             if deploy_map:
                 bonus += float(deploy_map.get(u, 0.0))   # 展開マップ(好位妙味)連携
         # ②妙味: 妙味シグナルの穴を含まないトリオは後退(盲目的な人気1-穴2を買わない=検証で最悪だった形)
@@ -264,6 +282,127 @@ def build_trifecta_odds_map(odds_list):
         except Exception:
             continue
     return m
+
+
+# 3連単の狙い目価格帯(倍)。3連単配当は3連複の約4〜6倍(JRA公表の券種別平均)で、
+# 3連複の本線(10-150)〜②妙味下限をカバーする帯に写像。<lo=1着固定が堅すぎ(妙味なし)/
+# >hi=宝くじ帯。3連複の_TARGET_BANDと同じく『帯は加点・帯外は軽い減点』のソフト運用。
+_TRIFECTA_BAND = (50.0, 3000.0)
+
+
+def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
+                       pop_th=5, ana_lo=6, ana_hi=12,
+                       n_first=3, n_second=5, n_third=9, band=None):
+    """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
+    build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
+
+    horses: recommend_trio と同形 [{'umaban','name','score','pop','alert'}]
+    odds_map: {(1着,2着,3着): odds} = build_trifecta_odds_map の出力(任意)
+    axis_umaban: 1着/2着候補の優先馬番リスト(先頭ほど優先。軸馬候補◎〇=オッズ別実複勝率を想定)
+    n_points: 上限点数。3連単は点数を広げるほど合成オッズが潰れるため30にハードcap。
+    戻り値: recommend_trio と同形 {'bets':[{...}], 'meta':{...}, 'warning':str|None}
+    """
+    horses = [h for h in horses if h.get('umaban')]
+    by = {h['umaban']: h for h in horses}
+    if len(by) < 3:
+        return {'bets': [], 'meta': {}, 'warning': '出走馬が3頭未満のため3連単を組めません'}
+    n_points = max(1, min(int(n_points), 30))   # ハード上限30(「3連単は30点以内」の設計)
+    lo, hi = band or _TRIFECTA_BAND
+    ranked = sorted(by.values(), key=lambda h: -(h.get('score') or 0))
+    pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
+    ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
+    axis = [u for u in (axis_umaban or []) if u in by]
+
+    def _combo_lvl(u):
+        _m = _COMBO_RE.search(str(by[u].get('alert', '') or ''))
+        return int(_m.group(1)) if _m else 0
+
+    def _has_sig(u):
+        al = str(by[u].get('alert', '') or '')
+        return any(s in al for s in _VAL_SIGS)
+
+    def _fill(pool, source, limit):
+        for h in source:
+            if len(pool) >= limit:
+                break
+            if h['umaban'] not in pool:
+                pool.append(h['umaban'])
+        return pool
+
+    # 1着候補: 軸馬候補◎〇(オッズ別実複勝率=検証済の軸信頼度)を頭に固定→スコア順で補充。
+    # 3連単は1着固定の精度が命(◎の複勝率フロア50%はスコア順1位より直接的な3着内根拠)。
+    first = _fill(list(axis[:2]), ranked, n_first)
+    # 2着候補: 1着候補+スコア順(取りこぼし=◎〇の2着付けをカバー)
+    second = _fill(list(first), ranked, n_second)
+    # 3着(ヒモ): 🧩シグナル重複穴>妙味シグナル穴>スコア順。荒れ時の3着穴が3連単配当の源泉
+    # (combo2+ holdout z+9.2 は単独シグナルより強い=ヒモ選別の第一基準)。
+    himo_ranked = sorted(by.values(),
+                         key=lambda h: (-(_combo_lvl(h['umaban']) if h['umaban'] in ana_set else 0),
+                                        -(1 if (h['umaban'] in ana_set and _has_sig(h['umaban'])) else 0),
+                                        -(h.get('score') or 0)))
+    third = _fill(list(second), himo_ranked, n_third)
+
+    scored = []
+    for a in first:
+        for b in second:
+            if b == a:
+                continue
+            for c in third:
+                if c in (a, b):
+                    continue
+                # 着順傾斜: 1着>2着>3着の重み(並び自体をスコア降順に寄せる=1着に最も強い馬)
+                base = ((by[a].get('score') or 0) * 1.0 +
+                        (by[b].get('score') or 0) * 0.8 +
+                        (by[c].get('score') or 0) * 0.6)
+                bonus = 0.0
+                if axis:
+                    if a == axis[0]:
+                        bonus += 8.0     # ◎1着(複勝率フロア50%=最有力の頭)
+                    elif a in axis:
+                        bonus += 4.0     # 〇1着
+                    if b in axis and b != a:
+                        bonus += 3.0     # ◎〇の2着付け
+                if c in ana_set:
+                    if _has_sig(c):
+                        bonus += 8.0     # 妙味シグナル穴の3着(3連複②妙味と同思想)
+                    _lv = _combo_lvl(c)
+                    if _lv >= 3:
+                        bonus += 14.0    # combo3+ (holdout z+8.2)
+                    elif _lv == 2:
+                        bonus += 10.0    # combo2+ (holdout z+9.2)
+                odds = None
+                in_band = False
+                if odds_map:
+                    odds = odds_map.get((a, b, c))
+                    if odds is not None:
+                        if lo <= odds <= hi:
+                            in_band = True
+                            bonus += 15.0
+                        elif odds < lo:
+                            bonus -= 10.0   # 堅すぎ(1着固定でこの配当は妙味なし)
+                        else:
+                            bonus -= 6.0    # 宝くじ帯
+                n_pop = sum(1 for u in (a, b, c) if u in pop_set)
+                n_ana = sum(1 for u in (a, b, c) if u in ana_set)
+                scored.append({'combo': (a, b, c),
+                               'names': tuple(by[u].get('name', '') for u in (a, b, c)),
+                               'odds': odds, 'in_band': in_band,
+                               'score': round(base + bonus, 1),
+                               'pop_ana': (n_pop, n_ana)})
+    if not scored:
+        return {'bets': [], 'meta': {'first': first, 'second': second, 'third': third},
+                'warning': '3連単の組合せを生成できませんでした（候補頭数を確認してください）'}
+    scored.sort(key=lambda x: -x['score'])
+    bets = scored[:n_points]
+    syn = None
+    if all(b['odds'] for b in bets):
+        inv = sum(1.0 / b['odds'] for b in bets)
+        syn = round(len(bets) / inv, 1) if inv else None
+    return {'bets': bets,
+            'meta': {'n_points': len(bets), 'target_band': (lo, hi), 'synthetic_odds': syn,
+                     'first': first, 'second': second, 'third': third,
+                     'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set)},
+            'warning': None}
 
 
 # ──────────────────────────────────────────────

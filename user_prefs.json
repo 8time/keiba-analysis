@@ -8,7 +8,6 @@
     "Popularity",
     "AxisMark",
     "Signal",
-    "Projected Score",
     "BattleScore",
     "AvgPosition",
     "DeployScoreLabel",
@@ -17,7 +16,6 @@
     "Trainer",
     "Bloodline",
     "BloodStats",
-    "Suitability (Y)",
     "AvgAgari",
     "Alert",
     "RiskFlags",
@@ -25,6 +23,11 @@
     "WeightCarried",
     "CorrectedT",
     "JPower",
-    "SpurtIdx"
+    "SpurtIdx",
+    "Lap33"
+  ],
+  "single_race_col_dup_right": [
+    "Umaban",
+    "Name"
   ]
 }

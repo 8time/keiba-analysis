@@ -194,6 +194,30 @@ def main():
         assert r['axis'] == 2, f"危険軸1をvetoし2へ降格すべき, got {r['axis']}"
     check("trio_engine.recommend_quinella_exacta(veto_axis)", t_veto_axis)
 
+    def t_trio_combo_boost():
+        from core import trio_engine as te
+        # 🧩シグナル重複穴(combo2+ holdout z+9.2)が②妙味で優先されること
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i * 3, 'pop': i, 'alert': ''}
+              for i in range(1, 13)]
+        hs[7]['alert'] = '🔵補正T上位 🧬血統上位 🧩2重複'   # 8番人気
+        hs[9]['alert'] = '🔥末脚top ⚡33ラップ適合 🧩3重複'  # 10番人気
+        r = te.recommend_trio(hs, pattern='②妙味', n_points=5)
+        assert r['warning'] is None and r['bets'], f"got {r['warning']}"
+        assert {8, 10} <= set(r['bets'][0]['combo']), f"combo穴が最上位に来るべき, got {r['bets'][0]['combo']}"
+    check("trio_engine.recommend_trio(🧩combo穴優先)", t_trio_combo_boost)
+
+    def t_trifecta():
+        from core import trio_engine as te
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i * 3, 'pop': i, 'alert': ''}
+              for i in range(1, 13)]
+        hs[9]['alert'] = '🔵補正T上位 🔥末脚top 🧩2重複'
+        r = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=100)
+        assert r['warning'] is None and len(r['bets']) <= 30, "ハード上限30点"
+        assert r['bets'][0]['combo'][0] == 2, f"◎(axis先頭)が1着固定, got {r['bets'][0]['combo']}"
+        assert 10 in r['meta']['third'], f"🧩combo穴がヒモ候補入り, got {r['meta']['third']}"
+        assert all(len(set(b['combo'])) == 3 for b in r['bets']), "3頭相異なる順序組"
+    check("trio_engine.recommend_trifecta(30点cap/◎頭/🧩ヒモ)", t_trifecta)
+
     def t_ledger_gate():
         import tempfile
         from core import money

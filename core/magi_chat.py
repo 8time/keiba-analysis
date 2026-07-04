@@ -478,8 +478,15 @@ def is_quarantined(tag):
     return any(kw in t for kw in _QUARANTINE_KEYWORDS)
 
 
-def save_record(race_id, meta, ctx, chat, learning):
-    """1セッションを台帳に追記し、保存後のタグ集計を返す。"""
+def save_record(race_id, meta, ctx, chat, learning, scanner_review=None, scanner_pred=None):
+    """1セッションを台帳に追記し、保存後のタグ集計を返す。
+
+    scanner_review: {'actual_class': '堅い|通常|波乱|大荒れ',
+                      'sanrenpuku_payout': int|None, 'sanrentan_payout': int|None}
+        会話開始前にユーザーへ必須で答えさせる、Race Scannerの荒れ予測の答え合わせ。
+    scanner_pred: build_context前(審議開始時)に計算したScanner(trio_lean)の事前予測。
+        {'label': str, 'score': float, 'detail': str} or None。
+    """
     ledger = _load_ledger()
     rec = {
         'ts': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -491,6 +498,8 @@ def save_record(race_id, meta, ctx, chat, learning):
         'pred_ubs': ctx.get('pred_ubs', []),
         'chat': chat,
         'learning': learning,
+        'scanner_review': scanner_review,
+        'scanner_pred': scanner_pred,
     }
     ledger.append(rec)
     os.makedirs(os.path.dirname(LEDGER_PATH), exist_ok=True)

@@ -70,6 +70,12 @@ def render():
     )
 
     # ── 入力 ──
+    # Race Scannerなどからのリンク(?race_id=...)を受けたら自動入力→そのまま自動分析開始。
+    _qp_race_id = st.query_params.get('race_id')
+    if _qp_race_id and st.session_state.get('hunter_url_from_qp') != _qp_race_id:
+        st.session_state['hunter_url'] = _qp_race_id
+        st.session_state['hunter_url_from_qp'] = _qp_race_id
+
     col_url, col_th = st.columns([3, 1])
     with col_url:
         race_url = st.text_input(
