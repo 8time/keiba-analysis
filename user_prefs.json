@@ -23,6 +23,8 @@
     "RiskFlags",
     "LTR",
     "WeightCarried",
-    "CorrectedT"
+    "CorrectedT",
+    "JPower",
+    "SpurtIdx"
   ]
 }
