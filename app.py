@@ -5399,13 +5399,48 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         pass
 
+                    # --- 🌀33ラップ(検証済み: 人気薄×コース適合で複勝残差+0.9pp台・train/holdout安定) ---
+                    # 得意33ラップ(馬)とコース平均33ラップの符号一致(⚡)のみ表示。JRA限定(NAR非対応)。
+                    try:
+                        from core import lap33 as _l33
+                        _l33_surf_raw = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else ''
+                        _l33_surf = '芝' if '芝' in _l33_surf_raw else ('ダ' if _l33_surf_raw else None)
+                        _l33_dist = None
+                        try:
+                            _l33_dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _l33_dist = None
+                        _l33_jyo = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
+                        _l33_course = (_l33.course_avg33(_l33_surf, _l33_dist, jyo=_l33_jyo)
+                                       if (_l33_surf and _l33_dist and _l33_jyo <= '10') else None)
+                        if _l33_course:
+                            _l33_cells = {}
+                            for _, _rl3 in view_df.iterrows():
+                                _ul3 = pd.to_numeric(_rl3.get('Umaban'), errors='coerce')
+                                if pd.isnull(_ul3):
+                                    continue
+                                _kl3, _ = _jjh.resolve_horse(str(_rl3.get('Name', '')))
+                                _fitl3 = _l33.horse_fit33(_kl3) if _kl3 else {'avg_lap33': None}
+                                _hv = _fitl3.get('avg_lap33')
+                                if _hv is None:
+                                    _l33_cells[int(_ul3)] = '-'
+                                    continue
+                                _m = _l33.fit_match(_hv, _l33_course['avg'])
+                                _icon = '⚡適合' if _m is True else ('' if _m is None else '')
+                                _l33_cells[int(_ul3)] = f"{_hv:+.1f}(場{_l33_course['avg']:+.1f}){_icon}"
+                            view_df['Lap33'] = view_df['Umaban'].apply(
+                                lambda u: _l33_cells.get(int(pd.to_numeric(u, errors='coerce')), '-')
+                                if pd.notnull(pd.to_numeric(u, errors='coerce')) else '-')
+                    except Exception:
+                        pass
+
                     # --- ⏱️調教評価(netkeiba取得済みなら表示) ---
                     if 'TrainingEval' in df.columns:
                         view_df['TrainingEval'] = df['TrainingEval']
 
                     # Merge previous screenshot columns with latest advanced columns
                     cols = ['Rank', 'Umaban', 'Waku', 'Popularity', 'Odds', 'Name', 'AxisMark', 'Jockey', 'JPower', 'Signal',
-                            'Projected Score', 'BattleScore', 'CorrectedT', 'LTR', 'SpurtIdx', 'AvgPosition',
+                            'Projected Score', 'BattleScore', 'CorrectedT', 'LTR', 'SpurtIdx', 'Lap33', 'AvgPosition',
                             'DeployScoreLabel', 'PCILabel', 'Pos600m', 'FrontCollapseEffect',
                             'DensityPenaltyLabel',
                             'OddsGap', 'Stress', 'SexAge', 'WeightHistory', 'WeightCarried',
@@ -5450,7 +5485,7 @@ if nav == "🏠 Single Race Analysis":
                         "Signal": "🔬シグナル",
                         "AxisMark": "🎯軸馬候補",
                         "JPower": "🏇騎手力(乗替)",
-                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "SpurtIdx": "🔥末脚指数", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
+                        "Projected Score": "⭐予測スコア", "CorrectedT": "🔵補正T", "LTR": "🤖検証AI", "SpurtIdx": "🔥末脚指数", "Lap33": "🌀33ラップ", "ボーナス詳細": "ボーナス内訳", "NIndex": "N指数",
                         "Stress": "ストレス", "Waku": "枠",
                         "BattleScore": "🔥総合戦闘力",
                         "Strength (X)": "💪強さ(X)", "Suitability (Y)": "🎯適性(Y)",
@@ -5751,6 +5786,13 @@ if nav == "🏠 Single Race Analysis":
                             "🔥末脚指数",
                             help="上がり3F偏差ベースの末脚力(高いほど良い)。🔥=レース内top3。"
                                  "検証: 人気薄(6番人気以下)×末脚top3で複勝+4pp/ROI+11pp(穴の相手の質)"),
+                        "Lap33": st.column_config.TextColumn(
+                            "🌀33ラップ",
+                            help="33ラップ理論(鈴木ショータ氏)。中盤3F相当ペース-上がり3F。"
+                                 "正=瞬発力型/負=持久力型。表示=馬の得意33ラップ(場コース平均)。"
+                                 "⚡適合=符号一致。検証: 人気薄(6番人気以下)×適合で複勝残差"
+                                 "+0.9pp台(train z+6.8/holdout z+3.3・train/holdout安定)。"
+                                 "JRA限定(NARはラップデータ無し)。"),
                         "JPower": st.column_config.TextColumn(
                             "🏇騎手力(乗替)",
                             help="騎手のみの力の偏差値(50=平均・オッズ期待値比を偏差値化・検証済で持続)。"

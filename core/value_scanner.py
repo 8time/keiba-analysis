@@ -351,6 +351,24 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     if pop and pop >= 6 and si is not None and si >= 0.8 and sr >= 2:
         pos.append(f"🔥末脚救出(指数{si:.1f})")
 
+    # 🌀33ラップ適合(独立シグナル): 人気薄(6番人気以下)×馬の得意33ラップとコース平均が
+    # 符号一致(瞬発力型馬×瞬発力コース or 持久力型馬×持久力コース)。
+    # 検証(scripts/lap33_backtest.py train2021-24/holdout2025): 6番人気以下×適合で
+    # 複勝率残差 train+0.95pp(z+6.8)/holdout+0.92pp(z+3.3)=train/holdout安定の独立エッジ。
+    # 不適合(逆符号)側はholdoutで有意水準未達のため消去/危険フラグには使わない。
+    try:
+        if pop and pop >= 6 and kt:
+            from core import lap33 as _l3
+            _l33_fit = _l3.horse_fit33(kt)
+            _l33_course = _l3.course_avg33(surface, dist, jyo=jyo)
+            _l33_match = _l3.fit_match(
+                _l33_fit.get('avg_lap33'),
+                _l33_course.get('avg') if _l33_course else None)
+            if _l33_match is True:
+                pos.append(f"🌀33ラップ適合({_l33_fit['avg_lap33']:+.1f})")
+    except Exception:
+        pass
+
     # 単複乖離(妙味)
     div_level, div_text = (0, '')
     if place_mid is not None:

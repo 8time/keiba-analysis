@@ -123,13 +123,20 @@ def race_lap33(kyori, mae3f, ato3f, race_time):
     return lap33(mid, _to_sec10(ato3f))
 
 
+_COURSE_AVG_CACHE = {}  # (surface,kyori,jyo,year_from,year_to,db_path) -> {'avg','n'} or None
+
+
 def course_avg33(surface, kyori, jyo=None, db_path=None, year_from=2016, year_to=9999):
     """コース(場×芝ダ×距離)の平均33ラップ(レース単位・原典と同じ構成)を返す。
 
     原典の『コース別平均33ラップ一覧表』のアプリ内自動生成版。mae3f/ato3fは全馬共有の
     レース区間タイムのため、個別馬の上がりでなくレース単位で1値を採る(=race_lap33)。
     戻り値: {'avg': float, 'n': int} or None(該当なし)。jyo省略時は全国平均。
+    プロセス内キャッシュあり(1レース内で馬ごとに呼ばれても再クエリしない・~0.9秒/回)。
     """
+    key = (surface, kyori, jyo, year_from, year_to, db_path)
+    if key in _COURSE_AVG_CACHE:
+        return _COURSE_AVG_CACHE[key]
     con = _con(db_path)
     surf_like = '%芝%' if surface == '芝' else '%ダ%'
     q = ("SELECT ra.mae3f, ra.ato3f, rw.time "
@@ -143,12 +150,16 @@ def course_avg33(surface, kyori, jyo=None, db_path=None, year_from=2016, year_to
     rows = con.execute(q, params).fetchall()
     con.close()
     if not rows:
+        _COURSE_AVG_CACHE[key] = None
         return None
     vals = [v for mae, ato, wtime in rows
             if (v := race_lap33(kyori, mae, ato, wtime)) is not None]
     if not vals:
+        _COURSE_AVG_CACHE[key] = None
         return None
-    return {'avg': round(sum(vals) / len(vals), 2), 'n': len(vals)}
+    result = {'avg': round(sum(vals) / len(vals), 2), 'n': len(vals)}
+    _COURSE_AVG_CACHE[key] = result
+    return result
 
 
 def horse_fit33(ketto_num, db_path=None, before_key=None, n_runs=10, min_runs=3):
