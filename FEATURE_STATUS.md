@@ -26,6 +26,7 @@
 | ├ 🔵補正T | 直近7走×同馬場の最高/100・top3に🔵 | ✅ | [[verified_corrected_time]] | — |
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |
 | ├ 展開MAP/Vマトリクス | テン速力でペース想定・隊列・荒れ寄り判定 | 🟡 | 展開恩恵はpriced-in([[verified_tenkai_priced_in]]) | — |
+| ├─ 33ラップ理論(Phase0-1完了・配線待ち) | 鈴木ショータ氏考案。中盤3F相当ペース-上がり3F=瞬発力型(+)/持久力型(-)。コース平均×馬の得意の適合判定 | ✅検証(未配線) | scripts/lap33_backtest.py: 人気薄(6+)×適合=複勝残差+0.92〜0.95pp(train z+6.8/holdout z+3.3・独立エッジ採用候補)。人気上位(1-3)×不適合=消去/危険候補は不採用(train z-1.0→holdout z-0.2で弱化)。core/lap33.py・PDF公式表を符号/序列で10/12再現 | 2026-07-04 |
 | ├─ T4:netkeiba AI展開予測 4角照合 | netkeiba出馬表の「AI展開予測」4コーナー隊列(#Horse{馬番}のleft%=static JS埋込)を抽出→アプリ到達位置と前40%/後35%帯で比較→両AI同帯なら🏆(前)/💀(後)。展開MAP expander内・ボタン起動・JRA/NAR両対応 | 🟢 | core/ai_tenkai.py(parse_tenkai_positions/band_by_left/agreement_icons)。実査=大井7/3 R11で4角帯抽出10/10・脚質と方向一致(先行=前/追込=後)。表示のみ・エッジ主張なし | 2026-07-03 |
 | ├ 騎手・厩舎脚質傾向を隊列に反映(表示用) | jockey_tactics/trainer_tactics(逃げ先行率)→道中ポジションprior小重み。corner履歴無い馬(NAR/新馬)で効くフォールバック | 🟢 | pace_map.tactics_forward(w0.15)。**表示精度のみ・エッジ主張なし**(ペース圧力の荒れ予測は⑧と重複と検証済) | 2026-07-02 |
 | ├ 🎯3連複おすすめエンジン | 決着タイプ判定→本線/②パターン＋lean連動の可変点数(本線8/②10/中立8)＋本線トリガミ警告 | 🟢 | trio_lean配線＋可変点数(4d81226) | 2026-06-24 |

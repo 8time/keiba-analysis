@@ -542,6 +542,27 @@ def main():
         assert 95 < jj.JPOWER_MEAN < 105 and 5 < jj.JPOWER_SD < 15, "JPower較正定数が異常"
     check("騎手力(jockey_power)の契約", t_jockey_power)
 
+    def t_lap33():
+        # 33ラップ理論(core/lap33.py)の関数契約＋符号規約(正=瞬発力型/負=持久力型)
+        from core import lap33 as l3
+        # 1200m: 前半3F(mae)一定・上がり(ato)が速いほどlap33は大きくなる(瞬発力=プラス)
+        assert l3.lap33(35.0, 33.0) == 2.0
+        assert l3.lap33(33.0, 35.0) == -2.0
+        # 1200mは前半3Fそのもの(race_mid3f_rateは中距離用の中盤換算をスキップ)
+        assert l3.race_mid3f_rate(1200, 350, 330, 700) == 35.0
+        # race_lap33: 中距離は中盤3F相当(600m換算)-上がり3F。極端値でないことを確認
+        # 完走108.0秒はJV形式'1480'(1分+48.0秒)。前3F35.0/上3F35.0→中盤38.0-上3F35.0=+3.0
+        v = l3.race_lap33(1800, 350, 350, 1480)
+        assert v == 3.0, f"race_lap33 計算誤り {v}"
+        # fit_match: 符号一致=True/不一致=False/しきい値未満または欠損=None
+        assert l3.fit_match(1.0, 1.5) is True
+        assert l3.fit_match(1.0, -1.5) is False
+        assert l3.fit_match(0.1, 1.5, threshold=0.3) is None
+        assert l3.fit_match(None, 1.5) is None
+        for fn in ('course_avg33', 'horse_fit33', 'race_mid3f_rate', 'race_lap33', 'lap33', 'fit_match'):
+            assert hasattr(l3, fn), f"lap33.{fn} 欠落"
+    check("33ラップ理論(lap33)の契約", t_lap33)
+
     # ── Phase4: DB健全性 ──
     if not args.quick:
         def t_jravan():
