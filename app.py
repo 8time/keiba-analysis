@@ -5519,7 +5519,15 @@ if nav == "🏠 Single Race Analysis":
                                     _l33_cells[int(_ul3)] = '-'
                                     continue
                                 _m = _l33.fit_match(_hv, _l33_course['avg'])
-                                _icon = '⚡適合' if _m is True else ('' if _m is None else '')
+                                # 検証エッジは人気薄(6+)×適合限定(verified_lap33_theory)。人気上位や
+                                # スプリント等で全馬が同符号=適合になる誤読を防ぐため、⚡は人気薄のみ。
+                                _popl3 = pd.to_numeric(_rl3.get('Popularity'), errors='coerce')
+                                if _m is True and pd.notnull(_popl3) and _popl3 >= 6:
+                                    _icon = ' ⚡穴適合'
+                                elif _m is True:
+                                    _icon = ' ・適'   # 適合だが人気上位=妙味でない(参考)
+                                else:
+                                    _icon = ''
                                 _l33_cells[int(_ul3)] = f"{_hv:+.1f}(場{_l33_course['avg']:+.1f}){_icon}"
                             view_df['Lap33'] = view_df['Umaban'].apply(
                                 lambda u: _l33_cells.get(int(pd.to_numeric(u, errors='coerce')), '-')
@@ -5929,9 +5937,9 @@ if nav == "🏠 Single Race Analysis":
                             "🟣🌀33ラップ",
                             help="🟣=荒れ予報時に見るべき検証済み項目(holdout z+2.6)。33ラップ理論(鈴木ショータ氏)。中盤3F相当ペース-上がり3F。"
                                  "正=瞬発力型/負=持久力型。表示=馬の得意33ラップ(場コース平均)。"
-                                 "⚡適合=符号一致。検証: 人気薄(6番人気以下)×適合で複勝残差"
-                                 "+0.9pp台(train z+6.8/holdout z+3.3・train/holdout安定)。"
-                                 "JRA限定(NARはラップデータ無し)。"),
+                                 "⚡穴適合=人気薄(6番人気以下)×符号一致＝検証エッジ(複勝残差+0.9pp・holdout z+3.3)。"
+                                 "・適=適合だが人気上位＝妙味でない参考(スプリント等では全馬が同符号=適合になりがちなため"
+                                 "『穴適合』のみ強調)。JRA限定(NARはラップデータ無し)。"),
                         "JPower": st.column_config.TextColumn(
                             "🟣🏇騎手力(乗替)",
                             help="🟣=荒れ予報時に見るべき検証済み項目(holdout z+3.8・6項目中最弱だがz≥2は維持)。"
