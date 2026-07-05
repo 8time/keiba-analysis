@@ -3772,9 +3772,19 @@ if nav == "🏠 Single Race Analysis":
                                         "平均上がり": f"{_s['my_agari']:.2f}",
                                         "自己ベスト": f"{_s['my_best']:.2f}",
                                         "必要上がり": f"{_s['need_agari']:.2f}",
+                                        "余裕(秒)": round(_s['margin'], 2),
                                         "判定": f"{_sk_verdict_label.get(_s['verdict'], '-')} ({_s['margin']:+.2f}秒)",
                                     } for _s in _sk_rows]
-                                    st.dataframe(pd.DataFrame(_sk_disp), hide_index=True, use_container_width=True)
+                                    # 余裕+2.0秒以上=4角から前に大きく押し上げる差し脚=行を黄色でハイライト
+                                    def _sk_row_color(_row):
+                                        try:
+                                            _big = float(_row['余裕(秒)']) >= 2.0
+                                        except Exception:
+                                            _big = False
+                                        return (['background-color:#fff3bf;color:#5f3a00;font-weight:bold'] * len(_row)
+                                                if _big else [''] * len(_row))
+                                    _sk_styled = pd.DataFrame(_sk_disp).style.apply(_sk_row_color, axis=1)
+                                    st.dataframe(_sk_styled, hide_index=True, use_container_width=True)
                                     st.caption(
                                         "4角想定隊列の先頭馬（の平均上がり3F）を物理的に差し切れるかの目安。"
                                         "馬身差は順位差×1.4馬身で推定。◎=平常運転で届く / △=自己ベスト必須（過信禁物） / "
