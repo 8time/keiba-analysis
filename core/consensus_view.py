@@ -267,6 +267,9 @@ def integrate(rows, aim, regime):
     #   危険veto→本命→切る(消去クロス重複≥3を強気に切る)→穴(comboが活きるゾーン=combo≥2限定)
     #   →相手→残り。※穴は単発シグナル(⚡33等・全馬に出がち)を入れず、複数合議のcombo馬に絞る。
     ELIM_CUT = 3        # 消去クロスの重複がこれ以上=強気に切る(ユーザー方針: 重複3-4は切る)
+    # 人気上位(1-5)は消去フラグが人気に織込み済み(priced-in)=フラグで切ると二重計上になる
+    # ([[project_elimination_engine]]/elim_crossは単体priced-in)。重複が極端(≥5)な時だけ切る。
+    ELIM_CUT_POPULAR = 5
     honmei, aite, ana_g, keshi = [], [], [], []
     assigned = set()
     for h in out:                                   # 危険人気veto → 消し
@@ -279,8 +282,11 @@ def integrate(rows, aim, regime):
     for h in out:                                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
         if h['umaban'] in assigned:
             continue
-        if h.get('elim', 0) >= ELIM_CUT:
-            h['role'] = f"💀切る(消去{h['elim']}重複)"; keshi.append(h['umaban']); assigned.add(h['umaban'])
+        _en = h.get('elim', 0)
+        _pop_top = (h['pop'] is not None and h['pop'] <= 5)   # 人気上位=priced-in
+        # 人気上位はフラグが織込み済みなので重複が極端(≥5)な時だけ切る。人気薄(6+)は重複3で切る
+        if _en >= (ELIM_CUT_POPULAR if _pop_top else ELIM_CUT):
+            h['role'] = f"💀切る(消去{_en}重複)"; keshi.append(h['umaban']); assigned.add(h['umaban'])
     for h in out:                                   # 穴 = 人気薄(6+)×comboが活きるゾーン(combo≥2)
         if h['umaban'] in assigned:
             continue
