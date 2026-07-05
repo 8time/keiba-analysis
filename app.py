@@ -6446,7 +6446,8 @@ if nav == "🏠 Single Race Analysis":
                     st.subheader("📊 強適シート (Strength × Suitability)")
                     st.caption("縦=馬の能力(戦闘力)／横=適性(コース・条件の合致)。右上=👑本命(強い×合う)／左上=★相手候補"
                                "(強いが条件はまだ)／右下=🎯穴妙味(能力控えめだが条件ドンピシャ)／左下=✕見送り。"
-                               "円の色はゾーン、ラベルは馬名＋オッズ。🔥=人気薄なのに強い×合う爆弾候補。")
+                               "🔴逃げ 🟠先行 🔵差し 🟣追込＝円の色は脚質、ラベルは馬名＋オッズ。"
+                               "※人気は使わず実力・適性のみ＝市場と違う位置＝妙味の芽。")
                     
                     try:
                         import pandas as pd_sc
@@ -6483,6 +6484,21 @@ if nav == "🏠 Single Race Analysis":
                             return '見送り'
                         df_sc['_zone'] = df_sc.apply(_zone_of, axis=1)
                         df_sc['_zc'] = df_sc['_zone'].map(_ZC)
+                        # 円の色=脚質(逃げ赤/先行橙/差し青/追込紫)。ユーザー要望=番号の色を脚質に合わせる
+                        from core.pace_map import STYLE_COLORS as _STYLE_COLORS
+                        def _style_of(r):
+                            ap = pd.to_numeric(r.get('AvgPosition'), errors='coerce')
+                            if pd.isnull(ap):
+                                return '不明'
+                            if ap <= 2.0:
+                                return '逃げ'
+                            if ap <= 4.5:
+                                return '先行'
+                            if ap <= 8.0:
+                                return '差し'
+                            return '追込'
+                        df_sc['_style'] = df_sc.apply(_style_of, axis=1)
+                        df_sc['_style_c'] = df_sc['_style'].map(lambda s: _STYLE_COLORS.get(s, '#8d8d8d'))
                         # 円ラベル=馬名＋オッズ
                         _odds_num_sc = pd.to_numeric(df_sc.get('Odds'), errors='coerce')
                         df_sc['_lab'] = [f"{n}  {o:.1f}倍" if pd.notnull(o) else str(n)
@@ -6492,7 +6508,7 @@ if nav == "🏠 Single Race Analysis":
                             x=alt.X('_px:Q', scale=alt.Scale(domain=[-3, 103]),
                                     title='適性 / トラックバイアス  →', axis=alt.Axis(labels=False, ticks=False)),
                             y=alt.Y('_py:Q', scale=alt.Scale(domain=[-3, 103]),
-                                    title='馬の能力 / 戦闘力  ↑', axis=alt.Axis(labels=False, ticks=False)),
+                                    title='馬の能力 / 戦闘力  →', axis=alt.Axis(labels=False, ticks=False)),
                         )
                         # 背景4ゾーン(角丸・淡色)＋ゾーン名ラベル
                         _zones_df = pd.DataFrame([
@@ -6517,8 +6533,9 @@ if nav == "🏠 Single Race Analysis":
                         _vmid = _mid.encode(x='v:Q')
                         _hmid = _mid.encode(y='v:Q')
                         pts_m = base_m.mark_circle(size=2000, opacity=0.92, stroke='white', strokeWidth=1.5).encode(
-                            color=alt.Color('_zc:N', scale=None, legend=None),
-                            tooltip=['Umaban', 'Name', alt.Tooltip('Strength (X):Q', title='能力'),
+                            color=alt.Color('_style_c:N', scale=None, legend=None),
+                            tooltip=['Umaban', 'Name', alt.Tooltip('_style:N', title='脚質'),
+                                     alt.Tooltip('Strength (X):Q', title='能力'),
                                      alt.Tooltip('Suitability (Y):Q', title='適性'),
                                      'Projected Score', 'BattleScore', 'Popularity', 'Odds'])
                         num_m = base_m.mark_text(align='center', baseline='middle',
@@ -6646,8 +6663,25 @@ if nav == "🏠 Single Race Analysis":
                                 '検証エッジ': h['reasons'] or '-',
                                 '危険': '⚠' if h['veto'] else ('△' if h['danger'] else ''),
                             })
-                        st.dataframe(pd.DataFrame(_cv_tbl), hide_index=True, use_container_width=True)
-                        st.caption("『合議数』=独立した検証済みエッジ(軸候補◎〇▲＋人気薄なら荒れ予報6シグナル＋市場エッジ)の"
+                        # 役割列に色付け(フォーメーション決定用・ユーザー要望=一番大事な列)
+                        def _color_role(_v):
+                            _s = str(_v)
+                            if '本命' in _s:
+                                return 'background-color:#f0a02033;color:#b26a00;font-weight:800'
+                            if '相手' in _s:
+                                return 'background-color:#12a59433;color:#0b6e63;font-weight:800'
+                            if '穴' in _s:
+                                return 'background-color:#9c27b033;color:#7a1a8c;font-weight:800'
+                            if '切る' in _s or '消し' in _s:
+                                return 'background-color:#e0313133;color:#b02020;font-weight:800'
+                            if '押さえ' in _s:
+                                return 'background-color:#8888880f;color:#777'
+                            return ''
+                        _cv_dfshow = pd.DataFrame(_cv_tbl)
+                        _cv_styled = _cv_dfshow.style.map(_color_role, subset=['役割'])
+                        st.dataframe(_cv_styled, hide_index=True, use_container_width=True)
+                        st.caption("『役割』=フォーメーション決定用(◎本命は1着/2着軸・〇▲相手は連下・🎯穴は3列目の妙味・切るは消し)。"
+                                   "『合議数』=独立した検証済みエッジ(軸候補◎〇▲＋人気薄なら荒れ予報6シグナル＋市場エッジ)の"
                                    "一致数。多いほど複勝の信頼度が高い(検証済)。『🧩重複』=荒れ予報6シグナルの同時発火数"
                                    "(穴の質)。『🧹消去』=消去クロスの来にくさフラグ重複数(3+は強気に切る)。"
                                    "『統合』=素点＋合議加点−危険/消去減点。※あくまで"
