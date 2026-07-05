@@ -5458,6 +5458,10 @@ if nav == "🏠 Single Race Analysis":
                                         return '-'
                                     return str(int(round(((s - _ltr_mn) / _ltr_rng) * 100)))
                                 view_df['LTR'] = view_df['Umaban'].apply(_fmt_ltr_v)
+                                # 強適シートの能力軸(検証AIベース)用に正規化LTR(0-100)を共有
+                                st.session_state[f'_ltr_norm_{race_id_input}'] = {
+                                    int(u): ((s - _ltr_mn) / _ltr_rng) * 100
+                                    for u, s in _ltr_sc.items()}
                     except Exception:
                         pass
 
@@ -6446,8 +6450,16 @@ if nav == "🏠 Single Race Analysis":
                     st.subheader("📊 強適シート (Strength × Suitability)")
                     st.caption("縦=馬の能力(戦闘力)／横=適性(コース・条件の合致)。右上=👑本命(強い×合う)／左上=★相手候補"
                                "(強いが条件はまだ)／右下=🎯穴妙味(能力控えめだが条件ドンピシャ)／左下=✕見送り。"
-                               "🔴逃げ 🟠先行 🔵差し 🟣追込＝円の色は脚質、ラベルは馬名＋オッズ。"
-                               "※人気は使わず実力・適性のみ＝市場と違う位置＝妙味の芽。")
+                               "🔴逃げ 🟠先行 🔵差し 🟣追込＝円の色は脚質、ラベルは馬名＋オッズ。")
+                    # 縦軸(能力)の指標: 検証AI(結果予測・recall@7)⇔実力(タイム指数)。結果に寄せるなら検証AI
+                    _ltr_norm = st.session_state.get(f'_ltr_norm_{race_id_input}', {})
+                    _yaxis_opts = (['🤖検証AI(結果予測)', '💪実力(タイム指数)'] if _ltr_norm
+                                   else ['💪実力(タイム指数)'])
+                    _yaxis_mode = st.radio(
+                        "縦軸(能力)の指標", _yaxis_opts, horizontal=True, key=f"sc_yaxis_{race_id_input}",
+                        help="🤖検証AI=LTRモデルの3着内予測(勝ち馬を7位以内に入れる精度recall@7=0.936で検証済。"
+                             "ただし人気/オッズも特徴量に含む)。💪実力=タイム指数ベース(人気非依存だが結果予測は未検証)。"
+                             "『結果に寄せる』なら検証AIを推奨。")
                     
                     try:
                         import pandas as pd_sc
@@ -6462,14 +6474,22 @@ if nav == "🏠 Single Race Analysis":
                                 return name_str
                             df_sc['Name'] = df_sc.apply(add_bomb_icon, axis=1)
 
-                        # 軸: 添付見本に合わせX=適性(トラックバイアス)/Y=能力(戦闘力)へ転置
+                        # 軸: 添付見本に合わせX=適性(トラックバイアス)/Y=能力へ転置
                         _px_col = 'Suitability (Y)'   # 横=適性
-                        _py_col = 'Strength (X)'      # 縦=能力
                         _rng_m = _np_main.random.default_rng(seed=42)
                         df_sc['_px'] = (pd.to_numeric(df_sc[_px_col], errors='coerce').fillna(50)
                                         + _rng_m.uniform(-2.2, 2.2, len(df_sc))).clip(1, 99)
-                        df_sc['_py'] = (pd.to_numeric(df_sc[_py_col], errors='coerce').fillna(50)
-                                        + _rng_m.uniform(-2.2, 2.2, len(df_sc))).clip(1, 99)
+                        # 縦=能力。検証AI(LTR正規化0-100・結果予測)⇔実力(タイム指数)を切替
+                        _use_ltr_y = bool(_ltr_norm) and str(_yaxis_mode).startswith('🤖')
+                        if _use_ltr_y:
+                            _py_raw = df_sc['Umaban'].map(
+                                lambda u: _ltr_norm.get(int(pd.to_numeric(u, errors='coerce')), 50.0)
+                                if pd.notnull(pd.to_numeric(u, errors='coerce')) else 50.0)
+                            _y_title = '3着内予測（🤖検証AI・recall@7）  →'
+                        else:
+                            _py_raw = pd.to_numeric(df_sc['Strength (X)'], errors='coerce').fillna(50)
+                            _y_title = '馬の能力 / 戦闘力  →'
+                        df_sc['_py'] = (_py_raw.astype(float) + _rng_m.uniform(-2.2, 2.2, len(df_sc))).clip(1, 99)
                         # 4ゾーン分類(適性50/能力50で四分): 本命/相手(改善)/穴妙味/見送り
                         _ZC = {'本命': '#2f9e44', '相手': '#1971c2', '穴妙味': '#9c27b0', '見送り': '#868e96'}
                         def _zone_of(r):
@@ -6508,7 +6528,7 @@ if nav == "🏠 Single Race Analysis":
                             x=alt.X('_px:Q', scale=alt.Scale(domain=[-3, 103]),
                                     title='適性 / トラックバイアス  →', axis=alt.Axis(labels=False, ticks=False)),
                             y=alt.Y('_py:Q', scale=alt.Scale(domain=[-3, 103]),
-                                    title='馬の能力 / 戦闘力  →', axis=alt.Axis(labels=False, ticks=False)),
+                                    title=_y_title, axis=alt.Axis(labels=False, ticks=False)),
                         )
                         # 背景4ゾーン(角丸・淡色)＋ゾーン名ラベル
                         _zones_df = pd.DataFrame([
