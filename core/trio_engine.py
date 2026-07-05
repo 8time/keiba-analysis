@@ -34,6 +34,19 @@ _COMBO_RE = re.compile(r'🧩(\d+)重複')
 _TARGET_BAND = {'本線': (10.0, 150.0), '②妙味': (70.0, 800.0),
                 '①': (10.0, 100.0), '②': (70.0, 700.0), 'おまかせ': (10.0, 300.0)}
 
+# 🌀妙味度連動の可変オッズ帯: 妙味度ラベル別『勝ち3連複配当の実測[25-75%]帯』
+# 検証(scripts/value_score_band_backtest.py・JRA平地36,197R): 妙味度スコアvs勝ち配当の
+# Spearman +0.28、配当中央値がD28→C50→B78→A144→S451倍と単調上昇=高妙味度ほど高配当が実証。
+# 各ラベルの勝ち配当[25%,75%]帯(=勝ち馬券が最も集まる価格)をそのまま狙い目帯にする。
+_VALUE_BAND = {'S': (170.0, 1400.0), 'A': (55.0, 380.0), 'B': (30.0, 228.0),
+               'C': (20.0, 144.0), 'D': (12.0, 76.0)}
+
+
+def band_from_value_label(label):
+    """妙味度ラベル(S/A/B/C/D)→勝ち3連複配当の実測[25-75%]帯(倍)。可変オッズ帯用。
+    未知ラベルはおまかせ相当の広め帯にフォールバック。"""
+    return _VALUE_BAND.get(str(label or '')[:1], (10.0, 300.0))
+
 
 def _classify(trio, pop_set, ana_set):
     """trio(umaban tuple) の人気構成 → (人気数, 穴数)。"""
@@ -95,7 +108,8 @@ def allocate_budget(bets, budget, mode='均等買い', unit=100):
 
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                    pattern='①', n_points=10, pop_th=5, ana_lo=6, ana_hi=12,
-                   pool_cap=12, deploy_map=None, combo_flow=0):
+                   pool_cap=12, deploy_map=None, combo_flow=0, keep_partners=None,
+                   band=None):
     """
     horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
     odds_map: {frozenset({u1,u2,u3}): float} ライブ3連複オッズ（任意）
@@ -105,12 +119,17 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     combo_flow: 0=通常 / N>=1=『🧩combo馬流し』。1軸/2軸時、相手を alert に🧩N重複以上を持つ
         検証シグナル馬だけに絞って流す(荒れ予報6シグナルの合議数=combo2+ holdout z+9.2)。
         auto(軸なし)時はプールをcombo馬に限定。ユーザーの実運用『◎軸×combo馬流し』を1操作で。
+    keep_partners: combo_flow時、combo未満でも相手プールに必ず残す馬番の集合。
+        軸候補◎〇▲(オッズ実複勝率=シグナルとは独立の検証エッジ)を渡す用途=市場評価は高いが
+        シグナルの無い馬(例:▲軸候補)がcombo流しから漏れて的中を落とすのを防ぐ(実査9-11-13の13番)。
+    band: 狙い目価格帯(lo,hi)の外部指定(任意)。妙味度連動の可変帯を渡す用途。未指定は_TARGET_BAND。
     戻り値: {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
     by = {h['umaban']: h for h in horses}
     axis_umaban = [u for u in (axis_umaban or []) if u in by]
-    lo, hi = _TARGET_BAND.get(pattern, (10.0, 300.0))
+    lo, hi = band if band else _TARGET_BAND.get(pattern, (10.0, 300.0))
+    keep_partners = set(keep_partners or ())
 
     def _combo_lvl(u):
         m = _COMBO_RE.search(str(by.get(u, {}).get('alert', '') or ''))
@@ -133,9 +152,10 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     # ── 候補トリオ生成 ──
     cand = set()
     others = [h['umaban'] for h in horses if h['umaban'] not in axis_umaban]
-    # 🧩combo馬流し: 相手を『🧩N重複以上の検証シグナル馬』だけに絞る(軸自身は除外条件外)
+    # 🧩combo馬流し: 相手を『🧩N重複以上の検証シグナル馬』に絞る。ただしkeep_partners
+    # (軸候補◎〇▲=シグナルとは独立の検証エッジ)は combo未満でも残す(市場評価馬の取りこぼし防止)
     if combo_flow > 0:
-        others = [u for u in others if _combo_lvl(u) >= combo_flow]
+        others = [u for u in others if _combo_lvl(u) >= combo_flow or u in keep_partners]
     if axis_mode == '2軸' and len(axis_umaban) >= 2:
         a, b = axis_umaban[0], axis_umaban[1]
         for x in others:

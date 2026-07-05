@@ -2349,7 +2349,45 @@ if nav == "🏠 Single Race Analysis":
                             <p style="font-size: 18px; color: #555; margin-top: 10px; line-height: 1.6;"><b>判定理由:</b> {chaos_data['reason']}</p>
                         </div>
                     """, unsafe_allow_html=True)
-                    
+
+                    # ── 🔍 妙味度(Race Scannerと同一指標: race_value_score)をSummaryにも表示 ──
+                    # ユーザーが予想時に『このレースの荒れ妙味の強さ』を意識できるように。
+                    # 高いほど1番人気が信頼しにくく中穴妙味が出やすい(=②穴妙味向き寄り)。
+                    try:
+                        from core import value_scanner as _vs_sum
+                        _sum_olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
+                        try:
+                            _sum_dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _sum_dist = None
+                        _sum_pz = None
+                        _pint_sum = st.session_state.get(f'_pace_int_{race_id_input}')
+                        if isinstance(_pint_sum, dict):
+                            _sum_pz = _pint_sum.get('z')
+                        _rv = _vs_sum.race_value_score(
+                            _sum_olist, meta=meta, jyo=str(race_id_input)[4:6],
+                            surface=str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '',
+                            dist=_sum_dist, n_horses=len(df), pace_z=_sum_pz)
+                        st.session_state[f'_race_value_{race_id_input}'] = _rv  # 3連複エンジンの帯連動用に共有
+                        _rv_col = {'S': '#E63946', 'A': '#F4A261', 'B': '#2A9D8F',
+                                   'C': '#457B9D', 'D': '#888'}.get(str(_rv['label'])[:1], '#888')
+                        _rv_c1, _rv_c2 = st.columns([1, 3])
+                        with _rv_c1:
+                            st.markdown(
+                                f"<div style='background:{_rv_col}18;border:2px solid {_rv_col};"
+                                f"border-radius:10px;padding:8px 12px;text-align:center;'>"
+                                f"<div style='font-size:11px;color:#888;'>🔍 妙味度(荒れ)</div>"
+                                f"<div style='font-size:30px;font-weight:900;color:{_rv_col};line-height:1.1;'>{_rv['score']:.0f}</div>"
+                                f"<div style='font-size:13px;font-weight:800;color:{_rv_col};'>{_rv['label']}</div>"
+                                f"</div>", unsafe_allow_html=True)
+                        with _rv_c2:
+                            st.caption("**🔍 妙味度**=Race Scannerと同じ荒れ妙味指標(0-100)。高いほど1番人気が信頼しにくく"
+                                       "中穴が来やすい＝②穴妙味向き。予想時の『どこまで手を広げるか』の目安に。")
+                            if _rv['breakdown']:
+                                st.caption("内訳: " + " / ".join(_rv['breakdown']))
+                    except Exception:
+                        pass
+
                     # ── トラックバイアス強化（Phase1: 当日逆算/コース×馬場 ・ Phase2: クッション値/含水率）──
                     from core import track_bias as _tb
                     from core import pace_map as _tb_pm
@@ -6834,6 +6872,22 @@ if nav == "🏠 Single Race Analysis":
                         else:
                             _combo_flow = 0
 
+                    # 🌀妙味度連動の可変オッズ帯(検証済:妙味度スコアvs勝ち配当 Spearman+0.28)
+                    _rv_sum = st.session_state.get(f'_race_value_{race_id_input}')
+                    _adaptive_band = None
+                    if _rv_sum:
+                        _ab_on = st.checkbox(
+                            f"🌀妙味度で狙い目価格帯を自動調整（現在: 妙味度{_rv_sum['score']:.0f} {_rv_sum['label']}）",
+                            value=False, key=f"te_adaptband_{race_id_input}",
+                            help="このレースの妙味度(荒れ度)に合わせて狙い目オッズ帯を可変にする。"
+                                 "検証(scripts/value_score_band_backtest.py・36,197R): 妙味度が高いほど勝ち3連複配当が"
+                                 "系統的に高い(中央値 D28→S451倍・Spearman+0.28)。ONで各妙味度の"
+                                 "『勝ち配当が最も集まる価格帯[25-75%]』を狙う。")
+                        if _ab_on:
+                            _adaptive_band = _te.band_from_value_label(_rv_sum['label'])
+                            st.caption(f"🌀可変帯ON: 妙味度{_rv_sum['label']}→狙い目 {_adaptive_band[0]:.0f}〜{_adaptive_band[1]:.0f}倍"
+                                       "（この妙味度で勝ち3連複配当が集まる実測帯）。パターン既定帯より優先。")
+
                     _axis_umaban = []
                     if _axis_mode != '軸なし(自動)':
                         _max_ax = 2 if _axis_mode == '2軸' else 1
@@ -6958,12 +7012,21 @@ if nav == "🏠 Single Race Analysis":
                     _pat_key = {'本線(人気2頭軸＝鉄板+①)': '本線',
                                 '②穴妙味狙い(人気-穴-穴)': '②妙味'}[_pattern]
                     _mode_key = {'軸なし(自動)': 'auto', '1軸': '1軸', '2軸': '2軸'}[_axis_mode]
+                    # combo馬流し時、軸候補◎〇▲(オッズ実複勝率=シグナルとは独立エッジ)は相手に必ず残す
+                    # (市場評価は高いがシグナル無しの馬=▲軸候補等の取りこぼし防止。実査9-11-13の13番)
+                    _keep_cands = set()
+                    try:
+                        _keep_cands = {u for u, m in (_axp_te or {}).items() if m in ('◎', '〇', '▲')}
+                    except Exception:
+                        _keep_cands = set()
                     _te_res = _te.recommend_trio(_te_horses, odds_map=_odds_map,
                                                  axis_umaban=_axis_umaban, axis_mode=_mode_key,
                                                  pattern=_pat_key, n_points=_n_points,
-                                                 deploy_map=_deploy_map, combo_flow=_combo_flow)
+                                                 deploy_map=_deploy_map, combo_flow=_combo_flow,
+                                                 keep_partners=_keep_cands, band=_adaptive_band)
                     if _combo_flow:
-                        st.caption(f"🧩combo馬流しON: 相手を🧩{_combo_flow}重複以上の検証シグナル馬に限定中"
+                        st.caption(f"🧩combo馬流しON: 相手を🧩{_combo_flow}重複以上の検証シグナル馬"
+                                   "＋軸候補◎〇▲(市場評価の独立エッジ)に限定中"
                                    "（軸モードと併用で『◎軸×combo馬流し』）。")
                     if _te_res['warning']:
                         st.warning(_te_res['warning'])

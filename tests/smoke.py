@@ -219,7 +219,28 @@ def main():
         allowed = {1, 4, 6, 7, 8}
         assert all(set(b['combo']) <= allowed for b in r['bets']), \
             f"combo馬以外が混入, got {[b['combo'] for b in r['bets']]}"
-    check("trio_engine.recommend_trio(🧩combo馬流し)", t_combo_flow)
+        # keep_partners: combo未満の軸候補(9番)も相手に残る(実査9-11-13の13番=▲軸候補ケース)
+        r2 = te.recommend_trio(hs, axis_umaban=[1], axis_mode='1軸', combo_flow=2,
+                               keep_partners={9}, n_points=12)
+        assert any(9 in b['combo'] for b in r2['bets']), \
+            f"keep_partnersの9番が相手に残らない, got {[b['combo'] for b in r2['bets']]}"
+    check("trio_engine.recommend_trio(🧩combo馬流し＋keep_partners)", t_combo_flow)
+
+    def t_value_band():
+        from core import trio_engine as te
+        # 妙味度ラベル→可変帯が単調(S高帯>D低帯)＋band引数がlo/hiを上書きすること
+        s = te.band_from_value_label('S'); d = te.band_from_value_label('D')
+        assert s[1] > d[1] and s[0] > d[0], f"S帯がD帯より高くない S={s} D={d}"
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 50, 'pop': i, 'alert': ''} for i in range(1, 8)]
+        om = {frozenset((1, 2, 3)): 200.0}  # 200倍
+        # band=(170,1400)ならin-band加点、band=(12,76)なら帯超で減点=別スコアになる
+        r_hi = te.recommend_trio(hs, odds_map=om, axis_umaban=[1], axis_mode='1軸', band=(170, 1400), n_points=15)
+        r_lo = te.recommend_trio(hs, odds_map=om, axis_umaban=[1], axis_mode='1軸', band=(12, 76), n_points=15)
+        def _sc(r):
+            return next((b['score'] for b in r['bets'] if tuple(b['combo']) == (1, 2, 3)), None)
+        assert _sc(r_hi) is not None and _sc(r_lo) is not None and _sc(r_hi) > _sc(r_lo), \
+            f"band上書きが効いていない hi={_sc(r_hi)} lo={_sc(r_lo)}"
+    check("trio_engine.band_from_value_label＋band上書き", t_value_band)
 
     def t_trifecta():
         from core import trio_engine as te
