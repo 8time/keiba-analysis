@@ -6392,13 +6392,15 @@ if nav == "🏠 Single Race Analysis":
 
                     # --- 強適マップ 散布図 (Main Feature) ---
                     st.subheader("📊 強適シート (Strength × Suitability)")
-                    st.caption("右上ゾーン（強い×合う）の馬が注目馬。対角線より上の馬が買い目の中心候補。")
+                    st.caption("縦=馬の能力(戦闘力)／横=適性(コース・条件の合致)。右上=👑本命(強い×合う)／左上=★相手候補"
+                               "(強いが条件はまだ)／右下=🎯穴妙味(能力控えめだが条件ドンピシャ)／左下=✕見送り。"
+                               "円の色はゾーン、ラベルは馬名＋オッズ。🔥=人気薄なのに強い×合う爆弾候補。")
                     
                     try:
                         import pandas as pd_sc
                         df_sc = df.copy()
-                        
-                        # Add Bomb Horse Highlight
+
+                        # 🔥爆弾馬ハイライト(人気薄なのに強い×合う)
                         if 'Popularity' in df_sc.columns and 'Strength (X)' in df_sc.columns and 'Suitability (Y)' in df_sc.columns:
                             def add_bomb_icon(r):
                                 name_str = str(r['Name'])
@@ -6406,43 +6408,76 @@ if nav == "🏠 Single Race Analysis":
                                     return f"🔥{name_str}"
                                 return name_str
                             df_sc['Name'] = df_sc.apply(add_bomb_icon, axis=1)
-                    
-                        # Rank diff label
-                        score_col_sc = 'Projected Score' if 'Projected Score' in df_sc.columns else 'BattleScore'
-                        df_sc['Old Rank'] = df_sc['BattleScore'].rank(ascending=False, method='min').astype(int)
-                        # Avoid KeyError if Projected Score is missing
-                        df_sc['New Rank'] = df_sc[score_col_sc].rank(ascending=False, method='min').astype(int)
-                        df_sc['Rank Diff'] = df_sc['Old Rank'] - df_sc['New Rank']
-                        df_sc['Trend'] = df_sc['Rank Diff'].apply(lambda x: '↑' if x > 0 else ('↓' if x < 0 else 'ー'))
-                    
-                        # Jitter
+
+                        # 軸: 添付見本に合わせX=適性(トラックバイアス)/Y=能力(戦闘力)へ転置
+                        _px_col = 'Suitability (Y)'   # 横=適性
+                        _py_col = 'Strength (X)'      # 縦=能力
                         _rng_m = _np_main.random.default_rng(seed=42)
-                        df_sc['_sx'] = (df_sc['Strength (X)'] + _rng_m.uniform(-2.5, 2.5, len(df_sc))).clip(1, 99)
-                        df_sc['_sy'] = (df_sc['Suitability (Y)'] + _rng_m.uniform(-2.5, 2.5, len(df_sc))).clip(1, 99)
-                    
-                        domain_m = ['↑', '↓', 'ー']
-                        range_m  = ['#e05252', '#5281e0', '#aaaaaa']
-                    
+                        df_sc['_px'] = (pd.to_numeric(df_sc[_px_col], errors='coerce').fillna(50)
+                                        + _rng_m.uniform(-2.2, 2.2, len(df_sc))).clip(1, 99)
+                        df_sc['_py'] = (pd.to_numeric(df_sc[_py_col], errors='coerce').fillna(50)
+                                        + _rng_m.uniform(-2.2, 2.2, len(df_sc))).clip(1, 99)
+                        # 4ゾーン分類(適性50/能力50で四分): 本命/相手(改善)/穴妙味/見送り
+                        _ZC = {'本命': '#2f9e44', '相手': '#1971c2', '穴妙味': '#9c27b0', '見送り': '#868e96'}
+                        def _zone_of(r):
+                            hi_su = r['_px'] >= 50
+                            hi_ab = r['_py'] >= 50
+                            if hi_ab and hi_su:
+                                return '本命'
+                            if hi_ab and not hi_su:
+                                return '相手'
+                            if (not hi_ab) and hi_su:
+                                return '穴妙味'
+                            return '見送り'
+                        df_sc['_zone'] = df_sc.apply(_zone_of, axis=1)
+                        df_sc['_zc'] = df_sc['_zone'].map(_ZC)
+                        # 円ラベル=馬名＋オッズ
+                        _odds_num_sc = pd.to_numeric(df_sc.get('Odds'), errors='coerce')
+                        df_sc['_lab'] = [f"{n}  {o:.1f}倍" if pd.notnull(o) else str(n)
+                                         for n, o in zip(df_sc['Name'], _odds_num_sc)]
+
                         base_m = alt.Chart(df_sc).encode(
-                            x=alt.X('_sx:Q', scale=alt.Scale(domain=[-5, 105]), title='強い →'),
-                            y=alt.Y('_sy:Q', scale=alt.Scale(domain=[-5, 105]), title='合う ↑')
+                            x=alt.X('_px:Q', scale=alt.Scale(domain=[-3, 103]),
+                                    title='適性 / トラックバイアス  →', axis=alt.Axis(labels=False, ticks=False)),
+                            y=alt.Y('_py:Q', scale=alt.Scale(domain=[-3, 103]),
+                                    title='馬の能力 / 戦闘力  ↑', axis=alt.Axis(labels=False, ticks=False)),
                         )
-                        pts_m = base_m.mark_circle(size=3500, opacity=0.9).encode(
-                            color=alt.Color('BattleScore:Q', 
-                                          scale=alt.Scale(scheme='viridis', domain=[50, 100]), 
-                                          legend=alt.Legend(title="戦闘力")),
-                            tooltip=['Umaban', 'Name', 'Strength (X)', 'Suitability (Y)', 'Projected Score', 'BattleScore', 'Trend']
-                        )
-                        num_m  = base_m.mark_text(align='center', baseline='middle', dy=-5, color='white', fontWeight='bold', fontSize=14).encode(text='Umaban:N')
-                        name_m = base_m.mark_text(align='center', baseline='top', dy=30, color='#222', fontWeight='bold', fontSize=11).encode(text='Name:N')
-                    
-                        # Diagonal line (buy zone)
-                        diag_m_df = pd.DataFrame({'x': [0, 100], 'y': [75, 25]})
-                        diag_m = alt.Chart(diag_m_df).mark_line(strokeDash=[8, 6], color='#888888', strokeWidth=2, opacity=0.7).encode(x='x:Q', y='y:Q')
-                        zone_m_df = pd.DataFrame({'x': [8], 'y': [95], 'label': ['◎ 強い×合う（推奨ゾーン）']})
-                        zone_m = alt.Chart(zone_m_df).mark_text(align='left', color='#cc2222', fontSize=12, fontWeight='bold').encode(x='x:Q', y='y:Q', text='label:N')
-                    
-                        st.altair_chart((diag_m + zone_m + pts_m + num_m + name_m).properties(height=550).interactive(), width='stretch')
+                        # 背景4ゾーン(角丸・淡色)＋ゾーン名ラベル
+                        _zones_df = pd.DataFrame([
+                            {'x0': 50, 'x1': 100, 'y0': 50, 'y1': 100, 'zc': _ZC['本命'],
+                             'lx': 75, 'ly': 96, 'zt': '👑 推奨ゾーン・本命'},
+                            {'x0': 0, 'x1': 50, 'y0': 50, 'y1': 100, 'zc': _ZC['相手'],
+                             'lx': 25, 'ly': 96, 'zt': '★ 改善ゾーン・相手候補'},
+                            {'x0': 50, 'x1': 100, 'y0': 0, 'y1': 50, 'zc': _ZC['穴妙味'],
+                             'lx': 75, 'ly': 5, 'zt': '🎯 穴・妙味ゾーン'},
+                            {'x0': 0, 'x1': 50, 'y0': 0, 'y1': 50, 'zc': _ZC['見送り'],
+                             'lx': 25, 'ly': 5, 'zt': '✕ 見送りゾーン・消去'},
+                        ])
+                        _rects = alt.Chart(_zones_df).mark_rect(opacity=0.12, cornerRadius=20).encode(
+                            x='x0:Q', x2='x1:Q', y='y0:Q', y2='y1:Q',
+                            color=alt.Color('zc:N', scale=None, legend=None))
+                        _zlabels = alt.Chart(_zones_df).mark_text(
+                            align='center', baseline='middle', fontSize=13, fontWeight='bold').encode(
+                            x='lx:Q', y='ly:Q', text='zt:N',
+                            color=alt.Color('zc:N', scale=None, legend=None))
+                        _mid = alt.Chart(pd.DataFrame({'v': [50]})).mark_rule(
+                            color='#ccc', strokeDash=[4, 4], opacity=0.6)
+                        _vmid = _mid.encode(x='v:Q')
+                        _hmid = _mid.encode(y='v:Q')
+                        pts_m = base_m.mark_circle(size=2000, opacity=0.92, stroke='white', strokeWidth=1.5).encode(
+                            color=alt.Color('_zc:N', scale=None, legend=None),
+                            tooltip=['Umaban', 'Name', alt.Tooltip('Strength (X):Q', title='能力'),
+                                     alt.Tooltip('Suitability (Y):Q', title='適性'),
+                                     'Projected Score', 'BattleScore', 'Popularity', 'Odds'])
+                        num_m = base_m.mark_text(align='center', baseline='middle',
+                                                 color='white', fontWeight='bold', fontSize=13).encode(text='Umaban:N')
+                        name_m = base_m.mark_text(align='center', baseline='top', dy=18,
+                                                  color='#333333', fontWeight='bold', fontSize=10).encode(text='_lab:N')
+
+                        st.altair_chart(
+                            (_rects + _vmid + _hmid + _zlabels + pts_m + num_m + name_m)
+                            .properties(height=560).configure_view(strokeOpacity=0).interactive(),
+                            width='stretch')
                     except Exception as e_sc:
                         st.warning(f"強適マップの描画中にエラー: {e_sc}")
 
@@ -6507,17 +6542,44 @@ if nav == "🏠 Single Race Analysis":
                                    "(検証: votes=3で複27% vs ベース9.4%)。市場を出し抜く予測ではなく"
                                    "**本命の信頼度＋相手/穴の絞り込み**の道具。")
                         _cv_g = _cv_res['groups']
-                        _cv_nm = {h['umaban']: h['name'] for h in _cv_res['horses']}
-                        def _cv_lab(_ul):
-                            return "　".join(f"{u} {_cv_nm.get(u, '')}" for u in _ul) or "—"
-                        _cvc1, _cvc2 = st.columns(2)
-                        with _cvc1:
-                            st.success(f"◎本命: {_cv_lab(_cv_g['honmei'])}")
-                            st.info(f"〇▲相手: {_cv_lab(_cv_g['aite'])}")
-                        with _cvc2:
-                            st.warning(f"🎯穴(検証シグナル): {_cv_lab(_cv_g['ana'])}")
-                            if _cv_g['keshi']:
-                                st.error(f"💀消し(危険人気/下位): {_cv_lab(_cv_g['keshi'])}")
+                        _cv_by_u = {h['umaban']: h for h in _cv_res['horses']}
+                        # ── 4カード(添付見本風): 本命/相手候補/穴・妙味/切る ──
+                        # 各カードのサブ指標は捏造の期待勝率でなく検証済みの実数=軸候補のオッズ実複勝率(複勝信頼度)。
+                        def _cv_conf(_ul):
+                            vals = []
+                            for u in _ul:
+                                h = _cv_by_u.get(u) or {}
+                                c = _cv_axs.axis_confidence(h.get('pop'), h.get('odds'))
+                                if c is not None:
+                                    vals.append(c)
+                            return (sum(vals) / len(vals)) if vals else None
+                        def _cv_nums(_ul):
+                            return "・".join(str(u) for u in _ul) if _ul else "—"
+                        _cv_maxcombo = max([(_cv_by_u.get(u) or {}).get('combo', 0) for u in _cv_g['ana']] or [0])
+                        _cv_hon_conf = _cv_conf(_cv_g['honmei'])
+                        _cv_aite_conf = _cv_conf(_cv_g['aite'])
+                        _cards = [
+                            ('#f0a020', '① 本命', '中心に置く馬・最重要', _cv_g['honmei'],
+                             (f"複勝信頼度 {_cv_hon_conf:.0f}%" if _cv_hon_conf is not None else "オッズ待ち")),
+                            ('#12a594', '② 相手候補', '馬券に絡む可能性が高い馬', _cv_g['aite'],
+                             (f"複勝信頼度 {_cv_aite_conf:.0f}%" if _cv_aite_conf is not None else "連下")),
+                            ('#9c27b0', '③ 穴・妙味', '人気薄×検証シグナルの合議', _cv_g['ana'],
+                             (f"{len(_cv_g['ana'])}頭 / 🧩最大{_cv_maxcombo}重複" if _cv_g['ana'] else "該当なし")),
+                            ('#e03131', '④ 切る', '危険人気・評価下位', _cv_g['keshi'],
+                             (f"{len(_cv_g['keshi'])}頭を消し" if _cv_g['keshi'] else "該当なし")),
+                        ]
+                        _cvcols = st.columns(4)
+                        for _cc, (_col, _ttl, _sub, _ul, _metric) in zip(_cvcols, _cards):
+                            with _cc:
+                                st.markdown(
+                                    f"<div style='border-top:4px solid {_col};background:rgba(0,0,0,0.03);"
+                                    f"border:1px solid {_col}44;border-radius:10px;padding:10px 12px;min-height:118px;'>"
+                                    f"<div style='font-size:13px;font-weight:800;color:{_col};'>{_ttl}</div>"
+                                    f"<div style='font-size:10.5px;color:#8a8a8a;margin-bottom:4px;'>{_sub}</div>"
+                                    f"<div style='font-size:22px;font-weight:900;letter-spacing:1px;"
+                                    f"line-height:1.25;'>{_cv_nums(_ul)}</div>"
+                                    f"<div style='font-size:11px;color:{_col};font-weight:700;margin-top:4px;'>{_metric}</div>"
+                                    f"</div>", unsafe_allow_html=True)
                         _cv_tbl = []
                         for h in _cv_res['horses']:
                             _cv_tbl.append({
