@@ -206,6 +206,21 @@ def main():
         assert {8, 10} <= set(r['bets'][0]['combo']), f"combo穴が最上位に来るべき, got {r['bets'][0]['combo']}"
     check("trio_engine.recommend_trio(🧩combo穴優先)", t_trio_combo_boost)
 
+    def t_combo_flow():
+        from core import trio_engine as te
+        # 🧩combo馬流し: ◎1軸×combo≥2馬流しで相手がcombo馬だけに絞られること
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i, 'pop': i, 'alert': ''}
+              for i in range(1, 13)]
+        for u in (4, 6, 7, 8):
+            hs[u - 1]['alert'] = '🧩2重複'
+        r = te.recommend_trio(hs, axis_umaban=[1], axis_mode='1軸', combo_flow=2, n_points=10)
+        assert r['bets'], f"got {r['warning']}"
+        # 全ベットが軸1＋combo馬(4/6/7/8)のみで構成される
+        allowed = {1, 4, 6, 7, 8}
+        assert all(set(b['combo']) <= allowed for b in r['bets']), \
+            f"combo馬以外が混入, got {[b['combo'] for b in r['bets']]}"
+    check("trio_engine.recommend_trio(🧩combo馬流し)", t_combo_flow)
+
     def t_trifecta():
         from core import trio_engine as te
         hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i * 3, 'pop': i, 'alert': ''}

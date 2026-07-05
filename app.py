@@ -6817,6 +6817,23 @@ if nav == "🏠 Single Race Analysis":
                         _budget = st.number_input("予算(円・任意)", min_value=0, max_value=200000,
                                                   value=0, step=500, key='te_budget')
 
+                    # 🧩combo馬流し: 相手を検証シグナル重複馬だけに絞る(◎軸×combo馬流しの実運用を1操作で)
+                    _cf1, _cf2 = st.columns([2, 3])
+                    with _cf1:
+                        _combo_flow_on = st.checkbox(
+                            "🧩combo馬流し", key=f"te_comboflow_{race_id_input}",
+                            help="相手を『荒れ予報6シグナルが複数点灯した🧩重複馬』だけに絞って流す。"
+                                 "軸モード(1軸/2軸)と併用=『◎軸×combo馬流し』が実運用向き。"
+                                 "combo2+はholdout z+9.2で単独シグナルより強い(scripts/arare_signal_backtest.py)。")
+                    with _cf2:
+                        if _combo_flow_on:
+                            _combo_flow = int(st.select_slider(
+                                "🧩重複しきい値(この数以上のシグナル馬に流す)", options=[2, 3, 4], value=2,
+                                key=f"te_comboth_{race_id_input}",
+                                help="2=広め(combo2+) / 3=絞る / 4=最厳選。相手が3頭未満になると点数が出ないので緩める。"))
+                        else:
+                            _combo_flow = 0
+
                     _axis_umaban = []
                     if _axis_mode != '軸なし(自動)':
                         _max_ax = 2 if _axis_mode == '2軸' else 1
@@ -6944,7 +6961,10 @@ if nav == "🏠 Single Race Analysis":
                     _te_res = _te.recommend_trio(_te_horses, odds_map=_odds_map,
                                                  axis_umaban=_axis_umaban, axis_mode=_mode_key,
                                                  pattern=_pat_key, n_points=_n_points,
-                                                 deploy_map=_deploy_map)
+                                                 deploy_map=_deploy_map, combo_flow=_combo_flow)
+                    if _combo_flow:
+                        st.caption(f"🧩combo馬流しON: 相手を🧩{_combo_flow}重複以上の検証シグナル馬に限定中"
+                                   "（軸モードと併用で『◎軸×combo馬流し』）。")
                     if _te_res['warning']:
                         st.warning(_te_res['warning'])
                     if _te_res['bets']:

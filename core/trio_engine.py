@@ -95,19 +95,26 @@ def allocate_budget(bets, budget, mode='均等買い', unit=100):
 
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                    pattern='①', n_points=10, pop_th=5, ana_lo=6, ana_hi=12,
-                   pool_cap=12, deploy_map=None):
+                   pool_cap=12, deploy_map=None, combo_flow=0):
     """
     horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
     odds_map: {frozenset({u1,u2,u3}): float} ライブ3連複オッズ（任意）
     axis_umaban: [int,...]（1軸/2軸時の軸馬番）
     axis_mode: '2軸'|'1軸'|'auto'(軸なし=スコア自動)
     pattern: '①'|'②'|'おまかせ'
+    combo_flow: 0=通常 / N>=1=『🧩combo馬流し』。1軸/2軸時、相手を alert に🧩N重複以上を持つ
+        検証シグナル馬だけに絞って流す(荒れ予報6シグナルの合議数=combo2+ holdout z+9.2)。
+        auto(軸なし)時はプールをcombo馬に限定。ユーザーの実運用『◎軸×combo馬流し』を1操作で。
     戻り値: {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
     by = {h['umaban']: h for h in horses}
     axis_umaban = [u for u in (axis_umaban or []) if u in by]
     lo, hi = _TARGET_BAND.get(pattern, (10.0, 300.0))
+
+    def _combo_lvl(u):
+        m = _COMBO_RE.search(str(by.get(u, {}).get('alert', '') or ''))
+        return int(m.group(1)) if m else 0
 
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
     ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
@@ -119,13 +126,16 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     _axis_active = ((axis_mode == '2軸' and len(axis_umaban) >= 2) or
                     (axis_mode == '1軸' and len(axis_umaban) >= 1))
 
-    # 人気/穴の分類は auto(パターンハード適用)モードでのみ必須。軸流し時は人気未取得でも流す。
-    if not _axis_active and (len(pop_set) < 1 or len(ana_set) < 1):
+    # 人気/穴の分類は auto(パターンハード適用)モードでのみ必須。軸流し/combo馬流し時は人気未取得でも流す。
+    if not _axis_active and combo_flow <= 0 and (len(pop_set) < 1 or len(ana_set) < 1):
         return {'bets': [], 'meta': {}, 'warning': '人気/穴の頭数が不足（人気・オッズ未取得の可能性）'}
 
     # ── 候補トリオ生成 ──
     cand = set()
     others = [h['umaban'] for h in horses if h['umaban'] not in axis_umaban]
+    # 🧩combo馬流し: 相手を『🧩N重複以上の検証シグナル馬』だけに絞る(軸自身は除外条件外)
+    if combo_flow > 0:
+        others = [u for u in others if _combo_lvl(u) >= combo_flow]
     if axis_mode == '2軸' and len(axis_umaban) >= 2:
         a, b = axis_umaban[0], axis_umaban[1]
         for x in others:
@@ -135,8 +145,11 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         for x, y in combinations(others, 2):
             cand.add(frozenset((a, x, y)))
     else:
-        # auto: 人気pool∪穴pool をスコア上位 pool_cap 頭に絞って総当り
-        pool = sorted(pop_set | ana_set, key=lambda u: -by[u].get('score', 0))[:pool_cap]
+        # auto: プール=人気pool∪穴pool(combo_flow時はcombo馬)をスコア上位pool_capで総当り
+        _pool_src = (pop_set | ana_set)
+        if combo_flow > 0:
+            _pool_src = {u for u in by if _combo_lvl(u) >= combo_flow}
+        pool = sorted(_pool_src, key=lambda u: -by[u].get('score', 0))[:pool_cap]
         for c in combinations(pool, 3):
             cand.add(frozenset(c))
 
@@ -147,7 +160,8 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         if len(trio) != 3:
             continue
         n_pop, n_ana = _classify(trio, pop_set, ana_set)
-        if not _axis_active and not _match_pattern(n_pop, n_ana, pattern):
+        # combo馬流し時はパターンのハード除外をしない(combo馬に流す意思を優先)
+        if not _axis_active and combo_flow <= 0 and not _match_pattern(n_pop, n_ana, pattern):
             continue
         base = sum(by[u].get('score', 0) for u in trio)
         # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
