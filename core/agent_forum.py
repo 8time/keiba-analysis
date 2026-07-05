@@ -552,10 +552,11 @@ def _build_magi_retrospective():
     lessons = []
     for rec in records[-5:]:
         pred = [int(x) for x in rec.get('pred_ubs', []) if str(x).isdigit()]
-        actual = rec.get('actual_top', [])
+        # actual_topはdict想定だが、旧形式/NARで馬番intのみの記録が混在する場合がある(要ガード)
+        actual = [a for a in (rec.get('actual_top', []) or []) if isinstance(a, dict)]
         if not actual:
             continue
-        actual_top3 = [a['umaban'] for a in actual[:3]]
+        actual_top3 = [a['umaban'] for a in actual[:3] if 'umaban' in a]
         hit = set(pred) & set(actual_top3)
         missed = set(actual_top3) - set(pred)
         winner = actual[0] if actual else {}
@@ -564,8 +565,8 @@ def _build_magi_retrospective():
         if missed:
             missed_info = []
             for a in actual[:3]:
-                if a['umaban'] in missed:
-                    missed_info.append(f'{a["name"]}({a["umaban"]}番/{a["pop"]}人気/上{a.get("agari",0)})')
+                if a.get('umaban') in missed:
+                    missed_info.append(f'{a.get("name","?")}({a.get("umaban","?")}番/{a.get("pop","?")}人気/上{a.get("agari",0)})')
             lesson += f' 取りこぼし={",".join(missed_info)}'
         if winner_pop and winner_pop >= 5:
             lesson += f' 勝ち馬は{winner_pop}人気の穴馬{winner.get("name","")}'
