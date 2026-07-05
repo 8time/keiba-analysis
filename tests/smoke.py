@@ -260,16 +260,20 @@ def main():
         # 空dfは空shapeを返す(呼び元は.getで安全に参照)
         e = cv.build_edge_sets(_pd.DataFrame(), {}, '202608020211')
         assert e['edge'] == set() and e['combo'] == {}, "空df=空shape"
-        # ②穴妙味レジーム: 人気薄×検証シグナル+🧩重複の穴が穴グループに拾われる
-        aim = {'edge_reasons': {2: ['🔥末脚top', '👑騎手力top', '🧩2重複'], 14: ['👑騎手力top']},
-               'danger': {16}, 'veto': set(), 'combo': {2: 2}, 'ana': {14, 2}}
+        # 穴=combo2+のみ(単発シグナルは入れない)/切る=消去クロス重複3+を強気に
+        aim = {'edge_reasons': {2: ['🔥末脚top', '👑騎手力top', '🧩2重複'], 14: ['⚡33ラップ適合']},
+               'danger': set(), 'veto': set(), 'combo': {2: 2}, 'ana': {14, 2},
+               'elim': {5: 4}}  # 5番=消去クロス重複4=強気に切る
         rows = [{'umaban': 16, 'name': 'A', 'pop': 1, 'odds': 3.3, 'proj': 95, 'axis_mark': '◎'},
                 {'umaban': 14, 'name': 'B', 'pop': 16, 'odds': 87.5, 'proj': 40, 'axis_mark': ''},
-                {'umaban': 2, 'name': 'C', 'pop': 15, 'odds': 14.8, 'proj': 50, 'axis_mark': ''}]
+                {'umaban': 2, 'name': 'C', 'pop': 15, 'odds': 14.8, 'proj': 50, 'axis_mark': ''},
+                {'umaban': 5, 'name': 'D', 'pop': 8, 'odds': 20.0, 'proj': 45, 'axis_mark': ''}]
         r = cv.integrate(rows, aim, '②穴妙味向き')
         assert r['horses'][0]['umaban'] == 16, "◎本命が統合トップ"
-        assert 14 in r['groups']['ana'] or 2 in r['groups']['ana'], "検証シグナル穴が穴グループ入り"
-    check("consensus_view.integrate(荒れレジーム穴拾い)", t_consensus_integrate)
+        assert 2 in r['groups']['ana'], "combo2の穴が穴グループ入り"
+        assert 14 not in r['groups']['ana'], "単発⚡33(combo1)は穴に入れない"
+        assert 5 in r['groups']['keshi'], "消去クロス重複4の馬は切る"
+    check("consensus_view.integrate(穴=combo2+/切る=消去3+)", t_consensus_integrate)
 
     def t_ledger_gate():
         import tempfile

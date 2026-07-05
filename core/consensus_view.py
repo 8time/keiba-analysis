@@ -29,8 +29,9 @@ def build_edge_sets(df, meta, race_id):
     失敗時は空shapeを返す(呼び元は必ず.get()で参照)。
     """
     empty = {'edge': set(), 'danger': set(), 'ana': set(), 'veto': set(),
-             'combo': {}, 'edge_reasons': {}, 'danger_reasons': {}}
+             'combo': {}, 'elim': {}, 'edge_reasons': {}, 'danger_reasons': {}}
     try:
+        import re as _re_cv
         import pandas as pd
         from core import corrected_time as ct
         from core import jockey_jv as jj
@@ -38,6 +39,7 @@ def build_edge_sets(df, meta, race_id):
         from core import danger_gate as dg
         from core import bloodline as bl
         from core import lap33 as l3
+        from core import elim_cross as ec
 
         meta = meta or {}
         surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
@@ -59,8 +61,10 @@ def build_edge_sets(df, meta, race_id):
             l33c = None
 
         ctfig = {}; spurt = {}; ana = set(); danger = set(); veto = set()
-        bld = {}; jpw = {}
+        bld = {}; jpw = {}; elim = {}   # elim=消去クロスの来にくさフラグ重複数(切る判定用)
         ereason = {}; dreason = {}
+        race_date = dv if len(dv) >= 8 else None
+        is_handi = bool(meta.get('is_handicap'))
 
         def _addr(d, u, lab):
             d.setdefault(u, [])
@@ -101,6 +105,26 @@ def build_edge_sets(df, meta, race_id):
                 si = (cx or {}).get('spurt_index'); srn = (cx or {}).get('spurt_runs', 0)
                 if si is not None and srn >= 2:
                     spurt[u] = si
+                # 消去クロスの来にくさフラグ重複数(切る判定用・事前確定入力のみ)
+                try:
+                    es = jj.horse_elim_stats(kt) or {}
+                    _zg = None
+                    _mzg = _re_cv.search(r'\(([-+]?\d+)\)', str(r.get('WeightHistory', '') or ''))
+                    if _mzg:
+                        _zg = int(_mzg.group(1))
+                    _age = None
+                    _mage = _re_cv.search(r'(\d+)', str(r.get('SexAge', '') or ''))
+                    if _mage:
+                        _age = int(_mage.group(1))
+                    _fl = ec.compute_flags(
+                        last5_top3=es.get('last5_top3'), spurt_index=si, spurt_runs=srn,
+                        avg_c4ratio=es.get('avg_c4ratio'),
+                        prev_date=(cx or {}).get('prev_date'), race_date=race_date,
+                        prev_dist=(cx or {}).get('prev_dist'), cur_dist=dist,
+                        zogen=_zg, age=_age, is_handicap=is_handi)
+                    elim[u] = ec.verified_count(_fl)   # 検証済みフラグの重複数(BAND根拠と同じ)
+                except Exception:
+                    pass
                 if l33c:
                     try:
                         hv3 = (l3.horse_fit33(kt) or {}).get('avg_lap33')
@@ -156,7 +180,7 @@ def build_edge_sets(df, meta, race_id):
                     _addr(ereason, u, f'🧩{c6}重複')
 
         return {'edge': set(ereason.keys()), 'danger': danger, 'ana': ana,
-                'veto': veto, 'combo': combo,
+                'veto': veto, 'combo': combo, 'elim': elim,
                 'edge_reasons': ereason, 'danger_reasons': dreason}
     except Exception:
         return empty
@@ -186,6 +210,7 @@ def integrate(rows, aim, regime):
     danger_set = aim.get('danger') or set()
     veto_set = aim.get('veto') or set()
     combo_map = aim.get('combo') or {}
+    elim_map = aim.get('elim') or {}
     mkval = {'◎': 3, '〇': 2, '▲': 1}
 
     out = []
@@ -197,6 +222,7 @@ def integrate(rows, aim, regime):
         labs = edge_reasons.get(u) or []
         sig6 = _count_sig6(labs)                 # 荒れ予報6シグナル発火数
         combo = combo_map.get(u, 0)
+        elim_n = elim_map.get(u, 0)              # 消去クロスの来にくさフラグ重複数
         mk = str(r.get('axis_mark') or '')[:1]
         axis_v = mkval.get(mk, 0)                # 軸候補◎〇▲(オッズ別実複勝率=最直接の3着内根拠)
         market_v = sum(1 for e in _MARKET_EDGES if any(str(x).startswith(e) for x in labs))
@@ -223,11 +249,13 @@ def integrate(rows, aim, regime):
             bonus -= 12.0
         elif danger and pop is not None and pop <= 3:
             bonus -= 5.0
+        # 消去クロス重複が多い=来にくさ(検証:重複数→複勝率単調低下)。統合順位を下げて切る側へ
+        bonus -= 4.0 * max(0, elim_n - 2)
 
         out.append({
             'umaban': u, 'name': r.get('name', ''), 'pop': pop, 'odds': r.get('odds'),
             'proj': round(base, 1), 'axis_mark': mk,
-            'votes': votes, 'value_votes': value_votes, 'combo': combo,
+            'votes': votes, 'value_votes': value_votes, 'combo': combo, 'elim': elim_n,
             'danger': danger, 'veto': veto,
             'reasons': ' '.join(labs),
             'integ': round(base + bonus, 1),
@@ -235,8 +263,10 @@ def integrate(rows, aim, regime):
 
     out.sort(key=lambda x: -x['integ'])
 
-    # 役割グルーピング(表示用・優先順位方式). 危険→本命→検証シグナル穴→相手→残り。
-    # 穴シグナルの人気薄は統合順位に関わらず『穴』として拾う(荒れで過小評価の勝ち馬を落とさない)。
+    # 役割グルーピング(優先順位方式・この機能は"意見"なので強気に切る):
+    #   危険veto→本命→切る(消去クロス重複≥3を強気に切る)→穴(comboが活きるゾーン=combo≥2限定)
+    #   →相手→残り。※穴は単発シグナル(⚡33等・全馬に出がち)を入れず、複数合議のcombo馬に絞る。
+    ELIM_CUT = 3        # 消去クロスの重複がこれ以上=強気に切る(ユーザー方針: 重複3-4は切る)
     honmei, aite, ana_g, keshi = [], [], [], []
     assigned = set()
     for h in out:                                   # 危険人気veto → 消し
@@ -246,11 +276,16 @@ def integrate(rows, aim, regime):
         if h['umaban'] in assigned:
             continue
         h['role'] = '◎本命'; honmei.append(h['umaban']); assigned.add(h['umaban']); break
-    for h in out:                                   # 穴 = 人気薄(6+)×検証シグナル合議の非本命
+    for h in out:                                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
         if h['umaban'] in assigned:
             continue
-        if (h['pop'] is not None and h['pop'] >= 6) and (h['value_votes'] >= 1 or h['combo'] >= 2):
-            h['role'] = '🎯穴(検証シグナル)'; ana_g.append(h['umaban']); assigned.add(h['umaban'])
+        if h.get('elim', 0) >= ELIM_CUT:
+            h['role'] = f"💀切る(消去{h['elim']}重複)"; keshi.append(h['umaban']); assigned.add(h['umaban'])
+    for h in out:                                   # 穴 = 人気薄(6+)×comboが活きるゾーン(combo≥2)
+        if h['umaban'] in assigned:
+            continue
+        if (h['pop'] is not None and h['pop'] >= 6) and h['combo'] >= 2:
+            h['role'] = '🎯穴(combo馬)'; ana_g.append(h['umaban']); assigned.add(h['umaban'])
     for h in out:                                   # 相手 = 残りの統合上位(最大3頭)
         if h['umaban'] in assigned:
             continue

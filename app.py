@@ -6610,15 +6610,16 @@ if nav == "🏠 Single Race Analysis":
                         _cv_maxcombo = max([(_cv_by_u.get(u) or {}).get('combo', 0) for u in _cv_g['ana']] or [0])
                         _cv_hon_conf = _cv_conf(_cv_g['honmei'])
                         _cv_aite_conf = _cv_conf(_cv_g['aite'])
+                        _cv_ncut = sum(1 for h in _cv_res['horses'] if h.get('elim', 0) >= 3)
                         _cards = [
                             ('#f0a020', '① 本命', '中心に置く馬・最重要', _cv_g['honmei'],
                              (f"複勝信頼度 {_cv_hon_conf:.0f}%" if _cv_hon_conf is not None else "オッズ待ち")),
                             ('#12a594', '② 相手候補', '馬券に絡む可能性が高い馬', _cv_g['aite'],
                              (f"複勝信頼度 {_cv_aite_conf:.0f}%" if _cv_aite_conf is not None else "連下")),
-                            ('#9c27b0', '③ 穴・妙味', '人気薄×検証シグナルの合議', _cv_g['ana'],
-                             (f"{len(_cv_g['ana'])}頭 / 🧩最大{_cv_maxcombo}重複" if _cv_g['ana'] else "該当なし")),
-                            ('#e03131', '④ 切る', '危険人気・評価下位', _cv_g['keshi'],
-                             (f"{len(_cv_g['keshi'])}頭を消し" if _cv_g['keshi'] else "該当なし")),
+                            ('#9c27b0', '③ 穴・妙味', 'comboが活きるゾーン(複数シグナル合議)', _cv_g['ana'],
+                             (f"{len(_cv_g['ana'])}頭(combo2+) / 🧩最大{_cv_maxcombo}重複" if _cv_g['ana'] else "combo馬なし")),
+                            ('#e03131', '④ 切る', '危険人気＋消去クロス重複3+', _cv_g['keshi'],
+                             (f"{len(_cv_g['keshi'])}頭を消し（消去3+={_cv_ncut}頭）" if _cv_g['keshi'] else "該当なし")),
                         ]
                         _cvcols = st.columns(4)
                         for _cc, (_col, _ttl, _sub, _ul, _metric) in zip(_cvcols, _cards):
@@ -6640,13 +6641,17 @@ if nav == "🏠 Single Race Analysis":
                                 '人気': h['pop'] if h['pop'] is not None else '-',
                                 '軸': h['axis_mark'] or '',
                                 '合議数': h['votes'], '🧩重複': h['combo'] or '',
+                                '🧹消去': h.get('elim', 0) or '',
                                 '素点': h['proj'], '統合': h['integ'],
                                 '検証エッジ': h['reasons'] or '-',
                                 '危険': '⚠' if h['veto'] else ('△' if h['danger'] else ''),
                             })
                         st.dataframe(pd.DataFrame(_cv_tbl), hide_index=True, use_container_width=True)
                         st.caption("『合議数』=独立した検証済みエッジ(軸候補◎〇▲＋人気薄なら荒れ予報6シグナル＋市場エッジ)の"
-                                   "一致数。多いほど複勝の信頼度が高い(検証済)。『統合』=素点＋レジーム別の合議加点−危険減点。")
+                                   "一致数。多いほど複勝の信頼度が高い(検証済)。『🧩重複』=荒れ予報6シグナルの同時発火数"
+                                   "(穴の質)。『🧹消去』=消去クロスの来にくさフラグ重複数(3+は強気に切る)。"
+                                   "『統合』=素点＋合議加点−危険/消去減点。※あくまで"
+                                   "『検証エッジの合議＝そういう意見』の道具で、最終判断はご自身で。")
                     except Exception as _cve:
                         st.caption(f"（統合ビューをスキップ: {_cve}）")
 
