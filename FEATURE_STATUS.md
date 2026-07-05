@@ -22,6 +22,7 @@
 | ├ NAR専用LTRモデル(資料p5セグメント) | JRA学習LTRは地方で分布外→南関42-45だけで別LightGBM学習。holdout2025 win recall@7=人気+2.38pp(JRA版+0.9ppより大・地方は騎手が効く) | 🟢 | scripts/build_ltr_nar.py(NAR特徴=log_odds/cushion等除外)+ltr_ranker._load_nar。data/ltr_nar_model.lgbはbuild scriptで再生成 | 2026-07-02 |
 | ├ 🛡️BattleScore乖離セーフティネット NAR比例化 | 中央固定top3/top7→NAR出走頭数比例(seed≈3/16・line≈40%)、中央側は完全不変 | ✅ | [[project_nar_recall_proportional]] | 2026-07-02 |
 | ├ 強適Ranking Table | 予測スコア/戦闘力/補正T/LTR/適性を列表示・列順保存 | 🟢 | CorrectedT/LTRヘッダ修正(077cfeb/ab0d15f) | 2026-06-23 |
+| ├─ 📊強適シート統合ビュー(合議) | Strength×Suitability散布図の下に『検証済みエッジの合議』を追加。軸候補◎〇▲(オッズ実複勝率)＋荒れ予報6シグナル(人気薄限定)＋🧩重複＋危険vetoを荒れ予報レジーム別に合議→本命/相手/穴(検証シグナル)/消しへ再編。_aim計算をcore/consensus_viewへ抽出しtrio/trifectaエンジンと共有(DRY・旧145行インライン削除) | 🟢 | scripts/consensus_backtest.py(votes=3で複27% vs ベース9.4%・市場は出し抜かない=本命信頼度+相手/穴絞り)＋smoke=consensus_view.integrate。実査202608020211大荒れで3着内全馬(14/17/6)が穴グループ入り。1200mは⚡33ラップが全馬適合で希釈=既知の弱点 | 2026-07-05 |
 | ├ 🎯軸馬候補◎〇▲ | 人気別複勝率＋圧勝🔨＋危険人気Vetoで軸提示(危険は降格/⚠) | ✅ | [[verified_ohtani_trap]]＋danger_gate(P0) | 2026-06-23 |
 | ├ 🔵補正T | 直近7走×同馬場の最高/100・top3に🔵 | ✅ | [[verified_corrected_time]] | — |
 | ├ 🤖検証AI(LTR) | LambdaRankで勝ち馬を上位7に(recall@7) | ✅ | recall@7=0.936 | — |

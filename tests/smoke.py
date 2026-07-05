@@ -57,7 +57,7 @@ def main():
     CORE = ['track_bias', 'value_scanner', 'bet_filter', 'trio_engine',
             'bet_optimizer', 'corrected_time', 'jockey_jv', 'ltr_ranker',
             'money', 'elim_reasons', 'elim_cross', 'score_cache', 'bloodline',
-            'axis_selector', 'pace_map', 'paddock_ledger']
+            'axis_selector', 'pace_map', 'paddock_ledger', 'consensus_view']
     for m in CORE:
         check(f"import core.{m}", lambda m=m: __import__(f'core.{m}', fromlist=['_']))
 
@@ -212,11 +212,28 @@ def main():
               for i in range(1, 13)]
         hs[9]['alert'] = '🔵補正T上位 🔥末脚top 🧩2重複'
         r = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=100)
-        assert r['warning'] is None and len(r['bets']) <= 30, "ハード上限30点"
+        assert r['warning'] is None and len(r['bets']) <= 50, "ハード上限50点(推奨30・40/50は任意増量)"
         assert r['bets'][0]['combo'][0] == 2, f"◎(axis先頭)が1着固定, got {r['bets'][0]['combo']}"
         assert 10 in r['meta']['third'], f"🧩combo穴がヒモ候補入り, got {r['meta']['third']}"
         assert all(len(set(b['combo'])) == 3 for b in r['bets']), "3頭相異なる順序組"
     check("trio_engine.recommend_trifecta(30点cap/◎頭/🧩ヒモ)", t_trifecta)
+
+    def t_consensus_integrate():
+        from core import consensus_view as cv
+        import pandas as _pd
+        # 空dfは空shapeを返す(呼び元は.getで安全に参照)
+        e = cv.build_edge_sets(_pd.DataFrame(), {}, '202608020211')
+        assert e['edge'] == set() and e['combo'] == {}, "空df=空shape"
+        # ②穴妙味レジーム: 人気薄×検証シグナル+🧩重複の穴が穴グループに拾われる
+        aim = {'edge_reasons': {2: ['🔥末脚top', '👑騎手力top', '🧩2重複'], 14: ['👑騎手力top']},
+               'danger': {16}, 'veto': set(), 'combo': {2: 2}, 'ana': {14, 2}}
+        rows = [{'umaban': 16, 'name': 'A', 'pop': 1, 'odds': 3.3, 'proj': 95, 'axis_mark': '◎'},
+                {'umaban': 14, 'name': 'B', 'pop': 16, 'odds': 87.5, 'proj': 40, 'axis_mark': ''},
+                {'umaban': 2, 'name': 'C', 'pop': 15, 'odds': 14.8, 'proj': 50, 'axis_mark': ''}]
+        r = cv.integrate(rows, aim, '②穴妙味向き')
+        assert r['horses'][0]['umaban'] == 16, "◎本命が統合トップ"
+        assert 14 in r['groups']['ana'] or 2 in r['groups']['ana'], "検証シグナル穴が穴グループ入り"
+    check("consensus_view.integrate(荒れレジーム穴拾い)", t_consensus_integrate)
 
     def t_ledger_gate():
         import tempfile

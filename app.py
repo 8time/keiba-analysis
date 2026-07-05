@@ -447,7 +447,7 @@ def display_icon_legend():
             ⚠️荒れ予報(top7圏外に3着馬のリスク高)が出たレースで、人気薄(8番人気以下)の馬がこれらの
             列で目立つ印(🔵🔥⚡👑や回収率100%超など)を持っていると3着内率が基準より明確に高い
             (バックテストで6項目ともholdout z≥2.3を確認・最強は補正Tでz+10.4)。列の背景が薄いピンク
-            (#FFDDFF)なのはこの目印。初ブリンカーは検証したが効果なし(不採用)。
+            (#FFEEFF)なのはこの目印。初ブリンカーは検証したが効果なし(不採用)。
         """)
 
 # Tab Layout
@@ -6051,7 +6051,7 @@ if nav == "🏠 Single Race Analysis":
                         # 既存の文字色は残したまま列全体の背景だけ薄いピンクにして目立たせる(既存colorと非競合の
                         # background-colorのみ追加なので.apply()の重ね掛けで両方効く)。
                         def bg_validated_arare_signal(s):
-                            return ["background-color:#FFDDFF"] * len(s)
+                            return ["background-color:#FFEEFF"] * len(s)
                         for _vc in ('Bloodline', 'BloodStats', 'CorrectedT', 'JPower', 'SpurtIdx', 'Lap33'):
                             if _vc in view_df.columns:
                                 styled_df = styled_df.apply(bg_validated_arare_signal, axis=0, subset=[_vc])
@@ -6443,9 +6443,99 @@ if nav == "🏠 Single Race Analysis":
                         st.altair_chart((diag_m + zone_m + pts_m + num_m + name_m).properties(height=550).interactive(), width='stretch')
                     except Exception as e_sc:
                         st.warning(f"強適マップの描画中にエラー: {e_sc}")
-                    
+
+                    # ── 🧩 統合ビュー(検証済みエッジの合議で本命/相手/穴/消しへ再編) ──
+                    # 強適(素点)に、独立した検証済みエッジ(軸候補◎〇=オッズ実複勝率/荒れ予報6シグナル/
+                    # 🧩重複/危険人気veto)を荒れ予報レジーム別に合議して重ねる。
+                    # 検証(scripts/consensus_backtest.py): 合議一致は複勝率を単調UP(votes=3で複27% vs ベース9.4%)。
+                    # ※市場を出し抜く予測ではなく『本命の信頼度＋相手/穴の絞り込み』の道具。
+                    try:
+                        from core import consensus_view as _cv
+                        from core import value_scanner as _cv_vs
+                        from core import axis_selector as _cv_axs
+                        # _aim(検証エッジ全馬セット)を先に用意→trio/trifectaエンジンと同一キャッシュを共有
+                        _aim_key0 = f"_aimsets2_{race_id_input}"
+                        if _aim_key0 not in st.session_state:
+                            st.session_state[_aim_key0] = _cv.build_edge_sets(df, meta, race_id_input)
+                        _aim0 = st.session_state[_aim_key0]
+                        # 荒れ予報レジーム(trio_lean)
+                        _cv_olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
+                        try:
+                            _cv_dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                        except Exception:
+                            _cv_dist = None
+                        _cv_lean = _cv_vs.trio_lean(
+                            meta=meta, n_horses=len(df), fav_odds=(min(_cv_olist) if _cv_olist else None),
+                            dist=_cv_dist, baba=str(meta.get('condition', '') or ''), odds_list=_cv_olist)
+                        _cv_regime = _cv_lean['lean']
+                        # 軸候補◎〇▲(オッズ別実複勝率=検証済の最直接な3着内根拠)
+                        _cv_isnar = False
+                        try:
+                            _cv_isnar = int(str(race_id_input)[4:6]) > 10
+                        except Exception:
+                            _cv_isnar = False
+                        _cv_axh = [{'name': str(_r.get('Name', '')),
+                                    'pop': pd.to_numeric(_r.get('Popularity'), errors='coerce'),
+                                    'odds': pd.to_numeric(_r.get('Odds'), errors='coerce')}
+                                   for _, _r in df.iterrows()]
+                        _cv_axm = _cv_axs.axis_marks_nar(_cv_axh) if _cv_isnar else _cv_axs.axis_marks(_cv_axh)
+                        # 合議入力行
+                        _cv_rows = []
+                        for _, _r in df.iterrows():
+                            _un = pd.to_numeric(_r.get('Umaban'), errors='coerce')
+                            if pd.isnull(_un):
+                                continue
+                            _nm = str(_r.get('Name', ''))
+                            _cv_rows.append({
+                                'umaban': int(_un), 'name': _nm,
+                                'pop': int(pd.to_numeric(_r.get('Popularity'), errors='coerce'))
+                                if pd.notnull(pd.to_numeric(_r.get('Popularity'), errors='coerce')) else None,
+                                'odds': float(pd.to_numeric(_r.get('Odds'), errors='coerce'))
+                                if pd.notnull(pd.to_numeric(_r.get('Odds'), errors='coerce')) else None,
+                                'proj': float(pd.to_numeric(_r.get('Projected Score', _r.get('BattleScore', 0)), errors='coerce') or 0),
+                                'axis_mark': (_cv_axm.get(_nm, {}) or {}).get('mark', ''),
+                            })
+                        _cv_res = _cv.integrate(_cv_rows, _aim0, _cv_regime)
+
+                        st.markdown("#### 🧩 統合ビュー（検証済みエッジの合議）")
+                        _cv_reg_lbl = {'②穴妙味向き': '🎲 荒れ予報＝②穴妙味向き（人気薄×検証シグナルの合議を厚く）',
+                                       '本線向き': '🛡️ 本線向き（軸候補◎〇＋市場エッジを厚く）',
+                                       '中立': '⚖️ 中立（軸・穴シグナルをバランス）'}.get(_cv_regime, _cv_regime)
+                        st.caption(f"レジーム: {_cv_reg_lbl}　｜　合議一致は複勝率を単調UP"
+                                   "(検証: votes=3で複27% vs ベース9.4%)。市場を出し抜く予測ではなく"
+                                   "**本命の信頼度＋相手/穴の絞り込み**の道具。")
+                        _cv_g = _cv_res['groups']
+                        _cv_nm = {h['umaban']: h['name'] for h in _cv_res['horses']}
+                        def _cv_lab(_ul):
+                            return "　".join(f"{u} {_cv_nm.get(u, '')}" for u in _ul) or "—"
+                        _cvc1, _cvc2 = st.columns(2)
+                        with _cvc1:
+                            st.success(f"◎本命: {_cv_lab(_cv_g['honmei'])}")
+                            st.info(f"〇▲相手: {_cv_lab(_cv_g['aite'])}")
+                        with _cvc2:
+                            st.warning(f"🎯穴(検証シグナル): {_cv_lab(_cv_g['ana'])}")
+                            if _cv_g['keshi']:
+                                st.error(f"💀消し(危険人気/下位): {_cv_lab(_cv_g['keshi'])}")
+                        _cv_tbl = []
+                        for h in _cv_res['horses']:
+                            _cv_tbl.append({
+                                '役割': h.get('role', ''),
+                                '馬番': h['umaban'], '馬名': h['name'],
+                                '人気': h['pop'] if h['pop'] is not None else '-',
+                                '軸': h['axis_mark'] or '',
+                                '合議数': h['votes'], '🧩重複': h['combo'] or '',
+                                '素点': h['proj'], '統合': h['integ'],
+                                '検証エッジ': h['reasons'] or '-',
+                                '危険': '⚠' if h['veto'] else ('△' if h['danger'] else ''),
+                            })
+                        st.dataframe(pd.DataFrame(_cv_tbl), hide_index=True, use_container_width=True)
+                        st.caption("『合議数』=独立した検証済みエッジ(軸候補◎〇▲＋人気薄なら荒れ予報6シグナル＋市場エッジ)の"
+                                   "一致数。多いほど複勝の信頼度が高い(検証済)。『統合』=素点＋レジーム別の合議加点−危険減点。")
+                    except Exception as _cve:
+                        st.caption(f"（統合ビューをスキップ: {_cve}）")
+
                     st.divider()
-                    
+
                     # 3. Display
                     
                     # 消し推奨表示用に下位5頭名を算出（Direct Match Network / Recent Match History は削除）
@@ -6583,151 +6673,12 @@ if nav == "🏠 Single Race Analysis":
                                 return 2
                         _te_choices = sorted(_te_choices, key=_ax_pref_rank)
 
-                    # --- 🎯 馬券フィルター用 検証エッジ/危険馬/穴セット(レース単位キャッシュ・全券種共有) ---
-                    _aim_key = f"_aimsets2_{race_id_input}"   # v2: 🟣6シグナル+🧩combo追加(旧キャッシュと分離)
+                    # --- 🎯 検証エッジ/危険馬/穴セット(全券種・強適シート共有・core/consensus_viewへ抽出) ---
+                    # 強適シート側(上方)で既にbuild_edge_setsを呼びキャッシュ済み。ここは再読込のみ。
+                    _aim_key = f"_aimsets2_{race_id_input}"   # v2: 🟣6シグナル+🧩combo
                     if _aim_key not in st.session_state:
-                        try:
-                            from core import corrected_time as _ctf2
-                            from core import jockey_jv as _jjf2
-                            from core import track_bias as _tbf2
-                            from core import danger_gate as _dgte
-                            from core import bloodline as _blf2
-                            from core import lap33 as _l33f2
-                            _surf_te = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
-                            _baba_te = str(meta.get('condition', '') or '')
-                            _jyo_te = str(race_id_input)[4:6]
-                            _dv_te = str(meta.get('date_val', '') or '')
-                            _month_te = int(_dv_te[4:6]) if len(_dv_te) >= 6 and _dv_te[4:6].isdigit() else None
-                            try:
-                                _dist_te = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
-                            except Exception:
-                                _dist_te = None
-                            # 33ラップのコース平均(JRA限定=jyo<=10・Ranking Tableと同条件)
-                            _l33c_te = None
-                            try:
-                                _l33s_te = '芝' if '芝' in _surf_te else ('ダ' if _surf_te else None)
-                                if _l33s_te and _dist_te and _jyo_te <= '10':
-                                    _l33c_te = _l33f2.course_avg33(_l33s_te, _dist_te, jyo=_jyo_te)
-                            except Exception:
-                                _l33c_te = None
-                            _ctfig_te = {}; _spurt_te = {}; _ana_te = set(); _danger_te = set(); _veto_te = set()
-                            _bld_te = {}; _jpw_te = {}   # 血統スコア/騎手力(レース内top3判定用)
-                            # 馬ごとの根拠ラベル(表示用)。edge=妙味方向 / danger=危険方向
-                            _ereason = {}; _dreason = {}
-                            def _addr(d, u, lab):
-                                d.setdefault(u, [])
-                                if lab not in d[u]:
-                                    d[u].append(lab)
-                            for _, _rt in df.iterrows():
-                                _utn = pd.to_numeric(_rt.get('Umaban'), errors='coerce')
-                                if pd.isnull(_utn):
-                                    continue
-                                _ut = int(_utn)
-                                _popt = pd.to_numeric(_rt.get('Popularity'), errors='coerce')
-                                if pd.notnull(_popt) and _popt >= 6:
-                                    _ana_te.add(_ut)
-                                _ktt, _tc2 = _jjf2.resolve_horse(str(_rt.get('Name', '')))
-                                _jky2 = str(_rt.get('Jockey', '') or '')
-                                # 血統: スクレイプ済み(netkeiba)優先→無ければjravan(JV血統は2023-07凍結)
-                                _sire2 = str(_rt.get('sire') or '').strip()
-                                if (not _sire2 or _sire2 == '-') and _ktt:
-                                    _sire2 = _tbf2.sire_of_ketto(_ktt)
-                                # 危険人気Veto(共通danger_gate): severity1=危険材料/2以上=軸不可(_veto_te)
-                                _vr = _dgte.danger_veto(
-                                    ninki=(int(_popt) if pd.notnull(_popt) else None),
-                                    surface=_surf_te, baba=_baba_te, sire=_sire2,
-                                    sex_age=str(_rt.get('SexAge', '') or ''), month=_month_te)
-                                if _vr['severity'] >= 1:
-                                    _danger_te.add(_ut)
-                                    for _rs in _vr['reasons']:
-                                        _addr(_dreason, _ut, _rs)
-                                    if _vr['severity'] >= 2:
-                                        _veto_te.add(_ut)
-                                # 道悪×血統 WETPOWER=軸補強(exempt)→妙味エッジ
-                                _bm2 = _tbf2.heavy_fav_blood_mod(_sire2, _surf_te, _baba_te) if _sire2 else None
-                                if _bm2 and _bm2.get('mod') == 'exempt':
-                                    _addr(_ereason, _ut, '🟢道悪軸')
-                                if _ktt:
-                                    _fg = _ctf2.get_figure(_ktt, _surf_te)
-                                    if _fg and _fg.get('fig') is not None:
-                                        _ctfig_te[_ut] = _fg['fig']
-                                    _cx = _jjf2.horse_recent_context(_ktt)
-                                    _si = (_cx or {}).get('spurt_index'); _srn = (_cx or {}).get('spurt_runs', 0)
-                                    if _si is not None and _srn >= 2:
-                                        _spurt_te[_ut] = _si
-                                    # ⚡33ラップ適合(荒れ予報6シグナル: holdout z+2.6)
-                                    if _l33c_te:
-                                        try:
-                                            _hv3 = (_l33f2.horse_fit33(_ktt) or {}).get('avg_lap33')
-                                            if _hv3 is not None and _l33f2.fit_match(_hv3, _l33c_te['avg']) is True:
-                                                _addr(_ereason, _ut, '⚡33ラップ適合')
-                                        except Exception:
-                                            pass
-                                # 🧬血統スコア/血統回収(荒れ予報6シグナル: top3 z+7.6 / 回収100%+ z+6.4)
-                                try:
-                                    _bms2 = str(_rt.get('broodmareSire') or '').strip()
-                                    if _bms2 in ('nan', 'NaN', 'None', '不明', '-'):
-                                        _bms2 = ''
-                                    _ss3 = _blf2.lookup_sire_stats(_sire2, _surf_te, _dist_te) if _sire2 else None
-                                    _bs3 = _blf2.lookup_bms_stats(_bms2, _surf_te, _dist_te) if _bms2 else None
-                                    # 統計が実在する馬のみtop3対象(全馬が母集団既定値25で並ぶ偽top3を防ぐ)
-                                    if _ss3 or _bs3:
-                                        _bld_te[_ut] = _blf2.blood_score(_sire2 or None, _bms2 or None,
-                                                                         _surf_te, _dist_te)
-                                    if _ss3 and _ss3.get('win_roi', 0) >= 100:
-                                        _addr(_ereason, _ut, '🧬血統回収100%+')
-                                except Exception:
-                                    pass
-                                # 👑騎手力(荒れ予報6シグナル: top3 z+3.8・6項目中最弱だがz≥2維持)
-                                try:
-                                    if _jky2:
-                                        _jpv3 = _jjf2.jockey_power(
-                                            _jjf2.resolve_jockey_name(_jky2)).get('jpower')
-                                        if _jpv3 is not None:
-                                            _jpw_te[_ut] = float(_jpv3)
-                                except Exception:
-                                    pass
-                                # 厩舎の当コース勝率(検証: >20%は妙味)
-                                if _tc2:
-                                    _tcw = _jjf2.trainer_course_winrate(_tc2, _jyo_te, _surf_te)
-                                    if _tcw and _tcw.get('runs', 0) >= 5 and _tcw.get('win_rate', 0) >= 0.20:
-                                        _addr(_ereason, _ut, f"🏠厩舎当ｺｰｽ{_tcw['win_rate']*100:.0f}%")
-                                # 黄金ライン(騎手×厩舎の連対率・検証で消去エンジンと同条件)
-                                if _tc2 and _jky2:
-                                    _gl = _jjf2.jockey_trainer_combo(_jky2, _tc2)
-                                    if _gl and _gl.get('rides', 0) >= 10 and _gl.get('top2', 0) >= 0.40:
-                                        _addr(_ereason, _ut, f"⭐黄金ライン{_gl['top2']*100:.0f}%")
-                            # 補正T上位3 / 末脚上位3 を妙味エッジに(穴脚で価値・検証済)
-                            for _u, _r in _ctf2.field_ranks(_ctfig_te).items():
-                                if _r <= 3:
-                                    _addr(_ereason, _u, '🔵補正T上位')
-                            for _u, _ in sorted(_spurt_te.items(), key=lambda x: -x[1])[:3]:
-                                _addr(_ereason, _u, '🔥末脚top')
-                            # 血統スコア/騎手力のレース内top3(Ranking Tableの🟣列と同じ判定)
-                            for _u, _ in sorted(_bld_te.items(), key=lambda x: -x[1])[:3]:
-                                _addr(_ereason, _u, '🧬血統上位')
-                            for _u, _ in sorted(_jpw_te.items(), key=lambda x: -x[1])[:3]:
-                                _addr(_ereason, _u, '👑騎手力top')
-                            # 🧩シグナル重複数(荒れ予報6シグナルの同時発火。combo2+ z+9.2 > 単独最強の補正T z+10.4に
-                            # 迫り、combo3+ z+8.2。重複馬はヒモ穴の第一候補=trio/trifectaエンジンで直接加点)
-                            _SIG6_TE = ('🔵補正T', '🔥末脚', '🧬血統上位', '🧬血統回収', '⚡33', '👑騎手')
-                            _combo_te = {}
-                            for _u, _labs in list(_ereason.items()):
-                                _c6 = sum(1 for _p in _SIG6_TE
-                                          if any(str(_l).startswith(_p) for _l in _labs))
-                                if _c6:
-                                    _combo_te[_u] = _c6
-                                    if _c6 >= 2:
-                                        _addr(_ereason, _u, f'🧩{_c6}重複')
-                            _edge_te = set(_ereason.keys())
-                            st.session_state[_aim_key] = {
-                                'edge': _edge_te, 'danger': _danger_te, 'ana': _ana_te,
-                                'veto': _veto_te, 'combo': _combo_te,
-                                'edge_reasons': _ereason, 'danger_reasons': _dreason}
-                        except Exception:
-                            st.session_state[_aim_key] = {'edge': set(), 'danger': set(), 'ana': set(),
-                                                          'veto': set(), 'combo': {},
-                                                          'edge_reasons': {}, 'danger_reasons': {}}
+                        from core import consensus_view as _cv_aim
+                        st.session_state[_aim_key] = _cv_aim.build_edge_sets(df, meta, race_id_input)
                     _aim = st.session_state[_aim_key]
                     # 危険人気Veto(severity≥2)を軸の自動採用から降格: デフォルト軸候補の並びで後ろへ
                     _veto_set = _aim.get('veto') or set()
@@ -7005,16 +6956,17 @@ if nav == "🏠 Single Race Analysis":
                     #   1着=軸馬候補◎〇(オッズ別実複勝率) / 3着=🧩シグナル重複穴を厚く。
                     # =========================================================
                     st.divider()
-                    st.subheader("🎯 3連単おすすめエンジン(30点以内)")
+                    st.subheader("🎯 3連単おすすめエンジン(推奨30点以内)")
                     st.caption("3連複と同じ検証シグナルで『30点以内で当てにいく』3連単。"
                                "1着候補は軸馬候補◎〇(オッズ別実複勝率=検証済の軸信頼度)を頭に固定し、"
                                "3着ヒモは🟣シグナル重複(🧩)の穴を優先配置"
-                               "(combo2+ holdout z+9.2は単独シグナルより強い)。上限30点ハードcap。")
+                               "(combo2+ holdout z+9.2は単独シグナルより強い)。推奨は30点以内(40/50はあえて増やしたい時用)。")
                     _tri_c1, _tri_c2 = st.columns([1, 2])
                     with _tri_c1:
-                        _tri_np = st.selectbox("提案数(点)", [10, 15, 20, 25, 30], index=4,
+                        _tri_np = st.selectbox("提案数(点)", [10, 15, 20, 25, 30, 40, 50], index=4,
                                                key='tri_npoints',
-                                               help="3連単は点数を広げるほど合成オッズが潰れる=30点で打ち止め。")
+                                               help="3連単は点数を広げるほど合成オッズが潰れる=推奨は30点。"
+                                                    "40/50は選べるがトリガミに注意。")
                     with _tri_c2:
                         _tri_odk = f"sanrentan_odds_{race_id_input}"
                         if st.button("🎯 3連単オッズ取得・更新", key='tri_fetch'):
@@ -7073,7 +7025,7 @@ if nav == "🏠 Single Race Analysis":
                             })
                         st.dataframe(pd.DataFrame(_tri_rows), hide_index=True, use_container_width=True)
                         _tri_syn = _tri_res['meta'].get('synthetic_odds')
-                        _tri_msg = f"計 {len(_tri_res['bets'])}点（上限30点）"
+                        _tri_msg = f"計 {len(_tri_res['bets'])}点（推奨30点・最大50点）"
                         if _tri_syn:
                             _tri_msg += f" / 合成オッズ約{_tri_syn}倍"
                         _tri_meta = _tri_res['meta']

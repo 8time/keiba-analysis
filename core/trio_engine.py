@@ -299,14 +299,14 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     horses: recommend_trio と同形 [{'umaban','name','score','pop','alert'}]
     odds_map: {(1着,2着,3着): odds} = build_trifecta_odds_map の出力(任意)
     axis_umaban: 1着/2着候補の優先馬番リスト(先頭ほど優先。軸馬候補◎〇=オッズ別実複勝率を想定)
-    n_points: 上限点数。3連単は点数を広げるほど合成オッズが潰れるため30にハードcap。
+    n_points: 上限点数。推奨は30点だが、あえて増やしたい時のため50までは許容(ハードcapは50)。
     戻り値: recommend_trio と同形 {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
     by = {h['umaban']: h for h in horses}
     if len(by) < 3:
         return {'bets': [], 'meta': {}, 'warning': '出走馬が3頭未満のため3連単を組めません'}
-    n_points = max(1, min(int(n_points), 30))   # ハード上限30(「3連単は30点以内」の設計)
+    n_points = max(1, min(int(n_points), 50))   # ハード上限50(推奨30・40/50は任意で増量可)
     lo, hi = band or _TRIFECTA_BAND
     ranked = sorted(by.values(), key=lambda h: -(h.get('score') or 0))
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
