@@ -323,16 +323,30 @@ with st.sidebar:
         st.success("Cache cleared! Please re-analyze.")
 
     # ── データ鮮度チェック ──
+    # カレンダー日数でなく『jravan.dbにモデル作成時より新しいレースが実際にあるか』で判定する。
+    # (jravan.dbが凍結中=新レース無しなら再ビルドは無意味なので警告を出さない)
     if is_local:
-        import time as _t_fresh
-        _FRESH_DAYS = 14
         _fresh_warns = []
+        # jravan.db の最新レース日を timestamp 化(無ければ鮮度チェック自体スキップ)
+        _jv_latest_ts = None
+        try:
+            import sqlite3 as _sq_fresh, datetime as _dt_fresh
+            _jvp = os.path.join(os.path.dirname(__file__), 'data', 'jravan.db')
+            if os.path.exists(_jvp):
+                _con_fresh = _sq_fresh.connect(f"file:{_jvp}?mode=ro", uri=True)
+                _mx = _con_fresh.execute("SELECT MAX(race_key) FROM results").fetchone()[0]
+                _con_fresh.close()
+                if _mx and len(str(_mx)) >= 8:
+                    _d = str(_mx)[:8]
+                    _jv_latest_ts = _dt_fresh.datetime(int(_d[:4]), int(_d[4:6]), int(_d[6:8])).timestamp()
+        except Exception:
+            _jv_latest_ts = None
         for _fn, _lbl in [('data/corrected_time.db', '補正T'), ('data/ltr_model.lgb', '検証AIモデル')]:
             _fp = os.path.join(os.path.dirname(__file__), _fn)
             if os.path.exists(_fp):
-                _age = (_t_fresh.time() - os.path.getmtime(_fp)) / 86400
-                if _age > _FRESH_DAYS:
-                    _fresh_warns.append(f"{_lbl}: {_age:.0f}日前")
+                # jravanの最新レースがモデル作成より後=未取込の新データあり→再ビルド推奨
+                if _jv_latest_ts is not None and _jv_latest_ts > os.path.getmtime(_fp):
+                    _fresh_warns.append(f"{_lbl}: jravanに新レースあり")
             else:
                 if 'ltr_model' not in _fn:
                     _fresh_warns.append(f"{_lbl}: 未作成")
