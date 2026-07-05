@@ -5326,7 +5326,9 @@ if nav == "🏠 Single Race Analysis":
                                 _jp_top3_u = {u for u, _ in sorted(_jp_numeric.items(), key=lambda x: -x[1])[:3]}
                                 for _u in _jp_top3_u:
                                     _jp_cells[_u] = '👑' + _jp_cells[_u]
-                            st.session_state[_jpw_key] = _jp_cells
+                            # 実値が1つも無い(全'-')結果はキャッシュしない=次のrerunで再取得(DB一時失敗等の自己回復)
+                            if _jp_numeric:
+                                st.session_state[_jpw_key] = _jp_cells
                         _jp_cells = st.session_state.get(_jpw_key, {})
                         if _jp_cells:
                             view_df['JPower'] = view_df['Umaban'].apply(
@@ -8576,6 +8578,7 @@ if nav == "🧹 消去フィルター":
                        "各フラグ単体は人気に織込み済(残差≈0)だが**重複数が増えるほど絶対複勝率は単調低下**"
                        "(0個31.5%→3個14.9%→7個10.3%)。🔴重複が多い＝来にくい馬を切って、**最終6〜7頭(軸含む)**に絞り込む段。")
             from core import elim_cross as _exc
+            import importlib as _il_exc; _il_exc.reload(_exc)  # 稼働中プロセスの旧版キャッシュ(stress1未対応等)を排除
             try:
                 # --- 🏠 Single Race Analysis の採点テーブル(総合戦闘力/予測スコア)を取得し下位30%を判定 ---
                 _score_df = st.session_state.get('current_bonus_df')
