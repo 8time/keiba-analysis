@@ -584,6 +584,10 @@ def main():
         assert (not r1['veto']) and r1['severity'] == 1, f"重×1番のみ→severity1, got {r1}"
         # axis_demote: severity>=2はマーク置換
         assert dg.axis_demote('◎ 60%', r).startswith('⚠危険'), "severity>=2でマーク置換"
+        # 高齢(7歳+)ソフト理由: 単独では非表示・硬い危険と重なるとseverity算入(検証済-6.5pp)
+        assert dg.danger_veto(ninki=2, surface='芝', sex_age='牡8')['severity'] == 0, "高齢単独は非表示(ソフト)"
+        _rage = dg.danger_veto(ninki=2, surface='芝', sex_age='牡8', top_jockey_swap=True)
+        assert '高齢(7歳+)' in _rage['reasons'] and _rage['severity'] == 2, "高齢+硬い危険で算入"
         assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
         # 半年休み明けはソフト理由: 単独では危険にしない(精度低・NAR誤爆対策)
         assert dg.danger_veto(ninki=1, layoff_days=200)['severity'] == 0, "休み明け単独は危険にしない"

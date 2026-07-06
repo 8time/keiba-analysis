@@ -88,6 +88,14 @@ def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
         pass
     if str(prev_kyaku or '') == '1':       # 前走逃げ
         reasons.append('前走逃げ')
+    # 高齢(7歳+): 人気馬(1-4)で複勝残差 train-5.0pp/holdout-12.1pp・z有意(ピーク過ぎ・市場が過小割引)。
+    # 絶対複勝率36%で単独精度は中程度→ソフト理由(半年休み明けと同扱い)。sex_age例"牡7"から年齢抽出。
+    try:
+        _agv = int(''.join(c for c in str(sex_age or '') if c.isdigit()) or 0)
+        if _agv >= 7:
+            reasons.append('高齢(7歳+)')
+    except (TypeError, ValueError):
+        pass
 
     # ⑥ Stress(リーク無しのみ)
     for f in (stress_flags or []):
@@ -99,7 +107,7 @@ def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
     # 加えてNAR/直近レースはjravanの収録が疎で休養日数を過大算出し誤爆する。
     # → 他に硬い危険理由がある時のみ severity に算入(単独では0＝表示しない)。
     # 前走逃げも同様に単独では弱い(dangerfav検証 残差+0.005≒0)=ソフト理由。
-    _SOFT = {'半年休み明け', '前走逃げ'}
+    _SOFT = {'半年休み明け', '前走逃げ', '高齢(7歳+)'}
     hard = [r for r in reasons if r not in _SOFT]
     soft = [r for r in reasons if r in _SOFT]
     final = hard + (soft if hard else [])
