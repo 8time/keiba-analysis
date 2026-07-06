@@ -345,7 +345,8 @@ def formation_for_arare(arare_prob):
 
 def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                        pop_th=4, ana_lo=6, ana_hi=12,
-                       n_first=3, n_second=5, n_third=9, band=None, arare_prob=None):
+                       n_first=3, n_second=5, n_third=9, band=None, arare_prob=None,
+                       fragile_fav=False):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
 
@@ -372,6 +373,12 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     _bf = formation_for_arare(arare_prob)
     if _bf is not None:
         band_name, (n_first, n_second, n_third, _sugg, put_ana_head) = _bf
+        # 脆い本命(1番人気に危険材料あり=検証: 複勝-6.5pp z-10.1)なら帯を1段広げる。
+        # 本命を軸固定せず相手重視へ(本命信頼度が落ちる時ほど手を広げる)。堅→中/中→荒れ。
+        if fragile_fav:
+            _bump = {'tight': 'mid', 'mid': 'arare', 'arare': 'arare'}
+            band_name = _bump.get(band_name, band_name)
+            n_first, n_second, n_third, _sugg, put_ana_head = _BAND_FORMATION[band_name]
         n_points = max(1, min(int(n_points), _sugg))   # 帯推奨点数を上限に(堅=絞る/荒れ=広げる)
 
     def _combo_lvl(u):
@@ -468,7 +475,7 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
             'meta': {'n_points': len(bets), 'target_band': (lo, hi), 'synthetic_odds': syn,
                      'first': first, 'second': second, 'third': third,
                      'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
-                     'band_name': band_name, 'arare_prob': arare_prob},
+                     'band_name': band_name, 'arare_prob': arare_prob, 'fragile_fav': fragile_fav},
             'warning': None}
 
 

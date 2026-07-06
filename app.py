@@ -7288,10 +7288,17 @@ if nav == "🏠 Single Race Analysis":
                             f"{u}番{_te_name_m.get(u, '')}" for u in _tri_axis[:2]))
                     # 帯別フォーメーション: 荒れ確率で買い方を可変(堅→少点/中→wide/荒れ→広角穴頭込み・検証済)
                     _tri_ap = (_rv_sum.get('arare_prob') if _rv_sum else None)
+                    # ①脆い本命: 1番人気に危険材料あり(検証: 複勝-6.5pp z-10.1)なら帯を1段広げる
+                    _fav_um = next((h['umaban'] for h in _te_horses if h.get('pop') == 1), None)
+                    _fragile_fav = bool(_fav_um is not None and _fav_um in _aim.get('danger', set()))
                     _tri_res = _te.recommend_trifecta(_te_horses, odds_map=_tri_omap,
                                                       axis_umaban=_tri_axis, n_points=_tri_np,
-                                                      arare_prob=_tri_ap)
+                                                      arare_prob=_tri_ap, fragile_fav=_fragile_fav)
                     _tri_bn = (_tri_res.get('meta') or {}).get('band_name')
+                    if (_tri_res.get('meta') or {}).get('fragile_fav'):
+                        _ff_rz = ' / '.join((_aim.get('danger_reasons') or {}).get(_fav_um, [])) or '危険材料'
+                        st.caption(f"⚠ 脆い本命: 1番人気({_fav_um}番)に危険材料({_ff_rz})＝複勝-6.5pp検証。"
+                                   "本命を軸固定せず帯を1段広げました(相手重視)。")
                     if _tri_bn:
                         _bn_txt = {'tight': '堅い帯→人気集中で少点に絞る(点数最適化が効く)',
                                    'mid': '中波乱帯→wide(最も損益分岐に近い)',

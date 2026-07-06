@@ -353,6 +353,11 @@ def main():
         assert tight['meta']['band_name'] == 'tight' and arare['meta']['band_name'] == 'arare'
         # 荒れは穴頭(妙味穴=combo馬)を1着プールに入れる
         assert any(u >= 6 for u in arare['meta']['first']), "荒れは穴頭を1着に許容"
+        # ①脆い本命: 帯を1段広げる(堅→中)。検証: 1番人気に危険材料で複勝-6.5pp
+        _clean = te.recommend_trifecta(horses, axis_umaban=[1, 2], n_points=50, arare_prob=0.30)
+        _frag = te.recommend_trifecta(horses, axis_umaban=[1, 2], n_points=50, arare_prob=0.30, fragile_fav=True)
+        assert _clean['meta']['band_name'] == 'tight' and _frag['meta']['band_name'] == 'mid', "脆い本命で帯が1段広がる"
+        assert _frag['meta']['fragile_fav'] is True
     check("trio_engine.recommend_trifecta(帯別フォーメーション)", t_trifecta_band_formation)
 
     def t_formation_stake_advice():
