@@ -282,6 +282,11 @@ def integrate(rows, aim, regime):
     for h in out:                                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
         if h['umaban'] in assigned:
             continue
+        # 敗者復活: 切る帯でもcombo3+は複勝が人気薄ベースを超えて復活(検証済:
+        # scripts/revival_backtest.py holdout複勝12.3% vs 切る帯5.9%・z+2.21)→切らず穴へ回す。
+        # combo2ではベース届かず(復活せず)=combo3+の激辛条件のみ。
+        if h['combo'] >= 3:
+            continue
         _en = h.get('elim', 0)
         _pop_top = (h['pop'] is not None and h['pop'] <= 5)   # 人気上位=priced-in
         # 人気上位はフラグが織込み済みなので重複が極端(≥5)な時だけ切る。人気薄(6+)は重複3で切る
@@ -291,7 +296,12 @@ def integrate(rows, aim, regime):
         if h['umaban'] in assigned:
             continue
         if (h['pop'] is not None and h['pop'] >= 6) and h['combo'] >= 2:
-            h['role'] = '🎯穴(combo馬)'; ana_g.append(h['umaban']); assigned.add(h['umaban'])
+            # 切る帯(消去3+)から復活したcombo3+は🔥敗者復活として明示
+            if h.get('elim', 0) >= 3 and h['combo'] >= 3:
+                h['role'] = f"🔥敗者復活(combo{h['combo']}/消去{h['elim']})"
+            else:
+                h['role'] = '🎯穴(combo馬)'
+            ana_g.append(h['umaban']); assigned.add(h['umaban'])
     for h in out:                                   # 相手 = 残りの統合上位(最大3頭)
         if h['umaban'] in assigned:
             continue

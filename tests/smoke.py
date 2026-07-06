@@ -260,20 +260,24 @@ def main():
         # 空dfは空shapeを返す(呼び元は.getで安全に参照)
         e = cv.build_edge_sets(_pd.DataFrame(), {}, '202608020211')
         assert e['edge'] == set() and e['combo'] == {}, "空df=空shape"
-        # 穴=combo2+のみ(単発シグナルは入れない)/切る=消去クロス重複3+を強気に
-        aim = {'edge_reasons': {2: ['🔥末脚top', '👑騎手力top', '🧩2重複'], 14: ['⚡33ラップ適合']},
-               'danger': set(), 'veto': set(), 'combo': {2: 2}, 'ana': {14, 2},
-               'elim': {5: 4}}  # 5番=消去クロス重複4=強気に切る
+        # 穴=combo2+/切る=消去3+/敗者復活=切る帯×combo3+
+        aim = {'edge_reasons': {2: ['🔥末脚top', '👑騎手力top', '🧩2重複'], 14: ['⚡33ラップ適合'],
+                                7: ['🔵補正T上位', '🔥末脚top', '🧬血統上位', '🧩3重複']},
+               'danger': set(), 'veto': set(), 'combo': {2: 2, 7: 3}, 'ana': {14, 2, 7},
+               'elim': {5: 4, 7: 3}}  # 5=消去4切る / 7=消去3だがcombo3=敗者復活
         rows = [{'umaban': 16, 'name': 'A', 'pop': 1, 'odds': 3.3, 'proj': 95, 'axis_mark': '◎'},
                 {'umaban': 14, 'name': 'B', 'pop': 16, 'odds': 87.5, 'proj': 40, 'axis_mark': ''},
                 {'umaban': 2, 'name': 'C', 'pop': 15, 'odds': 14.8, 'proj': 50, 'axis_mark': ''},
-                {'umaban': 5, 'name': 'D', 'pop': 8, 'odds': 20.0, 'proj': 45, 'axis_mark': ''}]
+                {'umaban': 5, 'name': 'D', 'pop': 8, 'odds': 20.0, 'proj': 45, 'axis_mark': ''},
+                {'umaban': 7, 'name': 'E', 'pop': 9, 'odds': 25.0, 'proj': 42, 'axis_mark': ''}]
         r = cv.integrate(rows, aim, '②穴妙味向き')
         assert r['horses'][0]['umaban'] == 16, "◎本命が統合トップ"
         assert 2 in r['groups']['ana'], "combo2の穴が穴グループ入り"
         assert 14 not in r['groups']['ana'], "単発⚡33(combo1)は穴に入れない"
         assert 5 in r['groups']['keshi'], "消去クロス重複4の馬は切る"
-    check("consensus_view.integrate(穴=combo2+/切る=消去3+)", t_consensus_integrate)
+        assert 7 in r['groups']['ana'] and 7 not in r['groups']['keshi'], "切る帯×combo3は敗者復活で穴へ"
+        assert '敗者復活' in next(h['role'] for h in r['horses'] if h['umaban'] == 7), "7番は敗者復活ロール"
+    check("consensus_view.integrate(穴/切る/敗者復活)", t_consensus_integrate)
 
     def t_ledger_gate():
         import tempfile
