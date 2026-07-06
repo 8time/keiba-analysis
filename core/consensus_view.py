@@ -29,7 +29,8 @@ def build_edge_sets(df, meta, race_id):
     失敗時は空shapeを返す(呼び元は必ず.get()で参照)。
     """
     empty = {'edge': set(), 'danger': set(), 'ana': set(), 'veto': set(),
-             'combo': {}, 'elim': {}, 'edge_reasons': {}, 'danger_reasons': {}}
+             'combo': {}, 'elim': {}, 'vh': {}, 'vh_tier': {},
+             'edge_reasons': {}, 'danger_reasons': {}}
     try:
         import re as _re_cv
         import pandas as pd
@@ -62,6 +63,7 @@ def build_edge_sets(df, meta, race_id):
 
         ctfig = {}; spurt = {}; ana = set(); danger = set(); veto = set()
         bld = {}; jpw = {}; elim = {}   # elim=消去クロスの来にくさフラグ重複数(切る判定用)
+        odds_map = {}                   # um -> 単勝オッズ(妙味馬ハンター軽量スコア用)
         ereason = {}; dreason = {}
         race_date = dv if len(dv) >= 8 else None
         is_handi = bool(meta.get('is_handicap'))
@@ -79,6 +81,9 @@ def build_edge_sets(df, meta, race_id):
             pop = pd.to_numeric(r.get('Popularity'), errors='coerce')
             if pd.notnull(pop) and pop >= 6:
                 ana.add(u)
+            _od = pd.to_numeric(r.get('Odds'), errors='coerce')
+            if pd.notnull(_od) and _od > 0:
+                odds_map[u] = float(_od)
             kt, tc = jj.resolve_horse(str(r.get('Name', '')))
             jky = str(r.get('Jockey', '') or '')
             sire = str(r.get('sire') or '').strip()
@@ -179,8 +184,22 @@ def build_edge_sets(df, meta, race_id):
                 if c6 >= 2:
                     _addr(ereason, u, f'🧩{c6}重複')
 
+        # 妙味馬ハンター軽量スコア(検証済: recall70%@precision2.09x・[[project_value_horse_hunter]])。
+        # 主成分は市場情報(オッズ順序)+補正T連続量。3着内の網羅リストであって+EVではない。
+        vh = {}; vh_tier = {}
+        try:
+            from core import value_hunter as _vh
+            if _vh.available():
+                _sc = _vh.score_race(ctfig, spurt, bld, combo, elim, odds_map)
+                for u, d in _sc.items():
+                    vh[u] = round(d['score'], 4)
+                    vh_tier[u] = d['tier']
+        except Exception:
+            pass
+
         return {'edge': set(ereason.keys()), 'danger': danger, 'ana': ana,
                 'veto': veto, 'combo': combo, 'elim': elim,
+                'vh': vh, 'vh_tier': vh_tier,
                 'edge_reasons': ereason, 'danger_reasons': dreason}
     except Exception:
         return empty
@@ -211,6 +230,8 @@ def integrate(rows, aim, regime):
     veto_set = aim.get('veto') or set()
     combo_map = aim.get('combo') or {}
     elim_map = aim.get('elim') or {}
+    vh_map = aim.get('vh') or {}
+    vh_tier_map = aim.get('vh_tier') or {}
     mkval = {'◎': 3, '〇': 2, '▲': 1}
 
     out = []
@@ -256,6 +277,7 @@ def integrate(rows, aim, regime):
             'umaban': u, 'name': r.get('name', ''), 'pop': pop, 'odds': r.get('odds'),
             'proj': round(base, 1), 'axis_mark': mk,
             'votes': votes, 'value_votes': value_votes, 'combo': combo, 'elim': elim_n,
+            'vh': vh_map.get(u), 'vh_tier': vh_tier_map.get(u, ''),
             'danger': danger, 'veto': veto,
             'reasons': ' '.join(labs),
             'integ': round(base + bonus, 1),
@@ -292,7 +314,10 @@ def integrate(rows, aim, regime):
         #             うちcombo3+×消去3+は穴ループで🔥敗者復活として明示(revival_backtest z+2.21)。
         #  ②軸候補◎〇 … オッズ実複勝率が上位(最直接の3着内根拠)。
         #  ③統合スコア上位1/3 … 検証AI(LTR)含む素点が高い=最良予測器が生存と判定した馬。
-        if h['combo'] >= 2 or h['axis_mark'] in ('◎', '〇') or idx < _cut_top_guard:
+        #  ④妙味馬ハンター精鋭 … 軽量スコアの上位運用点(recall0.5・precision2.6x)。combo=0でも
+        #     オッズ順序+補正T連続量で拾える層の救済(Fable検証: combo0好走の6割を捕捉)。
+        if (h['combo'] >= 2 or h['axis_mark'] in ('◎', '〇') or idx < _cut_top_guard
+                or h.get('vh_tier') == '🎯精鋭'):
             continue
         _en = h.get('elim', 0)
         _pop_top = (h['pop'] is not None and h['pop'] <= 5)   # 人気上位=priced-in

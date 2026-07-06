@@ -267,6 +267,17 @@ def render():
                 odds_map[u] = o
         gap_anchors = vs.odds_gap_anchors(odds_map)
 
+    # ── 妙味馬ハンター 軽量スコア(検証済 recall70%@2.09x) ──
+    # build_edge_setsが補正T/末脚/血統/combo/消去/オッズからvh_score(市場順序+補正T連続量)を返す。
+    _vh_map = {}; _vh_tier = {}
+    try:
+        from core import consensus_view as _cvh
+        _aim_vh = _cvh.build_edge_sets(df, meta, race_id)
+        _vh_map = _aim_vh.get('vh') or {}
+        _vh_tier = _aim_vh.get('vh_tier') or {}
+    except Exception:
+        pass
+
     # ── 穴馬候補を抽出 ──
     candidates = []
     for idx, row in df.iterrows():
@@ -520,14 +531,38 @@ def render():
             'n_verified': n_verified,
             'n_ref': n_ref,
             'n_total': n_verified + n_ref,
+            'vh_score': _vh_map.get(umaban),
+            'vh_tier': _vh_tier.get(umaban, ''),
         })
 
     if not candidates:
         st.warning(f"{pop_threshold}番人気以下の馬がいません（全{n_horses}頭）。")
         return
 
-    # ── ソート: 検証済みフラグ数 → 参考フラグ数 → 人気順 ──
-    candidates.sort(key=lambda c: (-c['n_verified'], -c['n_ref'], c['pop']))
+    # ── ソート: 妙味馬スコア(軽量vh)降順 → 検証済みフラグ数 → 人気順 ──
+    # vhが使えないレース(オッズ欠損等)は従来のフラグ数ソートにフォールバック。
+    candidates.sort(key=lambda c: (-(c['vh_score'] or -1), -c['n_verified'], -c['n_ref'], c['pop']))
+
+    # ── 🕸️ 妙味馬 2段リスト(検証済み軽量スコア) ──
+    _elite = [c for c in candidates if c['vh_tier'] == '🎯精鋭']
+    _net = [c for c in candidates if c['vh_tier'] == '🕸️広域網']
+    if _elite or _net:
+        def _mv_line(c):
+            _sc = f"{c['vh_score']*100:.0f}" if c['vh_score'] is not None else '-'
+            return f"**{c['umaban']}番 {c['name']}**({c['pop']}人気 {c['odds']:.1f}倍・妙味{_sc})"
+        _mv = ""
+        if _elite:
+            _mv += "🎯 **精鋭**(3着内率≈17-20%・基準の2.6倍): " + " / ".join(_mv_line(c) for c in _elite) + "\n\n"
+        if _net:
+            _mv += "🕸️ **広域網**(3着内率≈16%・2.1倍): " + " / ".join(_mv_line(c) for c in _net)
+        st.success(_mv)
+        st.caption(
+            "🕸️ 妙味馬スコア＝7番人気以下で3着内に来る馬を高再現率(recall70%)で網羅する検証済みショートリスト"
+            "(scripts/value_hunter_light.py)。主成分は市場のオッズ順序＋補正T連続量。"
+            "**⚠これは『3着内に来る馬の網羅リスト』であって『単勝で買えば儲かる(+EV)リスト』ではありません**"
+            "(単勝市場は効率的)。複勝/ワイド/3連複の相手・軸候補の絞り込みに使ってください。"
+        )
+        st.divider()
 
     # ── サマリー ──
     has_verified = [c for c in candidates if c['n_verified'] > 0]
@@ -539,12 +574,13 @@ def render():
 
     # ── 各馬の詳細表示 ──
     for c in candidates:
-        emoji = "🎯" if c['n_verified'] >= 2 else ("💡" if c['n_verified'] >= 1 else "📋")
+        emoji = c['vh_tier'] or ("🎯" if c['n_verified'] >= 2 else ("💡" if c['n_verified'] >= 1 else "📋"))
+        _vhtxt = f"　妙味{c['vh_score']*100:.0f}" if c['vh_score'] is not None else ""
         with st.expander(
             f"{emoji} {c['umaban']}番 {c['name']}　"
             f"{c['pop']}人気 {c['odds']:.1f}倍　"
-            f"検証済{c['n_verified']} / 参考{c['n_ref']}",
-            expanded=(c['n_verified'] >= 1)
+            f"検証済{c['n_verified']} / 参考{c['n_ref']}{_vhtxt}",
+            expanded=(c['vh_tier'] == '🎯精鋭' or c['n_verified'] >= 1)
         ):
             col_v, col_r = st.columns(2)
 

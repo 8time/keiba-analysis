@@ -298,6 +298,32 @@ def main():
         assert 7 in r['groups']['keshi'], "消去4×combo0の弱い馬は切る(強気切るは維持)"
     check("consensus_view.integrate(強材料は切らない回帰)", t_consensus_no_cut_strong)
 
+    def t_value_hunter():
+        # 軽量スコア: 低オッズ×補正T良は高スコア/精鋭、深穴×補正T悪×消去多は圏外
+        from core import value_hunter as vh
+        if not vh.available():
+            return  # パラメータ未生成環境ではスキップ
+        sc = vh.score_race(
+            ctfig={1: 80.0, 5: 78.0, 7: 95.0}, spurt={1: 0.5, 5: 0.6, 7: 0.4},
+            blood={1: 20, 5: 25, 7: 15}, combo_map={5: 2}, elim_map={5: 0, 7: 3},
+            odds_map={1: 8.0, 5: 12.0, 7: 60.0})
+        assert sc[5]['score'] > sc[7]['score'], "補正T良×低オッズ > 深穴×補正T悪"
+        assert sc[7]['tier'] == '', "60倍×補正T悪×消去3は圏外"
+    check("value_hunter.score_race(妙味馬軽量スコア)", t_value_hunter)
+
+    def t_consensus_vh_rescue():
+        # vh精鋭ならcombo0・消去多でも切らない(Fableのcombo0救済)
+        from core import consensus_view as cv
+        aim = {'edge_reasons': {}, 'danger': set(), 'veto': set(),
+               'combo': {}, 'elim': {8: 4}, 'vh': {8: 0.20}, 'vh_tier': {8: '🎯精鋭'}}
+        rows = [{'umaban': 1, 'name': 'A', 'pop': 1, 'odds': 2.5, 'proj': 260, 'axis_mark': '◎'},
+                {'umaban': 2, 'name': 'B', 'pop': 2, 'odds': 4.0, 'proj': 250, 'axis_mark': '〇'},
+                {'umaban': 8, 'name': 'V', 'pop': 7, 'odds': 14, 'proj': 100, 'axis_mark': ''},
+                {'umaban': 9, 'name': 'W', 'pop': 12, 'odds': 99, 'proj': 60, 'axis_mark': ''}]
+        r = cv.integrate(rows, aim, '②穴妙味向き')
+        assert 8 not in r['groups']['keshi'], "vh精鋭は消去多でも切らない"
+    check("consensus_view.integrate(vh精鋭の救済)", t_consensus_vh_rescue)
+
     def t_ledger_gate():
         import tempfile
         from core import money
