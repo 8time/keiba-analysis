@@ -8534,6 +8534,21 @@ if nav == "🧹 消去フィルター":
                             _negr.append(_bf_txt)
                         if _nige:
                             _negr.append('前走逃げ')
+                        # 年齢7歳以上(検証: 人気馬複勝残差 train-5.0pp/holdout-12.1pp・ピーク過ぎ)
+                        try:
+                            _agv = int(''.join(c for c in str(_sa or '') if c.isdigit()) or 0)
+                            if _agv >= 7:
+                                _negr.append('高齢(7歳+)')
+                        except (TypeError, ValueError):
+                            pass
+                        # 前走5着以下(検証: 人気馬複勝残差 train-1.5pp/holdout-1.8pp・市場が過信)
+                        try:
+                            _prv = _r.get('PastRuns')
+                            if isinstance(_prv, list) and _prv:
+                                if int(_prv[0].get('Rank')) >= 5:
+                                    _negr.append('前走5着以下')
+                        except (TypeError, ValueError):
+                            pass
                         _pos = bool(_posr)
                         _neg = bool(_negr)
                         _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
@@ -8560,7 +8575,12 @@ if nav == "🧹 消去フィルター":
                                        'オッズ': float(_odds) if pd.notnull(_odds) else None,
                                        'score': _score, 'pos': _pos, 'neg': _neg,
                                        '妙味材料': ' / '.join(_posr) or '-',
-                                       '危険材料': ' / '.join(_negr) or '-',
+                                       # 強い危険材料(検証で残差大)は🔴を付けて区別: 🌧️重不良×1番人気(-5〜9pp)/
+                                       # 半年休み明け(-6pp)/高齢7歳+(-6.5pp)/牝冬春フェード。弱い(priced-in)材料は無印。
+                                       '危険材料': (' / '.join(
+                                           ('🔴' + m if any(p in m for p in
+                                            ('🌧️', '半年休み明け', '高齢(7歳+)', '牝')) else m)
+                                           for m in _negr) or '-'),
                                        '_ctbest': _ctbest,
                                        '_ev': _ev, '_fuk': _fuk, '_ren': _ren,
                                        '_tags': _tags})
@@ -8730,6 +8750,9 @@ if nav == "🧹 消去フィルター":
                        + f" / 🧹消し{_cut_n}頭"
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
                        + _border_note)
+            st.caption("危険材料の**🔴印＝検証で残差の大きい強い消去理由**"
+                       "(🌧️重不良×1番人気-5〜9pp／半年休み明け-6pp／高齢7歳+ -6.5pp／牝冬春フェード)。"
+                       "無印は来にくさ材料だが人気に大半織込み済み(初ダート/距離変更/前走逃げ等)＝重ねて判断。")
             if _has_prob:
                 st.caption("単勝EV＝予測勝率×オッズ(1.0超で理論プラス)／複勝率＝P(3着内)／連対率＝P(2着内)。"
                            "**🏠の予測スコアから算出したモデル目安(未検証)**。人気薄の高EVは過信注意。"
@@ -9263,6 +9286,9 @@ if nav == "🧹 消去フィルター":
                     # 展開2(netkeiba AI照合の💀)= 青背景×黄文字ヘッダ。
                     _blue_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'BLUE_KEYS', set())
                                     if k in _exc.FLAG_LABEL}
+                    # 強い消去理由 = 濃い赤背景×白文字ヘッダ(点灯で単体でも消去寄り)。
+                    _strong_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'STRONG_KEYS', set())
+                                      if k in _exc.FLAG_LABEL}
                     try:
                         # 表示用に列名装飾(△=検証不可)＋重複→🔴重複。ヘッダ色は列位置で指定。
                         _rename = {}
@@ -9274,6 +9300,7 @@ if nav == "🧹 消去フィルター":
                         # 馬番/馬名(先頭2列)の後にフラグ列 → caution/blue列の表示位置
                         _caution_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _caution_labels]
                         _blue_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _blue_labels]
+                        _strong_pos = [2 + i for i, _fc in enumerate(_flag_cols) if _fc in _strong_labels]
                         _sty = _dispdf.style.hide(axis='index')
                         _sty = _sty.apply(_dup_color, subset=['🔴重複'])
                         if _flag_disp:
@@ -9297,6 +9324,11 @@ if nav == "🧹 消去フィルター":
                         for _p in _blue_pos:
                             _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
                                                 'props': [('background-color', '#1565C0'), ('color', '#ffff00'),
+                                                          ('font-weight', 'bold')]})
+                        # 強い消去理由のヘッダ = 濃い赤背景×白文字(点灯で単体でも消去寄り・CAUTIONの明赤と別)
+                        for _p in _strong_pos:
+                            _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
+                                                'props': [('background-color', '#7b0000'), ('color', '#ffffff'),
                                                           ('font-weight', 'bold')]})
                         _sty = _sty.set_table_styles(_tbl_styles, overwrite=False)
                         st.markdown(f'<div style="overflow-x:auto">{_sty.to_html()}</div>',

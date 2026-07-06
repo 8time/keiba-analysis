@@ -65,10 +65,15 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 #    重ね)には入れない(人気そのものを重複に足すと重複が人気を追うだけになるため)。
 UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2',
               'botcross', 'multiweak', 'poplow', 'jlow', 'tenkai2'}
-# 『過信しない列』= 重複には数えるが独立エッジでない(表示で赤背景×黄文字にする)。
+# 『過信しない列』= 重複には数えるが独立エッジでない(表示で明るい赤背景×黄文字にする)。
 CAUTION_KEYS = {'battle', 'proj', 'pmback', 'pcidev', 'poplow', 'jlow'}
 # 『展開2』(netkeiba AI照合の💀)= ヘッダを青背景×黄文字にする列。
 BLUE_KEYS = {'tenkai2'}
+# 『強い消去理由』= 人気統制後も独立して来にくさが強い/絶対複勝率が極端に低い検証済みフラグ
+# (点灯したら単体でも消去寄りに読める)。表示で濃い赤背景×白文字にする。CAUTION(明るい赤=弱い列)と別軸。
+#  botcross=両列最下位(複勝2-5%)/multiweak=多列弱点(6.7%)/lhandi=軽ハンデ(残差-2.3pp z-4.9)/
+#  nofuku5=5走複勝0/form3=近3走着外(近走全滅の強い来にくさ)/stress2=スト2(holdout z-2.83の追加情報)。
+STRONG_KEYS = {'botcross', 'multiweak', 'lhandi', 'nofuku5', 'form3', 'stress2'}
 
 BOTCROSS_K = 3  # レース内ワースト何頭を『両列最下位』の消去候補とみなすか(検証はK=3)
 BOTCROSS_MIN_FIELD = 8  # これ未満の頭数では両列交差を判定しない(小頭数の過剰消去防止)
