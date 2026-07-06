@@ -107,7 +107,7 @@ def allocate_budget(bets, budget, mode='均等買い', unit=100):
 
 
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
-                   pattern='①', n_points=10, pop_th=5, ana_lo=6, ana_hi=12,
+                   pattern='①', n_points=10, pop_th=4, ana_lo=6, ana_hi=12,
                    pool_cap=12, deploy_map=None, combo_flow=0, keep_partners=None,
                    band=None):
     """
@@ -325,7 +325,7 @@ _TRIFECTA_BAND = (50.0, 3000.0)
 
 
 def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
-                       pop_th=5, ana_lo=6, ana_hi=12,
+                       pop_th=4, ana_lo=6, ana_hi=12,
                        n_first=3, n_second=5, n_third=9, band=None):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
