@@ -3622,7 +3622,16 @@ if nav == "🏠 Single Race Analysis":
                             )
                             if _pm_data:
                                 _pm_title = f"{_pm_venue} {_pm_dist}m" if _pm_venue and _pm_dist else "想定展開マップ"
-                                _pm_fig = _pmap.build_figure(_pm_data, turn=_pm_turn, title=_pm_title)
+                                # 差し切り限界ラインで前方に押し上げる強い差し脚(margin≥+1.5)に>>>(黄色)
+                                _pm_push = set()
+                                try:
+                                    for _skp in (_pmap.sashikiri_table(_pm_data, _pm_profiles) or []):
+                                        if _skp.get('margin') is not None and _skp['margin'] >= 1.5:
+                                            _pm_push.add(_skp['umaban'])
+                                except Exception:
+                                    _pm_push = set()
+                                _pm_fig = _pmap.build_figure(_pm_data, turn=_pm_turn, title=_pm_title,
+                                                             push_umabans=_pm_push)
                                 st.plotly_chart(_pm_fig, use_container_width=True, key="pace_map_fig")
                                 # 最終直線で後方の馬を🧹消去クロステーブルへ橋渡し(ディスク保存)
                                 try:
@@ -3638,6 +3647,8 @@ if nav == "🏠 Single Race Analysis":
                                     "🔴逃げ 🟠先行 🔵差し 🟣追込 ｜ 下=内ラチ・右=前方。"
                                     "**【直線】は4角位置に強適Ranking Tableの〈決め手(上がり3F)・適性・総合戦闘力〉を合成した"
                                     "到達(着順)イメージ＝後方一気の差し馬も前方に描画**します。"
+                                    "**黄色の>>>付き馬番＝差し切り限界ラインで余裕+1.5秒以上＝直線で前へ大きく差し込む脚**"
+                                    "(展開恩恵は人気に織込み済み＝表示精度の向上でエッジ主張ではない)。"
                                     "スライダーで局面を切替。想定であり実際の隊列を保証するものではありません。"
                                 ))
                                 # ペース文脈サマリ（ハナ・ペース判定・風）

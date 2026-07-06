@@ -1375,11 +1375,15 @@ def final_straight_rear(pace_map):
     return rear_umaban(pace_map.get(last, []))
 
 
-def build_figure(pace_map, turn='右', title='想定展開マップ'):
+def build_figure(pace_map, turn='右', title='想定展開マップ', push_umabans=None):
     """
     pace_map（estimate_pace_map の出力）から、フェーズ切替スライダー付き
     Plotly Figure を生成する。右上にコース全体図インセットを表示し、
     現在見ている局面（コーナー）を赤マーカーでハイライトする。
+
+    push_umabans: 差し切り限界ラインで前方に大きく押し上げる強い差し脚(margin≥+1.5)の馬番集合。
+        該当馬の馬番ラベルに『>>>』を付け黄色文字にする(netkeiba風・直線で差し込む馬の明示)。
+        ※展開恩恵は人気に織込み済み(priced-in)=表示の精度向上であってエッジ主張ではない。
     """
     import plotly.graph_objects as go
 
@@ -1388,6 +1392,7 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
         return None
     n = len(pace_map[phases[0]])
     x_max = max(max(r['x'] for r in rows) for rows in pace_map.values())
+    push_umabans = set(push_umabans or ())
 
     anchors = _phase_anchors(phases, turn)
     track = _stadium_points()
@@ -1397,8 +1402,11 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
             x=[r['x'] for r in rows],
             y=[r['y'] for r in rows],
             mode='markers+text',
-            text=[str(r['umaban']) for r in rows],
-            textfont=dict(color='white', size=13, family='Arial Black'),
+            text=[(f">>>{r['umaban']}" if r['umaban'] in push_umabans else str(r['umaban']))
+                  for r in rows],
+            textfont=dict(
+                color=['#FFD700' if r['umaban'] in push_umabans else 'white' for r in rows],
+                size=13, family='Arial Black'),
             marker=dict(
                 size=34,
                 color=[STYLE_COLORS.get(r['style'], '#8d8d8d') for r in rows],
@@ -1406,7 +1414,8 @@ def build_figure(pace_map, turn='右', title='想定展開マップ'):
             ),
             hovertext=[
                 f"{r['umaban']}番 {r['name']}<br>脚質: {r['style']} (score {r['score']})"
-                f"<br>{'📊 JV-VAN実データ' if r.get('jv') else '⚙️ 推定（実データなし）'}"
+                + ('<br>>>> 差し切り射程(直線で前へ)' if r['umaban'] in push_umabans else '')
+                + f"<br>{'📊 JV-VAN実データ' if r.get('jv') else '⚙️ 推定（実データなし）'}"
                 for r in rows
             ],
             hoverinfo='text',
