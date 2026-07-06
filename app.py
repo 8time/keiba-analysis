@@ -7286,8 +7286,18 @@ if nav == "🏠 Single Race Analysis":
                     if _tri_axis:
                         st.caption("🎯 1着候補の優先: " + " > ".join(
                             f"{u}番{_te_name_m.get(u, '')}" for u in _tri_axis[:2]))
+                    # 帯別フォーメーション: 荒れ確率で買い方を可変(堅→少点/中→wide/荒れ→広角穴頭込み・検証済)
+                    _tri_ap = (_rv_sum.get('arare_prob') if _rv_sum else None)
                     _tri_res = _te.recommend_trifecta(_te_horses, odds_map=_tri_omap,
-                                                      axis_umaban=_tri_axis, n_points=_tri_np)
+                                                      axis_umaban=_tri_axis, n_points=_tri_np,
+                                                      arare_prob=_tri_ap)
+                    _tri_bn = (_tri_res.get('meta') or {}).get('band_name')
+                    if _tri_bn:
+                        _bn_txt = {'tight': '堅い帯→人気集中で少点に絞る(点数最適化が効く)',
+                                   'mid': '中波乱帯→wide(最も損益分岐に近い)',
+                                   'arare': '荒れ帯→広角＋穴頭も許容(荒れで絞る/穴頭カットは逆効果=検証済)'}.get(_tri_bn, '')
+                        st.caption(f"🎫 帯別フォーメーション: {_bn_txt}"
+                                   "　※買い方最適化は損失縮小であって利益(回収率100%)保証ではない(実配当検証)。")
                     if _tri_res['warning']:
                         st.warning(_tri_res['warning'])
                     if _tri_res['bets']:

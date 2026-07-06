@@ -324,9 +324,28 @@ def build_trifecta_odds_map(odds_list):
 _TRIFECTA_BAND = (50.0, 3000.0)
 
 
+# 帯別フォーメーション(検証済 verified_formation_roi・scripts/formation_pointopt.py):
+#   荒れ確率で買い方を可変。堅=少点book的(点数絞りが効く帯)/中=wide最良/荒れ=広角・穴頭込み
+#   (荒れで絞る/穴頭カットは逆効果=実配当で確認)。※どの帯も利益(100%)には届かない=損失縮小策。
+#   値: (n_first, n_second, n_third, 推奨点数, 穴頭を1着に入れるか)
+_BAND_FORMATION = {
+    'tight': (2, 4, 6, 30, False),   # 堅(ap<42%): 人気集中・少点(book)・穴頭切る
+    'mid':   (3, 5, 7, 36, False),   # 中(42-60%): wide寄り(最も損益分岐に近い帯)
+    'arare': (3, 5, 9, 50, True),    # 荒れ(≥62%): 広角・穴頭も入れる(切ると逆効果)
+}
+
+
+def formation_for_arare(arare_prob):
+    """荒れ確率(0-1)→帯名と(n_first,n_second,n_third,推奨点数,穴頭入れる)。Noneなら None。"""
+    if arare_prob is None:
+        return None
+    band = 'tight' if arare_prob < 0.42 else ('mid' if arare_prob < 0.60 else 'arare')
+    return band, _BAND_FORMATION[band]
+
+
 def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                        pop_th=4, ana_lo=6, ana_hi=12,
-                       n_first=3, n_second=5, n_third=9, band=None):
+                       n_first=3, n_second=5, n_third=9, band=None, arare_prob=None):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
 
@@ -347,6 +366,14 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
     axis = [u for u in (axis_umaban or []) if u in by]
 
+    # 帯別フォーメーション: 荒れ確率が渡されたらプール幅と推奨点数を可変(検証済)。
+    band_name = None
+    put_ana_head = False
+    _bf = formation_for_arare(arare_prob)
+    if _bf is not None:
+        band_name, (n_first, n_second, n_third, _sugg, put_ana_head) = _bf
+        n_points = max(1, min(int(n_points), _sugg))   # 帯推奨点数を上限に(堅=絞る/荒れ=広げる)
+
     def _combo_lvl(u):
         _m = _COMBO_RE.search(str(by[u].get('alert', '') or ''))
         return int(_m.group(1)) if _m else 0
@@ -366,6 +393,11 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     # 1着候補: 軸馬候補◎〇(オッズ別実複勝率=検証済の軸信頼度)を頭に固定→スコア順で補充。
     # 3連単は1着固定の精度が命(◎の複勝率フロア50%はスコア順1位より直接的な3着内根拠)。
     first = _fill(list(axis[:2]), ranked, n_first)
+    if put_ana_head:
+        # 荒れ帯: 妙味穴(combo上位)を1着にも許容→穴頭決着を拾う(荒れで穴頭カットは逆効果=検証済)
+        for u in sorted(ana_set, key=lambda u: -_combo_lvl(u))[:1]:
+            if u not in first:
+                first.append(u)
     # 2着候補: 1着候補+スコア順(取りこぼし=◎〇の2着付けをカバー)
     second = _fill(list(first), ranked, n_second)
     # 3着(ヒモ): 🧩シグナル重複穴>妙味シグナル穴>スコア順。荒れ時の3着穴が3連単配当の源泉
@@ -435,7 +467,8 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     return {'bets': bets,
             'meta': {'n_points': len(bets), 'target_band': (lo, hi), 'synthetic_odds': syn,
                      'first': first, 'second': second, 'third': third,
-                     'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set)},
+                     'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
+                     'band_name': band_name, 'arare_prob': arare_prob},
             'warning': None}
 
 

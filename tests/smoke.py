@@ -338,6 +338,23 @@ def main():
         assert 8 not in r['groups']['keshi'], "vh精鋭は消去多でも切らない"
     check("consensus_view.integrate(vh精鋭の救済)", t_consensus_vh_rescue)
 
+    def t_trifecta_band_formation():
+        # 帯別フォーメーション(verified_formation_roi): 堅→少点/中→wide/荒れ→広角+穴頭
+        from core import trio_engine as te
+        assert te.formation_for_arare(None) is None
+        assert te.formation_for_arare(0.30)[0] == 'tight'
+        assert te.formation_for_arare(0.50)[0] == 'mid'
+        assert te.formation_for_arare(0.70)[0] == 'arare'
+        horses = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i * 5, 'pop': i,
+                   'alert': ('🧩2重複' if i >= 6 else '')} for i in range(1, 13)]
+        tight = te.recommend_trifecta(horses, axis_umaban=[1, 2], n_points=50, arare_prob=0.30)
+        arare = te.recommend_trifecta(horses, axis_umaban=[1, 2], n_points=50, arare_prob=0.70)
+        assert tight['meta']['n_points'] <= arare['meta']['n_points'], "堅は荒れより少点"
+        assert tight['meta']['band_name'] == 'tight' and arare['meta']['band_name'] == 'arare'
+        # 荒れは穴頭(妙味穴=combo馬)を1着プールに入れる
+        assert any(u >= 6 for u in arare['meta']['first']), "荒れは穴頭を1着に許容"
+    check("trio_engine.recommend_trifecta(帯別フォーメーション)", t_trifecta_band_formation)
+
     def t_ledger_gate():
         import tempfile
         from core import money
