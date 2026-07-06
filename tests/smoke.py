@@ -83,6 +83,20 @@ def main():
         assert r['lean'] == '②穴妙味向き', f"ハンデ16頭短距離道悪→②期待, got {r['lean']}"
     check("value_scanner.trio_lean", t_lean)
 
+    def t_arare_prob():
+        # 検証済み荒れロジット: 鉄板(1番人気1.5倍) < 混戦(上位拮抗)。ラベルはS/A/B/C/D形式維持。
+        from core import value_scanner as vs
+        if not vs._load_arare_logit():
+            return  # パラメータ未生成環境ではスキップ
+        solid = vs.arare_prob([1.5, 4.0, 8.0, 12, 20, 30, 50, 80, 100, 120], {}, 10)
+        chaos = vs.arare_prob([4.5, 5.5, 6.5, 8, 9, 11, 13, 16, 20, 25, 30, 40, 50, 60, 80, 100], {}, 16)
+        assert solid is not None and chaos is not None
+        assert chaos > solid + 0.2, f"混戦>鉄板 期待, got solid={solid:.2f} chaos={chaos:.2f}"
+        rv = vs.race_value_score([4.5, 5.5, 6.5, 8, 9, 11, 13, 16, 20, 25, 30], {}, '05', '芝', 1600, 11)
+        assert str(rv['label'])[:1] in ('S', 'A', 'B', 'C', 'D'), "ラベルはS/A/B/C/D形式維持"
+        assert 'arare_prob' in rv
+    check("value_scanner.arare_prob(検証ロジット)", t_arare_prob)
+
     def t_no_favorite():
         from core import value_scanner as vs
         # 大谷等価: fav1≥3.0 & odds3/odds1≤2.0 & 30倍未満≥10頭 → ●大穴

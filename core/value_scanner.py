@@ -15,9 +15,68 @@ Race Scanner(バッチ)から1日のカードを横断し「買えるレース×
 すべて測ってから採用(測定=scripts/elimination_backtest.py, dangerfav_backtest.py, 本ファイル冒頭の単複乖離検証)。
 """
 import re
+import os as _os
+import json as _json
+import math as _math
 from datetime import datetime
 
 LOCAL_JYO = {'01', '02', '03', '04', '07', '10'}  # 札幌函館福島新潟中京小倉
+
+# ── 荒れ判別 検証済みロジット(Fable案件②)。凍結係数は data/scanner_arare_logit.json ──
+_ARARE_LOGIT = None
+_ARARE_PATH = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                            'data', 'scanner_arare_logit.json')
+
+
+def _load_arare_logit():
+    global _ARARE_LOGIT
+    if _ARARE_LOGIT is None:
+        try:
+            with open(_ARARE_PATH, encoding='utf-8') as f:
+                _ARARE_LOGIT = _json.load(f)
+        except Exception:
+            _ARARE_LOGIT = {}
+    return _ARARE_LOGIT or None
+
+
+def arare_prob(odds_list, meta=None, n_horses=None):
+    """荒れ確率 P(3着内に7番人気以下) を検証済みロジット(凍結係数)で返す。0..1 or None。
+    特徴はオッズ構造のみ(fav1/r21/r31/syn3/odds_entropy/eff_n/live10/live30/mid515)＋頭数/ハンデ/牝限定。
+    主係数=オッズエントロピー+0.90。holdout(2025.1-6) AUC0.69/上位20%precision73%(手調整vscore 0.624を上回る)。
+    ※フィールド実力の拮抗度は市場に織込み済み(priced-in)のため不使用(scripts/scanner_arare_v2.py)。"""
+    p = _load_arare_logit()
+    if not p:
+        return None
+    odds = sorted([float(o) for o in (odds_list or []) if o and float(o) > 0])
+    if len(odds) < 3:
+        return None
+    meta = meta or {}
+    fav1, fav2, fav3 = odds[0], odds[1], odds[2]
+    inv = [1.0 / o for o in odds]
+    s = sum(inv)
+    pn = [i / s for i in inv]
+    entropy = -sum(x * _math.log(x) for x in pn if x > 0)
+    kigo = str(meta.get('kigo', '') or '')
+    feats = {
+        'fav1': fav1, 'r21': fav2 / fav1, 'r31': fav3 / fav1,
+        'syn3': 3.0 / (1.0 / fav1 + 1.0 / fav2 + 1.0 / fav3),
+        'odds_entropy': entropy, 'eff_n': _math.exp(entropy),
+        'live10': float(sum(1 for o in odds if o < 10)),
+        'live30': float(sum(1 for o in odds if o < 30)),
+        'mid515': float(sum(1 for o in odds if 5.0 <= o <= 15.0)),
+        'field_size': float(n_horses or len(odds)),
+        'is_handi1': 1.0 if (meta.get('is_handicap') or meta.get('weight_rule') == 'ハンデ') else 0.0,
+        'fillies': 1.0 if (len(kigo) > 1 and kigo[1] == '2') else 0.0,
+    }
+    mu, sd, coef = p['mu'], p['sd'], p['coef']
+    z = float(p['intercept'])
+    for f in p['features']:
+        sdi = sd[f] if sd[f] else 1.0
+        z += coef[f] * ((feats[f] - mu[f]) / sdi)
+    try:
+        return 1.0 / (1.0 + _math.exp(-z))
+    except OverflowError:
+        return 0.0 if z < 0 else 1.0
 OPEN_CLASSES = {'オープン', 'G1', 'G2', 'G3', 'GI', 'GII', 'GIII', 'L', 'リステッド'}
 
 # JRA-VAN馬場状態コード→ラベル(共通の真実の源)。1=良/2=稍重/3=重/4=不良、0や空=該当なし。
@@ -130,6 +189,26 @@ def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_hors
         elif pace_z <= -0.5:
             score -= 6; breakdown.append(f'🏁スローペース想定(z{pace_z:+.1f}・前残り堅め-6)')
 
+    # --- 検証済みロジット(Fable案件②)を主判定に。手調整スコア(AUC0.624)を上回る(0.690) ---
+    # score/labelは荒れ確率(0-100%)ベースに置換。上の手調整breakdownは構造の"理由"として残す。
+    _ap = arare_prob(odds_list, meta, n_horses)
+    if _ap is not None:
+        breakdown.insert(0, f'🎯検証荒れ確率 {_ap*100:.0f}%(オッズ構造ロジット・holdout AUC0.69/上位20%的中73%)')
+        # base約50%(=3着内に7番人気以下)。しきい値は荒れ度の目安。
+        if _ap >= 0.68:
+            label = 'S 大荒れ妙味'
+        elif _ap >= 0.58:
+            label = 'A 荒れ妙味'
+        elif _ap >= 0.46:
+            label = 'B 中庸'
+        elif _ap >= 0.36:
+            label = 'C やや堅い'
+        else:
+            label = 'D 鉄板(妙味薄)'
+        return {'score': round(_ap * 100, 1), 'label': label, 'breakdown': breakdown,
+                'fav_odds': fav, 'arare_prob': round(_ap, 3)}
+
+    # フォールバック(パラメータ未取得時): 従来の手調整スコア
     score = max(0.0, min(100.0, score))
     if score >= 55:
         label = 'S 大荒れ妙味'

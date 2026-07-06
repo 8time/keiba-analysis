@@ -154,14 +154,15 @@ def compute_rolling_features(df):
 
 
 def encode_features(df):
-    # jravan.db: sex='1'(牡)/'2'(牝)/'3'(セ), juryo='3'(ハンデ),
+    # jravan.db: sex='1'(牡)/'2'(牝)/'3'(セ),
+    #            juryo='1'(ハンデ)/'2'(別定)/'3'(馬齢)/'4'(定量) ※旧版は'3'をハンデと誤判定(馬齢戦を拾う)
     #            baba='1'(良)/'2'(稍重)/'3'(重)/'4'(不良)/'0'(不明)
     df['sex_code'] = pd.to_numeric(df['sex'], errors='coerce').fillna(0).astype(int)
     df['surface_code'] = df['surface'].str.contains('ダ', na=False).astype(int)
     _bs = pd.to_numeric(df['baba_shiba'], errors='coerce').fillna(0)
     _bd = pd.to_numeric(df['baba_dirt'], errors='coerce').fillna(0)
     df['baba_code'] = np.where(df['surface_code'] == 0, _bs, _bd).astype(int)
-    df['is_handicap'] = (df['juryo'].astype(str) == '3').astype(int)
+    df['is_handicap'] = (df['juryo'].astype(str) == '1').astype(int)  # JV: 1=ハンデ(旧'3'は馬齢戦の誤り)
     df['field_size'] = df['shusso_tosu'].astype(int)
     df['log_odds'] = np.log1p(pd.to_numeric(df['win_odds'], errors='coerce').fillna(0))
     df['jyo_code'] = pd.to_numeric(df['jyo'], errors='coerce').fillna(0).astype(int)
