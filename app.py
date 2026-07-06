@@ -4593,30 +4593,38 @@ if nav == "🏠 Single Race Analysis":
                         # ────────────────────────────────────────────────────
 
                     # === 🔬 スコアリングシグナル: 当日JRAレースをスキャンしてJ◎/T●を取得 ===
-                    # シグナルスキャン実行（Analyze後。df から RaceDate を取得して正しいカレンダー日付を使う）
+                    # 重いため自動実行しない（SRAの初回表示を高速化）。強適Ranking Table直下の
+                    # ボタンで明示スキャン→再実行時にここでキャッシュから反映する遅延方式。
                     _signal_map = {}
                     _rid_str = str(race_id_input)
+                    _sig_is_jra = False    # シグナル対象(JRA)か → ボタン表示判定用
+                    _sig_scanned = False   # スキャン済み(キャッシュにデータ)か
+                    _sig_req_key = f'_sig_scan_req_{_rid_str}'
                     if len(_rid_str) == 12:
                         _vc = _rid_str[4:6]
                         if _vc.isdigit() and 1 <= int(_vc) <= 10:  # JRAのみ
+                            _sig_is_jra = True
                             # セッションキャッシュの初期化
                             if 'daily_signals_cache' not in st.session_state:
                                 st.session_state['daily_signals_cache'] = {}
-                            
+
                             # キャッシュに存在する場合はそれを使用
                             if _rid_str in st.session_state['daily_signals_cache']:
                                 _signal_map = st.session_state['daily_signals_cache'][_rid_str]
-                            else:
+                                _sig_scanned = True
+                            elif st.session_state.get(_sig_req_key):
+                                # ボタンで要求された時のみスキャン実行→キャッシュ保存
                                 # df から実際の開催日を取得（例: '2026/04/04' → '20260404'）
                                 _race_date_raw = ''
                                 if not df.empty and 'RaceDate' in df.columns:
                                     _race_date_raw = str(df['RaceDate'].iloc[0])
                                 _race_date_ymd = re.sub(r'[^\d]', '', _race_date_raw)[:8]  # YYYYMMDD
                                 if len(_race_date_ymd) == 8:
-                                    with st.spinner("🔬 当日シグナルスキャン中...（初回のみ時間がかかります）"):
+                                    with st.spinner("🔬 当日シグナルスキャン中...（少し時間がかかります）"):
                                         _signal_map = _fetch_daily_signals(_rid_str, _race_date_ymd)
                                         # 結果をキャッシュに保存
                                         st.session_state['daily_signals_cache'][_rid_str] = _signal_map
+                                        _sig_scanned = True
 
                     # dfに Signal 列を追加
                     df['Signal'] = df['Umaban'].apply(
@@ -4905,6 +4913,22 @@ if nav == "🏠 Single Race Analysis":
                     # --- 強適 Ranking Table ---
                     st.subheader("📊 強適 Ranking Table")
                     display_icon_legend()
+
+                    # 🔬 当日シグナルスキャン（遅延実行）: 重いので自動では走らせず、ここで明示ボタン。
+                    # 押すと再実行され、上部のスキャンブロックがキャッシュに取得→スコア(🔬列)へ反映。
+                    if _sig_is_jra and not _sig_scanned:
+                        _sig_bc1, _sig_bc2 = st.columns([1, 3])
+                        with _sig_bc1:
+                            if st.button("🔬 当日シグナルスキャン", key=f"btn_sigscan_{_rid_str}",
+                                         help="当日JRA全レースを走査して騎手◎(J◎)/厩舎◎●(T◎/T●)を取得し"
+                                              "強適スコアの🔬列に反映します。少し時間がかかります。"):
+                                st.session_state[_sig_req_key] = True
+                                st.rerun()
+                        with _sig_bc2:
+                            st.caption("🔬シグナル未取得（現在スコアには未反映）。左のボタンで当日の"
+                                       "J◎/T◎/T●を取得して反映します（重いので手動実行）。")
+                    elif _sig_is_jra and _sig_scanned:
+                        st.caption("🔬 当日シグナル反映済み（J◎/T◎/T●をスコアに加算）。")
 
                     from core import bloodline as _bl
                     view_df = df.copy()
