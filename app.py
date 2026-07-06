@@ -38,6 +38,11 @@ if not GEMINI_API_KEY:
 
 import importlib
 import pandas as pd
+# アプリ全体の数値表示は小数点第1位まで(ユーザー方針)。全Stylerのfloatをデフォルト1桁に。
+try:
+    pd.set_option("styler.format.precision", 1)
+except Exception:
+    pass
 import concurrent.futures
 import main
 import numpy as np
@@ -2843,6 +2848,8 @@ if nav == "🏠 Single Race Analysis":
                                         _bl_sty = _bl_sty.apply(_bl_topn, subset=[_bc])
                                     if '馬名' in _bl_df.columns and '馬場シフト' in _bl_df.columns:
                                         _bl_sty = _bl_sty.apply(_bl_name, subset=['馬名'])
+                                    # Styler使用時のfloat6桁表示を小数第1位に統一
+                                    _bl_sty = _bl_sty.format(precision=1)
                                     st.dataframe(_bl_sty, use_container_width=True, hide_index=True)
                                     st.caption("🟡各項目の上位3頭（濃→薄=1→3位）／🔵馬名=馬場シフトで有利な血統／"
                                                "🩷ピンク行=血統スコア(父×条件複勝率の縮小合成)レース内top3")
@@ -3783,7 +3790,7 @@ if nav == "🏠 Single Race Analysis":
                                         "平均上がり": f"{_s['my_agari']:.2f}",
                                         "自己ベスト": f"{_s['my_best']:.2f}",
                                         "必要上がり": f"{_s['need_agari']:.2f}",
-                                        "余裕(秒)": round(_s['margin'], 2),
+                                        "余裕(秒)": round(_s['margin'], 1),
                                         "判定": f"{_sk_verdict_label.get(_s['verdict'], '-')} ({_s['margin']:+.2f}秒)",
                                     } for _s in _sk_rows]
                                     # 余裕+2.0秒以上=4角から前に大きく押し上げる差し脚=行を黄色でハイライト
@@ -6734,7 +6741,8 @@ if nav == "🏠 Single Race Analysis":
                                 return 'background-color:#8888880f;color:#777'
                             return ''
                         _cv_dfshow = pd.DataFrame(_cv_tbl)
-                        _cv_styled = _cv_dfshow.style.map(_color_role, subset=['役割'])
+                        # Styler使用時はfloatが6桁表示になるため小数第1位に統一(アプリ全体の表示方針)
+                        _cv_styled = _cv_dfshow.style.map(_color_role, subset=['役割']).format(precision=1)
                         st.dataframe(_cv_styled, hide_index=True, use_container_width=True)
                         st.caption("『役割』=フォーメーション決定用(◎本命は1着/2着軸・〇▲相手は連下・🎯穴は3列目の妙味・切るは消し)。"
                                    "🔥敗者復活=消去で切る帯でもcombo3+で複勝がベース超え(検証:holdout複勝12.3%>切る帯5.9%・z+2.21)＝過小評価の穴。"
