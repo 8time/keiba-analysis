@@ -10565,11 +10565,25 @@ if nav == "🔍 Race Scanner (Batch)":
                             _band_txt = f"{_bl:.0f}〜{_bh:.0f}倍"
                         except Exception:
                             _band_txt = '-'
+                        # 3連複10点の点数感(荒れ確率×頭数=荒れ/多頭数ほど手薄。5頭BOX=C(5,3)=10点)
+                        _cov_p = r['arare_prob'] if r.get('arare_prob') is not None else (r['vscore'] / 100.0)
+                        if _lean_txt == '本線向き' and r['n_h'] <= 12:
+                            _cov = '◎ 5頭BOX(10点)で3着内を捕まえやすい（本線集中・少頭数）'
+                        elif _cov_p <= 0.45 or _lean_txt == '本線向き':
+                            _cov = '○ 10点で射程内（本線寄り・上位に収束）'
+                        elif _cov_p >= 0.62 or r['n_h'] >= 16:
+                            _cov = '△〜× 10点では手薄（穴が3着内に来やすい/多頭数＝軸1頭＋相手5-6頭で15〜30点推奨）'
+                        else:
+                            _cov = '△ 10点はやや薄い（12〜20点で調整）'
+                        _skip_line = (f"\n- ⏸ **見送り理由**: {'・'.join(r['skips'])}" if r['skips']
+                                      else "\n- ✅ 見送り条件なし（触れるレース）")
                         _figs = (f"- 決着タイプ: **{_lean_txt}** → 狙い方 {_stance}\n"
                                  f"- 3連複の狙い目オッズ帯（この妙味度の実測）: **{_band_txt}**\n"
+                                 f"- 🎫 **3連複10点の点数感**: {_cov}\n"
                                  f"- 妙味馬 {len(r['value_horses'])}頭 ／ 穴馬候補 {len(r.get('ana_horses', []))}頭 ／ "
                                  f"危険人気 {len(r['danger_horses'])}頭 ／ 軸フロア {'○(安全な人気軸あり)' if r.get('axis_floor') else '×(人気上位に危険)'}\n"
-                                 f"- 1番人気オッズ: {r['fav_odds']:.1f}倍" + ("　🔔**●大穴(本命不在=荒れ確率高)**" if r.get('no_fav') else ""))
+                                 f"- 1番人気オッズ: {r['fav_odds']:.1f}倍" + ("　🔔**●大穴(本命不在=荒れ確率高)**" if r.get('no_fav') else "")
+                                 + _skip_line)
                         st.markdown(_figs)
                         st.caption("※具体的な妙味馬・穴馬・危険人気馬の馬名と買い目は、検証で個別的中率が不足のため"
                                    "スキャナーには出しません。下のSRA/穴馬ハンターで確認してください（スキャナーは"
