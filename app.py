@@ -3875,6 +3875,7 @@ if nav == "🏠 Single Race Analysis":
                                 _vm_fig, _vm_list = _pmap.build_v_matrix(
                                     _pm_horses, profiles=_pm_profiles,
                                     pace=_vm_pace, baba=_vm_baba,
+                                    sashikiri=_sk_rows,
                                 )
                                 if _vm_fig is not None:
                                     st.plotly_chart(_vm_fig, use_container_width=True, key="v_matrix_fig")
@@ -3949,8 +3950,9 @@ if nav == "🏠 Single Race Analysis":
                                     except Exception as _my_e:
                                         st.caption(f"末脚妙味判定: {_my_e}")
                                     st.caption(
-                                        "縦=隊列位置（テンの位置取り実データ）、横=想定の通り（枠順＋脚質から推定）。"
-                                        "金縁の馬がVエリア該当。スロー→前有利 / ハイ→後方有利、馬場が荒れるほど外有利。"
+                                        "縦=到達位置（テンの位置取り実データ＋差し切り射程で前方補正）、横=想定の通り（枠順＋脚質から推定）。"
+                                        "金縁の馬がVエリア該当。黄色≫=差し切り限界ラインで余裕+1.5秒以上（4角後方でも直線で前へ届く脚）→縦位置を前方補正。"
+                                        "スロー→前有利 / ハイ→後方有利、馬場が荒れるほど外有利。"
                                     )
                             else:
                                 st.caption("出走馬データが不足しているため展開マップを描画できません。")

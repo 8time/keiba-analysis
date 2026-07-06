@@ -1136,11 +1136,16 @@ _V_COL = {'フラット': 0, '内2頭目まで荒れ': 1, '内4頭目まで荒�
 _V_ROW = {'スロー': 0, 'ミドル': 1, 'ハイ': 2}
 
 
-def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット'):
+def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット', sashikiri=None):
     """
     3×3マトリクス（横軸=トラックバイアス 内/中/外、縦軸=隊列位置 前/中/後）に
     出走馬をプロットし、馬場×ペースの組み合わせから導かれる
     Vエリア（最も恵まれるポジション）をハイライトする。
+
+    sashikiri（sashikiri_table の戻り値）を渡すと、差し切り射程（上がり3F実タイムで
+    先頭を物理的に差し切れる余裕=margin）に応じて縦位置を前方へ補正する＝4角の位置でなく
+    『直線での到達位置』でVエリア判定する。強射程(margin≥1.5)には黄色≫を付す。
+    ※展開恩恵は人気に織込み済み＝地図としての表示精度向上でありエッジ主張ではない。
 
     戻り値: (plotly Figure, Vエリア該当馬リスト [{'umaban','name','style'}])
     """
@@ -1151,6 +1156,7 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット')
         return None, []
     profiles = profiles or {}
     max_uma = max(h['umaban'] for h in horses)
+    sk_by_uma = {s['umaban']: s for s in (sashikiri or []) if s.get('umaban') is not None}
 
     pts = []
     for h in horses:
@@ -1160,11 +1166,25 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット')
         # 横: 想定の通り（枠ベース。先行できる馬ほど内に潜り込める）
         gate = (h['umaban'] - 1) / max(max_uma - 1, 1)
         lane = 0.65 * gate + 0.35 * pos
+        y = (1.0 - pos) * 3.0            # 0..3（後→前）4角相当
+        # 差し切り補正: 上がりで先頭を差し切れる余裕(margin)ぶん前方へ引き上げる。
+        # margin<=0(届かない)は据え置き。margin 2.5で+1.25=約1行ぶん前へ。3.0で頭打ち。
+        sk = sk_by_uma.get(h['umaban'])
+        sk_margin = sk.get('margin') if sk else None
+        sk_boost = 0.0
+        if sk_margin is not None and sk_margin > 0:
+            sk_boost = min(sk_margin, 2.5) * 0.5
+        y_adj = min(3.0, y + sk_boost)
         pts.append({
             'umaban': h['umaban'], 'name': h.get('name', ''),
             'style': h.get('style', '不明'),
             'x': lane * 3.0,            # 0..3（内→外）
-            'y': (1.0 - pos) * 3.0,     # 0..3（後→前）
+            'y': y_adj,                 # 差し切り補正後の到達位置
+            'y_raw': y,                 # 補正前(4角相当)
+            'sk_margin': sk_margin,
+            'sk_boost': sk_boost,
+            'push': (sk_margin is not None and sk_margin >= 1.5),
+            'sk_rank4': sk.get('rank4') if sk else None,
             'jv': bool(prof),
         })
 
@@ -1193,10 +1213,26 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット')
                        else 1.2 for p in pts],
             ),
         ),
-        hovertext=[f"{p['umaban']}番 {p['name']}<br>脚質: {p['style']}"
-                   f"<br>{'📊 JV実データ' if p['jv'] else '⚙️ 推定'}" for p in pts],
+        hovertext=[
+            f"{p['umaban']}番 {p['name']}<br>脚質: {p['style']}"
+            f"<br>{'📊 JV実データ' if p['jv'] else '⚙️ 推定'}"
+            + (f"<br>≫差し切り補正: 4角{p['sk_rank4']}番手→直線で前へ(余裕{p['sk_margin']:+.1f}秒)"
+               if p['push'] else
+               (f"<br>差し切り補正: +{p['sk_boost']:.1f}(余裕{p['sk_margin']:+.1f}秒)"
+                if p['sk_boost'] > 0 else ""))
+            for p in pts],
         hoverinfo='text',
     ))
+    # 強射程(margin≥1.5)の馬に円の左へ黄色≫（展開MAPと統一）
+    _push_pts = [p for p in pts if p['push']]
+    if _push_pts:
+        fig.add_trace(go.Scatter(
+            x=[p['x'] - 0.14 for p in _push_pts], y=[p['y'] for p in _push_pts],
+            mode='text', text=['≫' for _ in _push_pts],
+            textfont=dict(color='#FFD700', size=17, family='Arial Black'),
+            hovertext=[f"{p['umaban']}番 差し切り射程=直線で前へ" for p in _push_pts],
+            hoverinfo='text',
+        ))
 
     grid_shapes = [
         dict(type='line', x0=x, x1=x, y0=0, y1=3,
@@ -1221,7 +1257,7 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット')
                    title='トラックバイアス（通り）', showgrid=False, zeroline=False),
         yaxis=dict(range=[-0.15, 3.15], fixedrange=True,
                    tickvals=[0.5, 1.5, 2.5], ticktext=['後方', '中団', '前'],
-                   title='隊列ポジション', showgrid=False, zeroline=False),
+                   title='到達ポジション（4角＋差し切り補正）', showgrid=False, zeroline=False),
         height=430,
         margin=dict(l=10, r=10, t=45, b=10),
         plot_bgcolor='#20262e',
