@@ -1402,11 +1402,8 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
             x=[r['x'] for r in rows],
             y=[r['y'] for r in rows],
             mode='markers+text',
-            text=[(f">>>{r['umaban']}" if r['umaban'] in push_umabans else str(r['umaban']))
-                  for r in rows],
-            textfont=dict(
-                color=['#FFD700' if r['umaban'] in push_umabans else 'white' for r in rows],
-                size=13, family='Arial Black'),
+            text=[str(r['umaban']) for r in rows],
+            textfont=dict(color='white', size=13, family='Arial Black'),
             marker=dict(
                 size=34,
                 color=[STYLE_COLORS.get(r['style'], '#8d8d8d') for r in rows],
@@ -1418,6 +1415,23 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
                 + f"<br>{'📊 JV-VAN実データ' if r.get('jv') else '⚙️ 推定（実データなし）'}"
                 for r in rows
             ],
+            hoverinfo='text',
+        )
+
+    # >>> は番号に前置きすると円からはみ出て重なる→円の左に離した別トレースで描画(netkeiba風)
+    _PUSH_DX = max(0.42, (x_max + 2.8) * 0.032)   # 円の左に置くx方向オフセット
+
+    def _push_trace(rows):
+        pr = [r for r in rows if r['umaban'] in push_umabans]
+        if not pr:
+            return go.Scatter(x=[None], y=[None], mode='text', hoverinfo='skip')
+        return go.Scatter(
+            x=[r['x'] - _PUSH_DX for r in pr],
+            y=[r['y'] for r in pr],
+            mode='text',
+            text=['≫' for _ in pr],
+            textfont=dict(color='#FFD700', size=20, family='Arial Black'),
+            hovertext=[f"{r['umaban']}番 差し切り射程=直線で前へ" for r in pr],
             hoverinfo='text',
         )
 
@@ -1475,14 +1489,16 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
         hoverinfo='skip', xaxis='x2', yaxis='y2',
     )
 
-    # data: [0]=馬, [1]=コース, [2]=ラベル, [3]=ゴール, [4]=ハイライト, [5]=後方ライン
+    # data: [0]=馬, [1]=コース, [2]=ラベル, [3]=ゴール, [4]=ハイライト, [5]=後方ライン, [6]=>>>差し込み
     fig = go.Figure(
         data=[_trace(pace_map[phases[0]]), t_track, t_labels, t_goal,
-              _highlight(phases[0]), _rear_line(pace_map[phases[0]])],
+              _highlight(phases[0]), _rear_line(pace_map[phases[0]]),
+              _push_trace(pace_map[phases[0]])],
         frames=[
             go.Frame(name=ph,
-                     data=[_trace(pace_map[ph]), _highlight(ph), _rear_line(pace_map[ph])],
-                     traces=[0, 4, 5])
+                     data=[_trace(pace_map[ph]), _highlight(ph), _rear_line(pace_map[ph]),
+                           _push_trace(pace_map[ph])],
+                     traces=[0, 4, 5, 6])
             for ph in phases
         ],
     )
