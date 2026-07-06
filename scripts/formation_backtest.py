@@ -90,21 +90,27 @@ def main():
     for r in df.itertuples(index=False):
         by_race[str(r.race_key)].append(r)   # CSVはint64・payoutはstr→strで統一
 
-    # period -> ranksrc -> strat -> [cost, ret, hits, points_sum, n, ret_capped]
-    # ret_capped=配当を¥200,000で頭打ち=巨大3連単(最大¥5,836万)による平均ROIの膨張を除いた頑健版
+    # period -> filt -> ranksrc -> strat -> [cost, ret, hits, points_sum, n, ret_capped]
+    # filt = 参加フィルタ: all=全レース / vedge=検証済み荒れ条件(ハンデ/16頭/●大穴・verified_arare) /
+    #        ap62=荒れ確率≥0.62 のレースだけ参加。ret_capped=配当¥200k頭打ち(巨大配当の変動除去)。
     CAP = 200000.0
-    agg = {p: {rs: {s: [0.0, 0.0, 0, 0, 0, 0.0]
-                    for s in ('tight', 'jai', 'arare', 'variable', 'variable_skip')}
-               for rs in ('ninki', 'ability')} for p in ('train', 'holdout')}
-    regime_n = {p: defaultdict(int) for p in ('train', 'holdout')}
+    STRATS = ('tight', 'jai', 'arare', 'variable', 'variable_skip')
+    FILTS = ('all', 'vedge', 'ap62')
+    agg = {p: {ft: {rs: {s: [0.0, 0.0, 0, 0, 0, 0.0] for s in STRATS}
+                    for rs in ('ninki', 'ability')} for ft in FILTS}
+           for p in ('train', 'holdout', 'other')}
+    regime_n = {p: defaultdict(int) for p in ('train', 'holdout', 'other')}
+    vedge_n = {p: 0 for p in ('train', 'holdout', 'other')}
+    # holdoutの主要セルは per-race (cost,ret) を貯めてbootstrapでROIの信頼区間を出す
+    # (¥200k capは荒れの大穴を切りすぎ=保守的すぎるので、raw ROIの分布そのものを見る)
+    boot = defaultdict(list)
 
     for rk, rows in by_race.items():
         if rk not in payout or len(rows) < MIN_HORSES:
             continue
         period = 'train' if rows[0].day // 10000 <= cd.TRAIN_END else (
             'holdout' if rows[0].day // 10000 == cd.HOLDOUT_YEAR else 'other')
-        if period == 'other':
-            continue
+        # 'other'(2026)も除外しない: フォーメーションはデータにfitしないので全年プールでCIを狭める
         win, pay = payout[rk]
         odds_list = [r.win_odds for r in rows if r.win_odds and r.win_odds > 0]
         if len(odds_list) < 3:
@@ -121,6 +127,13 @@ def main():
             regime = 'arare'
         regime_n[period][regime] += 1
         skip_zone = 0.46 <= ap <= 0.54   # 中庸デッドゾーン=見送り候補
+
+        # 参加フィルタ判定: 検証済み荒れ条件(ハンデ/フルゲート16頭/●大穴本命不在=verified_arare)
+        no_fav = vs.no_favorite_flag(odds_list) is not None
+        is_vedge = bool(rows[0].is_handi1) or len(rows) >= 16 or no_fav
+        if is_vedge:
+            vedge_n[period] += 1
+        filts_hit = ['all'] + (['vedge'] if is_vedge else []) + (['ap62'] if ap >= 0.62 else [])
 
         # 妙味馬(人気薄6+×combo≥2)
         ana = [int(r.umaban) for r in sorted(rows, key=lambda x: -(x.combo or 0))
@@ -140,13 +153,16 @@ def main():
                 if pts <= 0:
                     return
                 _hit = hit(win, *cols)
-                a = agg[period][rs][strat]
-                a[0] += pts * 100        # cost
-                a[1] += pay if _hit else 0.0              # return(raw)
-                a[2] += 1 if _hit else 0                  # hits
-                a[3] += pts              # points
-                a[4] += 1                # participated
-                a[5] += min(pay, CAP) if _hit else 0.0    # return(capped¥200k)
+                for ft in filts_hit:
+                    a = agg[period][ft][rs][strat]
+                    a[0] += pts * 100        # cost
+                    a[1] += pay if _hit else 0.0              # return(raw)
+                    a[2] += 1 if _hit else 0                  # hits
+                    a[3] += pts              # points
+                    a[4] += 1                # participated
+                    a[5] += min(pay, CAP) if _hit else 0.0    # return(capped¥200k)
+                    if rs == 'ninki' and strat in ('variable', 'variable_skip'):
+                        boot[(ft, strat)].append((pts * 100, pay if _hit else 0.0))  # 全年プール
 
             apply('tight', F['tight'])
             apply('jai', F['jai'])
@@ -157,25 +173,63 @@ def main():
             if not skip_zone:
                 apply('variable_skip', F[regime])
 
+    _FILT_LABEL = {'all': '全レース', 'vedge': '検証荒れ(ハンデ/16頭/●大穴)', 'ap62': '荒れ確率≥62%'}
+
     def show(period):
-        print(f"\n{'='*74}\n=== {period} (train≤{cd.TRAIN_END}/holdout{cd.HOLDOUT_YEAR}) ===")
-        print("  レジーム分布:", dict(regime_n[period]))
-        print(f"  {'Rank源':8s} {'買い方':13s} {'参加':>6s} {'的中率':>7s} {'平均点数':>6s} {'平均購入':>8s} "
-              f"{'回収率':>7s} {'頑健ROI':>7s}")
-        for rs in ('ninki', 'ability'):
-            for s in ('tight', 'jai', 'arare', 'variable', 'variable_skip'):
-                cost, ret, hits, pts, n, retc = agg[period][rs][s]
-                if n < 50:
-                    continue
-                roi = ret / cost if cost else 0
-                roic = retc / cost if cost else 0
-                print(f"  {rs:8s} {s:13s} {n:6d} {hits/n:6.1%} {pts/n:6.1f} "
-                      f"¥{pts/n*100:7.0f} {roi:7.1%} {roic:7.1%}")
+        print(f"\n{'='*78}\n=== {period} (train≤{cd.TRAIN_END}/holdout{cd.HOLDOUT_YEAR}) ===")
+        print(f"  レジーム分布: {dict(regime_n[period])} / 検証荒れレース {vedge_n[period]}件")
+        for ft in FILTS:
+            print(f"\n  ── 参加フィルタ: {_FILT_LABEL[ft]} ──")
+            print(f"  {'Rank源':7s} {'買い方':13s} {'参加':>6s} {'的中率':>7s} {'点数':>5s} {'購入':>7s} "
+                  f"{'回収率':>7s} {'頑健ROI':>7s}")
+            for rs in ('ninki', 'ability'):
+                for s in STRATS:
+                    cost, ret, hits, pts, n, retc = agg[period][ft][rs][s]
+                    if n < 50:
+                        continue
+                    roi = ret / cost if cost else 0
+                    roic = retc / cost if cost else 0
+                    star = ' ★' if roic >= 0.80 else ''
+                    print(f"  {rs:7s} {s:13s} {n:6d} {hits/n:6.1%} {pts/n:5.1f} "
+                          f"¥{pts/n*100:6.0f} {roi:7.1%} {roic:7.1%}{star}")
 
     show('train')
     show('holdout')
-    print("\n[判定] ①ability軸>ninki軸のROIか(Rankエッジ) ②可変/見送りが単一買い方を上回るか "
-          "③荒れ用が高配当を拾うか。控除率75%(=ROI75%)が市場効率の目安ライン。")
+
+    # ── bootstrap: raw ROIの90%信頼区間(荒れ大穴を切らずに分布で判定) ──
+    import random
+    random.seed(42)
+    print(f"\n{'='*78}\n=== 全年プール(2021-2026) ninki軸 raw ROI ブートストラップ(1000回・レース再抽出) ===")
+    print("  75%(控除率壁)を90%CI下限が越えれば『レース選択で市場を出し抜く』が有意に成立。")
+    print(f"  {'買い方(フィルタ)':28s} {'参加':>5s} {'ROI中央':>8s} {'90%CI下限':>9s} {'上限':>8s}")
+    for (ft, strat), recs in sorted(boot.items()):
+        if len(recs) < 100:
+            continue
+        rois = []
+        m = len(recs)
+        for _ in range(1000):
+            samp = [recs[random.randrange(m)] for _ in range(m)]
+            c = sum(x[0] for x in samp)
+            r = sum(x[1] for x in samp)
+            rois.append(r / c if c else 0)
+        rois.sort()
+        lo, mid, hi = rois[50], rois[500], rois[950]
+        # 75%=控除率floor(=無情報ベット). 100%=損益分岐(利益). この2段で判定。
+        if lo > 1.0:
+            verdict = ' ★★利益(100%超)'
+        elif lo > 0.75:
+            verdict = ' ★floor超(スキル有だが<100%=長期負け)'
+        elif hi < 0.75:
+            verdict = ' floor未達(市場並以下)'
+        else:
+            verdict = ' 75%を跨ぐ=不確実'
+        print(f"  {strat+'/'+_FILT_LABEL[ft]:28s} {m:5d} {mid:7.1%} {lo:8.1%} {hi:7.1%}{verdict}")
+    print("  ※75%=控除率floor(無情報ベットの期待値)。100%=損益分岐。floor超=選択にスキル有だが、"
+          "ROI中央が<100%なら長期では負け(利益化には未到達)。")
+
+    print("\n[判定] 検証荒れ/荒れ確率≥62%のフィルタで頑健ROIが75%(控除率壁)を越えるか。"
+          "越えれば『レース選択で市場を出し抜く』が成立(★=頑健ROI≥80%)。越えなければ荒れ選択も"
+          "priced-in=買い方でなく見送りでの資金効率改善に留まる。ninki軸が本命(win slotで人気>実力代理)。")
 
 
 if __name__ == '__main__':
