@@ -31,7 +31,7 @@ _STRESS_OK = {'小柄×馬体減', '芝×後方ぐせ', '馬体増'}  # リー�
 def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
                 month=None, emp_bias=None, umaban=None, tosu=None,
                 top_jockey_swap=False, kinratio=False, layoff_days=None,
-                prev_kyaku=None, stress_flags=None):
+                prev_kyaku=None, prev_chaku=None, stress_flags=None):
     """戻り値: {'veto': bool, 'severity': int, 'reasons': [str,...]}"""
     try:
         nk = int(ninki)
@@ -96,6 +96,13 @@ def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
             reasons.append('高齢(7歳+)')
     except (TypeError, ValueError):
         pass
+    # 前走5着以下: 人気馬でも複勝残差 train-1.5pp/holdout-1.8pp・z有意(前走負けたのに今も人気=市場が過信)。
+    # 生の前走着順は人気に大半織込み済み(残差は小)だが独立分は残る→ソフト理由(単独では非表示)。
+    try:
+        if prev_chaku is not None and int(prev_chaku) >= 5:
+            reasons.append('前走5着以下')
+    except (TypeError, ValueError):
+        pass
 
     # ⑥ Stress(リーク無しのみ)
     for f in (stress_flags or []):
@@ -107,7 +114,7 @@ def danger_veto(*, ninki=None, surface='', baba='', sire='', sex_age='',
     # 加えてNAR/直近レースはjravanの収録が疎で休養日数を過大算出し誤爆する。
     # → 他に硬い危険理由がある時のみ severity に算入(単独では0＝表示しない)。
     # 前走逃げも同様に単独では弱い(dangerfav検証 残差+0.005≒0)=ソフト理由。
-    _SOFT = {'半年休み明け', '前走逃げ', '高齢(7歳+)'}
+    _SOFT = {'半年休み明け', '前走逃げ', '高齢(7歳+)', '前走5着以下'}
     hard = [r for r in reasons if r not in _SOFT]
     soft = [r for r in reasons if r in _SOFT]
     final = hard + (soft if hard else [])

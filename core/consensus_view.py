@@ -89,9 +89,16 @@ def build_edge_sets(df, meta, race_id):
             sire = str(r.get('sire') or '').strip()
             if (not sire or sire == '-') and kt:
                 sire = tb.sire_of_ketto(kt)
+            _prev_chaku = None                       # 前走着順(危険人気馬の前走5着以下ソフト理由用)
+            _pr = r.get('PastRuns')
+            if isinstance(_pr, list) and _pr:
+                try:
+                    _prev_chaku = int(_pr[0].get('Rank'))
+                except (TypeError, ValueError):
+                    _prev_chaku = None
             vr = dg.danger_veto(
                 ninki=(int(pop) if pd.notnull(pop) else None),
-                surface=surf, baba=baba, sire=sire,
+                surface=surf, baba=baba, sire=sire, prev_chaku=_prev_chaku,
                 sex_age=str(r.get('SexAge', '') or ''), month=month)
             if vr['severity'] >= 1:
                 danger.add(u)

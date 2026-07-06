@@ -588,6 +588,11 @@ def main():
         assert dg.danger_veto(ninki=2, surface='芝', sex_age='牡8')['severity'] == 0, "高齢単独は非表示(ソフト)"
         _rage = dg.danger_veto(ninki=2, surface='芝', sex_age='牡8', top_jockey_swap=True)
         assert '高齢(7歳+)' in _rage['reasons'] and _rage['severity'] == 2, "高齢+硬い危険で算入"
+        # 前走5着以下ソフト理由(検証済 train-1.5/holdout-1.8pp): 単独非表示・硬い危険と算入
+        assert dg.danger_veto(ninki=1, surface='芝', prev_chaku=8)['severity'] == 0, "前走5着以下単独は非表示"
+        _rp5 = dg.danger_veto(ninki=1, surface='芝', prev_chaku=8, top_jockey_swap=True)
+        assert '前走5着以下' in _rp5['reasons'] and _rp5['severity'] == 2, "前走5着以下+硬い危険で算入"
+        assert '前走5着以下' not in dg.danger_veto(ninki=1, surface='芝', prev_chaku=3)['reasons'], "前走4着以内は非該当"
         assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
         # 半年休み明けはソフト理由: 単独では危険にしない(精度低・NAR誤爆対策)
         assert dg.danger_veto(ninki=1, layoff_days=200)['severity'] == 0, "休み明け単独は危険にしない"
