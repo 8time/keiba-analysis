@@ -264,8 +264,10 @@ def integrate(rows, aim, regime):
     out.sort(key=lambda x: -x['integ'])
 
     # 役割グルーピング(優先順位方式・この機能は"意見"なので強気に切る):
-    #   危険veto→本命→切る(消去クロス重複≥3を強気に切る)→穴(comboが活きるゾーン=combo≥2限定)
-    #   →相手→残り。※穴は単発シグナル(⚡33等・全馬に出がち)を入れず、複数合議のcombo馬に絞る。
+    #   危険veto→本命→切る→穴(comboが活きるゾーン=combo≥2限定)→相手→残り。
+    #   切る=消去クロス重複≥3を強気に。ただしプラス材料(combo≥2/軸候補◎〇/統合上位1/3)のある馬は
+    #   切らず穴/相手へ(消去フラグは来にくさだが、複数の検証済プラスやLTR上位を上書きしない)。
+    #   ※穴は単発シグナル(⚡33等・全馬に出がち)を入れず、複数合議のcombo馬に絞る。
     ELIM_CUT = 3        # 消去クロスの重複がこれ以上=強気に切る(ユーザー方針: 重複3-4は切る)
     # 人気上位(1-5)は消去フラグが人気に織込み済み(priced-in)=フラグで切ると二重計上になる
     # ([[project_elimination_engine]]/elim_crossは単体priced-in)。重複が極端(≥5)な時だけ切る。
@@ -279,13 +281,18 @@ def integrate(rows, aim, regime):
         if h['umaban'] in assigned:
             continue
         h['role'] = '◎本命'; honmei.append(h['umaban']); assigned.add(h['umaban']); break
-    for h in out:                                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
+    _cut_top_guard = max(3, len(out) // 3)          # 統合上位1/3は切らない(最良予測器が生存判定)
+    for idx, h in enumerate(out):                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
         if h['umaban'] in assigned:
             continue
-        # 敗者復活: 切る帯でもcombo3+は複勝が人気薄ベースを超えて復活(検証済:
-        # scripts/revival_backtest.py holdout複勝12.3% vs 切る帯5.9%・z+2.21)→切らず穴へ回す。
-        # combo2ではベース届かず(復活せず)=combo3+の激辛条件のみ。
-        if h['combo'] >= 3:
+        # 強いプラス材料のある馬は消去フラグだけで切らない(ユーザー指摘202610020404/メイワキラリ:
+        # 6番人気・平均位置上位・血統top3・補正T🔵・高LTRを切るのは誤り=有料販売ならクレーム源)。
+        # 次のいずれかなら切らず穴/相手へ回す:
+        #  ①combo≥2 … 荒れ6シグナル複数一致(combo2+ z+9.2の検証済プラス・穴ループの閾値と一致)。
+        #             うちcombo3+×消去3+は穴ループで🔥敗者復活として明示(revival_backtest z+2.21)。
+        #  ②軸候補◎〇 … オッズ実複勝率が上位(最直接の3着内根拠)。
+        #  ③統合スコア上位1/3 … 検証AI(LTR)含む素点が高い=最良予測器が生存と判定した馬。
+        if h['combo'] >= 2 or h['axis_mark'] in ('◎', '〇') or idx < _cut_top_guard:
             continue
         _en = h.get('elim', 0)
         _pop_top = (h['pop'] is not None and h['pop'] <= 5)   # 人気上位=priced-in

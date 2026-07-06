@@ -279,6 +279,25 @@ def main():
         assert '敗者復活' in next(h['role'] for h in r['horses'] if h['umaban'] == 7), "7番は敗者復活ロール"
     check("consensus_view.integrate(穴/切る/敗者復活)", t_consensus_integrate)
 
+    def t_consensus_no_cut_strong():
+        # 回帰(202610020404/メイワキラリ): 6番人気×combo2×消去4でも切らず穴へ。
+        # 消去フラグだけで検証済プラス(combo≥2)や高LTRを上書きしない。
+        from core import consensus_view as cv
+        aim = {'edge_reasons': {5: ['🔵補正T上位', '🧬血統上位', '🧩2重複']},
+               'danger': set(), 'veto': set(),
+               'combo': {5: 2}, 'elim': {5: 4, 7: 4, 8: 3}}
+        rows = [{'umaban': 1, 'name': 'A', 'pop': 1, 'odds': 2.5, 'proj': 260, 'axis_mark': '◎'},
+                {'umaban': 2, 'name': 'B', 'pop': 2, 'odds': 4.0, 'proj': 250, 'axis_mark': '〇'},
+                {'umaban': 5, 'name': 'メイワ', 'pop': 6, 'odds': 18, 'proj': 244, 'axis_mark': ''},
+                {'umaban': 7, 'name': 'D', 'pop': 9, 'odds': 50, 'proj': 120, 'axis_mark': ''},
+                {'umaban': 8, 'name': 'E', 'pop': 12, 'odds': 99, 'proj': 90, 'axis_mark': ''},
+                {'umaban': 9, 'name': 'F', 'pop': 7, 'odds': 40, 'proj': 110, 'axis_mark': ''}]
+        r = cv.integrate(rows, aim, '②穴妙味向き')
+        assert 5 not in r['groups']['keshi'], "6番人気combo2は切ってはならない"
+        assert 5 in r['groups']['ana'], "6番人気combo2は穴へ"
+        assert 7 in r['groups']['keshi'], "消去4×combo0の弱い馬は切る(強気切るは維持)"
+    check("consensus_view.integrate(強材料は切らない回帰)", t_consensus_no_cut_strong)
+
     def t_ledger_gate():
         import tempfile
         from core import money
