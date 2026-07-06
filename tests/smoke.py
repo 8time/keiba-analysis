@@ -368,6 +368,18 @@ def main():
         assert mid['exp_roi'] < 1.0, "全帯で負EV(利益保証でない)"
     check("money.formation_stake_advice(帯別ステーク)", t_formation_stake_advice)
 
+    def t_recommend_bet_type():
+        # ③券種セレクター: 堅い1着→単勝 / 荒れ→3連単。取りこぼし最適化。
+        from core import bet_optimizer as bo
+        assert bo.recommend_bet_type(None) is None
+        solid = bo.recommend_bet_type(0.30, fav_odds=2.5, n_solid_axis=1)
+        assert '単勝' in solid['primary'], "堅い1着は単勝提案"
+        arare = bo.recommend_bet_type(0.70, fav_odds=6.0, n_solid_axis=0)
+        assert '3連単' in arare['primary'], "荒れは3連単フォーメーション"
+        wide = bo.recommend_bet_type(0.45, fav_odds=4.0, n_solid_axis=2)
+        assert 'ワイド' in wide['primary'] or '馬連' in wide['primary'], "軸2頭堅い→ワイド/馬連"
+    check("bet_optimizer.recommend_bet_type(券種セレクター)", t_recommend_bet_type)
+
     def t_ledger_gate():
         import tempfile
         from core import money

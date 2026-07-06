@@ -7313,6 +7313,17 @@ if nav == "🏠 Single Race Analysis":
                                                f"**{_stk['verdict']}** ＝控除率floor(75%)以下で賭ける根拠が薄い帯。")
                         except Exception:
                             pass
+                        # ③券種セレクター: 取りこぼしの少ない券種を提案(3連単に固定しない)
+                        try:
+                            from core import bet_optimizer as _bo_bt
+                            _bt = _bo_bt.recommend_bet_type(
+                                _tri_ap, fav_odds=(_rv_sum.get('fav_odds') if _rv_sum else None),
+                                n_solid_axis=len(_tri_axis), n_horses=len(df))
+                            if _bt:
+                                st.caption(f"🎫 おすすめ券種(取りこぼし最適化): **{_bt['primary']}**"
+                                           f"（代替: {_bt['alt']}）｜ {_bt['reason']} ※{_bt['caveat']}")
+                        except Exception:
+                            pass
                     if _tri_res['warning']:
                         st.warning(_tri_res['warning'])
                     if _tri_res['bets']:

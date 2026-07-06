@@ -146,6 +146,52 @@ def ev(p, odds):
     return (p or 0.0) * (odds or 0.0)
 
 
+# ───────────────────────── 券種セレクター(取りこぼし最適化) ─────────────────────────
+def recommend_bet_type(arare_prob=None, fav_odds=None, n_solid_axis=0, n_horses=None):
+    """レース構造→『取りこぼしの少ない券種』を提案する(③・買い方が9割の実装)。
+
+    重要な前提(検証済み・正直に): これはEVで市場を超える提案ではない(単勝は市場効率的・
+    verified_tansho_roi_efficient / アプリのEVは未検証確率の目安)。狙いは"分散と取りこぼしの削減"=
+    「予想は合っていたのに券種で外す」を減らすこと。3連単に固定せず券種を最後に選ぶ発想。
+
+    arare_prob: 荒れ確率(0-1・race_value_score). fav_odds: 1番人気オッズ.
+    n_solid_axis: 信頼できる軸頭数(軸候補◎〇の数). n_horses: 出走頭数.
+    戻り: {'primary','alt','reason','caveat'} or None(arare_prob不明時)。
+    """
+    if arare_prob is None:
+        return None
+    ap = float(arare_prob)
+    fo = float(fav_odds) if fav_odds else None
+    band = '堅' if ap < 0.42 else ('中' if ap < 0.60 else '荒')
+
+    # 1着が突出して堅い → 単勝で2/3着の取りこぼしを回避(特に単勝妙味がある帯)
+    if band == '堅' and fo is not None:
+        if fo <= 1.8:
+            return {'primary': '見送り or 単勝少額', 'alt': 'ワイド(軸2頭)',
+                    'reason': f'1番人気{fo:.1f}倍で1着ほぼ確定＝3連単は2/3着取りこぼしリスク。堅すぎて妙味薄。',
+                    'caveat': '低オッズ本命は控除率負けしやすい＝無理に張らない。'}
+        return {'primary': '単勝', 'alt': 'ワイド(軸2頭) / 3連単book少点',
+                'reason': f'1番人気{fo:.1f}倍で1着堅い＝単勝なら2/3着を読み違えても取りこぼさない(video⑧: 単勝10倍超は特に有利)。',
+                'caveat': '単勝は市場効率的＝回収率を約束しない。取りこぼし削減の観点。'}
+
+    # 上位2頭が堅い(◎〇あり)が3着が読めない → ワイド/馬連で3着の取りこぼし回避
+    if n_solid_axis >= 2 and band in ('堅', '中'):
+        return {'primary': 'ワイド(軸2頭) or 馬連', 'alt': '3連複2頭軸(3着流し)',
+                'reason': '軸2頭の信頼度が高く3着が混戦＝ワイド/馬連なら軸2頭が来れば当たる(3連単で紐だけ抜けを回避)。',
+                'caveat': '3着まで自信があるなら3連複2頭軸で配当を伸ばす選択も。'}
+
+    # 中波乱 → 3連複2頭軸(当てやすさ) or 3連単wide(実配当ROI最良帯)
+    if band == '中':
+        return {'primary': '3連複2頭軸 or 3連単wide', 'alt': 'ワイド(手堅く)',
+                'reason': '中波乱帯は3連単wideが実配当ROI最良(85%)だが的中率は下がる。当てやすさ重視なら3連複2頭軸。',
+                'caveat': 'どの券種も控除率75%は超えない＝配分と見送りで資金を守る。'}
+
+    # 荒れ → 3連単フォーメーション(配当×点数) / 3連複②穴妙味(当てやすさ)
+    return {'primary': '3連単フォーメーション(帯別・広角+穴頭)', 'alt': '3連複②穴妙味(人気-穴-穴)',
+            'reason': '荒れ帯は高配当の源泉だが1着も割れる＝3連単は広角必須。当てやすさなら3連複②穴妙味。',
+            'caveat': '荒れ3連単はROI80%前後＝妙味だが利益保証でない。エンタメ予算で。'}
+
+
 # ───────────────────────── 券種ごとの買い目列挙 ─────────────────────────
 def enumerate_bets(kind, axis, mates, win_p, odds_map, all_um, max_points=12):
     """kind: 'umaren'|'wide'|'trio'|'tan'|'fuku'。
