@@ -553,6 +553,26 @@ def trainer_course_winrate(trainer_code, jyo, surface, before_key=None,
     return _trainer_rows(where, params, db_path)
 
 
+def jockey_course_winrate(jockey_name, jyo, surface, before_key=None,
+                          min_year=None, db_path=None):
+    """騎手の『当コース(競馬場×馬場)』成績(騎手名で照会・NAR短縮名はresolveで完全名へ)。
+    検証(乗替×コース巧者・人気統制残差): 乗り替わり一律は織込み済み(-0.1pp)だが、乗替先が
+    当コース複勝率上位の巧者だと弱いプラス傾向(train+1.5pp/holdout+0.6pp・holdoutは有意水準未満)
+    =スコア加点でなく表示参考用。戻り: {'runs','wins','win_rate','top3_rate'}。"""
+    if not jockey_name or not jyo or not os.path.exists(db_path or JV_DB_PATH):
+        return None
+    jn = resolve_jockey_name(jockey_name, db_path) or str(jockey_name)
+    surf = 'ダート' if 'ダ' in str(surface) else '芝'
+    where = ("r.jockey_name=? AND ra.jyo=? AND ra.surface=? AND r.chakujun>0 "
+             "AND ra.surface IN ('芝','ダート')")
+    params = [jn, str(jyo)[:2], surf]
+    if before_key:
+        where += " AND r.race_key<?"; params.append(str(before_key))
+    if min_year:
+        where += " AND ra.year>=?"; params.append(str(min_year))
+    return _trainer_rows(where, params, db_path)
+
+
 def trainer_overall_winrate(trainer_code, before_key=None, min_year=None, db_path=None):
     """調教師の全体(JRA平地)勝率。厩舎ランク表示用(検証では市場織込み済=妙味は薄い)。"""
     if not trainer_code or not os.path.exists(db_path or JV_DB_PATH):

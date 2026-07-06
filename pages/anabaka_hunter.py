@@ -445,6 +445,16 @@ def render():
                         info_items.append(f"鞍上: {prev_jockey}→{jockey}(トップ騎手降り)")
                     else:
                         info_items.append(f"鞍上: {prev_jockey}→{jockey}")
+                    # コース巧者への乗替(検証:乗替一律は織込み済みだが乗替先が当コース上位だと弱いプラス傾向)。
+                    # スコアには加算せず参考表示(holdout有意水準未満のため)。
+                    try:
+                        _jcw = jj.jockey_course_winrate(jockey, jyo, surface) if jj else None
+                        if _jcw and _jcw.get('runs', 0) >= 30 and (_jcw.get('win_rate') or 0) >= 0.15:
+                            signals_ref.append(
+                                f"🎇 コース巧者への乗替({jockey}=当コース勝率{_jcw['win_rate']*100:.0f}%"
+                                f"・複勝{_jcw['top3_rate']*100:.0f}%／検証で弱いプラス傾向・参考)")
+                    except Exception:
+                        pass
 
         # ===== C. 馬体・馬具(参考) =====
 
