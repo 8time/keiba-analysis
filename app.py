@@ -7298,6 +7298,21 @@ if nav == "🏠 Single Race Analysis":
                                    'arare': '荒れ帯→広角＋穴頭も許容(荒れで絞る/穴頭カットは逆効果=検証済)'}.get(_tri_bn, '')
                         st.caption(f"🎫 帯別フォーメーション: {_bn_txt}"
                                    "　※買い方最適化は損失縮小であって利益(回収率100%)保証ではない(実配当検証)。")
+                        # ②資金管理: 帯別の実配当ROIから見送り/エンタメ配分を助言(BetSync残高連動)
+                        try:
+                            from core import money as _mny_tri
+                            _bk_tri = int(st.session_state.get('bs_bankroll', 20000) or 20000)
+                            _stk = _mny_tri.formation_stake_advice(_tri_ap, _bk_tri)
+                            if _stk:
+                                if _stk['stake'] > 0:
+                                    st.caption(f"💰 資金管理: {_stk['label']}=期待ROI{_stk['exp_roi']*100:.0f}%。"
+                                               f"エンタメ上限¥{_stk['cap']:,}のうち推奨¥{_stk['stake']:,}"
+                                               f"(期待損失≈¥{_stk['exp_loss']:,})。{_stk['verdict']}")
+                                else:
+                                    st.caption(f"💰 資金管理: {_stk['label']}=期待ROI{_stk['exp_roi']*100:.0f}%。"
+                                               f"**{_stk['verdict']}** ＝控除率floor(75%)以下で賭ける根拠が薄い帯。")
+                        except Exception:
+                            pass
                     if _tri_res['warning']:
                         st.warning(_tri_res['warning'])
                     if _tri_res['bets']:

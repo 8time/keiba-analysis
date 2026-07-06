@@ -355,6 +355,19 @@ def main():
         assert any(u >= 6 for u in arare['meta']['first']), "荒れは穴頭を1着に許容"
     check("trio_engine.recommend_trifecta(帯別フォーメーション)", t_trifecta_band_formation)
 
+    def t_formation_stake_advice():
+        # ②資金管理: 全帯負EV。中波乱=最厚/堅=見送り(floor以下)。
+        from core import money as mo
+        assert mo.formation_stake_advice(None, 20000) is None
+        mid = mo.formation_stake_advice(0.50, 20000)
+        tight = mo.formation_stake_advice(0.30, 20000)
+        arare = mo.formation_stake_advice(0.70, 20000)
+        assert mid['band'] == 'mid' and mid['stake'] > 0, "中波乱はエンタメ配分あり"
+        assert tight['stake'] == 0 and '見送り' in tight['verdict'], "堅(74%<floor)は見送り"
+        assert mid['stake'] >= arare['stake'] > 0, "中波乱≥荒れ(損の少ない帯に厚く)"
+        assert mid['exp_roi'] < 1.0, "全帯で負EV(利益保証でない)"
+    check("money.formation_stake_advice(帯別ステーク)", t_formation_stake_advice)
+
     def t_ledger_gate():
         import tempfile
         from core import money

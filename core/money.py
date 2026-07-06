@@ -144,6 +144,41 @@ def cap_check(next_bet, balance, pct=2.0, unit=100):
 
 
 # ──────────────────────────────────────────────
+# ③b 帯別ステーク助言（買い方研究の実配当ROIに基づく資金配分・見送り）
+# ──────────────────────────────────────────────
+# 検証済み実配当ROI(verified_formation_roi・scripts/formation_pointopt.py・帯ごとの最良買い方):
+#   堅(book) 74% / 中(wide) 85% / 荒れ(wide) 81%。全帯<100%=負EV。
+#   →ケリーは「賭けない」が正解だが、賭けるなら『損の最も少ない中波乱に厚く/最悪の帯は薄く or 見送り』。
+_BAND_ROI = {'tight': 0.74, 'mid': 0.85, 'arare': 0.81}
+_BAND_LABEL = {'tight': '堅い(book少点)', 'mid': '中波乱(wide/最良)', 'arare': '荒れ(wide広角)'}
+
+
+def formation_stake_advice(arare_prob, bankroll, entertainment_pct=2.0, unit=100):
+    """荒れ確率→帯別の3連単ステーク助言。3連単は全帯で負EV(実配当検証)なので、
+    上限=残高×entertainment_pct内で『損の最も少ない中波乱に厚く/最悪帯は薄く』配分し、
+    floor(75%)未満の帯は見送りを促す。利益を約束するものではない(期待損失を明示)。
+    戻り: {'band','label','exp_roi','cap','stake','exp_loss','verdict'}。arare_prob=NoneでNone。
+    """
+    if arare_prob is None:
+        return None
+    band = 'tight' if arare_prob < 0.42 else ('mid' if arare_prob < 0.60 else 'arare')
+    roi = _BAND_ROI[band]
+    cap = bankroll_cap(bankroll, pct=entertainment_pct, unit=unit)['cap']
+    # 中波乱(最良)を基準1.0、期待ROIが低い帯ほど賭け金を絞る(0.75floor未満は0=見送り)
+    best = max(_BAND_ROI.values())
+    scale = max(0.0, min(1.0, (roi - 0.75) / (best - 0.75))) if best > 0.75 else 0.0
+    stake = int((cap * scale) // unit) * unit
+    exp_loss = int(round(stake * (1 - roi)))
+    if roi < 0.75 or stake < unit:
+        verdict = '見送り推奨(この帯は控除率floor以下＝賭ける根拠が薄い)'
+        stake = 0
+    else:
+        verdict = f'エンタメ範囲で少額可(期待ROI{roi*100:.0f}%＝長期では負け)'
+    return {'band': band, 'label': _BAND_LABEL[band], 'exp_roi': roi,
+            'cap': cap, 'stake': stake, 'exp_loss': exp_loss, 'verdict': verdict}
+
+
+# ──────────────────────────────────────────────
 # ④ セッション・ガードレール（損切り/利確で感情を遮断）
 # ──────────────────────────────────────────────
 def session_guard(start_balance, current_balance, stop_loss_pct=25.0, take_profit_pct=30.0):
