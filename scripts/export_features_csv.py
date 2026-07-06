@@ -45,7 +45,7 @@ from core import value_scanner as vs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXPORT_DIR = os.path.join(ROOT, 'data', 'export')
-HORSE_FROM_DAY = 20210101   # CSV収録開始(履歴計算自体は1990+で行う)
+HORSE_FROM_DAY = 20160101   # CSV収録開始(履歴計算自体は1990+で行う)。案件③で2021→2016に拡張
 
 HORSE_COLS = [
     # キー・属性(事前確定)
@@ -59,6 +59,7 @@ HORSE_COLS = [
     'days_since', 'dist_change', 'avg_pos3', 'pos_ratio3',
     'h_lap33', 'course_l33', 'lap_align', 'lap_fit_bin',
     'sire_surf_t3', 'sire_dist_t3', 'bms_surf_t3', 'blood_race_pct',
+    'sire', 'bms', 'sire_winroi',
     'jockey_form_t3', 'jk_race_pct', 'jockey_jyo_win', 'jockey_dist_win',
     'trainer_jyo_t3', 'trainer_form_t3',
     'elim_n', 'combo', 'ability_score', 'vh2_score',
@@ -250,6 +251,24 @@ def main():
     df = bm.compute_race_ranks(df)
     df = vh2.add_race_pcts(df)
     df = add_elim_flags(df)
+
+    # 血統回収(種牡馬×馬場×距離帯の産駒単勝回収・レース単位rolling=leak-free)。
+    # bl.lookup_sire_stats(win_roi)のリーク無し版。1.0=回収率100%。
+    print('Computing sire win-ROI...', file=sys.stderr)
+    ky = df['kyori_int']
+    dbk = np.where(ky <= 1400, 'S', np.where(ky <= 1800, 'M', np.where(ky <= 2200, 'L', 'X')))
+    ok = df['sire'].notna() & (df['sire'].astype(str) != '')
+    df['_kw'] = np.where(ok, df['sire'].astype(str) + '|' + df['surface'].astype(str)
+                         + '|' + dbk, None)
+    wo = pd.to_numeric(df['win_odds'], errors='coerce')
+    df['_wret'] = np.where(wo > 0, (df['chakujun'] == 1).astype(float) * wo, np.nan)
+    g = (df.dropna(subset=['_kw']).groupby(['_kw', 'race_key'], as_index=False)
+         .agg(_m=('_wret', 'mean'), _d=('day', 'first'), _rn=('race_num_code', 'first')))
+    g = g.sort_values(['_kw', '_d', '_rn'])
+    g['sire_winroi'] = g.groupby('_kw', sort=False)['_m'].transform(
+        lambda x: x.shift(1).rolling(150, min_periods=30).mean())
+    df = df.merge(g[['_kw', 'race_key', 'sire_winroi']], on=['_kw', 'race_key'], how='left')
+    df.drop(columns=['_kw', '_wret'], inplace=True)
 
     # 総合実力スコア(オッズ非依存・レース内pct平均・低い=良い)と vh2スコア
     pcts = df[['h7_pct', 'spurt_race_pct', 'blood_race_pct', 'jk_race_pct']]

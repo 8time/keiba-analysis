@@ -9,6 +9,14 @@
 → payouts表の複勝実配当(網羅率99.9%)でbootstrap 90%CI検証。
 結果: combo≥4で ROI中央123.5%・CI下限109.8%>100% = 統計的に+EV。combo≥3は損益分岐±(2025は+有意)。
 ※comboはCSVで2024+のみ付与(2.5年)=標本限定。より長い履歴で再確認する価値あり(Fable案件候補)。
+
+⚠⚠ 事後注記(2026-07-07・Fable案件③ scripts/fukusho_wide_ev.py で反証済み) ⚠⚠
+  この+EVは**look-aheadリークの幻**と判定された。combo構成モジュールの統計が凍結DB全期間
+  (=歴史レースから見た未来)を含むため(補正T get_figure=馬の未来走含むベスト図/jockey_power
+  before_key無し/血統静的辞書)。厳密leak-free版combo6pでは全期間-EV(≥4でROI81-85%)。
+  リーク署名: +EVはleak-free版と不一致の群(未来情報でのみ上位)にROI144%で集中し、
+  一致群は104%(非有意)、未来情報が最少の2026年は97.7%で消滅。
+  → この結果を+EVの根拠に使わないこと。詳細=repo/fable_report_fukusho_wide.md。
 """
 import os
 import sys
