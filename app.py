@@ -10365,11 +10365,15 @@ if nav == "🔍 Race Scanner (Batch)":
                     results.append({
                         "id": rid, "title": str(race_title), "error": None,
                         "vscore": rv['score'], "vlabel": rv['label'], "breakdown": rv['breakdown'],
+                        "arare_prob": rv.get('arare_prob'),
                         "fav_odds": rv['fav_odds'], "skips": skips,
                         "value_horses": sorted(value_horses, key=lambda x: (-x['div'], -(x['odds'] or 0))),
                         "danger_horses": danger_horses, "axis_floor": axis_floor,
-                        "ana_horses": _ana_horses,
+                        "ana_horses": _ana_horses, "no_fav": vs.no_favorite_flag(odds_list),
                         "n_h": n_h, "surf": surf, "dist": dist,
+                        "cls": str(meta.get('class', '') or '').strip('-'),
+                        "cond": str(meta.get('condition', '') or '').strip('-'),
+                        "weather": str(meta.get('weather', '') or '').strip('-'),
                         "pace_label": (_pint or {}).get('label'), "pace_z": _pace_z,
                         "lean": lean, "conds": _conds,
                     })
@@ -10475,9 +10479,8 @@ if nav == "🔍 Race Scanner (Batch)":
                     ana_badge = ''
                     _n_ana = len(r.get('ana_horses', []))
                     if _n_ana:
-                        _ana_names = ', '.join(f"{h['name']}({h['pop']}人気)" for h in r['ana_horses'][:3])
-                        _tip_ana = (f'穴馬候補(6番人気以下×検証済シグナル): {_ana_names}'
-                                    '&#10;🎯穴馬ハンターで詳細分析できます')
+                        _tip_ana = ('穴馬候補(6番人気以下×検証済シグナル)の頭数。'
+                                    '&#10;具体的な馬名は🎯穴馬ハンターで確認(個別的中率が不足のため名前は非表示)。')
                         ana_badge = (f'&nbsp;<span title="{_tip_ana}" style="background:#1A0B2E;color:#E040FB;border:1px solid #E040FB;'
                                      f'border-radius:6px;padding:3px 8px;font-size:0.82em;font-weight:bold;cursor:help;">🎯穴馬{_n_ana}</span>')
                     skip_badge = ''
@@ -10528,41 +10531,56 @@ if nav == "🔍 Race Scanner (Batch)":
                     )
                     st.html(f'<div style="margin-top:14px;padding:10px 0 4px;border-top:1px solid #333;{dim}">{header_html}</div>')
 
-                    with st.expander("🔍 詳細を見る", expanded=False):
-                        if r['value_horses']:
-                            st.markdown("**🎯 妙味馬（過小評価）**")
-                            for h in r['value_horses']:
-                                mark = '★★' if h['div'] >= 2 else ('★' if h['div'] == 1 else '')
-                                if h.get('anchor'):
-                                    mark = (mark + '🛡️').strip()
-                                od = f"{h['odds']:.1f}倍" if h['odds'] else '-'
-                                pp = f"{h['pop']}人気" if h['pop'] else '-'
-                                st.markdown(f"- {mark} **{h['um']} {h['name']}**（{pp}・{od}）… {h['why']}")
-                            st.caption("★単複乖離=単勝が長いのに複勝が短い→単勝過小評価(検証:勝率2.5→7%)。"
-                                       "🛡️オッズ断層上位=強グループ末端の堅め妙味(90s検証:3着内+3.9pp/単勝回収81%)。"
-                                       "＋ファクター×人気薄=単勝回収108.8%(無印63.7%)。連系の軸/紐に妙味。")
-                        else:
-                            st.caption("🎯 妙味馬: 該当なし")
-                        if r['danger_horses']:
-                            st.error("⚠️ 危険な人気馬:\n" + "\n".join(
-                                f"- {h['um']} {h['name']}（{h['pop']}人気）: {h['why']}" for h in r['danger_horses']))
-                        if r.get('ana_horses'):
-                            st.markdown("**🎯 穴馬候補（6番人気以下×検証済シグナル）**")
-                            for h in r['ana_horses']:
-                                mark = '★★' if h['div'] >= 2 else ('★' if h['div'] == 1 else '')
-                                if h.get('anchor'):
-                                    mark = (mark + '🛡️').strip()
-                                od = f"{h['odds']:.1f}倍" if h['odds'] else '-'
-                                pp = f"{h['pop']}人気" if h['pop'] else '-'
-                                st.markdown(f"- {mark} **{h['um']} {h['name']}**（{pp}・{od}）… {h['why']}")
-                            st.caption("穴馬ハンターで前走/条件変更/馬体など定性シグナルも含めた詳細分析ができます。")
-                        if r['breakdown']:
-                            st.caption("妙味度内訳: " + " / ".join(r['breakdown']))
+                    # 詳細=『このレースを触るか』を決める材料のみ(具体的な妙味馬/穴馬名はSRA/穴馬ハンターへ委譲)。
+                    # 個別馬のシグナルは検証で的中率不足のため非表示(レース選択の根拠としてのみ使用)。
+                    with st.expander("🔍 このレースの見どころ（レース選択の材料）", expanded=False):
+                        # ① 基本情報
+                        _rno = str(r['id'])[-2:].lstrip('0') or str(r['id'])[-2:]
+                        _basics = f"{r['surf']}{r['dist']}m ・ {r['n_h']}頭"
+                        if r.get('cls'):
+                            _basics += f" ・ {r['cls']}"
+                        if r.get('cond'):
+                            _basics += f" ・ 馬場{r['cond']}"
+                        if r.get('weather'):
+                            _basics += f"({r['weather']})"
+                        for _cc in r.get('conds', []):
+                            _basics += f" ・ {_cc}"
+                        st.markdown(f"**{_venue_label(r['id'])} {_rno}R　{rn}**")
+                        st.caption(_basics)
+
+                        # ② 妙味度と根拠(荒れ確率ロジット + 構造の理由)
+                        _apct = f"{r['arare_prob']*100:.0f}%" if r.get('arare_prob') is not None else f"{r['vscore']:.0f}"
+                        st.markdown(f"**🎯 妙味度 {r['vscore']:.0f}・{r['vlabel']}**（検証荒れ確率 {_apct}）")
+                        if r.get('breakdown'):
+                            st.caption("根拠: " + " / ".join(r['breakdown']))
+
+                        # ③ このレースの構図(頭数=カウントのみ・具体名は出さない)
+                        _lean_txt = (r.get('lean') or {}).get('lean') or '中立'
+                        _stance = {'②穴妙味向き': '3連複 人気-穴-穴（穴は妙味馬から選別）',
+                                   '本線向き': '3連複 人気上位2頭軸（鉄板＋①）',
+                                   '中立': '無理に触らず点数を絞る/見送り寄り'}.get(_lean_txt, '-')
+                        try:
+                            from core.trio_engine import band_from_value_label as _bfl
+                            _bl, _bh = _bfl(r['vlabel'])
+                            _band_txt = f"{_bl:.0f}〜{_bh:.0f}倍"
+                        except Exception:
+                            _band_txt = '-'
+                        _figs = (f"- 決着タイプ: **{_lean_txt}** → 狙い方 {_stance}\n"
+                                 f"- 3連複の狙い目オッズ帯（この妙味度の実測）: **{_band_txt}**\n"
+                                 f"- 妙味馬 {len(r['value_horses'])}頭 ／ 穴馬候補 {len(r.get('ana_horses', []))}頭 ／ "
+                                 f"危険人気 {len(r['danger_horses'])}頭 ／ 軸フロア {'○(安全な人気軸あり)' if r.get('axis_floor') else '×(人気上位に危険)'}\n"
+                                 f"- 1番人気オッズ: {r['fav_odds']:.1f}倍" + ("　🔔**●大穴(本命不在=荒れ確率高)**" if r.get('no_fav') else ""))
+                        st.markdown(_figs)
+                        st.caption("※具体的な妙味馬・穴馬・危険人気馬の馬名と買い目は、検証で個別的中率が不足のため"
+                                   "スキャナーには出しません。下のSRA/穴馬ハンターで確認してください（スキャナーは"
+                                   "『どのレースを触るか』の選択専用）。")
+
+                        # ④ アクション導線
                         import urllib.parse as _urlparse_rs
                         _hunter_url = f"/?nav={_urlparse_rs.quote('🎯 穴馬ハンター')}&race_id={r['id']}"
-                        st.markdown(f"✨ [このレースをシングルタブで詳細分析する](/?race_id={r['id']})"
-                                    f"　｜　🎯 [穴馬ハンターで分析]({_hunter_url})"
-                                    f"　｜　🔗 [netkeiba.comで開く](https://race.netkeiba.com/race/shutuba.html?race_id={r['id']})")
+                        st.markdown(f"✨ [SRAで詳細分析（強適/展開/買い目）](/?race_id={r['id']})"
+                                    f"　｜　🎯 [穴馬ハンターで妙味馬を見る]({_hunter_url})"
+                                    f"　｜　🔗 [netkeibaで開く](https://race.netkeiba.com/race/shutuba.html?race_id={r['id']})")
 
 
 
