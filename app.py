@@ -6946,8 +6946,20 @@ if nav == "🏠 Single Race Analysis":
                             except Exception:
                                 return 0
                         _te_choices = sorted(_te_choices, key=_veto_rank)
+                        _vname = {}
+                        try:
+                            for _, _vr in df.iterrows():
+                                _vu = pd.to_numeric(_vr.get('Umaban'), errors='coerce')
+                                if pd.notnull(_vu):
+                                    _vname[int(_vu)] = str(_vr.get('Name', '') or '')
+                        except Exception:
+                            pass
+                        _veto_reasons = _aim.get('danger_reasons') or {}
                         st.warning("⚠ 危険人気馬（複数の危険材料で軸不可）: "
-                                   + " / ".join(f"{u}番" for u in sorted(_veto_set))
+                                   + " / ".join(
+                                       f"{u}番 {_vname.get(u, '')}"
+                                       + (f"（{'・'.join(_veto_reasons.get(u, []))}）" if _veto_reasons.get(u) else "")
+                                       for u in sorted(_veto_set))
                                    + " — 軸の自動採用から降格。相手/押さえで再検討を。")
 
                     # ── 決着タイプ判定(検証済 value_scanner.trio_lean): どのパターンで勝てるレースか ──

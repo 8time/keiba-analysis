@@ -491,6 +491,11 @@ def resolve_horse(bamei, db_path=None, before_key=None):
     (2026-07-02 NAR馬の厩舎当コース列で複数の異なる調教師が同一の
     "?-8%(6777)"を表示するバグとして発覚・修正)。"""
     name = _norm(bamei)
+    # 表示マーカー除去: 強適テーブルは人気馬名に " (🔥)" を付ける(fmt_pop_name)。この加工名で
+    # 照合すると1-3番人気だけ補正T/末脚/33が"-"になるバグ→末尾の絵文字入り括弧を落として照合。
+    if name and ('🔥' in name or '🔨' in name):
+        import re as _re_rh
+        name = _re_rh.sub(r'\s*\([^)]*[🔥🔨][^)]*\)\s*$', '', name).strip() or name
     if not name or not os.path.exists(db_path or JV_DB_PATH):
         return (None, None)
     con = _con(db_path)
