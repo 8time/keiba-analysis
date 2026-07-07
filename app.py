@@ -8382,6 +8382,12 @@ if nav == "🧹 消去フィルター":
                                 _odds_by_um[_u] = float(_od)
                     _winp = _bo.blended_win_probs(_score_by_um, _odds_by_um) if _score_by_um else {}
                     _all_um = list(_winp.keys())
+                    # ②オッズ断層直下(市場が線を引いて見放した側=検証: 残差-5.1pp z-16.5)
+                    try:
+                        from core import value_scanner as _vs_gb
+                        _gap_below = _vs_gb.odds_gap_below(_odds_by_um)
+                    except Exception:
+                        _gap_below = set()
 
                     def _top2_prob(wp, a, allu):
                         s = wp.get(a, 0.0)
@@ -8556,6 +8562,9 @@ if nav == "🧹 消去フィルター":
                                     _negr.append('前走5着以下')
                         except (TypeError, ValueError):
                             pass
+                        # オッズ断層直下(検証: 残差-5.1pp z-16.5・市場が線を引いて見放した側=強い消し)
+                        if _um in _gap_below:
+                            _negr.append('🌊断層直下')
                         _pos = bool(_posr)
                         _neg = bool(_negr)
                         _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
@@ -8586,7 +8595,7 @@ if nav == "🧹 消去フィルター":
                                        # 半年休み明け(-6pp)/高齢7歳+(-6.5pp)/牝冬春フェード。弱い(priced-in)材料は無印。
                                        '危険材料': (' / '.join(
                                            ('🔴' + m if any(p in m for p in
-                                            ('🌧️', '半年休み明け', '高齢(7歳+)', '牝')) else m)
+                                            ('🌧️', '半年休み明け', '高齢(7歳+)', '牝', '🌊断層')) else m)
                                            for m in _negr) or '-'),
                                        '_ctbest': _ctbest,
                                        '_ev': _ev, '_fuk': _fuk, '_ren': _ren,
@@ -8758,7 +8767,8 @@ if nav == "🧹 消去フィルター":
                        + (f"（うち♻️学習で自動残し{_learn_n}頭）" if _learn_n else "")
                        + _border_note)
             st.caption("危険材料の**🔴印＝検証で残差の大きい強い消去理由**"
-                       "(🌧️重不良×1番人気-5〜9pp／半年休み明け-6pp／高齢7歳+ -6.5pp／牝冬春フェード)。"
+                       "(🌧️重不良×1番人気-5〜9pp／半年休み明け-6pp／高齢7歳+ -6.5pp／牝冬春フェード／"
+                       "🌊断層直下-5.1pp=市場が線を引いて見放した側)。"
                        "無印は来にくさ材料だが人気に大半織込み済み(初ダート/距離変更/前走逃げ等)＝重ねて判断。")
             if _has_prob:
                 st.caption("単勝EV＝予測勝率×オッズ(1.0超で理論プラス)／複勝率＝P(3着内)／連対率＝P(2着内)。"

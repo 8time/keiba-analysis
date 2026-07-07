@@ -337,6 +337,18 @@ def odds_gap_anchors(odds_by_um, ratio=2.0, max_rank=6, max_odds=30.0):
     return anchors
 
 
+def odds_gap_below(odds_by_um, ratio=2.0, max_rank=6):
+    """『断層直下＝市場が線を引いて見放した弱グループ先頭』の馬番set(odds_gap_anchorsの鏡)。
+    単勝オッズ昇順で、上位(〜max_rank番手)で最初に次馬のオッズが ratio倍以上跳ねた"下"の馬。
+    検証(2016+ CSV): 人気統制残差 -5.1pp(z-16.5)＝人気以上に来にくい強い消し材料(純アンチ市場)。"""
+    items = sorted([(u, float(o)) for u, o in (odds_by_um or {}).items()
+                    if o and float(o) > 0], key=lambda x: x[1])
+    for i in range(1, min(max_rank, len(items) - 1)):
+        if items[i + 1][1] / items[i][1] >= ratio:
+            return {items[i + 1][0]}
+    return set()
+
+
 def no_favorite_flag(odds_list):
     """オッズ本命不在フラグ（日刊コンピ『大谷式大穴』の単勝オッズ等価再現）。
 

@@ -103,6 +103,9 @@ def main():
         assert vs.no_favorite_flag([3.5, 5.0, 6.0] + [8.0] * 8) == '●大穴'
         # 抜けた本命(fav1=1.5)がいる→フラグ無し
         assert vs.no_favorite_flag([1.5, 3.0, 10.0] + [40.0] * 5) is None
+        # ②オッズ断層直下(検証-5.1pp z-16.5): 断層の下側の馬番を返す
+        assert vs.odds_gap_below({1: 1.5, 2: 1.8, 3: 2.0, 4: 5.0, 5: 6, 6: 8, 7: 10, 8: 12}) == {4}, "断層直下=um4"
+        assert vs.odds_gap_below({1: 1.5, 2: 1.9, 3: 2.4, 4: 3.0, 5: 4, 6: 5, 7: 7, 8: 9}) == set(), "滑らか=断層なし"
         # 頭数不足・空はNone(クラッシュしない)
         assert vs.no_favorite_flag([]) is None and vs.no_favorite_flag([2.0, 3.0]) is None
     check("value_scanner.no_favorite_flag", t_no_favorite)
