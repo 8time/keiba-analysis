@@ -110,8 +110,10 @@ def _marks(horses, conf_fn):
         if conf is not None:
             scored.append((conf, nm))
     scored.sort(key=lambda x: x[0], reverse=True)
-    order = ['◎', '〇', '▲']
-    for i, (conf, nm) in enumerate(scored[:3]):
+    # 軸候補は◎〇の2頭まで(ユーザー方針: 3番手▲は着内が"たまに"で迷いの元。
+    # 検証も固定軸=人気1+2の2頭が最適[project_axis_selection]と一致)。▲は廃止。
+    order = ['◎', '〇']
+    for i, (conf, nm) in enumerate(scored[:2]):
         mk = order[i]
         if conf >= FLOOR[mk]:
             out[nm]['mark'] = mk
