@@ -6719,12 +6719,12 @@ if nav == "🏠 Single Race Analysis":
                              (f"複勝信頼度 {_cv_hon_conf:.0f}%" if _cv_hon_conf is not None else "オッズ待ち")),
                             ('#12a594', '② 相手候補', '馬券に絡む可能性が高い馬', _cv_g['aite'],
                              (f"複勝信頼度 {_cv_aite_conf:.0f}%" if _cv_aite_conf is not None else "連下")),
-                            ('#9c27b0', '③ 穴・妙味', 'comboが活きるゾーン(複数シグナル合議)', _cv_g['ana'],
+                            ('#607d8b', '③ 押さえ', '切らず残す中位馬(実際に着内に来る)', _cv_g.get('osae', []),
+                             (f"{len(_cv_g.get('osae', []))}頭を押さえ" if _cv_g.get('osae') else "なし")),
+                            ('#9c27b0', '④ 穴・妙味', 'comboが活きるゾーン(複数シグナル合議)', _cv_g['ana'],
                              ((f"{len(_cv_g['ana'])}頭 / 🧩最大{_cv_maxcombo}重複"
                                + (f" / 🔥敗者復活{_cv_revival}" if _cv_revival else ""))
                               if _cv_g['ana'] else "combo馬なし")),
-                            ('#e03131', '④ 切る', '危険人気＋消去クロス重複3+', _cv_g['keshi'],
-                             (f"{len(_cv_g['keshi'])}頭を消し（消去3+={_cv_ncut}頭）" if _cv_g['keshi'] else "該当なし")),
                         ]
                         _cvcols = st.columns(4)
                         for _cc, (_col, _ttl, _sub, _ul, _metric) in zip(_cvcols, _cards):
@@ -6738,6 +6738,13 @@ if nav == "🏠 Single Race Analysis":
                                     f"line-height:1.25;'>{_cv_nums(_ul)}</div>"
                                     f"<div style='font-size:11px;color:{_col};font-weight:700;margin-top:4px;'>{_metric}</div>"
                                     f"</div>", unsafe_allow_html=True)
+                        # 🧹切るは押さえと入れ替えでグレー(控えめ)表示に降格(押さえは着内に来るので昇格)
+                        if _cv_g['keshi']:
+                            st.markdown(
+                                f"<div style='color:#999;font-size:11.5px;margin-top:6px;'>"
+                                f"🧹 <b>切る</b>({len(_cv_g['keshi'])}頭・消去3+={_cv_ncut}頭): "
+                                f"{_cv_nums(_cv_g['keshi'])} ＝危険人気/消去クロス重複で消去候補</div>",
+                                unsafe_allow_html=True)
                         _cv_tbl = []
                         for h in _cv_res['horses']:
                             _cv_tbl.append({
@@ -6762,16 +6769,19 @@ if nav == "🏠 Single Race Analysis":
                                 return 'background-color:#12a59433;color:#0b6e63;font-weight:800'
                             if '穴' in _s:
                                 return 'background-color:#9c27b033;color:#7a1a8c;font-weight:800'
-                            if '切る' in _s or '消し' in _s:
-                                return 'background-color:#e0313133;color:#b02020;font-weight:800'
+                            # 押さえ=着内に来る中位馬→視認できる色(グレー廃止・昇格)
                             if '押さえ' in _s:
-                                return 'background-color:#8888880f;color:#777'
+                                return 'background-color:#607d8b26;color:#37474f;font-weight:700'
+                            # 切る/消し=グレーで控えめに降格(押さえと入れ替え)
+                            if '切る' in _s or '消し' in _s:
+                                return 'background-color:#8888880f;color:#999'
                             return ''
                         _cv_dfshow = pd.DataFrame(_cv_tbl)
                         # Styler使用時はfloatが6桁表示になるため小数第1位に統一(アプリ全体の表示方針)
                         _cv_styled = _cv_dfshow.style.map(_color_role, subset=['役割']).format(precision=1)
                         st.dataframe(_cv_styled, hide_index=True, use_container_width=True)
-                        st.caption("『役割』=フォーメーション決定用(◎本命は1着/2着軸・〇▲相手は連下・🎯穴は3列目の妙味・切るは消し)。"
+                        st.caption("『役割』=フォーメーション決定用(◎本命は1着/2着軸・〇相手は連下・押さえは切らず残す中位(着内に来る)・"
+                                   "🎯穴は3列目の妙味・切るはグレーで消し候補)。"
                                    "🔥敗者復活=消去で切る帯でもcombo3+で複勝がベース超え(検証:holdout複勝12.3%>切る帯5.9%・z+2.21)＝過小評価の穴。"
                                    "『合議数』=独立した検証済みエッジ(軸候補◎〇▲＋人気薄なら荒れ予報6シグナル＋市場エッジ)の"
                                    "一致数。多いほど複勝の信頼度が高い(検証済)。『🧩重複』=荒れ予報6シグナルの同時発火数"

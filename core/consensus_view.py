@@ -347,12 +347,15 @@ def integrate(rows, aim, regime):
         if len(aite) < 3:
             h['role'] = '〇▲相手'; aite.append(h['umaban']); assigned.add(h['umaban'])
     n = len(out)                                    # 残り = 下位1/3は消し候補・他は押さえ
+    osae = []
     for idx, h in enumerate(out):
         if h['umaban'] in assigned:
             continue
         if idx >= n - max(1, n // 3):
             h['role'] = '消し候補'; keshi.append(h['umaban'])
         else:
-            h['role'] = '押さえ'
+            # 押さえ=切らずに残す中位馬(実際に着内に来るのでグレー扱いにしない)。独立グループで返す。
+            h['role'] = '押さえ'; osae.append(h['umaban'])
     return {'horses': out, 'regime': regime,
-            'groups': {'honmei': honmei, 'aite': aite, 'ana': ana_g, 'keshi': keshi}}
+            'groups': {'honmei': honmei, 'aite': aite, 'ana': ana_g,
+                       'osae': osae, 'keshi': keshi}}

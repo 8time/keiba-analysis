@@ -294,6 +294,7 @@ def main():
         assert 5 in r['groups']['keshi'], "消去クロス重複4の馬は切る"
         assert 7 in r['groups']['ana'] and 7 not in r['groups']['keshi'], "切る帯×combo3は敗者復活で穴へ"
         assert '敗者復活' in next(h['role'] for h in r['horses'] if h['umaban'] == 7), "7番は敗者復活ロール"
+        assert 'osae' in r['groups'], "押さえは独立グループ(カード化)"
     check("consensus_view.integrate(穴/切る/敗者復活)", t_consensus_integrate)
 
     def t_consensus_no_cut_strong():
