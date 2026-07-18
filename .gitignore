@@ -18,6 +18,9 @@ debug_*.txt
 debug_*.csv
 tmp_*.py
 result.txt
+result.csv
+report.txt
+scratch_*.txt
 *_raw.txt
 *_debug.txt
 
