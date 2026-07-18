@@ -4284,83 +4284,149 @@ if nav == "🏠 Single Race Analysis":
 
                             _history_df = _tracker.get_history_df(race_id_input)
 
-                            # ── 最新スナップショット表示 ──
-                            st.markdown("#### 📊 最新オッズスナップショット")
-                            _latest_odds_df = _tracker.get_latest_odds_df(race_id_input)
-                            if not _latest_odds_df.empty:
-                                # メインdfの馬名をマージ
-                                if 'Umaban' in df.columns and 'Name' in df.columns:
-                                    _name_map = df[['Umaban', 'Name']].copy()
-                                    _name_map['Umaban'] = pd.to_numeric(_name_map['Umaban'], errors='coerce')
-                                    _latest_odds_df['Umaban'] = pd.to_numeric(_latest_odds_df['Umaban'], errors='coerce')
-                                    _latest_odds_df = _latest_odds_df.merge(_name_map, on='Umaban', how='left')
-                                # 表示カラム整理
-                                _disp_cols = [c for c in ['Umaban', 'Name', 'Win Odds', 'Show Odds (Min)', 'Popularity'] if c in _latest_odds_df.columns]
-                                st.dataframe(_latest_odds_df[_disp_cols].sort_values('Umaban'), use_container_width=True, hide_index=True)
-                            else:
-                                st.info("まだ記録がありません。上の「📥 現在オッズを記録」を押してください。")
+                            # ── このオッズ推移機能だけをダーク化するスコープCSS(ページ全体は変えない) ──
+                            st.markdown("""
+<style>
+.otp {background:#0f1117;border:1px solid #232838;border-radius:14px;padding:16px 18px;margin:6px 0 10px;}
+.otp-h {color:#cbd5e8;font-size:15px;font-weight:800;margin:0 0 10px;letter-spacing:.02em;}
+.otp-cards {display:flex;gap:10px;flex-wrap:wrap;}
+.otp-card {flex:1 1 130px;background:#171b26;border:1px solid #262c3d;border-radius:12px;padding:10px 12px;}
+.otp-card .rk {font-size:10px;color:#7c88a1;font-weight:700;}
+.otp-card .n {font-size:13px;color:#e8ecf6;font-weight:700;margin:1px 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.otp-card .o {font-size:25px;color:#fff;font-weight:900;line-height:1;}
+.otp-card .d {font-size:12px;font-weight:800;margin-top:4px;}
+.otp-up {color:#ff7a7a;} .otp-dn {color:#5cb3ff;} .otp-fl {color:#8a94ab;}
+.otp-tbl {width:100%;border-collapse:collapse;margin-top:4px;font-size:12.5px;}
+.otp-tbl th {color:#8a94ab;font-weight:700;text-align:right;padding:5px 10px;border-bottom:1px solid #262c3d;}
+.otp-tbl th:nth-child(-n+2){text-align:left;}
+.otp-tbl td {color:#dbe2f0;text-align:right;padding:5px 10px;border-bottom:1px solid #1b2030;}
+.otp-tbl td:nth-child(-n+2){text-align:left;}
+.otp-tbl tr.otp-hot td {color:#ffd43b;font-weight:800;}
+.otp-tbl tr:hover td {background:#161a24;}
+.otp-note {color:#6b7488;font-size:11px;margin-top:8px;}
+</style>
+""", unsafe_allow_html=True)
 
-                            # ── 時系列グラフ ──
                             import altair as alt
-                            if not _history_df.empty:
-                                st.markdown("#### 📉 単勝オッズ推移")
-                                _history_df['timestamp'] = pd.to_datetime(_history_df['timestamp'])
-                                _win_hist = _history_df[_history_df['odds_type'] == 'win'].copy()
-                                _snap_count = len(_win_hist['timestamp'].unique())
-                                if not _win_hist.empty and _snap_count >= 2:
-                                    # 馬名ラベル付け
-                                    _nm = {}
-                                    if 'Umaban' in df.columns and 'Name' in df.columns:
-                                        _nm = {int(r['Umaban']): r['Name'] for _, r in df.iterrows() if pd.notna(r.get('Umaban'))}
-                                    _win_hist['horse'] = _win_hist['umaban'].apply(lambda u: f"{int(u)}:{_nm.get(int(u), str(u))}")
+                            _history_df['timestamp'] = pd.to_datetime(_history_df['timestamp']) if not _history_df.empty else _history_df
+                            _win_hist = (_history_df[_history_df['odds_type'] == 'win'].copy()
+                                         if not _history_df.empty else pd.DataFrame())
+                            _snap_count = len(_win_hist['timestamp'].unique()) if not _win_hist.empty else 0
+                            _nm = {}
+                            if 'Umaban' in df.columns and 'Name' in df.columns:
+                                _nm = {int(r['Umaban']): str(r['Name']) for _, r in df.iterrows()
+                                       if pd.notna(r.get('Umaban'))}
 
-                                    # 急変馬を検出（最初→最後のオッズ変化率 ±15%以上）
-                                    _first = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].first()
-                                    _last  = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].last()
-                                    _change = ((_last - _first) / _first.replace(0, float('nan'))).abs()
-                                    _alert_uma = set(_change[_change >= 0.15].index.tolist())
+                            def _esc_h(s):
+                                return (str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
 
-                                    # 人気上位8頭 + 急変馬に絞る（全頭は線が多すぎ）
-                                    _latest_pop = _win_hist.sort_values('timestamp').groupby('umaban')['odds_value'].last().sort_values()
-                                    _top8_uma = set(_latest_pop.head(8).index.tolist())
-                                    _show_uma = _top8_uma | _alert_uma
+                            if _snap_count >= 1:
+                                _win_hist['horse'] = _win_hist['umaban'].apply(
+                                    lambda u: f"{int(u)}:{_nm.get(int(u), str(u))}")
+                                _svt = _win_hist.sort_values('timestamp')
+                                _first = _svt.groupby('umaban')['odds_value'].first()
+                                _last = _svt.groupby('umaban')['odds_value'].last()
+                                _chg_abs = ((_last - _first) / _first.replace(0, float('nan'))).abs()
+                                _alert_uma = set(_chg_abs[_chg_abs >= 0.15].index.tolist())
+                                _latest_pop = _last.sort_values()
 
-                                    _win_filtered = _win_hist[_win_hist['umaban'].isin(_show_uma)].copy()
+                                def _dcls(d):
+                                    return 'otp-up' if d > 1 else ('otp-dn' if d < -1 else 'otp-fl')
 
-                                    # 急変フラグ列（色分け用）
-                                    _win_filtered['急変'] = _win_filtered['umaban'].apply(lambda u: '🚨急変' if u in _alert_uma else '通常')
+                                def _darr(d):
+                                    return '▲' if d > 1 else ('▼' if d < -1 else '—')
 
-                                    _line_chart = alt.Chart(_win_filtered).mark_line(point=True).encode(
+                                # ── 注目カード(単勝が安い順=人気上位4頭・最新値と朝一→直前変化) ──
+                                _cards = []
+                                for _rk, _u in enumerate(_latest_pop.index.tolist()[:4], 1):
+                                    _f = float(_first.get(_u, 0)); _l = float(_last.get(_u, 0))
+                                    _d = ((_l - _f) / _f * 100) if _f else 0.0
+                                    _cards.append(
+                                        f"<div class='otp-card'><div class='rk'>{_rk}番人気帯</div>"
+                                        f"<div class='n'>{int(_u)} {_esc_h(_nm.get(int(_u), _u))}</div>"
+                                        f"<div class='o'>{_l:.1f}</div>"
+                                        f"<div class='d {_dcls(_d)}'>{_darr(_d)} {_d:+.1f}%</div></div>")
+                                _sub = ("最新オッズ・朝一→直前の変化" if _snap_count >= 2
+                                        else "最新オッズ(記録1回・推移は2回目以降)")
+                                st.markdown(
+                                    f"<div class='otp'><div class='otp-h'>📌 注目馬（{_sub}）</div>"
+                                    f"<div class='otp-cards'>{''.join(_cards)}</div></div>",
+                                    unsafe_allow_html=True)
+
+                                # ── ダーク折れ線(2スナップ以上) ──
+                                if _snap_count >= 2:
+                                    _top8 = set(_latest_pop.head(8).index.tolist())
+                                    _show_uma = _top8 | _alert_uma
+                                    _wf = _win_hist[_win_hist['umaban'].isin(_show_uma)].copy()
+                                    _wf['急変'] = _wf['umaban'].apply(
+                                        lambda u: '🚨急変' if u in _alert_uma else '通常')
+                                    # 凡例(馬番:馬名/丸)クリックでその馬の線を強調・他は薄くする選択。
+                                    # empty=Trueで未選択時は全馬フル表示。
+                                    _sel_h = alt.selection_point(fields=['horse'], bind='legend',
+                                                                 empty=True)
+                                    _chart = alt.Chart(_wf).mark_line(point=True).encode(
                                         x=alt.X('timestamp:T', title='記録時刻'),
                                         y=alt.Y('odds_value:Q', title='単勝オッズ', scale=alt.Scale(zero=False)),
-                                        color=alt.Color('horse:N', title='馬番:馬名'),
+                                        color=alt.Color('horse:N', title='馬番:馬名',
+                                                        scale=alt.Scale(scheme='tableau10')),
                                         strokeDash=alt.StrokeDash('急変:N', legend=alt.Legend(title='種別')),
-                                        tooltip=[
-                                            alt.Tooltip('horse:N', title='馬'),
-                                            alt.Tooltip('odds_value:Q', title='オッズ', format='.1f'),
-                                            alt.Tooltip('timestamp:T', title='時刻', format='%H:%M:%S'),
-                                            alt.Tooltip('急変:N', title='状態'),
-                                        ]
-                                    ).interactive()
-                                    st.altair_chart(_line_chart, use_container_width=True)
+                                        opacity=alt.condition(_sel_h, alt.value(1.0), alt.value(0.12)),
+                                        size=alt.condition(_sel_h, alt.value(3.2), alt.value(1.0)),
+                                        tooltip=[alt.Tooltip('horse:N', title='馬'),
+                                                 alt.Tooltip('odds_value:Q', title='オッズ', format='.1f'),
+                                                 alt.Tooltip('timestamp:T', title='時刻', format='%H:%M:%S'),
+                                                 alt.Tooltip('急変:N', title='状態')],
+                                    ).add_params(_sel_h).properties(
+                                        height=330, background='#0f1117'
+                                    ).configure_axis(
+                                        labelColor='#9aa4b8', titleColor='#9aa4b8',
+                                        gridColor='#1e2432', domainColor='#2c3346'
+                                    ).configure_legend(
+                                        labelColor='#cbd5e8', titleColor='#8a94ab'
+                                    ).configure_view(stroke=None)
+                                    st.altair_chart(_chart, use_container_width=True)
+                                    st.markdown(
+                                        "<div class='otp-note' style='margin:-6px 0 8px;'>"
+                                        "💡 右の凡例（馬番:馬名）をクリックすると、その馬の線だけ強調表示されます"
+                                        "（もう一度クリックで解除）。</div>",
+                                        unsafe_allow_html=True)
 
-                                    # 急変馬サマリー
-                                    if _alert_uma:
-                                        _alert_rows = []
-                                        for _u in sorted(_alert_uma):
-                                            _f = float(_first.get(_u, 0))
-                                            _l = float(_last.get(_u, 0))
-                                            _d = (_l - _f) / max(_f, 0.01) * 100
-                                            _arrow = '📉' if _d < 0 else '📈'
-                                            _alert_rows.append({'馬番': int(_u), '馬名': _nm.get(int(_u), ''), '初回': _f, '最新': _l, '変化': f"{_arrow}{_d:+.1f}%"})
-                                        st.dataframe(pd.DataFrame(_alert_rows), use_container_width=True, hide_index=True)
-                                    else:
-                                        st.caption(f"急変馬なし（{_snap_count}スナップショット・変化率±15%未満）")
-
-                                    if len(_show_uma) < len(_win_hist['umaban'].unique()):
-                                        st.caption(f"※ 人気上位8頭 + 急変馬のみ表示（全{len(_win_hist['umaban'].unique())}頭中{len(_show_uma)}頭）")
+                                    # ── ダーク変化テーブル(表示馬の初回→最終→変化) ──
+                                    # 変化が大きい上位5頭(絶対変化率)は行テキストを黄色で強調
+                                    _shown = [u for u in _latest_pop.index.tolist() if u in _show_uma]
+                                    _top5_change = set(
+                                        _chg_abs.reindex(_shown).fillna(0)
+                                        .sort_values(ascending=False).head(5).index.tolist())
+                                    _rows = []
+                                    for _u in _shown:
+                                        _f = float(_first.get(_u, 0)); _l = float(_last.get(_u, 0))
+                                        _d = ((_l - _f) / _f * 100) if _f else 0.0
+                                        _flag = ' 🚨' if _u in _alert_uma else ''
+                                        _hotcls = ' otp-hot' if _u in _top5_change else ''
+                                        _dcell = (_dcls(_d) if _u not in _top5_change else 'otp-fl')
+                                        _rows.append(
+                                            f"<tr class='{_hotcls.strip()}'><td>{int(_u)}</td>"
+                                            f"<td>{_esc_h(_nm.get(int(_u), _u))}</td>"
+                                            f"<td>{_f:.1f}</td><td>{_l:.1f}</td>"
+                                            f"<td class='{_dcell}'>{_darr(_d)} {_d:+.1f}%{_flag}</td></tr>")
+                                    _hidden = len(_win_hist['umaban'].unique()) - len(_show_uma)
+                                    _note = (f"人気上位8頭＋急変馬のみ表示（他{_hidden}頭は非表示）"
+                                             if _hidden > 0 else f"{_snap_count}スナップショット")
+                                    st.markdown(
+                                        "<div class='otp'><table class='otp-tbl'><thead><tr>"
+                                        "<th>馬番</th><th>馬名</th><th>初回</th><th>最新</th><th>変化</th>"
+                                        f"</tr></thead><tbody>{''.join(_rows)}</tbody></table>"
+                                        "<div class='otp-note'>🟡=変化が大きい上位5頭　｜　"
+                                        f"🚨=変化率±15%以上の急変馬　｜　{_note}</div></div>",
+                                        unsafe_allow_html=True)
                                 else:
-                                    st.caption(f"グラフ表示には2回以上の記録が必要です（現在 {_snap_count} スナップショット）")
+                                    st.markdown(
+                                        "<div class='otp-note' style='margin:-4px 0 8px;'>"
+                                        "📈 推移グラフには2回以上の記録が必要です。"
+                                        "上の『📥 現在オッズを記録』を時間を空けて複数回押してください。</div>",
+                                        unsafe_allow_html=True)
+                            else:
+                                st.info("まだ記録がありません。上の「📥 現在オッズを記録」を押してください。")
 
                             # ── 🔀 オッズ変動インサイト(朝一↔直前・書籍準拠/未検証) ──
                             try:
@@ -4392,7 +4458,9 @@ if nav == "🏠 Single Race Analysis":
 
                             # ── 異常検知 ──
                             st.markdown("#### ⚠️ 異常検知 (インサイダー・単複乖離)")
-                            # 記録済みのDB ODDSで分析（単複両方ある）
+                            # 記録済みのDB ODDSで分析（単複両方ある）。単複乖離検知に必要なので
+                            # 最新スナップショット(単勝+複勝)をここで取得する(上のカードは単勝のみ使用)。
+                            _latest_odds_df = _tracker.get_latest_odds_df(race_id_input)
                             _detect_src = _latest_odds_df if not _latest_odds_df.empty else df
                             _static_alerts = _analyzer.detect_abnormal_odds(_detect_src)
                             # 時系列の急落アラート
@@ -7747,14 +7815,16 @@ if nav == "🏠 Single Race Analysis":
                                     'name': str(_vr.get('Name', '') or ''),
                                     'pop': (int(_pm_vh.group()) if _pm_vh else None),
                                     'odds': pd.to_numeric(_vr.get('Odds'), errors='coerce')}
-                            # 穴馬ハンターと同じ定義: 7番人気以下×🎯精鋭(recall0.5選抜)をvhスコア降順
+                            # 穴馬ハンターと同じ定義: 6番人気以下×🎯精鋭(recall0.5選抜)をvhスコア降順。
+                            # ※閾値は穴馬ハンター(pop_threshold既定6)と検証台帳(6番人気以下が主流)に統一。
+                            #   以前は7で、精鋭が全て1-6番人気のレースでSRAだけ空になっていた(202610020709)。
                             _vh_picks = []
                             for _vu, _tier in _vht.items():
                                 if _tier != '🎯精鋭':
                                     continue
                                 _inf = _vh_info.get(int(_vu)) or {}
                                 _vp = _inf.get('pop')
-                                if _vp is None or pd.isnull(_vp) or _vp < 7:
+                                if _vp is None or pd.isnull(_vp) or _vp < 6:
                                     continue
                                 _vh_picks.append((float(_vhm.get(_vu, 0) or 0), int(_vu), _inf))
                             _vh_picks.sort(key=lambda t: -t[0])
@@ -7777,11 +7847,11 @@ if nav == "🏠 Single Race Analysis":
                                     st.markdown(f"🎯 **{_vu1}番 {_if1.get('name', '')}**"
                                                 f"（{int(_if1.get('pop'))}番人気）妙味{_vs1 * 100:.0f}"
                                                 + (f"　{_rs1}" if _rs1 else ""))
-                                st.caption("判定＝穴馬ハンター軽量スコア(7番人気以下×🎯精鋭・"
+                                st.caption("判定＝穴馬ハンター軽量スコア(6番人気以下×🎯精鋭・"
                                            "recall70%@基準2.09倍/holdout2025検証)。"
                                            "全頭リストと🕸️広域網は左メニュー『🎯穴馬ハンター』へ。")
                             else:
-                                st.info("🎯精鋭（7番人気以下×妙味スコア上位）に該当する馬はいません。")
+                                st.info("🎯精鋭（6番人気以下×妙味スコア上位）に該当する馬はいません。")
                         except Exception as e_dh:
                             st.caption(f"妙味馬の表示をスキップ: {e_dh}")
 
