@@ -2228,10 +2228,18 @@ if nav == "🏠 Single Race Analysis":
                     # --- オッズ・人気未取得 警告バナー ---
                     _pop_series = pd.to_numeric(df['Popularity'], errors='coerce') if 'Popularity' in df.columns else pd.Series(dtype=float)
                     _odds_series = pd.to_numeric(df['Odds'], errors='coerce') if 'Odds' in df.columns else pd.Series(dtype=float)
-                    _pop_missing  = (_pop_series >= 99).any()
-                    _odds_missing = ((_odds_series <= 0) | (_odds_series >= 9999.0)).any()
-                    _pop_all_missing  = (_pop_series >= 99).all()
-                    _odds_all_missing = ((_odds_series <= 0) | (_odds_series >= 9999.0)).all()
+                    # 取消/除外馬はオッズが負値(-3.0)のセンチネル=物理的にありえない値で表現される。
+                    # これは取得失敗ではなく正常(その馬が出走取消)なので、未取得カウントから除外する。
+                    _scratched = (_odds_series < 0)
+                    _scr_count = int(_scratched.sum())
+                    # 「未取得」= 人気9999/オッズ0以上9999超 だが 取消馬は除く(取消は失敗でない)
+                    _miss_mask = ((_pop_series >= 99) | (_odds_series <= 0) | (_odds_series >= 9999.0)) & (~_scratched)
+                    _pop_missing  = bool(_miss_mask.any())
+                    _odds_missing = _pop_missing
+                    # 全馬未取得(取消を除いた出走馬が全員未取得)=オッズ発売前 or レースID不正
+                    _runners = (~_scratched)
+                    _pop_all_missing  = bool(_runners.any() and (_miss_mask[_runners].all()))
+                    _odds_all_missing = _pop_all_missing
 
                     if _pop_missing or _odds_missing:
                         _is_early = _pop_all_missing and _odds_all_missing
@@ -2245,9 +2253,10 @@ if nav == "🏠 Single Race Analysis":
                                 "- 発売後に再試行するか、下の手入力モードで手動入力してください。"
                             )
                         else:
-                            # 一部取得失敗
-                            _missing_count = (_pop_series >= 99).sum()
-                            st.error(f"🚨 **取得エラー（部分失敗）**: {_missing_count}頭のオッズ/人気を取得できませんでした。")
+                            # 一部取得失敗(取消馬は除いた本当の失敗数)
+                            _missing_count = int(_miss_mask.sum())
+                            st.error(f"🚨 **取得エラー（部分失敗）**: {_missing_count}頭のオッズ/人気を取得できませんでした。"
+                                     + (f"（別に{_scr_count}頭は出走取消/除外）" if _scr_count else ""))
 
                         col_ret1, col_ret2 = st.columns([1, 1])
                         with col_ret1:
@@ -7057,17 +7066,19 @@ if nav == "🏠 Single Race Analysis":
                             #   膨張する既知アーティファクトがあり、レース内EV中央値が吊り上がって
                             #   1番人気が勝ちゾーンから漏れた(2026-07 福島4R: 12番EV79.8<中央値86で
                             #   ③堅実落ち→1着。①に残った2番は馬券外)。
-                            # 現行: ①はEV条件を外し『実測複勝率の上位25%』だけで判定(最も信頼できる軸)。
-                            #   EVは②一撃(穴)の判定のみに使い、EV膨張帯(60倍超)を閾値計算から除外する。
+                            # 現行: ①勝ちゾーンは右上コーナー(複勝率上位25% × 回収率が健全馬の中央値以上)。
+                            #   横帯にすると視覚的に『1/4』でなくなるためコーナー矩形に戻す。
+                            #   EV閾値は60倍超(大穴のEV膨張帯)を除いた健全馬の"中央値"で算出するので、
+                            #   1番人気など本命が中央値割れで漏れることはない(福島4Rの本命除外バグ対策)。
                             _y_hi = float(_sdf['fuku'].quantile(0.75))      # 複勝率のレース内上位25%
                             _y_mid = float(_sdf['fuku'].median())           # 同・中央値(③堅実の境界)
-                            # EV閾値は60倍以下の馬だけで算出(大穴のEV膨張でx_hiが汚染されるのを防ぐ)
                             _sane = _sdf[_sdf['odds'] <= 60.0]
-                            _x_hi = float(_sane['roi'].quantile(0.75)) if len(_sane) >= 4 \
-                                else float(_sdf['roi'].quantile(0.75))
+                            _sane_roi = _sane['roi'] if len(_sane) >= 1 else _sdf['roi']
+                            _x_mid = float(_sane_roi.median())             # ①コーナーのx境界(健全馬EV中央値)
+                            _x_hi = float(_sane_roi.quantile(0.75))        # ②一撃(穴)のx境界
 
                             def _sm_zone(_r):
-                                if _r['fuku'] >= _y_hi:
+                                if _r['fuku'] >= _y_hi and _r['roi'] >= _x_mid:
                                     return '① 勝ちゾーン(このレースの軸候補)'
                                 if _r['roi'] >= _x_hi and _r['odds'] <= 60.0:
                                     return '② 一撃ゾーン(穴)'
@@ -7086,16 +7097,16 @@ if nav == "🏠 Single Race Analysis":
                             _sm_y1 = min(100.0, max(float(_sdf['fuku'].max()), _y_hi + 5.0) + 10)
                             _sm_xs = _alt_sm.Scale(domain=[_sm_x0, _sm_x1], nice=False)
                             _sm_ys = _alt_sm.Scale(domain=[_sm_y0, _sm_y1], nice=False)
-                            # ① 勝ちゾーン=複勝率上位25%の横帯を薄い赤で塗る(EV条件なし=x全域)
-                            _sm_zone_df = pd.DataFrame([{'x0': _sm_x0, 'x1': _sm_x1,
+                            # ① 勝ちゾーン=右上コーナー(x≥健全EV中央値 × 複勝率上位25%)を薄い赤で塗る
+                            _sm_zone_df = pd.DataFrame([{'x0': _x_mid, 'x1': _sm_x1,
                                                          'y0': _y_hi, 'y1': _sm_y1}])
                             _sm_rect = _alt_sm.Chart(_sm_zone_df).mark_rect(
                                 color='#ffc9c9', opacity=0.30).encode(
                                 x=_alt_sm.X('x0:Q', scale=_sm_xs), x2='x1:Q',
                                 y=_alt_sm.Y('y0:Q', scale=_sm_ys), y2='y1:Q')
                             _sm_zlab = _alt_sm.Chart(pd.DataFrame([
-                                {'x': (_sm_x0 + _sm_x1) / 2, 'y': _sm_y1,
-                                 't': '① 勝ちゾーン(このレースの複勝率 上位25%)'}])).mark_text(
+                                {'x': (_x_mid + _sm_x1) / 2, 'y': _sm_y1,
+                                 't': '① 勝ちゾーン'}])).mark_text(
                                 align='center', baseline='top', dy=4, fontSize=12,
                                 fontWeight='bold', color='#e03131').encode(x='x:Q', y='y:Q', text='t:N')
                             _sm_base = _alt_sm.Chart(_sdf)
@@ -7115,14 +7126,18 @@ if nav == "🏠 Single Race Analysis":
                             _sm_r100 = _alt_sm.Chart(pd.DataFrame({'x': [100]})).mark_rule(
                                 color='#adb5bd', strokeDash=[3, 3]).encode(
                                 x=_alt_sm.X('x:Q', scale=_sm_xs))
+                            _sm_rxmid = _alt_sm.Chart(pd.DataFrame({'x': [_x_mid]})).mark_rule(
+                                color='#e03131', strokeDash=[5, 4]).encode(
+                                x=_alt_sm.X('x:Q', scale=_sm_xs))   # ①コーナーの左境界
                             _sm_rxhi = _alt_sm.Chart(pd.DataFrame({'x': [_x_hi]})).mark_rule(
-                                color='#f59f00', strokeDash=[5, 4]).encode(
-                                x=_alt_sm.X('x:Q', scale=_sm_xs))
+                                color='#f59f00', strokeDash=[3, 3]).encode(
+                                x=_alt_sm.X('x:Q', scale=_sm_xs))   # ②一撃の境界
                             _sm_ryhi = _alt_sm.Chart(pd.DataFrame({'y': [_y_hi]})).mark_rule(
                                 color='#e03131', strokeDash=[5, 4]).encode(
-                                y=_alt_sm.Y('y:Q', scale=_sm_ys))
+                                y=_alt_sm.Y('y:Q', scale=_sm_ys))   # ①コーナーの下境界
                             st.altair_chart(
-                                (_sm_rect + _sm_r100 + _sm_rxhi + _sm_ryhi + _sm_pts + _sm_txt + _sm_zlab)
+                                (_sm_rect + _sm_r100 + _sm_rxmid + _sm_rxhi + _sm_ryhi
+                                 + _sm_pts + _sm_txt + _sm_zlab)
                                 .properties(height=430).interactive(),
                                 use_container_width=True)
                             # 100倍超の構造的不利帯を警告(検証: 単勝ROI44.5%に急落・提案C)
@@ -7136,10 +7151,11 @@ if nav == "🏠 Single Race Analysis":
                                     "図の右側に見えても妙味ではなく罠です。")
                             st.caption(
                                 "縦=**複勝率**(単勝オッズ別の実測値・184万頭)／横=**回収率EV**(モデル推定勝率×オッズ)。"
-                                "**薄い赤の帯=① 勝ちゾーン＝このレースの複勝率 上位25%**(実測ベース・最も信頼できる軸候補)。"
+                                "**右上の薄い赤コーナー=① 勝ちゾーン**＝複勝率がレース内上位25% × 回収率が"
+                                "レース内(健全馬)の真ん中より上(実測ベースの最も信頼できる軸候補)。"
                                 "橙破線より右で60倍以下=② 一撃ゾーン(モデルEVがレース内上位・**外れやすい参考枠**)。"
                                 "グレー破線=EV100(参考)。"
-                                "　⚠ 横軸のEVはモデルの目安で、特に大穴(60倍超)では膨らみやすいためゾーン判定から除外。"
+                                "　⚠ 横軸のEVはモデルの目安で、特に大穴(60倍超)では膨らみやすいため閾値計算から除外。"
                                 "ゾーンは**レース内の相対比較**で『必ず儲かる』ではありません(検証済)。"
                                 "この数値は**表示専用でスコア/AI学習/検証には一切使いません**。")
 
@@ -7724,9 +7740,12 @@ if nav == "🏠 Single Race Analysis":
                                 _vu = pd.to_numeric(_vr.get('Umaban'), errors='coerce')
                                 if pd.isnull(_vu):
                                     continue
+                                # 人気は絵文字付き("7 💎"等)だとpd.to_numericでNaN化し精鋭馬が
+                                # 丸ごと除外される(断層恩恵馬バグと同型)→数字だけ抽出する
+                                _pm_vh = re.search(r'\d+', str(_vr.get('Popularity', '') or ''))
                                 _vh_info[int(_vu)] = {
                                     'name': str(_vr.get('Name', '') or ''),
-                                    'pop': pd.to_numeric(_vr.get('Popularity'), errors='coerce'),
+                                    'pop': (int(_pm_vh.group()) if _pm_vh else None),
                                     'odds': pd.to_numeric(_vr.get('Odds'), errors='coerce')}
                             # 穴馬ハンターと同じ定義: 7番人気以下×🎯精鋭(recall0.5選抜)をvhスコア降順
                             _vh_picks = []
