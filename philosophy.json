@@ -1,0 +1,45 @@
+{
+  "steps": {
+    "race_filter": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "elimination": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "danger_check": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "value_hunt": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "axis_support": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "bet_build": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "devil_advocate": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    },
+    "my_rules": {
+      "enabled": true,
+      "mode": "標準",
+      "params": {}
+    }
+  },
+  "custom_rules": []
+}
