@@ -75,6 +75,23 @@ def _is_subseq(short, longer):
     return all(ch in it for ch in short)
 
 
+_RESOLVE_CACHE = {}
+
+
+def _resolved(name, db_path=None):
+    """resolve_jockey_name のメモ化版(内部用)。
+
+    ★重要: 下位の集計関数(jockey_base_stats/jockey_trainer_combo/jockey_usm/jockey_power)は
+    以前これを通しておらず、netkeiba出馬表の略記(『横山武』『岩田望』)でDBを直引きしていたため
+    ヒット0件 →『データ少』→ 騎手係数1.0・黄金ライン空、になっていた(2026-07-14修正)。
+    完全名を渡した場合は同じ名前が返る(冪等)ので、DB名で回すバックテストの結果は変わらない。
+    """
+    key = (str(name), db_path or JV_DB_PATH)
+    if key not in _RESOLVE_CACHE:
+        _RESOLVE_CACHE[key] = resolve_jockey_name(name, db_path=db_path)
+    return _RESOLVE_CACHE[key]
+
+
 def resolve_jockey_name(name, db_path=None):
     """ライブ出馬表の騎手名(略記/減量記号/イニシャル付き)をjravanの完全名へ解決。
 
@@ -153,8 +170,9 @@ def _dist_band(d):
 # ──────────────────────────────────────────────
 def jockey_base_stats(jockey_name, venue=None, distance=None, db_path=None,
                       before_key=None, max_rides=2000):
-    """騎手の全体＆（指定があれば）当該場・距離帯・オッズ帯の成績を返す。"""
-    name = _norm(jockey_name)
+    """騎手の全体＆（指定があれば）当該場・距離帯・オッズ帯の成績を返す。
+    出馬表の略記(『横山武』)でも引けるよう完全名へ解決してから集計する。"""
+    name = _norm(_resolved(jockey_name, db_path))
     out = {'name': name, 'overall': _rate_block([]), 'venue': None,
            'dist': None, 'by_odds': {}}
     if not name or not os.path.exists(db_path or JV_DB_PATH):
@@ -217,8 +235,8 @@ def jockey_horse_combo(jockey_name, ketto_num, db_path=None, before_key=None):
 
 
 def jockey_trainer_combo(jockey_name, trainer_code, db_path=None, before_key=None):
-    """騎手×調教師（黄金ライン）の過去成績。"""
-    name = _norm(jockey_name)
+    """騎手×調教師（黄金ライン）の過去成績。略記の騎手名も完全名へ解決してから引く。"""
+    name = _norm(_resolved(jockey_name, db_path))
     if not name or not trainer_code or not os.path.exists(db_path or JV_DB_PATH):
         return _rate_block([])
     con = _con(db_path)
@@ -375,8 +393,9 @@ def momentum(jockey_name, db_path=None, before_key=None, recent_n=20, base_n=200
 
 
 def jockey_usm(jockey_name, expected, db_path=None, before_key=None, n=150):
-    """騎手の直近n走で較正USM（人気=オッズ期待値に対し何%実成績を出しているか）。"""
-    name = _norm(jockey_name)
+    """騎手の直近n走で較正USM（人気=オッズ期待値に対し何%実成績を出しているか）。
+    略記の騎手名も完全名へ解決してから引く。"""
+    name = _norm(_resolved(jockey_name, db_path))
     if not name or not expected or not os.path.exists(db_path or JV_DB_PATH):
         return {'win_usm': None, 'top2_usm': None, 'top3_usm': None}
     con = _con(db_path)
@@ -402,8 +421,9 @@ JPOWER_MIN_RIDES = 150  # これ未満は偏差値を出さない(ノイズ)
 def jockey_power(jockey_name, db_path=None, before_key=None):
     """騎手のみの力(JPower偏差値・50=平均)。そのレース時点(before_key)以前の
     直近500騎乗で、オッズ期待値に対する複勝上振れ(縮小USM)を偏差値化。
+    略記の騎手名も完全名へ解決してから引く(呼び元での事前resolveは不要・冪等)。
     戻り値: {'jpower': float|None, 'usm': float|None, 'rides': int}"""
-    name = _norm(jockey_name)
+    name = _norm(_resolved(jockey_name, db_path))
     out = {'jpower': None, 'usm': None, 'rides': 0}
     if not name or not os.path.exists(db_path or JV_DB_PATH):
         return out
@@ -526,7 +546,65 @@ def resolve_horse(bamei, db_path=None, before_key=None):
     return (ketto_num, trainer_code)
 
 
-def _trainer_rows(where, params, db_path=None):
+_COURSE_PRIOR_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'data', 'course_prior_cache.json')
+_COURSE_PRIOR = None            # {'01|芝': 0.077, ...}
+_COURSE_PRIOR_FALLBACK = 0.08   # 平均頭数12-13頭の逆数(キャッシュ不能時)
+
+# 厩舎の当コース勝率『妙味あり(🔴)』ゲート。win_rate_shrunk(縮小推定)に対する閾値。
+# 検証: scripts/trainer_shrinkage_backtest.py (train〜2022 / test2023-25・16万騎乗)
+#   shrunk>=0.18 → 3着内残差 +0.0329 (z+2.88)  ★採用
+#   生>=0.20     → 3着内残差 +0.0222 (z+1.84)  (旧・比較用)
+# 縮小推定は勝率を全体平均へ引き寄せる=尺度が圧縮されるため、生の20%と同じ数字は使えない
+# (shrunk>=0.20 は3年で57回しか発火せず実質機能しない)。
+TRAINER_COURSE_GATE = 0.18
+
+
+def course_prior_winrate(jyo, surface, db_path=None):
+    """当コース(場×馬場)の『全体の平均勝率』。縮小推定の引き寄せ先(prior_mean)。
+
+    値は 1/平均出走頭数 に等しく、調教師でも騎手でも共通(誰かは必ず1着になるため)。
+    毎回SQLを打つとレイテンシに響くので data/course_prior_cache.json にキャッシュする。
+    取得できない場合は 0.08(平均12-13頭立ての逆数)にフォールバック。
+    """
+    global _COURSE_PRIOR
+    if _COURSE_PRIOR is None:
+        import json
+        try:
+            with open(_COURSE_PRIOR_CACHE_PATH, encoding='utf-8') as f:
+                _COURSE_PRIOR = json.load(f)
+        except Exception:
+            _COURSE_PRIOR = {}
+    surf = 'ダート' if 'ダ' in str(surface) else '芝'
+    key = f"{str(jyo)[:2]}|{surf}"
+    if key in _COURSE_PRIOR:
+        return _COURSE_PRIOR[key]
+    # 未キャッシュ: DBから算出して書き戻す
+    try:
+        con = _con(db_path)
+        row = con.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN r.chakujun=1 THEN 1 ELSE 0 END) "
+            "FROM results r JOIN races ra ON r.race_key=ra.race_key "
+            "WHERE ra.jyo=? AND ra.surface=? AND r.chakujun>0",
+            [str(jyo)[:2], surf]).fetchone()
+        con.close()
+        n, w = (row or (0, 0))
+        if n and w:
+            _COURSE_PRIOR[key] = w / n
+            import json
+            os.makedirs(os.path.dirname(_COURSE_PRIOR_CACHE_PATH), exist_ok=True)
+            with open(_COURSE_PRIOR_CACHE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(_COURSE_PRIOR, f, ensure_ascii=False, indent=1)
+            return _COURSE_PRIOR[key]
+    except Exception:
+        pass
+    return _COURSE_PRIOR_FALLBACK
+
+
+def _trainer_rows(where, params, db_path=None, prior_mean=None):
+    """成績集計。prior_mean を渡すと 'win_rate_shrunk'(縮小推定した勝率)を追加する。
+    既存キー(runs/wins/win_rate/top3_rate)の値は変えない=後方互換。"""
     con = _con(db_path)
     rows = con.execute(
         f"SELECT r.chakujun FROM results r JOIN races ra ON r.race_key=ra.race_key "
@@ -534,17 +612,28 @@ def _trainer_rows(where, params, db_path=None):
     con.close()
     n = len(rows)
     if n == 0:
-        return {'runs': 0, 'wins': 0, 'win_rate': None, 'top3_rate': None}
+        out = {'runs': 0, 'wins': 0, 'win_rate': None, 'top3_rate': None}
+        if prior_mean is not None:
+            out['win_rate_shrunk'] = prior_mean
+        return out
     wins = sum(1 for (c,) in rows if c == 1)
     t3 = sum(1 for (c,) in rows if c <= 3)
-    return {'runs': n, 'wins': wins, 'win_rate': wins / n, 'top3_rate': t3 / n}
+    out = {'runs': n, 'wins': wins, 'win_rate': wins / n, 'top3_rate': t3 / n}
+    if prior_mean is not None:
+        # 少ない出走数の勝率を全体平均へ引き寄せる(5戦1勝=20%の過信を防ぐ)
+        from core.bayes_stats import shrink_rate
+        out['win_rate_shrunk'] = shrink_rate(wins, n, prior_mean)
+    return out
 
 
 def trainer_course_winrate(trainer_code, jyo, surface, before_key=None,
                            min_year=None, db_path=None):
     """調教師の『当コース(競馬場×馬場)』成績。検証(scripts/trainer_backtest.py)で
     当場×馬場の高勝率(特に>20%)はオッズ超の妙味あり/全体勝率は市場織込み済。
-    min_year='2023'等で期間(過去N年)を限定。戻り値: {'runs','wins','win_rate','top3_rate'}。"""
+    min_year='2023'等で期間(過去N年)を限定。
+    戻り値: {'runs','wins','win_rate','top3_rate','win_rate_shrunk'}。
+    win_rate_shrunk=出走数が少ない時に全体平均へ引き寄せた勝率(5戦1勝=20%の過信を防ぐ)。
+    妙味ゲート(≥20%)の判定にはこちらを使う。"""
     if not trainer_code or not jyo or not os.path.exists(db_path or JV_DB_PATH):
         return None
     surf = 'ダート' if 'ダ' in str(surface) else '芝'
@@ -555,7 +644,8 @@ def trainer_course_winrate(trainer_code, jyo, surface, before_key=None,
         where += " AND r.race_key<?"; params.append(str(before_key))
     if min_year:
         where += " AND ra.year>=?"; params.append(str(min_year))
-    return _trainer_rows(where, params, db_path)
+    _prior = course_prior_winrate(jyo, surface, db_path)
+    return _trainer_rows(where, params, db_path, prior_mean=_prior)
 
 
 def jockey_course_winrate(jockey_name, jyo, surface, before_key=None,
@@ -563,7 +653,9 @@ def jockey_course_winrate(jockey_name, jyo, surface, before_key=None,
     """騎手の『当コース(競馬場×馬場)』成績(騎手名で照会・NAR短縮名はresolveで完全名へ)。
     検証(乗替×コース巧者・人気統制残差): 乗り替わり一律は織込み済み(-0.1pp)だが、乗替先が
     当コース複勝率上位の巧者だと弱いプラス傾向(train+1.5pp/holdout+0.6pp・holdoutは有意水準未満)
-    =スコア加点でなく表示参考用。戻り: {'runs','wins','win_rate','top3_rate'}。"""
+    =スコア加点でなく表示参考用。
+    戻り: {'runs','wins','win_rate','top3_rate','win_rate_shrunk'}。
+    win_rate_shrunk=騎乗数が少ない時に全体平均へ引き寄せた勝率。"""
     if not jockey_name or not jyo or not os.path.exists(db_path or JV_DB_PATH):
         return None
     jn = resolve_jockey_name(jockey_name, db_path) or str(jockey_name)
@@ -575,7 +667,8 @@ def jockey_course_winrate(jockey_name, jyo, surface, before_key=None,
         where += " AND r.race_key<?"; params.append(str(before_key))
     if min_year:
         where += " AND ra.year>=?"; params.append(str(min_year))
-    return _trainer_rows(where, params, db_path)
+    _prior = course_prior_winrate(jyo, surface, db_path)
+    return _trainer_rows(where, params, db_path, prior_mean=_prior)
 
 
 def trainer_overall_winrate(trainer_code, before_key=None, min_year=None, db_path=None):

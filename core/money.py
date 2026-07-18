@@ -143,6 +143,60 @@ def cap_check(next_bet, balance, pct=2.0, unit=100):
             'bet_pct': bet_pct, 'recommended': min(next_bet, cap), 'pct': pct}
 
 
+def dutch_stakes(legs, budget, unit=100):
+    """ダッチング(均等回収)配分。複数馬に賭けて『どれが的中しても同額戻る』配分を返す。
+
+    legs: [{'um':馬番, 'odds':複勝/単勝オッズ(倍)}, ...]（オッズは的中時の払戻倍率）。
+    budget: 総予算(円)。unit: 馬券単位(円)で各stakeを丸める。
+
+    ★重要: これは+EVを作らない。合成回収率(payout_ratio)が100%未満なら賭けるほど負ける。
+    的中率を上げて分散(資金曲線のブレ)を下げるための"買い方"であって、儲けの魔法ではない。
+
+    戻り: {
+      'stakes': [{'um','odds','stake','payout','ret_pct'}...],  # 各馬のstakeと的中時払戻
+      'total': 実際の総投資(unit丸め後),
+      'payout_ratio': 合成回収率(=どれか的中時の払戻/総投資・<1なら-EV),
+      'implied_hit': 合成的中率の目安(=Σ1/odds・>1なら全通り買い過ぎ=不成立),
+      'note': 説明,
+    }
+    合成的中率 Σ(1/odds) >= 1 のときはダッチング不成立(オッズ的に均等回収で利益が出ない/
+    そもそも全馬の勝率合計が1超=矛盾)。その場合は payout_ratio<=1 を返し note で警告。
+    """
+    legs = [l for l in (legs or []) if l.get('odds') and float(l['odds']) > 0]
+    if not legs or budget <= 0:
+        return {'stakes': [], 'total': 0, 'payout_ratio': 0.0,
+                'implied_hit': 0.0, 'note': '対象馬なし'}
+    inv_sum = sum(1.0 / float(l['odds']) for l in legs)   # Σ(1/oi)
+    # 各馬の理想stake比 = (1/oi) / Σ(1/oi)。均等回収になる配分。
+    raw = [(budget * (1.0 / float(l['odds'])) / inv_sum) for l in legs]
+    stakes = [max(unit, int(round(s / unit)) * unit) for s in raw]  # unit丸め(最低1単位)
+    total = sum(stakes)
+    out_legs = []
+    payouts = []
+    for l, s in zip(legs, stakes):
+        po = s * float(l['odds'])            # この馬が的中したときの払戻
+        payouts.append(po)
+        out_legs.append({'um': l.get('um'), 'odds': float(l['odds']), 'stake': s,
+                         'payout': int(po), 'ret_pct': round(po / total * 100, 1) if total else 0.0})
+    # payout_ratio = 『どれか1頭が的中したときの戻り/総投資』(条件付き回収率)。
+    # 均等配分なので各馬の払戻はほぼ同額 → 保守的に最小払戻/総投資。
+    payout_ratio = (min(payouts) / total) if (total and payouts) else 0.0
+    hit_pct = inv_sum * 100.0    # 市場想定のヒット率(Σ1/o・控除率で上振れ気味)
+    if inv_sum >= 1.0:
+        # 複勝を3頭など=Σ1/o≥1: 的中しても総投資割れ(トリガミ)が確定
+        note = (f"⚠トリガミ確定(Σ1/オッズ={inv_sum:.2f}≥1)。"
+                f"どれか来ても戻りは{payout_ratio*100:.0f}%＝必ず負ける組合せ。")
+    else:
+        # 単勝で人気馬を数頭=Σ1/o<1: 的中時は{payout_ratio}%戻るが、来る確率は約{hit_pct}%。
+        # 控除率(約20-25%)ぶん-EVなのは変わらない(市場効率的)。
+        note = (f"どれか来れば戻り{payout_ratio*100:.0f}%／来る確率は市場想定で約{hit_pct:.0f}%。"
+                "的中率を上げて分散を下げる買い方で、控除率ぶん-EVなのは変わりません(儲けの魔法ではない)。")
+    return {'stakes': out_legs, 'total': total,
+            'payout_ratio': round(payout_ratio, 4),
+            'implied_hit': round(inv_sum, 4),
+            'hit_pct': round(hit_pct, 1), 'note': note}
+
+
 # ──────────────────────────────────────────────
 # ③b 帯別ステーク助言（買い方研究の実配当ROIに基づく資金配分・見送り）
 # ──────────────────────────────────────────────

@@ -67,6 +67,18 @@ def build_edge_sets(df, meta, race_id):
         ereason = {}; dreason = {}
         race_date = dv if len(dv) >= 8 else None
         is_handi = bool(meta.get('is_handicap'))
+        # 複勝オッズ(ガラス人気馬=単複逆転FADEの判定用・事前市場値でリーク無し)。
+        # build_edge_setsはセッションキャッシュされるため1レース1回のみfetch。失敗は無視。
+        place_mid_map = {}
+        try:
+            from core.scraper import fetch_place_odds_api
+            _pl = fetch_place_odds_api(race_id) or {}
+            for _u, _pv in _pl.items():
+                _m = (_pv or {}).get('Mid') if isinstance(_pv, dict) else None
+                if _m:
+                    place_mid_map[int(_u)] = float(_m)
+        except Exception:
+            place_mid_map = {}
 
         def _addr(d, u, lab):
             d.setdefault(u, [])
@@ -90,15 +102,30 @@ def build_edge_sets(df, meta, race_id):
             if (not sire or sire == '-') and kt:
                 sire = tb.sire_of_ketto(kt)
             _prev_chaku = None                       # 前走着順(危険人気馬の前走5着以下ソフト理由用)
+            _lay_days = None                         # 休養日数(半年休み明け/中9週+ローテのソフト理由用)
             _pr = r.get('PastRuns')
             if isinstance(_pr, list) and _pr:
                 try:
                     _prev_chaku = int(_pr[0].get('Rank'))
                 except (TypeError, ValueError):
                     _prev_chaku = None
+                try:
+                    from datetime import datetime as _dt_lay
+                    _pd8 = (str(_pr[0].get('Date', '') or '')
+                            .replace('.', '').replace('-', '').replace('/', '')[:8])
+                    if len(_pd8) == 8 and _pd8.isdigit() and race_date:
+                        _lay_days = (_dt_lay.strptime(str(race_date)[:8], '%Y%m%d')
+                                     - _dt_lay.strptime(_pd8, '%Y%m%d')).days
+                        if _lay_days < 0:
+                            _lay_days = None
+                except Exception:
+                    _lay_days = None
             vr = dg.danger_veto(
                 ninki=(int(pop) if pd.notnull(pop) else None),
                 surface=surf, baba=baba, sire=sire, prev_chaku=_prev_chaku,
+                layoff_days=_lay_days,
+                win_odds=(float(_od) if pd.notnull(_od) and _od > 0 else None),
+                place_mid=place_mid_map.get(u),
                 sex_age=str(r.get('SexAge', '') or ''), month=month)
             if vr['severity'] >= 1:
                 danger.add(u)
@@ -165,8 +192,15 @@ def build_edge_sets(df, meta, race_id):
                 pass
             if tc:
                 tcw = jj.trainer_course_winrate(tc, jyo, surf)
-                if tcw and tcw.get('runs', 0) >= 5 and tcw.get('win_rate', 0) >= 0.20:
-                    _addr(ereason, u, f"🏠厩舎当ｺｰｽ{tcw['win_rate']*100:.0f}%")
+                # 妙味ゲートは縮小推定した勝率で判定(5戦1勝=20%の誤発火を防ぐ)。
+                # 閾値18%は縮小推定スケールでの再検証値(scripts/trainer_shrinkage_backtest.py):
+                # shrunk>=18% は 3着内残差+0.0329/z+2.88 で 生>=20%(+0.0222/z+1.84)を上回る。
+                # ※縮小推定は勝率を圧縮するため、生の20%とは尺度が違う(20%のままだとほぼ発火しない)。
+                _twr = tcw.get('win_rate_shrunk') if tcw else None
+                if _twr is None and tcw:
+                    _twr = tcw.get('win_rate')
+                if tcw and tcw.get('runs', 0) >= 5 and (_twr or 0) >= jj.TRAINER_COURSE_GATE:
+                    _addr(ereason, u, f"🏠厩舎当ｺｰｽ{_twr*100:.0f}%")
             if tc and jky:
                 gl = jj.jockey_trainer_combo(jky, tc)
                 if gl and gl.get('rides', 0) >= 10 and gl.get('top2', 0) >= 0.40:
@@ -272,11 +306,12 @@ def integrate(rows, aim, regime):
             bonus += 5.0 * axis_v + 4.0 * market_v + 2.0 * value_votes + (3.0 if combo >= 2 else 0.0)
         else:  # 中立
             bonus += 4.0 * axis_v + 3.0 * market_v + 3.5 * value_votes + (5.0 if combo >= 2 else 0.0)
-        # 危険人気馬(severity≥2=veto)は本命/相手から外す方向へ減点(fade)
+        # 危険人気馬: 注意マーク止まり。軸からは外さない(66R台帳: 警告あり軸77.5%的中=切ると損)。
+        # severity≥2は押さえ推奨の軽い減点、severity==1は微減点。
         if veto:
-            bonus -= 12.0
-        elif danger and pop is not None and pop <= 3:
             bonus -= 5.0
+        elif danger and pop is not None and pop <= 3:
+            bonus -= 3.0
         # 消去クロス重複が多い=来にくさ(検証:重複数→複勝率単調低下)。統合順位を下げて切る側へ
         bonus -= 4.0 * max(0, elim_n - 2)
 
@@ -303,9 +338,8 @@ def integrate(rows, aim, regime):
     ELIM_CUT_POPULAR = 5
     honmei, aite, ana_g, keshi = [], [], [], []
     assigned = set()
-    for h in out:                                   # 危険人気veto → 消し
-        if h['veto']:
-            h['role'] = '💀消し(危険人気)'; keshi.append(h['umaban']); assigned.add(h['umaban'])
+    # 旧: veto→消し。廃止(66R台帳で警告あり軸77.5%的中=消すと損)。
+    # 危険人気馬は減点のみで通常フローに参加し、統合順位で自然に押さえ/穴へ降格する。
     for h in out:                                   # 本命 = 統合最上位の非veto
         if h['umaban'] in assigned:
             continue

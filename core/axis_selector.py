@@ -23,12 +23,28 @@
 候補にはマークを付けない(波乱含みのレースではマークが減る)。
 """
 
+import math as _math
+
 # 単勝オッズ別 実複勝率(%) — jravan.db 2021-2025 全出走馬。(upper_exclusive, 複勝率)
 ODDS_FUKU = [
     (1.2, 94.9), (1.5, 91.8), (1.8, 81.1), (2.2, 74.5), (2.6, 68.7), (3.0, 64.3),
     (3.5, 59.8), (4.5, 52.5), (6.0, 45.2), (8.0, 37.3), (12.0, 30.5), (20.0, 22.5),
     (9999.0, 7.2),
 ]
+# ── 表示用の滑らかな複勝率カーブ(散布図など『全馬を打つ』用途専用) ──
+# ODDS_FUKU は軸マーク判定用の階段テーブルで、最終段が「20倍以上=一律7.2%」に潰れている。
+# 20倍超を実測で割ると 20-25倍16.6% / 32-40倍11.3% / 55-75倍6.5% / 110-200倍2.6% / 200倍超0.9% と
+# 大きく違うため、階段のまま散布図に打つと人気薄が全員同じ高さに並んでしまう(横一列)。
+# 複勝率はオッズに対し『崖なく滑らかに単調』(scripts/axis_filters_backtest.py で確認済)なので、
+# 各ビンの幾何中心をアンカーにして log(オッズ) で線形補間する。数値の捏造ではなく実測の内挿。
+# (代表オッズ, 実複勝率%) — jravan.db 全出走馬(n=1,843,036)。
+ODDS_FUKU_CURVE = [
+    (1.10, 94.9), (1.34, 91.8), (1.64, 81.1), (1.99, 74.5), (2.39, 68.7), (2.79, 64.3),
+    (3.24, 59.8), (3.97, 52.5), (5.20, 45.2), (6.93, 37.3), (9.80, 30.5), (15.49, 22.5),
+    (22.36, 16.6), (28.28, 13.8), (35.78, 11.3), (46.90, 8.8), (64.20, 6.5),
+    (90.80, 4.6), (148.30, 2.6), (316.00, 0.9),
+]
+
 # 人気別 実複勝率(%) — オッズ欠損時のフォールバック
 POP_FUKU = {1: 70.1, 2: 56.0, 3: 44.2, 4: 34.6, 5: 26.6, 6: 20.6, 7: 15.4, 8: 11.7}
 # NAR(地方)専用 人気別 実複勝率(%) — jravan.db 南関含む地方2023-25・各n≈7000で実測。
@@ -43,6 +59,28 @@ ATSU_POP_BONUS = 15.7   # 人気基準(オッズ欠損)時のみ有効な加点(
 # 信頼度フロア: これ未満の馬にはその印を付けない(少なく・迷わない)
 FLOOR = {'◎': 50.0, '〇': 42.0, '▲': 35.0}
 MAX_CAND_POP = 6        # 軸候補とする人気上限(穴は軸にしない=妙味軸/ヒモの役割)
+
+# 前走1着(勝ち上がり直後)の人気馬は『勝ち幅に関係なく』オッズ相応より走らない。
+# scripts/axis_ng_backtest.py で検証(1-5番人気・オッズ20分位で統制した複勝率残差):
+#   前走1着 全体        : train -1.28pp(z-7.18) / holdout -2.28pp(z-2.62)  ★両窓で有意
+#   うち勝ち幅0.3-1.0秒 : train -1.00pp(z-3.43) / holdout -3.67pp(z-2.66)  ★圧勝でなくても負
+#   うち僅差勝ち<0.3秒  : train -1.41pp(z-5.82) / holdout -0.97pp(z-0.82)
+# → 現行の🔨圧勝(ATSU=勝ち幅1.0秒以上)は"前走1着"の一部でしかなく、大多数(圧勝でない勝ち馬)が
+#   無警戒だった。ここを軽い減点で埋める。※複勝率の絶対値は高い(44.5%)ので軸から外すのではなく
+#   『オッズほどには信頼できない』という信頼度の割引([[verified_ohtani_trap]]の運用と同じ)。
+PREV_WIN_DEMERIT = 1.5  # 前走1着の軽い減点(pp)。ATSU(圧勝)が立つ時は二重計上しない
+
+# 『本物の先行』(直近走の平均通過位置比率 < 0.28 = 前方28%以内)の人気馬も過剰人気。
+# scripts/pci_front_axis_backtest.py で検証(1-5番人気・オッズ20分位で統制した複勝率残差):
+#   先行(全体)                 : train -1.61pp(z-6.84) / holdout -1.86pp(z-3.23) ★
+#   先行 × 前走1着でない(純粋分): train -1.03pp(z-4.00) / holdout -1.54pp(z-2.44) ★
+#   先行 × 前走1着(最悪の組合せ): train -4.63pp(z-7.87) / holdout -3.41pp(z-2.45) ★
+#   非先行 × 前走1着でない(対照): train +0.82pp(z+5.09) / holdout +1.00pp(z+2.54) ★ ←最も信頼できる軸
+# ※[[verified_legtype_axis]]と矛盾しない: 先行馬の"生の"複勝率は確かに高い(44.1%)。だが
+#   オッズがそれ以上に高い=過剰人気。前走1着と同じ『絶対値は高いが割高』のパターン。
+#   前走1着とは独立(上記の純粋分)なので減点は加算する。
+FRONT_RATIO = 0.28      # 本物の先行とみなす平均通過位置比率(core/calculator.front_threshold と同値)
+FRONT_DEMERIT = 1.2     # 先行の軽い減点(pp)。前走1着の減点とは加算(独立に効くと検証済)
 
 
 def _valid_odds(odds):
@@ -60,8 +98,30 @@ def _odds_fuku(o):
     return ODDS_FUKU[-1][1]
 
 
-def _axis_conf(pop, table, odds=None, prev_win_margin=None):
-    """内部: 人気別複勝率テーブル table を使って信頼度を算出(JRA/NAR共通ロジック)。"""
+def _odds_fuku_smooth(o):
+    """表示用: ODDS_FUKU_CURVE を log(オッズ)で線形補間した滑らかな複勝率(%)。
+    軸マーク判定には使わない(検証済みの階段テーブル _odds_fuku は据え置き)。"""
+    xs = ODDS_FUKU_CURVE
+    if o <= xs[0][0]:
+        return xs[0][1]
+    if o >= xs[-1][0]:
+        return xs[-1][1]
+    lo = _math.log(o)
+    for (x0, y0), (x1, y1) in zip(xs, xs[1:]):
+        if o <= x1:
+            t = (lo - _math.log(x0)) / (_math.log(x1) - _math.log(x0))
+            return y0 + t * (y1 - y0)
+    return xs[-1][1]
+
+
+def _axis_conf(pop, table, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
+    """内部: 人気別複勝率テーブル table を使って信頼度を算出(JRA/NAR共通ロジック)。
+
+    prev_chaku(前走着順)は任意。1着なら PREV_WIN_DEMERIT を引く(勝ち上がり直後は過剰人気)。
+    圧勝(ATSU)が立つ場合は ATSU_DEMERIT のみ適用し二重計上しない(圧勝 ⊂ 前走1着)。
+    pos_ratio(平均通過位置比率)は任意。FRONT_RATIO未満(=本物の先行)なら FRONT_DEMERIT を引く。
+    前走1着の減点とは独立に効くと検証済みなので加算する。
+    """
     try:
         p = int(pop)
     except (TypeError, ValueError):
@@ -71,11 +131,23 @@ def _axis_conf(pop, table, odds=None, prev_win_margin=None):
 
     o = _valid_odds(odds)
     atsu = (prev_win_margin is not None and prev_win_margin >= ATSU_MARGIN)
+    try:
+        prev_win = (prev_chaku is not None and int(prev_chaku) == 1)
+    except (TypeError, ValueError):
+        prev_win = False
+    try:
+        front = (pos_ratio is not None and 0 < float(pos_ratio) < FRONT_RATIO)
+    except (TypeError, ValueError):
+        front = False
 
     if o is not None:
         conf = _odds_fuku(o)
         if atsu:
             conf -= ATSU_DEMERIT          # オッズ統制下では圧勝は過剰人気=軽い減点
+        elif prev_win:
+            conf -= PREV_WIN_DEMERIT      # 圧勝でなくても『前走1着』は同様に過剰人気(検証済)
+        if front:
+            conf -= FRONT_DEMERIT         # 本物の先行も過剰人気(前走1着とは独立・検証済)
     elif p is not None:
         conf = table.get(p, max(8.0, table.get(1, 70.0) - (p - 1) * 11.0))
         if atsu:
@@ -85,17 +157,44 @@ def _axis_conf(pop, table, odds=None, prev_win_margin=None):
     return round(max(0.0, min(conf, 95.0)), 1)
 
 
-def axis_confidence(pop, odds=None, prev_win_margin=None):
+def axis_confidence(pop, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
     """1頭の推定3着内信頼度(%)を返す(JRA/中央)。軸候補外(人気なし/MAX超)は None。
-    オッズがあればオッズ基準、無ければ人気基準(POP_FUKU)。"""
-    return _axis_conf(pop, POP_FUKU, odds, prev_win_margin)
+    オッズがあればオッズ基準、無ければ人気基準(POP_FUKU)。
+    prev_chaku(前走着順)=1なら軽い減点、pos_ratio<0.28(本物の先行)ならさらに軽い減点。
+    どちらも『生の複勝率は高いがオッズがそれ以上に高い=過剰人気』(検証済・両窓有意)。"""
+    return _axis_conf(pop, POP_FUKU, odds, prev_win_margin, prev_chaku, pos_ratio)
 
 
-def axis_confidence_nar(pop, odds=None, prev_win_margin=None):
+def axis_confidence_nar(pop, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
     """NAR(地方)版。NAR実測の複勝率表(POP_FUKU_NAR)を人気基準で使う。
     地方はオッズ市場が中央ほど厚くなく、NAR較正は人気ベースなので odds は使わず人気基準に固定。
-    地方は人気決着傾向が強く、JRA表だと1番人気(実78.7%)を過小評価する為の較正。"""
-    return _axis_conf(pop, POP_FUKU_NAR, None, prev_win_margin)
+    地方は人気決着傾向が強く、JRA表だと1番人気(実78.7%)を過小評価する為の較正。
+    ※前走1着/先行の減点はオッズ基準(中央)で検証したものなので、人気基準のNARには適用しない。"""
+    return _axis_conf(pop, POP_FUKU_NAR, None, prev_win_margin, prev_chaku, pos_ratio)
+
+
+def fuku_rate(pop, odds=None, is_nar=False):
+    """全出走馬の推定複勝率(%)。軸候補ゲート(MAX_CAND_POP)を掛けない表示専用版。
+
+    axis_confidence() は『軸マークを付けるか』の判定器なので7番人気以下を None で弾く。
+    強適シート(散布図)のように全馬をプロットする用途でそれを使うと人気薄が丸ごと消える為、
+    ゲート無しの複勝率だけをここで返す。軸マーク判定には使わないこと。
+
+    オッズがある場合は階段テーブルでなく ODDS_FUKU_CURVE の対数補間を使う。階段のままだと
+    20倍超が全員7.2%に潰れて散布図で横一列になる(実測では16.6%〜0.9%まで開きがある)。
+    """
+    try:
+        p = int(pop)
+    except (TypeError, ValueError):
+        p = None
+    table = POP_FUKU_NAR if is_nar else POP_FUKU
+    o = None if is_nar else _valid_odds(odds)   # NARはオッズ市場が薄く人気基準に固定
+    if o is not None:
+        return round(max(0.0, min(_odds_fuku_smooth(o), 95.0)), 1)
+    if p is not None and p >= 1:
+        conf = table.get(p, max(3.0, table.get(8, 10.0) - (p - 8) * 1.5))
+        return round(max(0.0, min(conf, 95.0)), 1)
+    return None
 
 
 def _marks(horses, conf_fn):
@@ -104,9 +203,20 @@ def _marks(horses, conf_fn):
     for h in horses:
         nm = str(h.get('name', ''))
         pwm = h.get('prev_win_margin')
-        conf = conf_fn(h.get('pop'), h.get('odds'), pwm)
+        pch = h.get('prev_chaku')
+        prr = h.get('pos_ratio')
+        conf = conf_fn(h.get('pop'), h.get('odds'), pwm, pch, prr)
         atsu = (pwm is not None and pwm >= ATSU_MARGIN)
-        out[nm] = {'mark': '', 'conf': conf, 'atsu': atsu}
+        try:
+            prev_win = (pch is not None and int(pch) == 1)
+        except (TypeError, ValueError):
+            prev_win = False
+        try:
+            front = (prr is not None and 0 < float(prr) < FRONT_RATIO)
+        except (TypeError, ValueError):
+            front = False
+        out[nm] = {'mark': '', 'conf': conf, 'atsu': atsu,
+                   'prev_win': prev_win, 'front': front}
         if conf is not None:
             scored.append((conf, nm))
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -121,8 +231,8 @@ def _marks(horses, conf_fn):
 
 
 def axis_marks(horses):
-    """horses: [{'name','pop','odds'(任意),'prev_win_margin'(任意)}]
-    戻り: {name: {'mark': '◎'/'〇'/'▲'/'', 'conf': float|None, 'atsu': bool}}(JRA/中央)
+    """horses: [{'name','pop','odds'(任意),'prev_win_margin'(任意),'prev_chaku'(任意)}]
+    戻り: {name: {'mark': '◎'/'〇'/'▲'/'', 'conf': float|None, 'atsu': bool, 'prev_win': bool}}
     """
     return _marks(horses, axis_confidence)
 

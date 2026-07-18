@@ -48,6 +48,18 @@ def band_from_value_label(label):
     return _VALUE_BAND.get(str(label or '')[:1], (10.0, 300.0))
 
 
+def trifecta_band_from_trio(band):
+    """3連複基準の狙い目帯→3連単用に換算(lo×5, hi×6)。
+
+    実測(payouts 2016+・34,882R・妙味度ラベル別[25-75%]帯の比較):
+    3連単/3連複の勝ち配当比は中央5.1(IQR3.8-7.0)、帯下限比≈5.0/上限比≈5.6-5.9で
+    全ラベル一貫。3連複配当で較正した🌀妙味度帯をそのまま3連単に使うと帯が狭すぎて
+    in_band(→🎯)がほぼ点かないため、この換算を通すこと。Noneはそのまま返す。"""
+    if not band:
+        return None
+    return (band[0] * 5.0, band[1] * 6.0)
+
+
 def _classify(trio, pop_set, ana_set):
     """trio(umaban tuple) の人気構成 → (人気数, 穴数)。"""
     n_pop = sum(1 for u in trio if u in pop_set)
@@ -123,6 +135,8 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         軸候補◎〇▲(オッズ実複勝率=シグナルとは独立の検証エッジ)を渡す用途=市場評価は高いが
         シグナルの無い馬(例:▲軸候補)がcombo流しから漏れて的中を落とすのを防ぐ(実査9-11-13の13番)。
     band: 狙い目価格帯(lo,hi)の外部指定(任意)。妙味度連動の可変帯を渡す用途。未指定は_TARGET_BAND。
+    n_points>=56(56/84=8/9頭BOX級)は網羅モード: autoプールを全馬スコア上位8/9頭に拡張し
+    パターンのハード除外をしない(通常プールは人気1-4∪6-12のため5番人気/13+が漏れる対策)。
     戻り値: {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
@@ -169,6 +183,12 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         _pool_src = (pop_set | ana_set)
         if combo_flow > 0:
             _pool_src = {u for u in by if _combo_lvl(u) >= combo_flow}
+        elif n_points >= 56:
+            # 大点数の網羅モード(56/84=8/9頭BOX級): プールを全馬スコア上位に拡張。
+            # 通常プールは人気1-4∪6-12番人気のため5番人気/13+番人気が原理的に漏れる
+            # =使う馬で絞って大点数を指定した意思(選択馬の網羅)を優先する。
+            _pool_src = set(by)
+            pool_cap = 8 if n_points <= 56 else 9
         pool = sorted(_pool_src, key=lambda u: -by[u].get('score', 0))[:pool_cap]
         for c in combinations(pool, 3):
             cand.add(frozenset(c))
@@ -180,8 +200,9 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         if len(trio) != 3:
             continue
         n_pop, n_ana = _classify(trio, pop_set, ana_set)
-        # combo馬流し時はパターンのハード除外をしない(combo馬に流す意思を優先)
-        if not _axis_active and combo_flow <= 0 and not _match_pattern(n_pop, n_ana, pattern):
+        # combo馬流し時・大点数網羅モード(56+)時はパターンのハード除外をしない
+        if (not _axis_active and combo_flow <= 0 and n_points < 56
+                and not _match_pattern(n_pop, n_ana, pattern)):
             continue
         base = sum(by[u].get('score', 0) for u in trio)
         # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
@@ -334,6 +355,10 @@ _BAND_FORMATION = {
     'arare': (3, 5, 9, 50, True),    # 荒れ(≥62%): 広角・穴頭も入れる(切ると逆効果)
 }
 
+# 点数指定モードの下限。これ以上の点数を明示選択したら帯推奨点数の上限を外し、
+# その点数を生成できるところまでプールを広げる(60=5頭BOX / 120=6頭 / 210=7頭 / 336=8頭)。
+WIDE_MODE_MIN = 60
+
 
 def formation_for_arare(arare_prob):
     """荒れ確率(0-1)→帯名と(n_first,n_second,n_third,推奨点数,穴頭入れる)。Noneなら None。"""
@@ -346,21 +371,25 @@ def formation_for_arare(arare_prob):
 def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                        pop_th=4, ana_lo=6, ana_hi=12,
                        n_first=3, n_second=5, n_third=9, band=None, arare_prob=None,
-                       fragile_fav=False):
+                       fragile_fav=False, combo_flow=0, keep_partners=None):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
 
     horses: recommend_trio と同形 [{'umaban','name','score','pop','alert'}]
     odds_map: {(1着,2着,3着): odds} = build_trifecta_odds_map の出力(任意)
     axis_umaban: 1着/2着候補の優先馬番リスト(先頭ほど優先。軸馬候補◎〇=オッズ別実複勝率を想定)
-    n_points: 上限点数。推奨は30点だが、あえて増やしたい時のため50までは許容(ハードcapは50)。
+    n_points: 上限点数。推奨は30点。120/210/336は6/7/8頭BOX級の網羅モード
+    (プール自動拡張＋帯別推奨点数の上限を適用しない。🎯抽出向け)。ハードcapは336。
+    band: 狙い目価格帯(lo,hi)の外部指定(妙味度連動の可変帯)。未指定は_TRIFECTA_BAND。
+    combo_flow/keep_partners: recommend_trioと同じ『🧩combo馬流し』。2着/3着ヒモを
+    🧩N重複以上のシグナル馬(＋keep_partners=軸候補◎〇▲)に限定する。1着候補は絞らない。
     戻り値: recommend_trio と同形 {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
     by = {h['umaban']: h for h in horses}
     if len(by) < 3:
         return {'bets': [], 'meta': {}, 'warning': '出走馬が3頭未満のため3連単を組めません'}
-    n_points = max(1, min(int(n_points), 50))   # ハード上限50(推奨30・40/50は任意で増量可)
+    n_points = max(1, min(int(n_points), 336))   # ハード上限336(=8頭BOX級の網羅モード)
     lo, hi = band or _TRIFECTA_BAND
     ranked = sorted(by.values(), key=lambda h: -(h.get('score') or 0))
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
@@ -379,7 +408,18 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
             _bump = {'tight': 'mid', 'mid': 'arare', 'arare': 'arare'}
             band_name = _bump.get(band_name, band_name)
             n_first, n_second, n_third, _sugg, put_ana_head = _BAND_FORMATION[band_name]
-        n_points = max(1, min(int(n_points), _sugg))   # 帯推奨点数を上限に(堅=絞る/荒れ=広げる)
+        if n_points < WIDE_MODE_MIN:
+            n_points = max(1, min(int(n_points), _sugg))   # 帯推奨点数を上限に(堅=絞る/荒れ=広げる)
+    if n_points >= WIDE_MODE_MIN:
+        # 点数指定モード(60点以上): ユーザーが明示的に点数を選んだ場合は帯推奨点数の上限を外し、
+        # その点数を生成できるところまでプールをk頭BOX相当に拡張する。
+        #   k*(k-1)*(k-2) = 60(k=5) / 120(k=6) / 210(k=7) / 336(k=8)
+        # ※以前は120未満が一律で帯推奨(荒れ帯なら50点)に切り捨てられており、60〜100点を選んでも
+        #   50点に潰れて選択が効かなかった。120/210/336の挙動は従来と同一(k=6/7/8)。
+        _k = next((k for k in (5, 6, 7, 8) if k * (k - 1) * (k - 2) >= n_points), 8)
+        n_first = max(n_first, _k)
+        n_second = max(n_second, _k)
+        n_third = max(n_third, _k)
 
     def _combo_lvl(u):
         _m = _COMBO_RE.search(str(by[u].get('alert', '') or ''))
@@ -405,14 +445,24 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
         for u in sorted(ana_set, key=lambda u: -_combo_lvl(u))[:1]:
             if u not in first:
                 first.append(u)
+    # 🧩combo馬流し(recommend_trioと同思想): 2着/3着ヒモを『🧩N重複以上のシグナル馬
+    # ∪keep_partners(軸候補◎〇▲=独立の検証エッジ)∪1着候補』に限定。1着候補は絞らない。
+    keep_partners = set(keep_partners or ())
+    _himo_ok = None
+    if combo_flow and combo_flow > 0:
+        _himo_ok = ({u for u in by if _combo_lvl(u) >= int(combo_flow)}
+                    | keep_partners | set(first))
+    _ranked_himo = ranked if _himo_ok is None else [h for h in ranked if h['umaban'] in _himo_ok]
     # 2着候補: 1着候補+スコア順(取りこぼし=◎〇の2着付けをカバー)
-    second = _fill(list(first), ranked, n_second)
+    second = _fill(list(first), _ranked_himo, n_second)
     # 3着(ヒモ): 🧩シグナル重複穴>妙味シグナル穴>スコア順。荒れ時の3着穴が3連単配当の源泉
     # (combo2+ holdout z+9.2 は単独シグナルより強い=ヒモ選別の第一基準)。
     himo_ranked = sorted(by.values(),
                          key=lambda h: (-(_combo_lvl(h['umaban']) if h['umaban'] in ana_set else 0),
                                         -(1 if (h['umaban'] in ana_set and _has_sig(h['umaban'])) else 0),
                                         -(h.get('score') or 0)))
+    if _himo_ok is not None:
+        himo_ranked = [h for h in himo_ranked if h['umaban'] in _himo_ok]
     third = _fill(list(second), himo_ranked, n_third)
 
     scored = []
@@ -484,6 +534,64 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
 #   人気馬が3頭目に絡むと3連複は配当が伸びない。そんな時は2頭勝負の
 #   馬連/馬単のほうが高配当になりやすい。それを検知して提案する。
 # ──────────────────────────────────────────────
+def purchase_summary(combos, ordered=False):
+    """買い目(3頭組のlist)を購入時に入力しやすい『ながし形式』へ整理する(集合は不変・表記だけ)。
+
+    ordered=False(3連複):
+      axis1 = 軸1頭view。最頻出馬を軸に貪欲グルーピング。相手ペアが相手集合の全組なら
+              『軸X―相手a,b,cの全組』とながし表記に圧縮、そうでなければ相手ペア列挙。
+      axis2 = 軸2頭view。最頻出ペアを軸に貪欲グルーピング→『軸a-b―相手c,d,e』。
+    ordered=True(3連単):
+      first  = 1着固定でまとめ(1着ながし入力用)
+      first2 = 1着→2着でまとめて3着リスト表記(マークカードで最も打ちやすい)
+    戻り: dict of list[str]。同じ買い目集合の別表記であり点数は変わらない。
+    """
+    from itertools import combinations as _comb2
+    combos = [tuple(int(x) for x in c) for c in (combos or []) if len(c) == 3]
+    if not combos:
+        return {}
+    if ordered:
+        by_first, by_f2 = {}, {}
+        for a, b, c in combos:
+            by_first.setdefault(a, []).append((b, c))
+            by_f2.setdefault((a, b), []).append(c)
+        lines1 = [f"1着{a}固定({len(v)}点): " + " / ".join(f"{b}→{c}" for b, c in sorted(v))
+                  for a, v in sorted(by_first.items(), key=lambda kv: -len(kv[1]))]
+        lines2 = [f"{a}→{b}→ " + ",".join(str(c) for c in sorted(v)) + f"（{len(v)}点）"
+                  for (a, b), v in sorted(by_f2.items(), key=lambda kv: -len(kv[1]))]
+        return {'first': lines1, 'first2': lines2}
+    remain = [frozenset(c) for c in combos]
+    lines1 = []
+    while remain:
+        cnt = {}
+        for fs in remain:
+            for u in fs:
+                cnt[u] = cnt.get(u, 0) + 1
+        ax = max(sorted(cnt), key=lambda u: cnt[u])
+        grp = [fs for fs in remain if ax in fs]
+        remain = [fs for fs in remain if ax not in fs]
+        pairs = sorted(tuple(sorted(fs - {ax})) for fs in grp)
+        ps = sorted({u for p in pairs for u in p})
+        if len(ps) >= 2 and len(pairs) == len(ps) * (len(ps) - 1) // 2:
+            lines1.append(f"軸{ax} ― 相手 {','.join(map(str, ps))} の全組（{len(pairs)}点）")
+        else:
+            lines1.append(f"軸{ax} ― 相手ペア " + " / ".join(f"{a}-{b}" for a, b in pairs)
+                          + f"（{len(pairs)}点）")
+    remain2 = [frozenset(c) for c in combos]
+    lines2 = []
+    while remain2:
+        pcnt = {}
+        for fs in remain2:
+            for p in _comb2(sorted(fs), 2):
+                pcnt[p] = pcnt.get(p, 0) + 1
+        pr = max(sorted(pcnt), key=lambda p: pcnt[p])
+        grp = [fs for fs in remain2 if pr[0] in fs and pr[1] in fs]
+        remain2 = [fs for fs in remain2 if not (pr[0] in fs and pr[1] in fs)]
+        thirds = sorted(next(iter(fs - set(pr))) for fs in grp)
+        lines2.append(f"軸{pr[0]}-{pr[1]} ― 相手 {','.join(map(str, thirds))}（{len(grp)}点）")
+    return {'axis1': lines1, 'axis2': lines2}
+
+
 def _pop_label(pop):
     """人気 → 簡易区分。人=1〜5 / 中=6〜9 / 穴=10番人気〜。不明は'?'。"""
     if pop is None:
@@ -557,6 +665,82 @@ def recommend_quinella_exacta(horses, q_odds=None, e_odds=None, axis_umaban=None
                        'score': _sc(a, b)})
     e_rows.sort(key=lambda r: (-int(r['in_band']), -(r['odds'] or 0)))
     return {'axis': axis, 'opp': opp, 'quinella': q_rows, 'exacta': e_rows}
+
+
+def recommend_wide(horses, w_odds=None, axis_umaban=None, n_points=3,
+                   band_w=(5.0, 40.0), veto_axis=None, ana_lo=6, ana_hi=12):
+    """ワイドおすすめ（軸1頭×相手・上位n_points点のみの少数精鋭提案）。
+
+    ワイドは2頭とも3着内で的中＝このアプリの検証済みエッジ(全て3着内率ベース)と
+    券種相性が最も良い2頭券種。相手選抜はアプリのシグナルを総動員:
+      スコア + 🧩combo重複穴(2+:+10/3+:+14=荒れ6シグナル合議・holdout z+9.2)
+      + 妙味シグナル穴(🔥末脚等:+8) + 狙い目帯内(+15/堅すぎ-10/大穴すぎ-6)
+      + 危険人気馬(veto)は軸からも相手からも除外。
+    axis_umaban: 軸馬番(int)。Noneはスコア最上位(veto回避)を自動軸に。
+    w_odds: {frozenset({a,b}): odds}（scraper.fetch_combo_odds(race_id,'wide')の出力可）。
+    band_w: 狙い目価格帯。既定(5,40)=馬連帯(10,120)と同percentile[31-90%]のワイド実測値
+      (payouts 2016+ n=108,770・中央8.0倍・[25,75]=4.1-18.1倍)。
+    戻り: {'axis':u|None, 'opp':[検討した相手], 'wide':[row..(上位n_points)]}
+          row={'combo','names','pop_ana','odds','in_band','score'}
+    """
+    hs = [h for h in horses if h.get('umaban')]
+    if not hs:
+        return {'axis': None, 'opp': [], 'wide': []}
+    by_um = {h['umaban']: h for h in hs}
+    ranked = sorted(hs, key=lambda h: h.get('score', 0) or 0, reverse=True)
+    _veto = {u for u in (veto_axis or [])}
+    if axis_umaban in by_um:
+        axis = axis_umaban
+    else:
+        axis = next((h['umaban'] for h in ranked if h['umaban'] not in _veto),
+                    ranked[0]['umaban'])
+    ana_set = {h['umaban'] for h in hs if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
+    w_odds = w_odds or {}
+
+    def _combo_lvl(u):
+        m = _COMBO_RE.search(str(by_um.get(u, {}).get('alert', '') or ''))
+        return int(m.group(1)) if m else 0
+
+    def _has_sig(u):
+        al = str(by_um.get(u, {}).get('alert', '') or '')
+        return any(s in al for s in _VAL_SIGS)
+
+    def _name(u):
+        return (by_um.get(u) or {}).get('name', '')
+
+    def _pa(combo):
+        return ''.join(_pop_label((by_um.get(u) or {}).get('pop')) for u in combo)
+
+    opp_all = [h['umaban'] for h in ranked
+               if h['umaban'] != axis and h['umaban'] not in _veto]
+    rows = []
+    for o in opp_all:
+        pair = tuple(sorted((axis, o)))
+        od = w_odds.get(frozenset(pair)) or w_odds.get(pair)
+        base = (((by_um.get(axis) or {}).get('score') or 0) +
+                ((by_um.get(o) or {}).get('score') or 0)) / 2.0
+        bonus = 0.0
+        if o in ana_set:
+            if _has_sig(o):
+                bonus += 8.0        # 妙味シグナル穴(末脚top等・3着内エッジ)
+            _lv = _combo_lvl(o)
+            if _lv >= 3:
+                bonus += 14.0       # combo3+ (holdout z+8.2)
+            elif _lv == 2:
+                bonus += 10.0       # combo2+ (holdout z+9.2)
+        in_band = bool(od and band_w[0] <= od <= band_w[1])
+        if od:
+            if in_band:
+                bonus += 15.0
+            elif od < band_w[0]:
+                bonus -= 10.0       # 堅すぎ(配当妙味なし)
+            else:
+                bonus -= 6.0        # 大穴すぎ(当たりにくい)
+        rows.append({'combo': pair, 'names': [_name(pair[0]), _name(pair[1])],
+                     'pop_ana': _pa(pair), 'odds': od, 'in_band': in_band,
+                     'score': round(base + bonus, 1)})
+    rows.sort(key=lambda r: -r['score'])
+    return {'axis': axis, 'opp': opp_all, 'wide': rows[:max(1, int(n_points))]}
 
 
 def trio_vs_pair(trio_combos, t_odds, q_odds, e_odds, pop_by_um=None):

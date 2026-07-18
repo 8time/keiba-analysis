@@ -1607,6 +1607,9 @@ def extract_race_metadata(soup, race_date_val=""):
                 if m_weather: metadata['weather'] = m_weather.group(1)
                 m_cond = re.search(r'馬場:(\w+)', t01)
                 if m_cond: metadata['condition'] = m_cond.group(1)
+                # 発走時刻(例 "15:35発走") — オッズ記録の『発走N分前』逆算に使う
+                m_post = re.search(r'(\d{1,2}:\d{2})\s*発走', t01)
+                if m_post: metadata['post_time'] = m_post.group(1)
             
             d02 = name_box.find('div', class_='RaceData02')
             if d02:

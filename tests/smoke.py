@@ -265,11 +265,37 @@ def main():
               for i in range(1, 13)]
         hs[9]['alert'] = '🔵補正T上位 🔥末脚top 🧩2重複'
         r = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=100)
-        assert r['warning'] is None and len(r['bets']) <= 50, "ハード上限50点(推奨30・40/50は任意増量)"
+        assert r['warning'] is None and len(r['bets']) <= 100, "n_points=100以内"
         assert r['bets'][0]['combo'][0] == 2, f"◎(axis先頭)が1着固定, got {r['bets'][0]['combo']}"
         assert 10 in r['meta']['third'], f"🧩combo穴がヒモ候補入り, got {r['meta']['third']}"
         assert all(len(set(b['combo'])) == 3 for b in r['bets']), "3頭相異なる順序組"
-    check("trio_engine.recommend_trifecta(30点cap/◎頭/🧩ヒモ)", t_trifecta)
+        r336 = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=999)
+        assert len(r336['bets']) <= 336, "ハード上限336点(120/210/336=6/7/8頭BOX級)"
+        r_wide = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=336, arare_prob=0.30)
+        assert len(r_wide['bets']) > 50, f"大点数指定は帯クランプ除外+プール拡張, got {len(r_wide['bets'])}"
+        r_cf = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=50, combo_flow=2)
+        _himo_cf = set(r_cf['meta']['third']) - set(r_cf['meta']['first'])
+        assert _himo_cf <= {10}, f"combo馬流し=ヒモは🧩2重複馬のみ, got {sorted(_himo_cf)}"
+        r_tw = te.recommend_trio(hs, n_points=56)
+        assert len(r_tw['bets']) == 56, f"3連複56=8頭BOX級網羅(パターン絞り除外), got {len(r_tw['bets'])}"
+        # ワイドおすすめ: 軸1頭×検証シグナル厳選で上位3点のみ(馬連/馬単と同じ作り)
+        w_od = {frozenset((1, 2)): 8.0, frozenset((1, 3)): 12.0, frozenset((1, 10)): 25.0,
+                frozenset((1, 4)): 2.0}
+        rw = te.recommend_wide(hs, w_odds=w_od, axis_umaban=1, n_points=3)
+        assert rw['axis'] == 1 and len(rw['wide']) == 3, f"軸1×3点厳選, got {rw['axis']}/{len(rw['wide'])}"
+        _combos_w = [r['combo'] for r in rw['wide']]
+        assert (1, 10) in _combos_w, f"🧩2重複×帯内(25倍)の穴が3点入り, got {_combos_w}"
+        assert all(1 in c for c in _combos_w), "全点が軸絡み"
+        rw_v = te.recommend_wide(hs, w_odds=w_od, veto_axis={1}, n_points=3)
+        assert rw_v['axis'] == 2, f"自動軸はveto回避で次点, got {rw_v['axis']}"
+        # 買い目の整理(軸ながし形式・集合不変の別表記)
+        ps = te.purchase_summary([(1, 2, 3), (1, 2, 4), (1, 3, 4), (2, 3, 4)])
+        assert 'の全組' in ps['axis1'][0], f"軸1頭+相手全組はながし圧縮, got {ps['axis1']}"
+        assert any('軸' in l and '相手' in l for l in ps['axis2']), "軸2頭viewが出る"
+        pst = te.purchase_summary([(1, 2, 3), (1, 2, 4), (1, 3, 5)], ordered=True)
+        assert pst['first'][0].startswith('1着1固定(3点)'), f"1着固定まとめ, got {pst['first']}"
+        assert pst['first2'][0].startswith('1→2→ 3,4'), f"1着→2着まとめ, got {pst['first2']}"
+    check("trio_engine.recommend_trifecta(336cap/◎頭/🧩ヒモ/combo流し)", t_trifecta)
 
     def t_consensus_integrate():
         from core import consensus_view as cv
@@ -519,6 +545,28 @@ def main():
         assert m['A']['mark'] == '◎' and m['A']['conf'] == 78.7, f"NAR1番人気◎, got {m['A']}"
     check("axis_selector.NAR較正(POP_FUKU_NAR)", t_axis_nar)
 
+    def t_jockey_shortname_resolve():
+        """回帰: 出馬表の略記(『横山武』)で騎手成績が0件になるバグ(2026-07-14修正)。
+
+        jockey_base_stats/jockey_trainer_combo/jockey_usm/jockey_power が
+        resolve_jockey_name を通しておらず、略記でDB直引き→ヒット0→『データ少』→
+        騎手係数が全馬1.0・黄金ライン空、になっていた。完全名は冪等(結果不変)。
+        """
+        from core import jockey_jv as jj
+        import os as _os
+        if not _os.path.exists(jj.JV_DB_PATH):
+            return                      # 公開版(DB無し)ではスキップ
+        b = jj.jockey_base_stats('横山武')
+        assert b['name'] == '横山武史', f"略記→完全名, got {b['name']}"
+        assert b['overall']['rides'] > 100, f"略記でも騎乗数が引ける, got {b['overall']['rides']}"
+        # 完全名を渡した場合は同じ結果(冪等=バックテストに影響しない)
+        f = jj.jockey_base_stats('横山武史')
+        assert f['overall']['rides'] == b['overall']['rides'], "完全名と略記で同一結果"
+        # 騎手係数が『データ少』で1.0固定にならない
+        fac = jj.jockey_factor('横山武')
+        assert fac['note'] != 'データ少', "略記でもデータ少にならない"
+    check("jockey_jv.略記の騎手名解決(係数1.0固定バグ回帰)", t_jockey_shortname_resolve)
+
     def t_magi_done_check():
         from core import magi_chat as mc
         led = [{'ts': '2026-07-01 10:00', 'race_id': 'R1', 'place': '東京', 'name': 'A', 'learning': {}},
@@ -587,16 +635,15 @@ def main():
         assert dg.danger_veto(ninki=8, surface='芝', baba='重')['severity'] == 0, "人気薄は危険対象外"
         # 重×1番人気 + 牝×冬春fade = 2件→veto
         r = dg.danger_veto(ninki=1, surface='芝', baba='重', sex_age='牝3', month=1)
-        assert r['veto'] and r['severity'] >= 2, f"重×1番+牝冬春→veto, got {r}"
+        assert not r['veto'] and r['severity'] >= 2, f"重×1番+牝冬春→veto廃止・severity維持, got {r}"
         # 1件なら降格注意(veto=False)
         r1 = dg.danger_veto(ninki=1, surface='芝', baba='重')
         assert (not r1['veto']) and r1['severity'] == 1, f"重×1番のみ→severity1, got {r1}"
-        # axis_demote: severity>=2はマーク置換
-        assert dg.axis_demote('◎ 60%', r).startswith('⚠危険'), "severity>=2でマーク置換"
-        # 高齢(7歳+)ソフト理由: 単独では非表示・硬い危険と重なるとseverity算入(検証済-6.5pp)
-        assert dg.danger_veto(ninki=2, surface='芝', sex_age='牡8')['severity'] == 0, "高齢単独は非表示(ソフト)"
-        _rage = dg.danger_veto(ninki=2, surface='芝', sex_age='牡8', top_jockey_swap=True)
-        assert '高齢(7歳+)' in _rage['reasons'] and _rage['severity'] == 2, "高齢+硬い危険で算入"
+        # axis_demote: severity>=2は押さえ推奨(軸からは外さない・66R台帳検証済)
+        assert '押さえ推奨' in dg.axis_demote('◎ 60%', r), "severity>=2で押さえ推奨"
+        # 高齢(7歳+): 削除済み(66R台帳で3回中3回的中=逆効果)
+        assert '高齢' not in str(dg.danger_veto(ninki=2, surface='芝', sex_age='牡8', top_jockey_swap=True)['reasons']), \
+            "高齢は削除済み"
         # 前走5着以下ソフト理由(検証済 train-1.5/holdout-1.8pp): 単独非表示・硬い危険と算入
         assert dg.danger_veto(ninki=1, surface='芝', prev_chaku=8)['severity'] == 0, "前走5着以下単独は非表示"
         _rp5 = dg.danger_veto(ninki=1, surface='芝', prev_chaku=8, top_jockey_swap=True)
@@ -608,7 +655,390 @@ def main():
         # 他の硬い理由と重なった時のみ算入
         _rs = dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)
         assert _rs['severity'] == 2 and '半年休み明け' in _rs['reasons'], f"休明+硬でstack, got {_rs}"
+        # 中9週+ローテ(63-179日)ソフト理由(実測 複勝残差-1.6pp z-5.6・ROIフラット=軸信頼度のみ)
+        assert dg.danger_veto(ninki=1, layoff_days=70)['severity'] == 0, "中9週+単独は非表示(ソフト)"
+        _r9w = dg.danger_veto(ninki=1, layoff_days=70, top_jockey_swap=True)
+        assert '中9週+ローテ' in _r9w['reasons'] and _r9w['severity'] == 2, f"中9週+硬い危険で算入, got {_r9w}"
+        assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)['reasons'], \
+            "180日+は半年休み明け側(排他)"
+        assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=40, top_jockey_swap=True)['reasons'], \
+            "63日未満は非該当"
+        # ガラス人気馬(単複逆転FADE・検証z-8.5): 上位人気×単勝短い×複勝が帯中央比1.2倍↑=硬い危険
+        from core import value_scanner as _vsg
+        _g_hit, _g_r = _vsg.glass_favorite_fade(3.0, 1.8, ninki=2)  # 2.5-3帯の複勝中央1.2→1.8=x1.5
+        assert _g_hit and _g_r >= 1.25, f"ガラス人気馬判定(閾値1.25), got {_g_hit}/{_g_r}"
+        assert not _vsg.glass_favorite_fade(3.0, 1.1, ninki=2)[0], "複勝が帯並みならガラスでない"
+        assert not _vsg.glass_favorite_fade(15.0, 5.0, ninki=8)[0], "人気薄/単勝10倍+は対象外"
+        _rg = dg.danger_veto(ninki=2, surface='芝', win_odds=3.0, place_mid=1.8)
+        assert any('ガラス' in x for x in _rg['reasons']) and _rg['severity'] == 1, f"ガラスは硬い危険1件, got {_rg}"
     check("danger_gate.danger_veto / axis_demote", t_danger_gate)
+
+    def t_bayes_shrink():
+        from core.bayes_stats import shrink_rate
+        # 少サンプル(5戦1勝=20%)は全体平均(8%)へ引き寄せられ、生の20%より小さく8%より大きい
+        s = shrink_rate(1, 5, 0.08)
+        assert 0.08 < s < 0.20, f"5戦1勝は0.08〜0.20の間に縮小, got {s}"
+        # 大サンプル(100戦20勝=20%)は実測値のまま(引き寄せの影響が小さい)
+        big = shrink_rate(20, 100, 0.08)
+        assert abs(big - 0.20) <= 0.03, f"100戦20勝は0.20±0.03, got {big}"
+        # n=0 は prior をそのまま返す
+        assert shrink_rate(0, 0, 0.08) == 0.08, "n=0はprior_mean"
+        # 3戦3勝(100%)も母集団平均へ大きく引き戻される(過信防止の本丸)
+        assert shrink_rate(3, 3, 0.08) < 0.30, "3戦3勝でも100%とは出さない"
+        # 不正入力
+        for bad in [(-1, 5, 0.08), (6, 5, 0.08), (1, 5, 1.5)]:
+            try:
+                shrink_rate(*bad)
+                raise AssertionError(f"不正入力でValueErrorが必要: {bad}")
+            except ValueError:
+                pass
+    check("bayes_stats.shrink_rate(縮小推定)", t_bayes_shrink)
+
+    def t_trainer_course_gate():
+        from core import jockey_jv as jjg
+        # 妙味ゲート閾値は縮小推定スケールでの再検証値(trainer_shrinkage_backtest.py: z+2.88)。
+        # 生の20%とは尺度が違う(shrunk>=0.20は3年で57回しか発火せず機能しない)ため0.18。
+        assert abs(jjg.TRAINER_COURSE_GATE - 0.18) < 1e-9, \
+            f"厩舎当コースゲートは0.18(縮小推定スケール), got {jjg.TRAINER_COURSE_GATE}"
+        # course_prior_winrate はDB無くてもフォールバックを返す(0〜1)
+        _p = jjg.course_prior_winrate('05', '芝')
+        assert _p is not None and 0.0 < _p < 1.0, f"prior は0〜1, got {_p}"
+    check("jockey_jv.TRAINER_COURSE_GATE(縮小推定ゲート)", t_trainer_course_gate)
+
+    def t_wilson():
+        from core.bayes_stats import wilson_lower
+        # 66R中52的中(78.8%)の下限は67%前後(=レース数が少ない分を差し引いた堅めの値)
+        lo = wilson_lower(52, 66)
+        assert 0.66 <= lo <= 0.70, f"wilson_lower(52,66)は0.66〜0.70, got {lo}"
+        # 常に実測値より下(=盛らない)
+        assert lo < 52 / 66, "下限は実測値より小さい"
+        # n=0 は None
+        assert wilson_lower(0, 0) is None, "n=0はNone"
+        # 全的中(k=n)でも1.0未満(標本が少ない不確実性が残る)
+        assert wilson_lower(5, 5) < 1.0, "k=nでも1.0未満"
+        # 標本が増えるほど下限は実測値に近づく
+        assert wilson_lower(80, 100) < wilson_lower(800, 1000), "標本が多いほど下限は上がる"
+        # 不正入力
+        for bad in [(-1, 5), (6, 5)]:
+            try:
+                wilson_lower(*bad)
+                raise AssertionError(f"不正入力でValueErrorが必要: {bad}")
+            except ValueError:
+                pass
+    check("bayes_stats.wilson_lower(控えめな下限)", t_wilson)
+
+    def t_track_record_lo():
+        from core import track_record as tr
+        s = tr.get_summary()
+        # 下限キーが常に存在する(データ有無に関わらず・呼び手が KeyError にならない)
+        for k in ('axis_rate_lo', 'trio_rate_lo', 'any_hit_rate_lo', 'keshi_precision_lo'):
+            assert k in s, f"get_summary に {k} が必要"
+        # データがあるなら下限 <= 実測値
+        if s.get('axis_rate') is not None and s.get('axis_rate_lo') is not None:
+            assert s['axis_rate_lo'] <= s['axis_rate'], "下限は実測以下"
+        txt = tr.export_summary_text()
+        assert isinstance(txt, str) and txt, "成績テキストが生成される"
+    check("track_record.get_summary(下限併記)", t_track_record_lo)
+
+    def t_elim_promote():
+        import json as _js
+        import tempfile as _tf
+        from core import elim_reasons as er
+        p = os.path.join(_tf.gettempdir(), 'smoke_elim.json')
+
+        # --- 旧形式(listのみ)の台帳が読めること(移行互換) ---
+        old = [{'race_id': 'r1', 'tags': ['anauma']},
+               {'race_id': 'r2', 'tags': ['anauma']},
+               {'race_id': 'r3', 'tags': ['anauma']}]
+        with open(p, 'w', encoding='utf-8') as f:
+            _js.dump(old, f)
+        led = er.load_ledger(p)
+        assert isinstance(led, list) and len(led) == 3, "旧形式listが読める"
+        assert er.load_fired(p) == {}, "旧形式のfiredは空"
+        # 分母が無いので従来の3回ルールで昇格
+        assert 'anauma' in er.learned_tags(led, path=p), "分母なし=3回ルールで昇格"
+
+        # --- 分母を記録すると生還率ベースの判定に切り替わる ---
+        # 40レースで anauma を切った(= 分母40) → 3回来ただけでは昇格しない
+        for i in range(40):
+            er.record_fired(f'race{i}', {1: ['anauma']}, path=p)
+        led = er.load_ledger(p)
+        assert len(led) == 3, "fired記録でentriesは壊れない"
+        st = er.tag_stats(led, path=p)
+        assert st['anauma']['fired'] == 40 and st['anauma']['hits'] == 3
+        assert not st['anauma']['promoted'], \
+            f"40回切って3回来た(7.5%)は昇格しない, got {st['anauma']}"
+
+        # --- 冪等性: 同じrace_idを何度記録しても分母は増えない(Streamlit再描画対策) ---
+        for _ in range(5):
+            er.record_fired('race0', {1: ['anauma']}, path=p)
+        assert er.tag_stats(er.load_ledger(p), path=p)['anauma']['fired'] == 40, \
+            "同一race_idの再記録で分母が膨らまない"
+
+        # --- 少数だが高率なタグは昇格する ---
+        from core.bayes_stats import shrink_rate
+        assert shrink_rate(3, 3, er.BASE_SURVIVE, er.PRIOR_STRENGTH) >= er.PROMOTE_RATE, \
+            "3回切って3回来た=昇格"
+        assert shrink_rate(3, 40, er.BASE_SURVIVE, er.PRIOR_STRENGTH) < er.PROMOTE_RATE, \
+            "40回切って3回来た=昇格しない(頻出タグの誤昇格防止)"
+        os.remove(p)
+    check("elim_reasons.learned_tags(分母つき昇格)", t_elim_promote)
+
+    def t_odds_schedule():
+        from core import odds_schedule as osch
+        from datetime import datetime as _dts
+        assert osch._norm_hhmm('8:40') == '08:40' and osch._norm_hhmm('0840') == '08:40'
+        assert osch._norm_hhmm('25:00') is None and osch._norm_hhmm('x') is None
+        plan = {'date': '20260712', 'times': ['12:00', '08:40'],
+                'races': [{'race_id': '202605050311', 'label': '東京11R'}], 'records': {}}
+        plan = osch.save_plan(plan, path=osch.PLAN_PATH + '.smoketest')
+        assert plan['times'] == ['08:40', '12:00'], f"時刻は正規化+ソート, got {plan['times']}"
+        # 08:40枠は08:45時点でdue / 09:30(猶予25分超)ではstale=due外
+        due = osch.due_slots(plan, now=_dts(2026, 7, 12, 8, 45))
+        assert ('202605050311', '08:40', '東京11R') in due, f"08:45に08:40枠がdue, got {due}"
+        assert osch.due_slots(plan, now=_dts(2026, 7, 12, 9, 30)) == [], "猶予超過はdue外(stale)"
+        assert osch.due_slots(plan, now=_dts(2026, 7, 12, 8, 30)) == [], "予定前はdue外"
+        osch.mark_done(plan, '202605050311', '08:40', 12)
+        assert osch.due_slots(plan, now=_dts(2026, 7, 12, 8, 45)) == [], "記録済はdue外"
+        stt = osch.plan_status(plan, now=_dts(2026, 7, 12, 8, 45))
+        assert stt['total'] == 2 and stt['done'] == 1 and stt['pending'] == 1, f"進捗, got {stt}"
+        # 共通times空×レース個別timesのプランでもdueが出る(ランナーガードバグ回帰防止)
+        plan2 = {'date': '20260712', 'times': [],
+                 'races': [{'race_id': '202610020607', 'label': '小倉7R', 'times': ['13:10']}],
+                 'records': {}}
+        due2 = osch.due_slots(plan2, now=_dts(2026, 7, 12, 13, 15))
+        assert ('202610020607', '13:10', '小倉7R') in due2, f"個別times形式でdue, got {due2}"
+        # ── 前日夜枠(night_times): dateの前日の時刻としてdue判定される ──
+        plan3 = {'date': '20260713', 'times': ['08:40'], 'night_times': ['22:00'],
+                 'races': [{'race_id': '202605050311', 'label': '東京11R'}], 'records': {}}
+        plan3 = osch.save_plan(plan3, path=osch.PLAN_PATH + '.smoketest')
+        assert plan3['night_times'] == ['22:00'], "night_timesも正規化保存"
+        # 前日(7/12) 22:05 → 前日夜枠がdue(トークンは'前日22:00')
+        due3 = osch.due_slots(plan3, now=_dts(2026, 7, 12, 22, 5))
+        assert ('202605050311', '前日22:00', '東京11R') in due3, f"前日夜がdue, got {due3}"
+        # 当日(7/13) 22:05 は前日夜枠のdueではない(猶予超過)・当日朝08:45は当日枠のみ
+        assert osch.due_slots(plan3, now=_dts(2026, 7, 13, 22, 5)) == [], "当日夜はdue外"
+        due3b = osch.due_slots(plan3, now=_dts(2026, 7, 13, 8, 45))
+        assert due3b == [('202605050311', '08:40', '東京11R')], f"当日朝は当日枠のみ, got {due3b}"
+        # mark_doneでキー'<rid>|前日22:00'が立ち、二重記録しない
+        osch.mark_done(plan3, '202605050311', '前日22:00', 12)
+        assert osch.due_slots(plan3, now=_dts(2026, 7, 12, 22, 5)) == [], "前日夜の記録済はdue外"
+        stt3 = osch.plan_status(plan3, now=_dts(2026, 7, 12, 22, 5))
+        assert stt3['total'] == 2 and stt3['done'] == 1, f"前日夜込みの進捗, got {stt3}"
+        # ハートビート: touch直後はalive・古い/無しはFalse
+        _hb = osch.HEARTBEAT_PATH + '.smoketest'
+        osch.touch_heartbeat(path=_hb)
+        assert osch.runner_alive(path=_hb), "touch直後はalive"
+        assert not osch.runner_alive(max_age_s=-1, path=_hb), "期限切れはFalse"
+        import os as _os_sm
+        _os_sm.remove(osch.PLAN_PATH + '.smoketest')
+        _os_sm.remove(_hb)
+    check("odds_schedule.plan/due/status", t_odds_schedule)
+
+    def t_dbkeiba_slug():
+        from core import dbkeiba as dk
+        # slugは 'jockey-samejima' 形式と 'jockey-osuke-tayama'(名-姓)形式の両方がある。
+        # 正規表現の文字クラスに '-' が無いと後者が途中で切れ、その騎手がマップから丸ごと
+        # 落ちる(2026-07に20名欠落を実測。田山旺佑が『未取得』のままだった真因)。
+        jmap = {'鮫島克駿': 'jockey-samejima', '鮫島良太': 'jockey-ryota-sameshima',
+                '田山旺佑': 'jockey-osuke-tayama', '戸崎圭太': 'jockey-tosaki',
+                'ルメール': 'jockey-lemaire'}
+        # 姓のみ表記 → 完全名
+        assert dk.resolve_slug('田山', jmap) == 'jockey-osuke-tayama', "姓のみ『田山』が解決"
+        assert dk.resolve_slug('戸崎圭', jmap) == 'jockey-tosaki', "『戸崎圭』→戸崎圭太"
+        # 中間文字が省略された略記(アプリ『鮫島駿』 vs サイト『鮫島克駿』)。
+        # 同姓の『鮫島良太』がいても末尾一致ガードで誤爆しない。
+        assert dk.resolve_slug('鮫島駿', jmap) == 'jockey-samejima', "『鮫島駿』→鮫島克駿"
+        # 外国人騎手のイニシャル付き
+        assert dk.resolve_slug('Ｃ．ルメール', jmap) == 'jockey-lemaire', "イニシャル付きが解決"
+        # 実マップにも両騎手が載っていること(取りこぼし回帰の検出)
+        real = dk.get_jockey_map(allow_fetch=False)
+        if real:
+            assert dk.resolve_slug('鮫島駿', real), "実マップで鮫島駿が解決"
+            assert dk.resolve_slug('田山', real), "実マップで田山が解決"
+    check("dbkeiba.resolve_slug(ハイフンslug/略記)", t_dbkeiba_slug)
+
+    def t_np_j5():
+        from core import newspaper as np_j5
+        rid = 'smoketest_j5'
+        rows = [{'騎手込み順位': 1, '順位変動': '↑2', '馬番': 9, '馬名': 'テスト馬',
+                 '騎手': '鮫島駿', '強適スコア': 71.2, '騎手係数': 1.043,
+                 '黄金ライン': '🥇🥇', 'DB条件': '📗2', '騎手込みスコア': 74.3}]
+        np_j5.write_j5_snapshot(rid, rows, weight=1.0)
+        d = np_j5.load_j5(rid)
+        assert d and len(d['rows']) == 1 and d['weight'] == 1.0, "J5スナップショット保存/読込"
+        h = np_j5._j5_html(rid)
+        assert 'テスト馬' in h and '鮫島駿' in h, "J5表に馬名/騎手が載る"
+        assert '100%' in h, "騎手影響率(スライダー値)を併記=再現性の担保"
+        assert 'exbox exwide' in h, "8列なので幅広ボックス"
+        # スナップショット未保存のレースでは空(=SRA未解析レースに出ない)
+        assert np_j5._j5_html('no_such_race_id') == '', "未保存レースは空"
+        os.remove(np_j5._j5_path(rid))
+    check("newspaper.j5(騎手係数セクション)", t_np_j5)
+
+    def t_np_colfmt():
+        from core import newspaper as np_cf
+        # 見出しの折り返し(<br>挿入)
+        assert np_cf._header_cell('⭐展開適合度') == '⭐展開<br>適合度', "展開適合度は⭐展開で改行"
+        assert np_cf._header_cell('🔥総合戦闘力') == '🔥総合<br>戦闘力', "総合戦闘力は🔥総合で改行"
+        assert np_cf._header_cell('🟣🔵補正T') == '🟣🔵<br>補正T', "補正Tは🔵で改行"
+        assert np_cf._header_cell('🟣🏇騎手力(乗替)') == '🟣騎手力(乗替)', "騎手力の🏇アイコン除去"
+        assert np_cf._header_cell('馬名') == '馬名', "対象外の見出しは素通し"
+        # JPower値だけ括弧手前で改行・他列は改行しない
+        assert np_cf._cell_html('JPower', '1 👑62(▲+25)', 0) == '1 👑62<br>(▲+25)', "騎手力は括弧手前で改行"
+        assert np_cf._cell_html('JPower', '52', 0) == '52', "デルタ無しはそのまま"
+        assert np_cf._cell_html('BloodStats', '27%(256)', 0) == '27%(256)', "他列の括弧は改行しない"
+        # 乗替(JockeyChange)は矢印の後ろで改行
+        assert np_cf._cell_html('JockeyChange', '木幡巧也→丹内', 0) == '木幡巧也→<br>丹内', "乗替は→の後で改行"
+        assert np_cf._cell_html('JockeyChange', '-', 0) == '-', "乗替なしはそのまま"
+        # 列スラッグ(CSSクラス)
+        assert np_cf._col_slug('Projected Score') == 'col-Projected_Score', "空白は_に畳む"
+        assert np_cf._col_slug('Bloodline') == 'col-Bloodline'
+    check("newspaper.列見出し折返し/幅クラス", t_np_colfmt)
+
+    def t_roi_tools():
+        # 提案C: 極端人気薄(100倍超)の構造的不利警告
+        from core import value_scanner as vsr
+        assert vsr.longshot_disadvantage(150) and vsr.longshot_disadvantage(150)['roi'] == 44.5, \
+            "100倍超は不利帯警告"
+        assert vsr.longshot_disadvantage(100) is None, "ちょうど100倍は非警告(境界)"
+        assert vsr.longshot_disadvantage(80) is None, "50-100倍は本命帯同等=警告しない"
+        assert vsr.longshot_disadvantage(None) is None, "不正値はNone"
+        # 提案B: ダッチング(均等回収)配分
+        from core.money import dutch_stakes
+        r = dutch_stakes([{'um': 8, 'odds': 4.0}, {'um': 4, 'odds': 6.0}], 3000)
+        assert r['total'] > 0 and len(r['stakes']) == 2, "2頭配分が返る"
+        # オッズ低すぎ(Σ1/o>=1)はトリガミ確定警告
+        r2 = dutch_stakes([{'um': 1, 'odds': 1.5}, {'um': 2, 'odds': 1.8}], 2000)
+        assert r2['implied_hit'] >= 1.0 and 'トリガミ' in r2['note'], "オーバーラウンドはトリガミ警告"
+        # 単勝で人気馬(Σ1/o<1)は条件付回収>100%だがヒット率併記(-EVは明記)
+        r3 = dutch_stakes([{'um': 1, 'odds': 3.9}, {'um': 2, 'odds': 6.1}], 3000)
+        assert r3['payout_ratio'] > 1.0 and 'hit_pct' in r3 and '-EV' in r3['note'], \
+            "Σ1/o<1は条件付>100%+ヒット率+(-EV明記)"
+        # 空/予算0は安全
+        assert dutch_stakes([], 1000)['total'] == 0 and dutch_stakes([{'um': 1, 'odds': 3}], 0)['total'] == 0
+    check("ROI道具(longshot警告/dutching)", t_roi_tools)
+
+    def t_pace_spurt():
+        from core import pace_spurt as ps
+        # スロー=前半3F遅い(mae大)>後半, ハイ=前半速い(mae小)<後半 → 芝1800想定
+        assert ps.classify_pace('芝', 1800, 420, 360) == 'slow', "前半遅い=slow"
+        assert ps.classify_pace('芝', 1800, 340, 400) == 'high', "前半速い=high"
+        assert ps.classify_pace('芝', 1800, 0, 360) is None, "欠損はNone"
+        q = ps.spurt_quality(None)  # ketto無しは安全に空
+        assert q['tag'] is None and q['n'] == 0 and not q['reliable'], f"空入力は中立, got {q}"
+    check("pace_spurt.classify/quality", t_pace_spurt)
+
+    def t_odds_move():
+        from core import odds_move as omv
+        import pandas as _pdm
+        # 朝一(t0): 3番が最良(1人気)・7番が2人気 / 直前(t1): 5番が浮上して1人気、3番は5人気に降下
+        rows = []
+        for ts, snap in [('2026-07-12 08:40:00', {3: 2.0, 7: 3.0, 5: 9.0, 9: 12.0, 2: 15.0}),
+                         ('2026-07-12 15:20:00', {5: 2.2, 7: 3.1, 9: 6.0, 2: 8.0, 3: 11.0})]:
+            for u, o in snap.items():
+                rows.append({'timestamp': ts, 'umaban': u, 'odds_type': 'win', 'odds_value': o})
+        h = _pdm.DataFrame(rows)
+        r = omv.analyze_odds_movement(h)
+        assert r['ok'], f"2スナップで分析可, got {r}"
+        kinds = {i['kind']: i['umaban'] for i in r['insights']}
+        assert kinds.get('fav_fake') == 5, f"直前浮上5番=見せかけ1番人気, got {kinds}"
+        assert kinds.get('hidden_ana') == 3, f"朝一1番人気→直前降下3番=隠れ本命, got {kinds}"
+        # 1スナップのみは不足メッセージ
+        h1 = h[h['timestamp'] == '2026-07-12 08:40:00']
+        assert not omv.analyze_odds_movement(h1)['ok'], "1スナップは分析不可"
+    check("odds_move.analyze(朝一↔直前)", t_odds_move)
+
+    def t_newspaper():
+        # 📰 新聞発行: viewスナップショット往復→HTML組版→CSV(PDF化はPlaywright依存なので対象外)
+        import pandas as _pdn
+        from core import newspaper as npm
+        rid = '209905050599'
+        df = _pdn.DataFrame({
+            'Rank': [1, 2], 'Umaban': [3, 7], 'Name': ['🔥馬A', '馬B'],
+            'Odds': ['2.5', '48.0'], 'Popularity': ['1', '9'], '補正T': ['🔵110', '98'],
+            'PastRuns': [[{'a': 1}], [{'a': 2}]], 'Name__dup_right': ['x', 'y'],
+            'RaceName': ['テストR'] * 2, 'Venue': ['東京'] * 2, 'RaceDate': ['2026/07/12'] * 2,
+        })
+        npm.write_view_snapshot(rid, df, {'Name': '馬名', '補正T': '🔵補正T'},
+                                ['Umaban', 'Name', 'Odds', '補正T'],
+                                meta={'condition': '良'}, sort_label='テスト順')
+        v = npm.load_view(rid)
+        assert v and v['source'] == 'view', "viewスナップショット読める"
+        assert 'PastRuns' not in v['columns'] and not any(
+            c.endswith('__dup_right') for c in v['columns']), "ネスト列/複製列は除外"
+        assert v['meta']['venue'] == '東京' and v['meta']['condition'] == '良', f"meta, got {v['meta']}"
+        npm.write_consensus_snapshot(
+            rid, '②穴妙味向き',
+            {'groups': {'honmei': [3], 'aite': [], 'osae': [], 'ana': {7}, 'keshi': []},
+             'horses': [{'umaban': 3, 'name': '馬A', 'pop': 1, 'odds': 2.5, 'axis_mark': '◎'}]},
+            aim={'danger': {7}, 'veto': set(), 'elim': {7: 3},
+                 'vh': {7: 0.2}, 'vh_tier': {7: '🎯精鋭'},
+                 'edge_reasons': {7: ['🔥末脚top']}, 'danger_reasons': {7: ['ガラス人気馬']}})
+        cv = npm.load_consensus(rid)
+        assert cv['groups']['ana'] == [7], "set→listで合議groups往復"
+        assert cv['aim']['elim'].get('7') == 3, "aim(消去クロス)が往復"
+        # 買い目/展開スナップショット
+        npm.write_bets_snapshot(rid, 'trio', {'bets': [{'combo': (3, 7, 2), 'odds': 58.0,
+                                                        'aim_tag': '🎯'}]},
+                                extra={'pattern': '②穴妙味'})
+        npm.write_pace_snapshot(rid, {'pos4': {3: 0.1, 7: 0.9}, 'leader': 3,
+                                      'pace': 'ミドル', 'nige_umas': [3], 'contested': False})
+        html, iss = npm.build_newspaper_html([rid], {'col_mode': 'app'})
+        # 見出し「🟣🔵補正T」は列幅対策で🔵の後に<br>が入る(→ 🔵<br>補正T)
+        assert html and '🔵<br>補正T' in html and '① 本命' in html, "紙面に表示ラベル(折返し)+合議カード"
+        for tok in ('危険人気馬', '軸候補', '3連複おすすめ', '展開・隊列',
+                    '消去フィルター', '穴馬ハンター'):
+            assert tok in html, f"新セクション欠落: {tok}"
+        assert '3-7-2(58倍)' in html, "買い目コンボが紙面化"
+        assert iss[0]['n_cols'] == 4, f"アプリ表示列の列数維持, got {iss[0]['n_cols']}"
+        # カスタム(チェック式)列: チェック順=紙面順
+        html_c, iss_c = npm.build_newspaper_html(
+            [rid], {'col_mode': 'custom', 'custom_cols': ['Name', 'Umaban']})
+        assert iss_c[0]['n_cols'] == 2, f"カスタム2列, got {iss_c[0]['n_cols']}"
+        csvb, nr, nc = npm.build_csv_bytes(rid)
+        assert csvb and nr == 2 and nc >= 4, f"CSVエクスポート, got {nr}x{nc}"
+        for pth in (npm._view_path(rid), npm._cv_path(rid),
+                    npm._bets_path(rid), npm._pace_path(rid)):
+            if os.path.exists(pth):
+                os.remove(pth)
+    check("newspaper.スナップショット往復/組版/CSV", t_newspaper)
+
+    def t_scan_digest():
+        # 📰 スキャン新聞: 保存(lean dict→str)→フィルタ(②のみ/本線のみ/見送り除外)→組版
+        from core import newspaper as npm
+        import shutil as _sh
+        _bak = npm.SCAN_PATH + '.smokebak'
+        _had = os.path.exists(npm.SCAN_PATH)
+        if _had:
+            _sh.copy(npm.SCAN_PATH, _bak)   # 実スキャン結果を退避(テストで壊さない)
+        try:
+            rows = [
+                {'id': '202610020601', 'title': 'A', 'gate': 'buy', 'vscore': 80,
+                 'vlabel': 'S 大荒れ妙味', 'arare_prob': 0.8, 'no_fav': '●大穴',
+                 'value_horses': [{'um': 8}], 'ana_horses': [], 'danger_horses': [{'um': 1}],
+                 'n_h': 16, 'surf': 'ダ', 'dist': 1700, 'post_time': '15:40',
+                 'lean': {'lean': '②穴妙味向き'}},
+                {'id': '202605020602', 'title': 'B', 'gate': 'skip', 'vscore': 30,
+                 'vlabel': 'D 平凡', 'arare_prob': 0.3, 'value_horses': [],
+                 'lean': {'lean': '本線向き'}},
+            ]
+            npm.write_scan_digest(rows)
+            d = npm.load_scan_digest()
+            assert d and isinstance(d['rows'][0]['lean'], str), "leanはstr化"
+            ana = npm.filter_scan_rows(d['rows'], 'ana', (0, 100), True, 12)
+            assert [r['id'] for r in ana] == ['202610020601'], "②のみ+見送り除外"
+            hon = npm.filter_scan_rows(d['rows'], 'honsen', (0, 100), False, 12)
+            assert [r['id'] for r in hon] == ['202605020602'], "本線のみ(荒れ回避)"
+            html, used = npm.build_scan_digest_html(d['rows'], {'lean_mode': 'ana'})
+            assert html and len(used) == 1 and '②穴妙味向き' in html and '🎯妙味馬 8' in html
+            assert '⚠危険人気 1' in html and '小倉1R' in html, "カード内容"
+        finally:
+            if _had:
+                _sh.move(_bak, npm.SCAN_PATH)
+            elif os.path.exists(npm.SCAN_PATH):
+                os.remove(npm.SCAN_PATH)
+    check("newspaper.スキャン新聞(digest保存/フィルタ/組版)", t_scan_digest)
 
     # ── Phase3.5: 実行時バグ/契約ガード(py_compileでは拾えない) ──
     def t_dup_widget_keys():

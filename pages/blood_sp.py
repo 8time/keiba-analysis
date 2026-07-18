@@ -263,6 +263,9 @@ def render():
                     })
                 df = pd.DataFrame(rows).sort_values('血統スコア', ascending=False).reset_index(drop=True)
                 df.insert(0, '血統順', range(1, len(df) + 1))
+                # 結果の印(色に頼らず着順が分かるように・色覚/モノクロ印刷対策)
+                _MEDAL = {1: '🥇1着', 2: '🥈2着', 3: '🥉3着'}
+                df.insert(1, '結果', [_MEDAL.get(int(c), '') for c in df['着順']])
 
                 # 血統だけの的中チェック
                 top3_blood = set(df.head(3)['馬番'])
@@ -274,6 +277,15 @@ def render():
                 m1.metric("血統上位3頭 of 実3着内", f"{hit}/3")
                 m2.metric("1着馬の血統順位", f"{win_blood_rank[0] if win_blood_rank else '-'}位")
 
+                # 凡例は表の"上"に出す(下のキャプションは読み飛ばされて『色の意味は?』となるため)。
+                # 色＝レース結果(答え合わせ)であって血統スコアの高さではない、を明言する。
+                st.info(
+                    "**この表は答え合わせです。**行の色と🥇🥈🥉は"
+                    "**実際の着順**（結果）で、血統スコアの高さではありません。\n\n"
+                    "🥇 黄色=1着 ／ 🥈🥉 緑=2〜3着 ／ 色なし=4着以下\n\n"
+                    "→ 血統順（左端）の上の方に色が固まっていれば「血統どおりに決着した」、"
+                    "下の方に散っていれば「血統は効かなかった」レースです。")
+
                 def _hl(row):
                     if row['着順'] == 1:
                         return ['background-color:#3a2e00;color:#FBC02D;font-weight:bold'] * len(row)
@@ -282,8 +294,7 @@ def render():
                     return [''] * len(row)
                 st.dataframe(df.style.apply(_hl, axis=1).format({'血統スコア': '{:.1f}'}),
                              hide_index=True, use_container_width=True)
-                st.caption("黄=1着 / 緑=2-3着。血統順と着順がどれだけ一致するか観察。"
-                           "血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
+                st.caption("血統スコア=父複勝率×重み＋母父複勝率×重み（サンプル少は母集団へ縮小推定）。"
                            "『父系統』=アンカー遡上の大系統(表示用・系統×コースは織込み済で単独エッジなし)。"
                            "『道悪判定』🟢道悪軸=ダ重不良でシニミニ系等が好走(危険人気から免除)/"
                            "⚠瞬発系道悪=芝重不良でディープ・ステゴ系の人気馬は割引(検証済)。"

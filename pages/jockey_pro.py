@@ -445,6 +445,74 @@ def render():
 
             st.success(f"✅ {_jp_venue}  {len(_jp_entries)}頭の分析完了")
 
+            # ── 🌐 db-keiba条件重複(買い/消し条件のcombo風カウント・表示専用) ──
+            # 騎手ごとの条件別回収率(db-keiba.com集計・2021-2025)を今日の条件と照合。
+            # 外部サイトの集計値でありleak-free検証は未実施=参考表示のみ(総合スコア非連動)。
+            with st.expander("🌐 db-keiba 条件重複チェック（📗買い条件/📕消し条件のcombo風カウント）",
+                             expanded=False):
+                try:
+                    from core import dbkeiba as _dbk
+                    _dbk_rm = (_jp_entries[0].get('race_meta') or {}) if _jp_entries else {}
+                    _dbk_surf_jp = str(_dbk_rm.get('surface', '') or '')
+                    try:
+                        _dbk_dist_jp = int(_dbk_rm.get('distance') or 0) or None
+                    except (TypeError, ValueError):
+                        _dbk_dist_jp = None
+
+                    def _dbk_ctx_jp(_e):
+                        return {'ninki': _e.get('popularity'), 'surface': _dbk_surf_jp,
+                                'dist': _dbk_dist_jp, 'venue': _jp_venue,
+                                'trainer': str(_e.get('trainer_name', '') or '')}
+
+                    def _dbk_run_jp(_fetch):
+                        _o = {}
+                        for _e in _jp_entries:
+                            _u = _e.get('umaban')
+                            if _u is None:
+                                continue
+                            _o[int(_u)] = _dbk.match_race(str(_e.get('jockey_name', '')),
+                                                          _dbk_ctx_jp(_e), allow_fetch=_fetch)
+                        return _o
+
+                    _dbk_key_jp = f"_dbk_jp_{_jp_res.get('race_id', '')}"
+                    if _dbk_key_jp not in st.session_state:
+                        st.session_state[_dbk_key_jp] = _dbk_run_jp(False)   # キャッシュのみ=一瞬
+                    _dbk_res_jp = st.session_state[_dbk_key_jp]
+                    _dbk_miss_jp = sum(1 for v in _dbk_res_jp.values() if not v.get('found'))
+                    if _dbk_miss_jp:
+                        if st.button(f"🌐 db-keibaの騎手条件を取得（未取得{_dbk_miss_jp}名・"
+                                     f"約{_dbk_miss_jp * 2}秒）", key="dbk_btn_jpro"):
+                            with st.spinner("db-keibaから騎手ページを取得中（2秒間隔・低負荷）..."):
+                                st.session_state[_dbk_key_jp] = _dbk_run_jp(True)
+                            st.rerun()
+                    _dbk_rows_jp = []
+                    for _e in _jp_entries:
+                        _u = _e.get('umaban')
+                        if _u is None:
+                            continue
+                        _d = _dbk_res_jp.get(int(_u)) or {}
+                        _b, _f = _d.get('buy') or [], _d.get('fade') or []
+                        _dbk_rows_jp.append({
+                            '馬番': int(_u), '馬名': str(_e.get('horse_name', '')),
+                            '騎手': str(_e.get('jockey_name', '')),
+                            '📗買い条件': len(_b) if _d.get('found') else '-',
+                            '📕消し条件': len(_f) if _d.get('found') else '-',
+                            '該当条件の内訳': (' / '.join(_b + [f"⚠{t}" for t in _f]) or '-')
+                            if _d.get('found') else '（db-keiba未収録 or 未取得）',
+                        })
+                    if _dbk_rows_jp:
+                        _dbk_df_jp = pd.DataFrame(_dbk_rows_jp).sort_values(
+                            '📗買い条件', ascending=False,
+                            key=lambda s: pd.to_numeric(s, errors='coerce').fillna(-1))
+                        st.dataframe(_dbk_df_jp, hide_index=True, use_container_width=True)
+                    st.caption("📗＝その騎手が**儲かってきた条件**(単回100%+ or 複回95%+・20走以上)が"
+                               "今日のレース条件(人気/コース/距離/競馬場/調教師など)と重複した数。"
+                               "📕＝苦手条件(複回55%以下)との重複。数字が大きいほど条件が向いています。"
+                               "出典=db-keiba.com(2021-2025集計・週1更新/2週間キャッシュ)。"
+                               "**外部集計で当アプリの検証は未実施＝参考表示のみ**（総合スコアには入れていません）。")
+                except Exception as _dbk_e_jp:
+                    st.caption(f"db-keiba条件チェックをスキップ: {_dbk_e_jp}")
+
 
             # ── スコアリング（全指標を集計） ──
             def _compute_full_score(entry, venue, weights=None):

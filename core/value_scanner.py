@@ -89,6 +89,26 @@ def baba_code_to_label(code):
     return _BABA_CODE.get(str(code).strip()) or ''
 
 
+# 極端な人気薄の構造的不利ライン。単勝ROIオッズ帯別(jravan 2023-25・141,519頭)で
+# 75〜84%とほぼ横ばい(市場効率的)なのは100倍未満まで。100倍超だけROI44.5%に急落する
+# (検証: repo/roi_betting_research.md)。この帯は買ってはいけない=表示で控えめに警告する。
+LONGSHOT_CLIFF_ODDS = 100.0
+
+
+def longshot_disadvantage(odds):
+    """単勝オッズが構造的不利帯(100倍超・実測ROI44.5%)かを返す。
+    戻り: 該当時 {'flag':'⚠', 'roi':44.5, 'note':...} / 非該当は None。
+    50〜100倍は本命帯と同等(75%)なので警告しない(誤警告防止)。"""
+    try:
+        o = float(odds)
+    except (TypeError, ValueError):
+        return None
+    if o > LONGSHOT_CLIFF_ODDS:
+        return {'flag': '⚠', 'roi': 44.5,
+                'note': f'100倍超は単勝ROIが44.5%へ急落する構造的不利帯(検証済)。妙味でなく罠。'}
+    return None
+
+
 # ───────────────────────── 見送りレース判定 ─────────────────────────
 def race_skip_reasons(meta, n_horses, surface='', race_name='', min_win_odds=None):
     """見送り(購入非推奨)理由のリストを返す。空なら検討可。
@@ -221,6 +241,70 @@ def race_value_score(odds_list, meta=None, jyo='', surface='', dist=None, n_hors
     else:
         label = 'D 鉄板(妙味薄)'
     return {'score': round(score, 1), 'label': label, 'breakdown': breakdown, 'fav_odds': fav}
+
+
+# ───────────────────────── ガラスの人気馬(単複逆転FADE・検証済) ─────────────────────────
+_GLASS_BANDS = None
+
+
+def _load_glass_bands():
+    global _GLASS_BANDS
+    if _GLASS_BANDS is None:
+        import os
+        import json
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'data', 'glass_favorite_bands.json')
+        try:
+            with open(p, encoding='utf-8') as f:
+                _GLASS_BANDS = json.load(f)
+        except Exception:
+            _GLASS_BANDS = {'edges': [1, 1.5, 2, 2.5, 3, 4, 5, 7, 10],
+                            'place_median': [1.1, 1.1, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0],
+                            'threshold': 1.25}
+    return _GLASS_BANDS
+
+
+def glass_favorite_fade(win_odds, place_mid, ninki=None):
+    """『ガラスの人気馬』(単勝は売れてるのに複勝が売れてない=大衆の錯覚人気)を判定。
+
+    tanpuku_divergence(単勝長い×複勝短い=買い妙味)の裏＝FADE側。上位人気(1-5番)かつ
+    単勝10倍未満で、実複勝オッズが『その単勝帯の複勝中央値』より threshold倍以上高い
+    (=複勝が相対的に売れていない)馬を危険人気馬とする。
+
+    検証(scripts・data/export・2016+ n=7,239): 単勝帯統制の複勝乖離+25%↑で複勝率残差
+    z-8.5(train-23 z-11.2/2024-25 z-4.2/2026 z-2.8=3窓方向一貫のleak-freeなfade)。
+    複勝オッズは事前市場値=リーク無し。買い妙味でなく『軸から外す/割引』側の道具。
+
+    win_odds/place_mid: 単勝・複勝(中間値)オッズ。ninki: 1-5番人気のみ対象(Noneは判定のみ)。
+    戻り値: (is_glass: bool, ratio: float|None)。ratio=実複勝/帯中央値(高いほどガラス)。
+    """
+    try:
+        w = float(win_odds)
+        p = float(place_mid)
+    except (TypeError, ValueError):
+        return False, None
+    if w <= 0 or p <= 0 or w >= 10.0:
+        return False, None
+    if ninki is not None:
+        try:
+            if int(ninki) > 5 or int(ninki) < 1:
+                return False, None
+        except (TypeError, ValueError):
+            pass
+    tb = _load_glass_bands()
+    edges = tb['edges']
+    band = None
+    for i in range(len(edges) - 1):
+        if edges[i] <= w < edges[i + 1]:
+            band = i
+            break
+    if band is None:
+        return False, None
+    med = tb['place_median'][band]
+    if not med or med <= 0:
+        return False, None
+    ratio = p / med
+    return (ratio >= tb.get('threshold', 1.25)), round(ratio, 2)
 
 
 # ───────────────────────── 3連複 決着タイプ傾向(本線 ⇔ ②穴妙味) ─────────────────────────
@@ -406,8 +490,12 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     if g and g.get('rides', 0) >= 10 and g.get('top2', 0) >= 0.40:
         pos.append(f"黄金ライン(連対{g['top2']:.0%}/{g['rides']})")
     cs = jj.trainer_course_winrate(tc, jyo, surface, min_year=min_year) if tc else None
-    if cs and cs.get('runs', 0) >= 10 and (cs.get('win_rate') or 0) >= 0.20:
-        pos.append(f"厩舎当ｺｰｽ{cs['win_rate']:.0%}")
+    # 妙味ゲートは縮小推定した勝率で判定(少ない出走数の過信を防ぐ)。閾値=jj.TRAINER_COURSE_GATE
+    _cwr = (cs.get('win_rate_shrunk') if cs else None)
+    if _cwr is None and cs:
+        _cwr = cs.get('win_rate')
+    if cs and cs.get('runs', 0) >= 10 and (_cwr or 0) >= jj.TRAINER_COURSE_GATE:
+        pos.append(f"厩舎当ｺｰｽ{_cwr:.0%}")
 
     ctx = jj.horse_recent_context(kt) if kt else None
     if ('牝' in sa) and month in (12, 1, 2, 3, 4, 5):

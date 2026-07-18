@@ -61,6 +61,17 @@ keiba_analysis/
 - 文字化け：response.encoding='utf-8'を明示。または content.decode('euc-jp') などの適切なデコード。
 - HTML取得失敗：DynamicFetcherのタイムアウトを30秒に延長
 - Streamlit再描画ループ：st.session_stateで状態管理
+- **コード修正が反映されない**：ブラウザのリロードや「Rerun」では直らないことが
+  2026-06-14〜07-09の間に7回発生している（Streamlitがimport済みモジュールを
+  プロセス内キャッシュするため）。まずCtrl+Cで完全停止→`streamlit run app.py`で
+  再起動を提案してから原因調査に入ること（`restart-verify` skill参照）。
+
+# UIラベル・数値表示の方針
+- ユーザーは競馬・EV計算の初心者を自認している。新しい数値指標/略語
+  (LTR, EV, PCI等)や連続値メーターをUIに追加する前に、平易な言い換えか
+  説明を添えること。連続値メーターより離散的な選択式(プルダウン等)を優先検討する。
+  根拠：2026-06-17, 06-18, 06-22, 07-03に「わかりにくい」という指摘が出ている
+  （`plain-label-check` skill参照）。
 
 # 過去の失敗事例
 - requestsでnetkeiba取得→ボット検知でブロックされる（fetch_robust_htmlを使用すること）
