@@ -11595,10 +11595,19 @@ if nav == "🔍 Race Scanner (Batch)":
         _plan = _osch.load_plan()
         _pl_c1, _pl_c2 = st.columns([1, 1])
         with _pl_c1:
+            # 初期値: 保存済みの日付が過去なら今日にする(古い日付が残って全記録失敗する事故の防止)。
+            _saved_d = str(_plan.get('date') or '')
+            _def_d = datetime.now().strftime('%Y%m%d')
+            try:
+                if _saved_d and datetime.strptime(_saved_d, '%Y%m%d').date() >= datetime.now().date():
+                    _def_d = _saved_d   # 今日以降の有効な日付ならそれを尊重
+            except Exception:
+                pass
             _pl_date = st.text_input(
                 "記録対象日（YYYYMMDD・全レース同日）",
-                value=(_plan.get('date') or datetime.now().strftime('%Y%m%d')),
-                key="oschedule_date")
+                value=_def_d, key="oschedule_date",
+                help="このプランを記録する日。**必ず記録したい日（通常は今日）に合わせてください。**"
+                     "古い日付のままだと全スロットが過去扱いになり1件も記録されません。")
         with _pl_c2:
             _pl_race_src = st.radio("対象レース", ["スキャン結果から", "IDを直接貼り付け"],
                                     horizontal=True, key="oschedule_src")
@@ -11699,9 +11708,28 @@ if nav == "🔍 Race Scanner (Batch)":
         # 現在のプランの進捗
         _st = _osch.plan_status(_plan)
         if _st['total']:
+            # 記録対象日を曜日付きで明示(日付フィールドが古い/未来だと全スロットが記録されない為)
+            from datetime import datetime as _dtp, date as _datep
+            _pdate_raw = str(_plan.get('date') or '')
+            _pdate_txt = _pdate_raw
+            _date_warn = ''
+            try:
+                _pd_obj = _dtp.strptime(_pdate_raw, '%Y%m%d').date()
+                _wd = ['月', '火', '水', '木', '金', '土', '日'][_pd_obj.weekday()]
+                _pdate_txt = _pd_obj.strftime(f'%Y/%m/%d({_wd})')
+                _today = _datep.today()
+                if _pd_obj < _today:
+                    _date_warn = "　⚠️ **記録対象日が過去です**（この日付のままだと記録されません。日付を修正して保存し直してください）"
+                elif _pd_obj == _today:
+                    _pdate_txt += "＝今日"
+            except Exception:
+                _date_warn = "　⚠️ 記録対象日が未設定です" if not _pdate_raw else ''
+            st.markdown(f"📅 **記録対象日: {_pdate_txt}**{_date_warn}")
             st.caption(f"📋 現在のプラン: 全{_st['total']}枠 / ✅記録済{_st['done']} / ⏳待機{_st['pending']}"
                        f" / 見送り{_st['missed']}" + (f" / 次の記録={_st['next']}" if _st['next'] else "")
-                       + f"　（{len(_plan.get('races', []))}レース×{len(_plan.get('times', []))}時間帯）")
+                       + f"　（{len(_plan.get('races', []))}レース×{len(_plan.get('times', []))}時間帯"
+                       + (f"＋前日夜{len(_plan.get('night_times', []))}" if _plan.get('night_times') else "")
+                       + "）")
 
     # Shared name map (race_id -> race_name) populated by auto-fetch
     if 'scanner_name_map' not in st.session_state:
