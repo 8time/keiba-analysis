@@ -5716,6 +5716,7 @@ if nav == "🏠 Single Race Analysis":
                                 'name': _nm, 'umaban': _dr.get('Umaban'),
                                 'pop': _dr.get('Popularity'),
                                 'odds': _dr.get('Odds'),
+                                'waku': _dr.get('Waku'),
                                 'prev_win_margin': _tm.get(_nm, {}).get('awm'),
                                 # 前走1着=勝ち上がり直後は圧勝でなくても過剰人気(検証済・軸信頼度を軽く減点)
                                 'prev_chaku': _prev_chaku_of(_dr),
@@ -5768,6 +5769,37 @@ if nav == "🏠 Single Race Analysis":
                                 pass
                             try:
                                 _uma2mark[int(_h['umaban'])] = _txt
+                            except Exception:
+                                pass
+                        # --- 🏇ダート枠順バイアス(検証済+4.5pp/-3.9pp)を軸候補列に付記 ---
+                        # boost(外枠×1-3人気)=軸補強 / danger(内枠×4-5人気)=軸から外す。
+                        # danger対象(4-5人気)は◎〇▲が付かないことが多いので全馬に回して付記する
+                        # (2026-07 福島ダ1700の負け教訓: 11番=外枠boostを相手に/1番=内枠dangerを軸に、と
+                        #  信号と逆の配置をしていた。枠信号を軸選び画面で埋もれさせない)。
+                        if 'ダ' in str(_dg_surf):
+                            try:
+                                from core import track_bias as _tb_dd
+                                _dd_jyo = str(race_id_input)[4:6]
+                                try:
+                                    _dd_kyori = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+                                except Exception:
+                                    _dd_kyori = None
+                                for _h in _ax_horses:
+                                    _wk = pd.to_numeric(_h.get('waku'), errors='coerce')
+                                    _pm = re.search(r'\d+', str(_h.get('pop', '') or ''))
+                                    _pp = int(_pm.group()) if _pm else None
+                                    if pd.isnull(_wk) or _pp is None:
+                                        continue
+                                    _dd = _tb_dd.dirt_draw_signal(int(_wk), _pp, 'ダート',
+                                                                  jyo=_dd_jyo, kyori=_dd_kyori)
+                                    if not _dd:
+                                        continue
+                                    _tag = ('🟢外枠軸補強' if _dd['type'] == 'boost' else '🔻内枠危険')
+                                    try:
+                                        _uu = int(_h['umaban'])
+                                    except Exception:
+                                        continue
+                                    _uma2mark[_uu] = (_uma2mark.get(_uu, '') + ' ' + _tag).strip()
                             except Exception:
                                 pass
                         if _uma2mark and 'Umaban' in view_df.columns:
@@ -6436,6 +6468,8 @@ if nav == "🏠 Single Race Analysis":
                                  "オッズは人気順位より細かい軸指標)。🔨=前走を着差1.0秒以上で圧勝＝"
                                  "オッズ統制では複勝率-5〜11ppの過剰人気注意フラグ(加点ではない)。"
                                  "脚質/前走僅差負けは人気に織込み済のため不採用。"
+                                 "　【ダート限定・検証済枠順】🟢外枠軸補強=外枠(6-8)×1-3番人気で複勝率+4.5pp(z+9.4)"
+                                 "→軸に最適。🔻内枠危険=内枠(1-3)×4-5番人気で複勝率-3.9pp(z-6.0)→軸から外す。"
                         ),
                         "CorrectedT": st.column_config.TextColumn(
                             "🟣🔵補正T",
