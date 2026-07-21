@@ -487,7 +487,7 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
         kt, tc = None, None
 
     g = jj.jockey_trainer_combo(jky, tc) if tc else None
-    if g and g.get('rides', 0) >= 10 and g.get('top2', 0) >= 0.40:
+    if jj.is_golden_line(g):
         pos.append(f"黄金ライン(連対{g['top2']:.0%}/{g['rides']})")
     cs = jj.trainer_course_winrate(tc, jyo, surface, min_year=min_year) if tc else None
     # 妙味ゲートは縮小推定した勝率で判定(少ない出走数の過信を防ぐ)。閾値=jj.TRAINER_COURSE_GATE

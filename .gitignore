@@ -21,8 +21,12 @@ result.txt
 result.csv
 report.txt
 scratch_*.txt
+scratch_*.pdf
+scratch_*.html
 *_raw.txt
 *_debug.txt
+# 自動保存されるタイムスタンプ付きバックアップ(*.bak_YYYYmmdd_HHMMSS)
+*.bak_*
 
 # 消去理由ラーニング台帳(ユーザー個人データ)
 elim_reasons.json

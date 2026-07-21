@@ -464,15 +464,27 @@ def main():
     def t_agent_roster():
         from core import agent_forum as af
         r = af.agent_roster()
-        assert len(r) >= 10 and all('focus' in a and 'id' in a for a in r), "名簿にfocus/id"
-        # 情報の切り口ラベルが付く(多様性=脱相関の軸)
+        # 2026-07再設計: 血統/展開/調教単体等priced-in確定済みの旧ペルソナは廃止し、
+        # 検証済みモジュール担当の6人格(BASE_AGENTS)のみに縮小。_EXTRA_AGENTSは空。
+        assert len(r) == 6 and all('focus' in a and 'id' in a for a in r), "名簿にfocus/id"
         _foc = {a['id']: a['focus'] for a in r}
-        assert _foc.get('kei') == '血統' and _foc.get('jin') == '騎手'
+        assert _foc.get('hoseiT') == '補正タイム' and _foc.get('wakuDirt') == 'ダート枠信号'
+        assert _foc.get('powerJk') == '騎手力(JPower)'
+        # 旧ペルソナ(廃止済み)が残っていないこと
+        assert 'kei' not in _foc and 'jin' not in _foc and 'amano' not in _foc, \
+            "血統単体/騎手単体/強制逆張りの旧ペルソナは廃止済み"
         # 選択班: 指定id順・未知は無視
-        sel = af.agents_by_ids(['taku', 'zzz', 'kei'])
-        assert [a['id'] for a in sel] == ['taku', 'kei']
+        sel = af.agents_by_ids(['hoseiT', 'zzz', 'wakuDirt'])
+        assert [a['id'] for a in sel] == ['hoseiT', 'wakuDirt']
         assert af.agents_by_ids([]) == []
-    check("agent_forum.agent_roster/agents_by_ids", t_agent_roster)
+        # knowledge_fnの重複が無い(個性が見た目だけでない事の保証)
+        assert len(set(id(a['knowledge_fn']) for a in af.BASE_AGENTS)) == len(af.BASE_AGENTS), \
+            "各ペルソナのknowledge_fnが重複していない"
+        # 共通プロンプトが『人気を無視しろ』と縛っていないこと(2026-07 root cause修正の回帰防止)
+        _sys = af._build_system_with_knowledge(af.BASE_AGENTS[0])
+        assert '無視' not in _sys.split('重要:')[-1].split('\n')[0] or '無視したり逆張り' in _sys, \
+            "共通指示が人気無視を強制していない"
+    check("agent_forum.agent_roster/agents_by_ids(2026-07ペルソナ再設計)", t_agent_roster)
 
     def t_agent_correlation():
         from core import agent_forum as af
@@ -522,6 +534,32 @@ def main():
                                   distance=1600, surface='芝')
         assert c['leader'] == 1, f"score低=前=leader1, got {c['leader']}"
     check("pace_map.tactics_forward(表示用)", t_pace_tactics)
+
+    def t_pace_comment_nige_consistency():
+        # 回帰(202608030811 栗東S): 隊列はnige_umas=[4,3]/contested=Trueなのに
+        # コメントだけ「単騎逃げ濃厚→前残り警戒」と逆を出していた。
+        # 原因=逃げ判定の閾値がbuild_pace_context(0.20)とdescribe_pace(0.18)で不一致。
+        from core import pace_map as pm
+        horses = [{'umaban': 4, 'name': 'A', 'score': 0.05, 'style': '逃げ'},
+                  {'umaban': 3, 'name': 'B', 'score': 0.19, 'style': '逃げ'},
+                  {'umaban': 7, 'name': 'C', 'score': 0.30, 'style': '先行'}]
+        fwd = {4: 0.05, 3: 0.19, 7: 0.30}   # 3番は旧0.18〜新0.20の境界にいる
+        nige = [u for u, v in fwd.items() if v < pm.NIGE_FORWARD_MAX]
+        assert nige == [4, 3], f"閾値{pm.NIGE_FORWARD_MAX}で2頭が逃げ判定, got {nige}"
+        ctx = {'forward': fwd, 'leader': 4, 'pace': 'ハイ', 'front_ratio': 0.5,
+               'nige_umas': nige, 'contested': True}
+        txt = pm.describe_pace(horses, pace_ctx=ctx)
+        assert '単騎逃げ' not in txt, f"ハナ争い時に単騎逃げと言わない: {txt}"
+        assert '逃げ候補2頭' in txt, f"逃げ候補2頭と明示: {txt}"
+        # 本当に単騎ならこれまで通り単騎逃げと言う(修正で潰していない)
+        ctx1 = dict(ctx, forward={4: 0.05, 3: 0.30, 7: 0.35},
+                    nige_umas=[4], contested=False)
+        txt1 = pm.describe_pace(horses, pace_ctx=ctx1)
+        assert '単騎逃げ' in txt1, f"真の単騎は従来通り: {txt1}"
+        # 先行はnige除外(二重計上しない)
+        assert '先行勢' not in txt or '逃げ候補2頭' in txt
+    check("pace_map.describe_pace(逃げ判定をctxと一致・単騎誤判定の回帰)",
+          t_pace_comment_nige_consistency)
 
     def t_ltr_nar():
         from core import ltr_ranker as lr
@@ -628,6 +666,28 @@ def main():
         w = af.agent_weights(recs, lam=3.0)
         assert w['a'] > w['b'], "的中エージェントの重みが大きい"
     check("agent_forum.agent_weights(安全縮退)", t_agent_weights)
+
+    def t_agent_knowledge_fns():
+        from core import agent_forum as af
+        csv_text = ('馬番,枠,馬名,騎手,人気,単勝オッズ\n'
+                   '9,6,アドマイヤズーム,吉田隼,2,8.4\n'
+                   '12,7,モンロワイヤル,丹内,1,3.3\n')
+        meta_dirt = {'surface': 'ダート', 'distance': 1700, 'race_id': '202602010812'}
+        meta_turf = {'surface': '芝', 'distance': 2000, 'race_id': '202605020811'}
+        # 全knowledge_fnがエラーなく文字列を返す(実データ有無に関わらず)
+        for fn in (af._knowledge_conservative, af._knowledge_corrected_time,
+                  af._knowledge_lap33, af._knowledge_spurt, af._knowledge_jpower,
+                  af._knowledge_dirt_draw):
+            out = fn(csv_text, meta_dirt)
+            assert isinstance(out, str) and len(out) > 0, f"{fn.__name__}が文字列を返す"
+        # ダート枠信号は芝レースでは対象外と正直に言う(無理に枠を語らない)
+        out_turf = af._knowledge_dirt_draw(csv_text, meta_turf)
+        assert '対象外' in out_turf, "芝レースではダート枠エッジ対象外と明記"
+        # 空データでも例外を出さない(馬名解決失敗等への耐性)
+        for fn in (af._knowledge_corrected_time, af._knowledge_lap33, af._knowledge_spurt,
+                  af._knowledge_jpower, af._knowledge_dirt_draw):
+            fn('', {})
+    check("agent_forum.knowledge_fn(検証済みモジュール直結)", t_agent_knowledge_fns)
 
     def t_danger_gate():
         from core import danger_gate as dg
@@ -876,6 +936,162 @@ def main():
         os.remove(np_j5._j5_path(rid))
     check("newspaper.j5(騎手係数セクション)", t_np_j5)
 
+    def t_np_dev_thoughts():
+        from core import newspaper as np_dt
+        rid = 'smoketest_devth'
+        ph_res = {
+            'steps': [
+                {'key': 'race_filter', 'no': '①', 'name': 'レース選別', 'desc': '',
+                 'enabled': True, 'verdict': '買い対象', 'reasons': ['荒れ確率62%']},
+                {'key': 'danger_check', 'no': '③', 'name': '危険人気馬チェック', 'desc': '',
+                 'enabled': False, 'verdict': '', 'reasons': []},
+            ],
+            'final': {'honmei': [12], 'aite': [4, 9], 'ana': [7], 'keshi': [11, 8],
+                      'plan': '3連複本線', 'skip': False, 'skip_reasons': []},
+        }
+        np_dt.write_philosophy_snapshot(rid, ph_res)
+        d = np_dt.load_philosophy(rid)
+        assert d and len(d['steps']) == 2 and d['final']['honmei'] == [12], \
+            "思考プロセススナップショット保存/読込"
+        h = np_dt._developer_thoughts_html(rid)
+        assert '開発者の思考プロセス' in h and '①' in h and 'レース選別' in h, \
+            "紙面に見出し+有効ステップが載る"
+        assert '危険人気馬チェック' not in h, "OFFのステップは省く"
+        assert '12' in h, "本命馬番が載る"
+        assert np_dt._developer_thoughts_html('no_such_race_id') == '', "未保存レースは空"
+        os.remove(np_dt._philosophy_path(rid))
+    check("newspaper.dev_thoughts(開発者の思考プロセス)", t_np_dev_thoughts)
+
+    def t_np_ai_commentary():
+        from core import newspaper_commentary as nc
+        from core import newspaper as np_ai
+        # 俗説フィルタ(検証で否定済みのキーワードを検出)
+        assert nc._contains_quarantined('前走の脚質が良いので買い'), "俗説キーワード検出"
+        assert not nc._contains_quarantined('combo数が多く危険理由もない'), "通常文は非検出"
+        # コスト見積り(レース数×人格数)
+        est = nc.estimate_cost(6)
+        assert est['calls'] == 6 * len(nc.COMMENTATORS), "コール数=レース数×人格数"
+        # 未生成レースはHTML空(=自動生成されない・課金事故防止)
+        assert np_ai._commentary_html('no_such_race_id_xyz') == '', "未生成は空"
+        # 保存/読込/描画(ダミーデータ・API呼び出しなし)
+        rid = 'smoketest_aicom'
+        dummy = [{'persona': 'gou', 'name': 'ゴウ', 'emoji': '🔥', 'comment': 'テストコメント'}]
+        nc.write_commentary_snapshot(rid, dummy)
+        d = nc.load_commentary(rid)
+        assert d and len(d['comments']) == 1, "コメント保存/読込"
+        h = np_ai._commentary_html(rid)
+        assert 'ゴウ' in h and 'テストコメント' in h and 'exbox exwide' in h, \
+            "紙面にコメントが載る(幅広ボックス)"
+        os.remove(nc._commentary_path(rid))
+    check("newspaper_commentary.AIコメント欄(俗説フィルタ/コスト見積り)", t_np_ai_commentary)
+
+    def t_np_value_zone():
+        from core import newspaper as np_vz
+        rid = 'smoketest_vzone'
+        rows = [
+            {'馬番': 12, 'name': 'テストA', 'fuku': 53.1, 'roi': 79.8, 'odds': 3.9, 'pop': 1,
+             'ゾーン': '① 勝ちゾーン(このレースの軸候補)'},
+            {'馬番': 2, 'name': 'テストB', 'fuku': 40.8, 'roi': 89.4, 'odds': 6.1, 'pop': 2,
+             'ゾーン': '② 一撃ゾーン(穴)'},
+        ]
+        np_vz.write_value_zone_snapshot(rid, rows)
+        d = np_vz.load_value_zone(rid)
+        assert d and len(d['rows']) == 2, "複勝率×回収率マップのスナップショット保存/読込"
+        h = np_vz._value_zone_html(rid)
+        assert '複勝率×回収率マップ' in h and '① 勝ちゾーン' in h and '② 一撃(穴)' in h, \
+            "紙面にゾーン別の馬が載る"
+        assert np_vz._value_zone_html('no_such_race_id') == '', "未保存レースは空"
+        os.remove(np_vz._value_zone_path(rid))
+    check("newspaper.value_zone(複勝率×回収率マップ)", t_np_value_zone)
+
+    def t_np_value_zone_chart():
+        from core import newspaper as np_vzc
+        assert np_vzc._value_zone_scatter_svg([]) == '', "0件は空文字"
+        assert np_vzc._value_zone_scatter_svg([{'馬番': 1, 'roi': 80, 'fuku': 30}]) == '', \
+            "1件のみは散布図として意味がないので空文字"
+        rows = [
+            {'馬番': 12, 'name': 'テストA', 'fuku': 80.0, 'roi': 120.0,
+             'ゾーン': '① 勝ちゾーン(このレースの軸候補)'},
+            {'馬番': 2, 'name': 'テストB', 'fuku': 10.0, 'roi': 90.0,
+             'ゾーン': '④ 見送り'},
+        ]
+        svg = np_vzc._value_zone_scatter_svg(rows)
+        assert svg.startswith('<svg') and '12テストA' in svg and '2テストB' in svg, \
+            "馬番+馬名ラベルが載る"
+        assert '#2f9e44' in svg and '#868e96' in svg, "ゾーン別の色分けが載る"
+        assert '<rect' in svg and '① 勝ちゾーン</text>' in svg, \
+            "①勝ちゾーンの網掛け矩形+ラベルが描画される"
+        assert svg.count('stroke-dasharray') >= 2, "境界の破線(x_mid/y_hi等)が複数本ある"
+        for lbl in ('① 勝ちゾーン', '② 一撃(穴)', '③ 堅実', '④ 見送り'):
+            assert lbl in svg, f"凡例に{lbl}が無い"
+        # 閾値の再計算(_quantile)がapp.py側の式(fuku上位25%/健全馬roiの中央値・75%)と一致すること
+        assert np_vzc._quantile([1, 2, 3, 4], 0.5) == 2.5, "中央値の線形補間"
+        assert np_vzc._quantile([10], 0.75) == 10, "1件のみは値そのもの"
+
+        rid = 'smoketest_vzone_chart'
+        np_vzc.write_value_zone_snapshot(rid, rows)
+        try:
+            h = np_vzc._value_zone_chart_html(rid)
+            assert '強適シート' in h and '<svg' in h, "強適シート散布図ボックスが生成される"
+            assert h.startswith("<div class='exbox exwide'"), "exwideボックス(横幅66.2%)で生成"
+            assert np_vzc._value_zone_chart_html('no_such_race_id') == '', "未保存レースは空"
+        finally:
+            os.remove(np_vzc._value_zone_path(rid))
+    check("newspaper.value_zone_chart(強適シート散布図)", t_np_value_zone_chart)
+
+    def t_np_value_zone_chart_wiring():
+        # build_newspaper_html: 既定OFF/明示ONで表示が切り替わり、末尾(evidenceの後)に置かれること
+        import pandas as _pdn
+        from core import newspaper as np_vzw
+        rid = 'smoketest_vzone_wiring'
+        df = _pdn.DataFrame({'Umaban': [1, 2], 'Name': ['馬A', '馬B'],
+                              'Odds': ['2.5', '9.0'], 'Popularity': ['1', '2']})
+        np_vzw.write_view_snapshot(rid, df, {}, ['Umaban', 'Name', 'Odds'],
+                                   meta={'condition': '良'}, sort_label='テスト順')
+        rows = [
+            {'馬番': 1, 'name': '馬A', 'fuku': 80.0, 'roi': 120.0,
+             'ゾーン': '① 勝ちゾーン(このレースの軸候補)'},
+            {'馬番': 2, 'name': '馬B', 'fuku': 10.0, 'roi': 90.0, 'ゾーン': '④ 見送り'},
+        ]
+        np_vzw.write_value_zone_snapshot(rid, rows)
+        try:
+            html_off, _ = np_vzw.build_newspaper_html([rid], {})
+            assert '強適シート' not in html_off, "既定(未指定)ではOFF"
+            html_on, _ = np_vzw.build_newspaper_html(
+                [rid], {'sections': {'value_zone_chart': True}})
+            assert '強適シート' in html_on, "明示ONで表示"
+            assert html_on.index('強適シート（複勝率×回収率の散布図）') \
+                > html_on.index('複勝率×回収率マップ（ゾーン別）'), \
+                "複勝率×回収率マップ(テーブル版)より後ろ=extras末尾寄りに配置"
+        finally:
+            for pth in (np_vzw._view_path(rid), np_vzw._value_zone_path(rid)):
+                if os.path.exists(pth):
+                    os.remove(pth)
+    check("newspaper.build_newspaper_html(強適シート散布図のON/OFF配線)", t_np_value_zone_chart_wiring)
+
+    def t_np_page_format():
+        from core import newspaper as np_pf
+        assert np_pf.resolve_page_format('a3_portrait') == ('A3', False), \
+            "A3縦=A3/非landscape"
+        assert np_pf.resolve_page_format('portrait') == ('A4', False), "A4縦=A4/非landscape"
+        assert np_pf.resolve_page_format('landscape') == ('A4', True), "既定=A4横/landscape"
+        assert np_pf.resolve_page_format('unknown_value') == ('A4', True), \
+            "未知値は既定(A4横)にフォールバック"
+        rid = 'smoketest_a3fmt'
+        import pandas as _pdn
+        df = _pdn.DataFrame({'Umaban': [1, 2], 'Name': ['馬A', '馬B'],
+                              'Odds': ['2.5', '9.0'], 'Popularity': ['1', '2']})
+        np_pf.write_view_snapshot(rid, df, {}, ['Umaban', 'Name', 'Odds'],
+                                  meta={'condition': '良'}, sort_label='テスト順')
+        try:
+            html, iss = np_pf.build_newspaper_html([rid], {'orientation': 'a3_portrait'})
+            assert html and not iss[0].get('error'), "A3縦でエラー無くHTML生成"
+            assert 'size: A3 portrait' in html, "@page が A3 portrait を宣言"
+        finally:
+            if os.path.exists(np_pf._view_path(rid)):
+                os.remove(np_pf._view_path(rid))
+    check("newspaper.resolve_page_format/A3縦レンダリング", t_np_page_format)
+
     def t_np_colfmt():
         from core import newspaper as np_cf
         # 見出しの折り返し(<br>挿入)
@@ -990,6 +1206,8 @@ def main():
         for tok in ('危険人気馬', '軸候補', '3連複おすすめ', '展開・隊列',
                     '消去フィルター', '穴馬ハンター'):
             assert tok in html, f"新セクション欠落: {tok}"
+        assert '<svg' in html, "展開・隊列にレーン図(SVG)が併記される"
+        assert '《4角想定》' in html, "finish未保存の旧スナップショットは4角想定にフォールバック"
         assert '3-7-2(58倍)' in html, "買い目コンボが紙面化"
         assert iss[0]['n_cols'] == 4, f"アプリ表示列の列数維持, got {iss[0]['n_cols']}"
         # カスタム(チェック式)列: チェック順=紙面順
@@ -1003,6 +1221,192 @@ def main():
             if os.path.exists(pth):
                 os.remove(pth)
     check("newspaper.スナップショット往復/組版/CSV", t_newspaper)
+
+    def t_pace_diagram_svg():
+        from core import newspaper as np_pd
+        assert np_pd._pace_diagram_svg({}) == '', "pos4空は空文字"
+        assert np_pd._pace_diagram_svg({'a': 'x'}) == '', "不正値は空文字(例外を握って空)"
+        svg = np_pd._pace_diagram_svg({3: 0.1, 7: 0.9}, {3: '馬A', 7: '馬B'})
+        assert svg.startswith('<svg') and '3</text>' in svg and '7</text>' in svg, \
+            "馬番ラベルがSVGテキストとして出力される"
+        import re as _re_svg
+        cxs = {int(m[0]): float(m[1]) for m in
+               _re_svg.findall(r'title>(\d+)番[^<]*</title><circle cx="([\d.]+)"', svg)}
+        assert cxs[3] > cxs[7], "前(値0.1)が右・後(値0.9)が左(PCの並び順に合わせて反転済み)"
+        assert svg.index('前</text>') > svg.index('後</text>'), "前ラベルが右側(後より後に出現)"
+        # 密集(全馬同一通過位置)でも同一行に重ならず全員配置されること(ジグザグ回避)
+        dense = {i: 0.5 for i in range(1, 19)}
+        svg_dense = np_pd._pace_diagram_svg(dense)
+        assert all(f'>{i}</text>' in svg_dense for i in range(1, 19)), \
+            "18頭全員がラベル欠落なく配置される"
+        import re as _re
+        cys = [float(m) for m in _re.findall(r'cy="([\d.]+)"', svg_dense)]
+        # circle+textで同じcyが2回出るので重複除去し、行(cy値)が十分分散していることを確認
+        uniq_cy = sorted(set(cys))
+        assert len(uniq_cy) >= 10, f"密集時に十分な行数へジグザグ分散, got {len(uniq_cy)}"
+        # 『後方N頭』の境界マーカー(縦破線+ラベル)
+        svg_m = np_pd._pace_diagram_svg({1: 0.1, 2: 0.3, 3: 0.5, 4: 0.7, 5: 0.9},
+                                        marker=(0.6, '後方2頭'))
+        assert '後方2頭' in svg_m and 'stroke-dasharray' in svg_m, "境界マーカーが描画される"
+        assert np_pd._pace_diagram_svg({1: 0.1, 2: 0.9}, marker=None) != '', \
+            "marker未指定でも従来通り描画される"
+    check("newspaper._pace_diagram_svg(展開レーン図・密集回避・後方N頭マーカー)", t_pace_diagram_svg)
+
+    def t_rear_group_threshold():
+        from core import newspaper as np_rgt
+        disp = {1: 0.1, 2: 0.3, 3: 0.5, 4: 0.7, 5: 0.9}
+        assert np_rgt._rear_group_threshold(disp, 0) is None, "n=0は境界なし"
+        assert np_rgt._rear_group_threshold(disp, 5) is None, "n=全頭は境界なし"
+        th = np_rgt._rear_group_threshold(disp, 2)
+        assert 0.5 < th < 0.7, f"後方2頭(0.9,0.7)と前方(0.5)の中間, got {th}"
+        assert all(disp[u] > th for u in (4, 5)), "後方2頭は境界より後ろ側"
+        assert all(disp[u] < th for u in (1, 2, 3)), "残りは境界より前側"
+    check("newspaper._rear_group_threshold(後方N頭の境界計算)", t_rear_group_threshold)
+
+    def t_pace_finish_priority():
+        # 直線到達(finish)が保存されていれば4角想定(pos4)より優先表示されること
+        from core import newspaper as np_pf2
+        rid = 'smoketest_pace_finish'
+        try:
+            np_pf2.write_pace_snapshot(rid, {
+                'pos4': {3: 0.1, 7: 0.9}, 'finish': {3: 0.8, 7: 0.1},
+                'leader': 3, 'pace': 'ミドル', 'nige_umas': [3], 'contested': False})
+            d = np_pf2.load_pace(rid)
+            assert d['finish'] == {'3': 0.8, '7': 0.1} or d['finish'] == {3: 0.8, 7: 0.1}, \
+                f"finishが往復保存される, got {d.get('finish')}"
+            html = np_pf2._pace_html(rid, [{'Umaban': 3, 'Name': '馬A'}, {'Umaban': 7, 'Name': '馬B'}])
+            assert '《直線到達想定》' in html and '《4角想定》' not in html, \
+                "finish保存時は直線到達想定ラベルを使い4角想定は出さない"
+            # finish値(3=0.8後方寄り/7=0.1前方寄り)基準の並びになっている(pos4基準なら逆)
+            assert '(前) 7' in html and '3 (後)' in html, \
+                "並び順がfinish値基準になっていない(pos4なら3が前・7が後になるはず)"
+        finally:
+            if os.path.exists(np_pf2._pace_path(rid)):
+                os.remove(np_pf2._pace_path(rid))
+    check("newspaper._pace_html(finish優先/4角想定フォールバック)", t_pace_finish_priority)
+
+    def t_pace_html_rear_marker():
+        # 展開・隊列: 後方グループ(展開MAP)/AI展開照合の件数から『後方N頭』マーカーが図に載る
+        from core import newspaper as np_prm
+        from core import score_cache as sc_prm
+        rid = 'smoketest_pace_rear_marker'
+        try:
+            np_prm.write_pace_snapshot(rid, {
+                'pos4': {1: 0.1, 2: 0.3, 3: 0.5, 4: 0.7, 5: 0.9},
+                'leader': 1, 'pace': 'ミドル', 'nige_umas': [1], 'contested': False})
+            sc_prm.write_rear(rid, {4, 5})
+            records = [{'Umaban': u, 'Name': f'馬{u}'} for u in range(1, 6)]
+            html = np_prm._pace_html(rid, records)
+            assert '後方グループ(展開MAP)' in html, "後方グループの説明行が出る"
+            assert '後方2頭' in html, "rear件数(2頭)からマーカーラベルが生成される"
+        finally:
+            if os.path.exists(np_prm._pace_path(rid)):
+                os.remove(np_prm._pace_path(rid))
+            _rp = sc_prm._rear_path(rid)
+            if os.path.exists(_rp):
+                os.remove(_rp)
+    check("newspaper._pace_html(後方N頭マーカーの配線)", t_pace_html_rear_marker)
+
+    def t_vh_html_no_reason_tags():
+        # 🎯穴馬ハンター: 〈⚡33ラップ適合/🔥末脚top/🧬血統上位〉等の根拠タグは非表示(ユーザー要望)
+        from core import newspaper as np_vh
+        cv = {'aim': {
+            'vh_tier': {7: '🎯精鋭', 9: '🎯精鋭'},
+            'vh': {7: 0.31, 9: 0.22},
+            'edge_reasons': {7: ['⚡33ラップ適合', '🔥末脚top', '🧬血統上位'], 9: ['🔵補正T上位']},
+            'ana': set(),
+        }}
+        records = [{'Umaban': '7', 'Name': 'テスト馬7', 'Popularity': '7'},
+                   {'Umaban': '9', 'Name': 'テスト馬9', 'Popularity': '9'}]
+        html = np_vh._vh_html(cv, records)
+        assert '穴馬ハンター' in html and '🎯精鋭' in html and 'vh0.31' in html, \
+            "tier/馬番/スコアは表示される"
+        for tag in ('33ラップ適合', '末脚top', '血統上位', '補正T上位', '〈', '〉'):
+            assert tag not in html, f"根拠タグ({tag})が残っている"
+    check("newspaper._vh_html(根拠タグ非表示)", t_vh_html_no_reason_tags)
+
+    def t_j5_html_columns():
+        # 🏇騎手係数込みスコア: 内訳/DB条件内訳を表示、強適スコア/騎手込みスコア/騎手込み順位/変動は非表示
+        from core import newspaper as np_j5t
+        rid = 'smoketest_j5cols'
+        rows = [
+            {'馬番': 7, '馬名': 'テストG', '騎手': '武豊', '強適スコア': 88.5,
+             '騎手係数': 1.05, '黄金ライン': '🥇42%', 'DB条件': '📗2', '騎手込みスコア': 93.0,
+             '内訳': 'USM108・黄金ライン一致', 'DB条件内訳': '芝1800m得意/連闘は苦手',
+             '騎手込み順位': 1, '順位変動': '↑2'},
+            {'馬番': 3, '馬名': 'テストH', '騎手': '横山武', '強適スコア': 70.0,
+             '騎手係数': 0.98, '黄金ライン': '-', 'DB条件': '-', '騎手込みスコア': 68.6,
+             '内訳': '-', 'DB条件内訳': '-', '騎手込み順位': 2, '順位変動': '→'},
+        ]
+        try:
+            np_j5t.write_j5_snapshot(rid, rows, weight=1.0)
+            html = np_j5t._j5_html(rid)
+            assert 'USM108・黄金ライン一致' in html and '芝1800m得意' in html, \
+                "内訳/DB条件内訳は表示される"
+            assert '🥇42%' in html and '1.05' in html, "黄金ライン/騎手係数は表示される"
+            for tag in ('88.5', '93.0', '↑2', '70.0', '68.6'):
+                assert tag not in html, f"非表示にしたはずの値({tag})が残っている"
+            assert '<th>順</th>' not in html and '<th>変動</th>' not in html, \
+                "順位/変動の列見出しが残っている"
+        finally:
+            if os.path.exists(np_j5t._j5_path(rid)):
+                os.remove(np_j5t._j5_path(rid))
+    check("newspaper._j5_html(内訳/DB条件内訳中心の列構成)", t_j5_html_columns)
+
+    def t_bets_html_bet_types():
+        # おすすめ買い目: 券種別ON/OFFで表示を絞り込める(3連複/3連単/馬連/馬単/ワイド)
+        from core import newspaper as np_bt
+        rid = 'smoketest_bettypes'
+        try:
+            np_bt.write_bets_snapshot(rid, 'trio', {'bets': [{'combo': (1, 2, 3), 'odds': 10.0}]})
+            np_bt.write_bets_snapshot(rid, 'trifecta', {'bets': [{'combo': (1, 2, 3), 'odds': 20.0}]})
+            np_bt.write_bets_snapshot(rid, 'qe', {'quinella': [{'combo': (1, 2), 'odds': 5.0}],
+                                                   'exacta': [{'combo': (1, 2), 'odds': 8.0}]})
+            np_bt.write_bets_snapshot(rid, 'wide', {'wide': [{'combo': (1, 2), 'odds': 3.0}],
+                                                     'axis': 1})
+            html_all = np_bt._bets_html(rid)
+            for tok in ('3連複', '3連単', '馬連', '馬単', 'ワイド'):
+                assert tok in html_all, f"未指定時は全券種表示, got missing {tok}"
+            html_trio_only = np_bt._bets_html(rid, {'trio': True, 'trifecta': False,
+                                                     'quinella': False, 'exacta': False,
+                                                     'wide': False})
+            assert '3連複' in html_trio_only, "trioのみON"
+            for tok in ('3連単', '馬連', '馬単', 'ワイド'):
+                assert tok not in html_trio_only, f"{tok}はOFFなので非表示のはず"
+            html_q_only = np_bt._bets_html(rid, {'trio': False, 'trifecta': False,
+                                                  'quinella': True, 'exacta': False, 'wide': False})
+            assert '馬連おすすめ' in html_q_only and '馬単' not in html_q_only, \
+                "馬連のみONなら単独タイトル(馬連/馬単の併記にならない)"
+        finally:
+            for pth_fn in (np_bt._bets_path,):
+                p = pth_fn(rid)
+                if os.path.exists(p):
+                    os.remove(p)
+    check("newspaper._bets_html(券種別ON/OFF)", t_bets_html_bet_types)
+
+    def t_elim_verdict_html():
+        # 🧹消去フィルター: 強適消去エンジンの判定から✅残し/🛟ボーダー残し以外(🧹消し)の馬名を表示
+        from core import newspaper as np_ev
+        rid = 'smoketest_elimverdict'
+        rows = [
+            {'馬番': 1, '馬名': 'ノコシA', '判定': '✅残し'},
+            {'馬番': 2, '馬名': 'ボーダーB', '判定': '🛟ボーダー残し'},
+            {'馬番': 3, '馬名': 'ケシC', '判定': '🧹消し'},
+            {'馬番': 4, '馬名': 'ケシD', '判定': '🧹消し'},
+        ]
+        try:
+            np_ev.write_elim_verdict_snapshot(rid, rows)
+            d = np_ev.load_elim_verdict(rid)
+            assert d and len(d['rows']) == 4, "判定スナップショットが往復保存される"
+            html = np_ev._elim_html({}, [], rid)
+            assert 'ケシC' in html and 'ケシD' in html, "消去された馬名が表示される"
+            assert 'ノコシA' not in html and 'ボーダーB' not in html, \
+                "残し/ボーダー残しの馬名は消去リストに出さない"
+            assert '消去フィルター' in html and '強適消去エンジンで消去' in html
+        finally:
+            if os.path.exists(np_ev._elim_verdict_path(rid)):
+                os.remove(np_ev._elim_verdict_path(rid))
+    check("newspaper._elim_html(強適消去エンジンの消去馬名)", t_elim_verdict_html)
 
     def t_scan_digest():
         # 📰 スキャン新聞: 保存(lean dict→str)→フィルタ(②のみ/本線のみ/見送り除外)→組版
@@ -1061,6 +1465,108 @@ def main():
         for fn in ('recent_gates', 'read_gate', 'write_gate', 'read_buy', 'write_buy'):
             assert hasattr(sc, fn), f"score_cache.{fn} 欠落"
     check("dashboard/⑥回顧の関数契約", t_dashboard_contract)
+
+    def t_jra_baba_scraper_parse():
+        # JRA公式アーカイブPDFのテキスト抽出結果(pdfplumber経由)を模したサンプルで
+        # 行パーサ(_parse_page_text)が正しく構造化できることを確認(ネットワーク不使用)。
+        from core import jra_baba_scraper as jb
+        sample_text = (
+            "２０２６年 第３回 東京競馬 クッション値・含水率一覧\n"
+            "2026年 3回東京競馬\n"
+            "芝コースクッション値 含水率\n"
+            "開催日次 測定月日 曜日 芝コース（%） ダートコース（%）\n"
+            "使用コース 測定時刻 測定値 測定時刻\n"
+            "ゴール前 4コーナー ゴール前 4コーナー\n"
+            "6月 5日 金曜日 C 09:00 9.8 08:30 14.9 15.1 7.9 8.8\n"
+            "第 1日 6月 6日 土曜日 C 07:00 9.9 05:00 16.2 15.7 7.7 8.9\n"
+        )
+        rows = jb._parse_page_text(sample_text)
+        assert len(rows) == 2, f"2行パースできる, got {len(rows)}"
+        r0 = rows[0]
+        assert r0['year'] == '2026' and r0['jyo'] == '05' and r0['monthday'] == '0605', \
+            f"年/場コード/月日の抽出, got {r0}"
+        assert r0['cushion'] == 9.8 and r0['turf_moist_goal'] == 14.9 \
+            and r0['turf_moist_4c'] == 15.1 and r0['dirt_moist_goal'] == 7.9 \
+            and r0['dirt_moist_4c'] == 8.8, f"数値抽出, got {r0}"
+        assert rows[1]['monthday'] == '0606', "2行目(第1日)も正しくパースされる"
+        assert jb._parse_page_text("関係ないテキスト") == [], "タイトル不一致は空リスト"
+        assert jb._parse_page_text("") == [], "空文字は空リスト"
+    check("jra_baba_scraper._parse_page_text(過去データPDFのテキスト構造化)",
+          t_jra_baba_scraper_parse)
+
+    def t_lookup_track_cond_contract():
+        # core.track_bias.lookup_track_cond の戻り値キー契約(app.pyのSRA自動供給が依存)
+        from core import track_bias as tb_lc
+        out = tb_lc.lookup_track_cond('1900', '0101', '99')  # 存在しないキー→全None
+        for k in ('cushion', 'dirt_moisture', 'turf_moist_goal', 'turf_moist_4c',
+                  'dirt_moist_4c', 'course'):
+            assert k in out, f"lookup_track_condの戻り値に{k}キーが無い(app.py自動供給が壊れる)"
+            assert out[k] is None, f"存在しないキーはNone, got {k}={out[k]}"
+    check("track_bias.lookup_track_cond(戻り値キー契約/芝含水率対応)",
+          t_lookup_track_cond_contract)
+
+    def t_sire_cushion_level():
+        # 種牡馬×クッション値絶対水準(9.5閾値)の検証済みフラグ(2026-07大規模BT・4頭のみ)
+        from core import track_bias as tb_cl
+        assert set(tb_cl._SIRE_CUSHION_LEVEL) == {
+            'ダイワメジャー', 'ハービンジャー', 'リアルスティール', 'サトノダイヤモンド'}, \
+            "採用は両窓一致の4頭のみ(それ以外は崩落=追加禁止)"
+        f = tb_cl.sire_cushion_level_flag('ダイワメジャー', 10.2)
+        assert f and f['flag'] == '🟢適合', "ダイワメジャー×硬め=適合"
+        f = tb_cl.sire_cushion_level_flag('ハービンジャー', 10.2)
+        assert f and f['flag'] == '🔴不適', "ハービンジャー×硬め=不適(軟め得意)"
+        f = tb_cl.sire_cushion_level_flag('サトノダイヤモンド', 9.0)
+        assert f and f['flag'] == '🟢適合', "サトノダイヤモンド×軟め=適合(資料の逆が真)"
+        assert tb_cl.sire_cushion_level_flag('キズナ', 10.2) is None, \
+            "崩落した種牡馬(キズナ等)はフラグを出さない"
+        assert tb_cl.sire_cushion_level_flag('ダイワメジャー', None) is None, "欠損はNone"
+        assert tb_cl.sire_cushion_level_flag('ダイワメジャー', 0.0) is None, "未入力0はNone"
+    check("track_bias.sire_cushion_level_flag(クッション水準×種牡馬・検証済4頭)",
+          t_sire_cushion_level)
+
+    def t_venue_race_label():
+        # 🏆Race Analysis Summary の「東京11R」表示(旧 (Score: x.x) の置換先)
+        from core import scraper as sc_vr
+        assert sc_vr.venue_race_label('202605020811') == '東京11R'
+        assert sc_vr.venue_race_label('202602011105') == '函館5R', "先頭0を落として5R"
+        assert sc_vr.venue_race_label('202644010111') == '大井11R', "NAR場コードも解決"
+        for bad in ('20260201110', 'abcdefghijkl', '', None):
+            assert sc_vr.venue_race_label(bad) == '', f"不正入力は空文字, got {bad}"
+        # 開催日(metadata['date_val'] YYYYMMDD)→ 曜日つき表示
+        assert sc_vr.format_race_date('20260517') == '2026/05/17(日)'
+        assert sc_vr.format_race_date('20260502') == '2026/05/02(土)'
+        for bad in ('2026051', '20260230', 'abcdefgh', '', None):
+            assert sc_vr.format_race_date(bad) == '', f"不正日付は空文字, got {bad}"
+    check("scraper.venue_race_label/format_race_date(Summaryの開催日・場R表示)",
+          t_venue_race_label)
+
+    def t_golden_line_gate():
+        # 黄金ラインのゲート(2026-07再検証: 35-40%が両窓最強・35%未満はholdoutで消える)
+        from core import jockey_jv as jj_gl
+        assert (jj_gl.GOLD_TOP2_WEAK, jj_gl.GOLD_TOP2_GATE, jj_gl.GOLD_TOP2_STRONG) \
+            == (0.30, 0.35, 0.40)
+        assert jj_gl.golden_line_mark({'rides': 40, 'top2': 0.52}) == '🥇🥇', '50%+は🥇🥇'
+        assert jj_gl.golden_line_mark({'rides': 40, 'top2': 0.42}) == '🥇🥇', '40-50%は🥇🥇'
+        assert jj_gl.golden_line_mark({'rides': 30, 'top2': 0.37}) == '🥇', '35-40%=期待値ゾーン'
+        assert jj_gl.golden_line_mark({'rides': 30, 'top2': 0.336}) == '△', '30-35%=参考のみ'
+        assert jj_gl.golden_line_mark({'rides': 30, 'top2': 0.29}) == '', '30%未満は出さない'
+        assert jj_gl.golden_line_mark({'rides': 8, 'top2': 0.60}) == '', '騎乗数不足は出さない'
+        for bad in (None, {}, {'rides': 'x', 'top2': 'y'}):
+            assert jj_gl.golden_line_mark(bad) == '', f'不正入力は空, got {bad}'
+        # △(30-35%)はholdoutで再現しないため判定ゲートには通さない(表示専用)
+        assert jj_gl.is_golden_line({'rides': 30, 'top2': 0.37}) is True
+        assert jj_gl.is_golden_line({'rides': 30, 'top2': 0.336}) is False, \
+            '△は消去/合議/妙味スキャナの判定に混入させない'
+        # 判定の正本が1か所であること(閾値の二重管理を防ぐ=逃げ判定と同種の回帰対策)。
+        # 各消費側は is_golden_line/golden_line_mark 経由で、閾値をベタ書きしない。
+        for mod in ('core/consensus_view.py', 'core/value_scanner.py', 'app.py'):
+            with open(os.path.join(ROOT, mod), encoding='utf-8') as _f:
+                src = _f.read()
+            assert 'is_golden_line' in src or 'golden_line_mark' in src, \
+                f"{mod} が黄金ライン判定ヘルパーを使っていない"
+            assert "get('top2', 0) >= 0.40" not in src, \
+                f"{mod} に旧40%閾値のベタ書きが残っている"
+    check("jockey_jv.golden_line_mark(黄金ライン35%ゲート・判定の一本化)", t_golden_line_gate)
 
     def t_nankan_contract():
         # NAR過去走ブリッジ(SRA/消去エンジンが依存)の関数存在＋venue導出ロジック保証

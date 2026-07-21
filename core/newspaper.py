@@ -229,7 +229,7 @@ def _pace_path(race_id):
 
 
 def write_pace_snapshot(race_id, ctx):
-    """展開MAPのコンテキスト(想定隊列pos4/ペース/逃げ馬)を新聞用に保存。"""
+    """展開MAPのコンテキスト(想定隊列pos4/直線到達finish/ペース/逃げ馬)を新聞用に保存。"""
     if not race_id or not ctx:
         return
     try:
@@ -237,6 +237,7 @@ def write_pace_snapshot(race_id, ctx):
         with open(_pace_path(race_id), 'w', encoding='utf-8') as f:
             json.dump({'race_id': str(race_id), 'ts': time.time(),
                        'pos4': _jsonable(ctx.get('pos4') or {}),
+                       'finish': _jsonable(ctx.get('finish') or {}),
                        'leader': _scalar(ctx.get('leader')),
                        'pace': str(ctx.get('pace') or ''),
                        'nige': _jsonable(ctx.get('nige_umas') or []),
@@ -249,6 +250,37 @@ def write_pace_snapshot(race_id, ctx):
 
 def load_pace(race_id):
     p = _pace_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _elim_verdict_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(NP_DIR, f"{rid}.elimv.json")
+
+
+def write_elim_verdict_snapshot(race_id, rows):
+    """🎯強適消去エンジンの判定(✅残し/🛟ボーダー残し/🧹消し)を新聞用に保存。
+    rows: [{'馬番','馬名','判定'}, ...]（app.pyの_edf 判定列そのまま）。"""
+    if not race_id or not rows:
+        return
+    try:
+        os.makedirs(NP_DIR, exist_ok=True)
+        with open(_elim_verdict_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'rows': _jsonable(list(rows))},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def load_elim_verdict(race_id):
+    p = _elim_verdict_path(race_id)
     if not os.path.exists(p):
         return None
     try:
@@ -315,6 +347,76 @@ def write_j5_snapshot(race_id, rows, weight=None):
 
 def load_j5(race_id):
     p = _j5_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _value_zone_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(NP_DIR, f"{rid}.valuezone.json")
+
+
+def write_value_zone_snapshot(race_id, rows):
+    """複勝率×回収率マップ(①勝ちゾーン等)の判定結果を新聞用に保存。
+
+    rows: SRAのゾーン散布図が計算した行(dictのlist・馬番/fuku/roi/odds/ゾーン等)。
+    印刷ではテーブル形式を優先(散布図の画像化はPDF生成コスト増につながるため)。
+    """
+    if not race_id or not rows:
+        return
+    try:
+        os.makedirs(NP_DIR, exist_ok=True)
+        with open(_value_zone_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'rows': _jsonable(list(rows))},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def load_value_zone(race_id):
+    p = _value_zone_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _philosophy_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(NP_DIR, f"{rid}.philosophy.json")
+
+
+def write_philosophy_snapshot(race_id, ph_res):
+    """🧠開発者の思考(core/philosophy.think()の戻り値)を新聞用に保存。
+
+    ph_res: {'steps':[{key,no,name,desc,enabled,verdict,reasons[]}...],
+             'final':{'honmei','aite','ana','keshi','plan','skip','skip_reasons',...}}
+    新しい予測ロジックは作らない層なので、ここでは受け取った結果をそのまま保存するだけ。
+    """
+    if not race_id or not ph_res:
+        return
+    try:
+        os.makedirs(NP_DIR, exist_ok=True)
+        with open(_philosophy_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(),
+                       'steps': _jsonable(ph_res.get('steps') or []),
+                       'final': _jsonable(ph_res.get('final') or {})},
+                      f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def load_philosophy(race_id):
+    p = _philosophy_path(race_id)
     if not os.path.exists(p):
         return None
     try:
@@ -1041,7 +1143,13 @@ DEFAULT_OPTS = {
                  'elim': True, 'vh': True, 'odds_moves': True,
                  'evidence': True, 'pci': True, 'pace_upset': True, 'stress': True,
                  'alerts': True,
-                 'j5': False},   # 騎手係数込みスコア(既定OFF・チェックで紙面に追加)
+                 'j5': False,     # 騎手係数込みスコア(既定OFF・チェックで紙面に追加)
+                 'dev_thoughts': True,   # 開発者の思考プロセス(既定ON・差別化の核)
+                 'ai_commentary': False,  # AIコメント欄(既定OFF・課金が発生するため)
+                 'value_zone': True,    # 複勝率×回収率マップ(テーブル形式・既定ON)
+                 'value_zone_chart': False},  # 同内容の散布図版(強適シート・既定OFF・空きスペース埋め用)
+    'bet_types': {'trio': True, 'trifecta': True, 'quinella': True,
+                  'exacta': True, 'wide': True},  # おすすめ買い目セクション内の券種別ON/OFF
     'footer_text': '',
     'page_numbers': True,
     'custom_cols': [],
@@ -1129,9 +1237,7 @@ def _consensus_html(cv, records, mono=False):
             f"<div class='cvcard' style='border-top:3px solid {c};'>"
             f"<div class='cvttl' style='color:{c};'>{_esc(ttl)}</div>"
             f"<div class='cvbody'>{_names(ul)}</div></div>")
-    reg = _esc(cv.get('regime') or '')
-    return (f"<div class='cvrow'><span class='regime'>合議レジーム: {reg}</span>"
-            + ''.join(cards) + "</div>")
+    return f"<div class='cvrow'>{''.join(cards)}</div>"
 
 
 def _buymeta_html(race_id, show_gate=True, show_buy=True):
@@ -1282,43 +1388,142 @@ def _fmt_bet_list(bets, arrow=False, cap=36):
     return ' / '.join(out)
 
 
-def _bets_html(race_id):
-    """SRAで生成した4券種おすすめ買い目(スナップショット)を紙面化。"""
+def _bets_html(race_id, bet_types=None):
+    """SRAで生成した5券種おすすめ買い目(スナップショット)を紙面化。
+    bet_types={'trio','trifecta','quinella','exacta','wide'}のON/OFFで
+    どの券種を紙面に載せるか選べる(未指定=全券種ON・従来動作を維持)。"""
     data = load_bets(race_id)
     if not data:
         return ''
+    bt = dict(DEFAULT_OPTS['bet_types'])
+    bt.update(bet_types or {})
     boxes = []
-    d = (data.get('trio') or {})
-    bets = (d.get('result') or {}).get('bets')
-    if bets:
-        pat = (d.get('extra') or {}).get('pattern') or ''
-        boxes.append(_exbox(f"🎯 3連複おすすめ（{pat}・{len(bets)}点）", _fmt_bet_list(bets)))
-    d = (data.get('trifecta') or {})
-    bets = (d.get('result') or {}).get('bets')
-    if bets:
-        band = ((d.get('result') or {}).get('meta') or {}).get('band_name') or ''
-        band_j = {'tight': '堅', 'mid': '中波乱', 'arare': '荒れ'}.get(band, band)
-        ttl = f"🎯 3連単おすすめ（{len(bets)}点" + (f"・{band_j}帯" if band_j else '') + "）"
-        boxes.append(_exbox(ttl, _fmt_bet_list(bets, arrow=True)))
-    d = (data.get('qe') or {})
-    res = d.get('result') or {}
-    q_txt = _fmt_bet_list(res.get('quinella'))
-    e_txt = _fmt_bet_list(res.get('exacta'), arrow=True)
-    if q_txt or e_txt:
-        body = (f"馬連: {q_txt}" if q_txt else '') + ('<br>' if q_txt and e_txt else '') \
-             + (f"馬単: {e_txt}" if e_txt else '')
-        boxes.append(_exbox("🎯 馬連/馬単おすすめ", body))
-    d = (data.get('wide') or {})
-    res = d.get('result') or {}
-    w_txt = _fmt_bet_list(res.get('wide'))
-    if w_txt:
-        ax_txt = f"軸{res.get('axis')}番・" if res.get('axis') else ''
-        boxes.append(_exbox(f"🎯 ワイドおすすめ（{ax_txt}厳選3点）", w_txt))
+    if bt.get('trio'):
+        d = (data.get('trio') or {})
+        bets = (d.get('result') or {}).get('bets')
+        if bets:
+            pat = (d.get('extra') or {}).get('pattern') or ''
+            boxes.append(_exbox(f"🎯 3連複おすすめ（{pat}・{len(bets)}点）", _fmt_bet_list(bets)))
+    if bt.get('trifecta'):
+        d = (data.get('trifecta') or {})
+        bets = (d.get('result') or {}).get('bets')
+        if bets:
+            band = ((d.get('result') or {}).get('meta') or {}).get('band_name') or ''
+            band_j = {'tight': '堅', 'mid': '中波乱', 'arare': '荒れ'}.get(band, band)
+            ttl = f"🎯 3連単おすすめ（{len(bets)}点" + (f"・{band_j}帯" if band_j else '') + "）"
+            boxes.append(_exbox(ttl, _fmt_bet_list(bets, arrow=True)))
+    if bt.get('quinella') or bt.get('exacta'):
+        d = (data.get('qe') or {})
+        res = d.get('result') or {}
+        q_txt = _fmt_bet_list(res.get('quinella')) if bt.get('quinella') else ''
+        e_txt = _fmt_bet_list(res.get('exacta'), arrow=True) if bt.get('exacta') else ''
+        if q_txt or e_txt:
+            body = (f"馬連: {q_txt}" if q_txt else '') + ('<br>' if q_txt and e_txt else '') \
+                 + (f"馬単: {e_txt}" if e_txt else '')
+            if q_txt and e_txt:
+                ttl = "🎯 馬連/馬単おすすめ"
+            elif q_txt:
+                ttl = "🎯 馬連おすすめ"
+            else:
+                ttl = "🎯 馬単おすすめ"
+            boxes.append(_exbox(ttl, body))
+    if bt.get('wide'):
+        d = (data.get('wide') or {})
+        res = d.get('result') or {}
+        w_txt = _fmt_bet_list(res.get('wide'))
+        if w_txt:
+            ax_txt = f"軸{res.get('axis')}番・" if res.get('axis') else ''
+            boxes.append(_exbox(f"🎯 ワイドおすすめ（{ax_txt}厳選3点）", w_txt))
     return ''.join(boxes)
 
 
+def _rear_group_threshold(disp, n):
+    """disp(0=前〜1=後)の値から『後方n頭』の境界値を計算する。
+    後ろからn番目とn+1番目の値の中間に境界線を引く(表示専用・判定ロジックの追加ではない)。"""
+    if not disp or not n or n <= 0 or n >= len(disp):
+        return None
+    vals = sorted(disp.values())
+    idx = len(vals) - n
+    if idx <= 0:
+        return max(0.0, vals[0] - 0.03)
+    return (vals[idx - 1] + vals[idx]) / 2.0
+
+
+def _pace_diagram_svg(pos4, labels=None, marker=None):
+    """展開・隊列レーン図(静的SVG)。{umaban: 0(先頭/1着想定)〜1(最後方)}の値を
+    そのまま横軸に並べる表示専用の視覚化で、新しい予測ロジックは追加しない
+    (verified_tenkai_priced_in)。呼び元は4角位置(pos4)/直線到達想定(finish)を渡す。
+    marker: 任意で(value, text)を渡すと、その位置(0=前〜1=後)に縦の破線+ラベルを重ねる
+    (例:『後方N頭』の境界線=AI展開照合/展開MAPの後方グループ件数から算出)。"""
+    if not pos4:
+        return ''
+    labels = labels or {}
+    try:
+        items = sorted(
+            ((int(u), max(0.0, min(1.0, float(v)))) for u, v in pos4.items()),
+            key=lambda t: t[1]
+        )
+    except Exception:
+        return ''
+    if not items:
+        return ''
+    w, margin_x, row_gap, thresh = 600, 30, 32, 28
+    lane_w = w - 2 * margin_x
+    zigzag = [0]
+    for k in range(1, max(10, len(items))):
+        zigzag += [k, -k]
+    placed = []
+    xy = {}
+    for um, v in items:
+        x = margin_x + (1.0 - v) * lane_w   # 前(0)を右・後(1)を左に配置(PCの並び順に合わせる)
+        row = zigzag[-1]
+        for r in zigzag:
+            if all(abs(x - px) >= thresh for px, pr in placed if pr == r):
+                row = r
+                break
+        placed.append((x, row))
+        xy[um] = (x, row)
+    max_row = max((abs(r) for _, r in placed), default=0)
+    h = 60 + max_row * row_gap * 2
+    cy = h / 2
+    parts = [f'<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" '
+             f'style="width:100%;height:auto;display:block;margin:1mm 0;">']
+    parts.append(f'<line x1="{margin_x}" y1="{cy:.1f}" x2="{w - margin_x}" y2="{cy:.1f}" '
+                 f'stroke="#bbb" stroke-width="1.5" stroke-dasharray="4,3"/>')
+    parts.append(f'<text x="2" y="{cy:.1f}" font-size="13" fill="#777" '
+                 f'dominant-baseline="middle">後</text>')
+    parts.append(f'<text x="{w - 16}" y="{cy:.1f}" font-size="13" fill="#777" '
+                 f'dominant-baseline="middle">前</text>')
+    if marker:
+        mv, mtext = marker[0], marker[1]
+        try:
+            mv = max(0.0, min(1.0, float(mv)))
+        except Exception:
+            mv = None
+        if mv is not None:
+            mx = margin_x + (1.0 - mv) * lane_w
+            parts.append(f'<line x1="{mx:.1f}" y1="8" x2="{mx:.1f}" y2="{h - 8}" '
+                         f'stroke="#7048e8" stroke-width="1.3" stroke-dasharray="4,3"/>')
+            parts.append(f'<text x="{mx:.1f}" y="11" font-size="10" fill="#7048e8" '
+                         f'text-anchor="middle" font-weight="700">{_esc(mtext)}</text>')
+    for um, (x, row) in xy.items():
+        y = cy + row * row_gap
+        nm = _esc(str(labels.get(um, '')))[:8]
+        title = f'{um}番 {nm}' if nm else f'{um}番'
+        parts.append(
+            f'<g><title>{title}</title>'
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="13" fill="#fff" stroke="#333" stroke-width="1.3"/>'
+            f'<text x="{x:.1f}" y="{y:.1f}" font-size="12" fill="#111" text-anchor="middle" '
+            f'dominant-baseline="middle" font-weight="700">{um}</text></g>'
+        )
+    parts.append('</svg>')
+    return ''.join(parts)
+
+
 def _pace_html(race_id, records):
-    """展開・隊列: 4角想定隊列の1行図＋ペース＋AI展開照合💀。"""
+    """展開・隊列: 直線到達(到達=着順)想定の1行図＋レーン図(SVG)＋ペース＋AI展開照合💀。
+    直線到達(finish)は4角位置+決め手+適性+総合力+人気の合成(pace_map.predict_finish)。
+    旧スナップショット(finish未保存)は4角位置(pos4)にフォールバックする。"""
     pc = load_pace(race_id)
     ai_danger = None
     rear = None
@@ -1331,19 +1536,27 @@ def _pace_html(race_id, records):
     if not pc and not ai_danger:
         return ''
     lines = []
+    disp = {}
     if pc:
-        pos4 = {}
+        finish, pos4 = {}, {}
+        for k, v in (pc.get('finish') or {}).items():
+            try:
+                finish[int(k)] = float(v)
+            except Exception:
+                continue
         for k, v in (pc.get('pos4') or {}).items():
             try:
                 pos4[int(k)] = float(v)
             except Exception:
                 continue
-        if pos4:
-            ordered = sorted(pos4.items(), key=lambda kv: kv[1])
+        disp = finish or pos4
+        disp_label = "《直線到達想定》" if finish else "《4角想定》"
+        if disp:
+            ordered = sorted(disp.items(), key=lambda kv: kv[1])
             front = [str(u) for u, v in ordered if v < 0.35]
             mid = [str(u) for u, v in ordered if 0.35 <= v <= 0.65]
             back = [str(u) for u, v in ordered if v > 0.65]
-            lines.append("《4角想定》(前) " + ' '.join(front) + " ｜ " + ' '.join(mid)
+            lines.append(f"{disp_label}(前) " + ' '.join(front) + " ｜ " + ' '.join(mid)
                          + " ｜ " + ' '.join(back) + " (後)")
         meta_p = []
         if pc.get('pace'):
@@ -1369,18 +1582,31 @@ def _pace_html(race_id, records):
         if meta_p:
             lines.append('　'.join(meta_p))
     by_um = _names_by_um(records)
+    rear_group = None
     if ai_danger:
         nm = '・'.join(f"{u}{by_um.get(u, '')[:6]}" for u in sorted(ai_danger))
         lines.append(f"💀 AI展開照合=両AIが後方帯で合意: {nm}")
+        rear_group = ai_danger
     elif rear:
         lines.append("後方グループ(展開MAP): " + '・'.join(str(u) for u in sorted(rear)))
+        rear_group = rear
     if not lines:
         return ''
-    return _exbox("🗺 展開・隊列", '<br>'.join(_esc(x) for x in lines))
+    body = '<br>'.join(_esc(x) for x in lines)
+    marker = None
+    if disp and rear_group:
+        n_rear = len(rear_group)
+        th = _rear_group_threshold(disp, n_rear)
+        if th is not None:
+            marker = (th, f"後方{n_rear}頭")
+    diagram = _pace_diagram_svg(disp, by_um, marker) if disp else ''
+    if diagram:
+        body += diagram
+    return _exbox("🗺 展開・隊列", body)
 
 
 def _elim_html(cv, records, race_id):
-    """消去フィルター: 消去クロス重複数の高い馬＋残し馬。"""
+    """消去フィルター: 強適消去エンジンの消去馬名＋消去クロス重複数の高い馬＋残し馬。"""
     aim = (cv or {}).get('aim') or {}
     keep = None
     try:
@@ -1394,10 +1620,17 @@ def _elim_html(cv, records, race_id):
             elim[int(k)] = int(v)
         except Exception:
             continue
-    if not elim and not keep:
+    verdict = load_elim_verdict(race_id)
+    cut_rows = [r for r in ((verdict or {}).get('rows') or [])
+                if str(r.get('判定') or '') == '🧹消し']
+    if not elim and not keep and not cut_rows:
         return ''
     by_um = _names_by_um(records)
     lines = []
+    if cut_rows:
+        cut_txt = '・'.join(
+            f"{_esc(str(r.get('馬番', '')))}{_esc(str(r.get('馬名', ''))[:7])}" for r in cut_rows)
+        lines.append(f"🎯強適消去エンジンで消去（残し/ボーダー残し以外・{len(cut_rows)}頭）: {cut_txt}")
     bad = sorted(((u, c) for u, c in elim.items() if c >= 3), key=lambda x: -x[1])
     if bad:
         lines.append("✖消去クロス重複3+（強気に切る候補）: "
@@ -1443,15 +1676,12 @@ def _vh_html(cv, records):
     cand = sorted(cand, key=lambda u: -(vh.get(u, 0)))[:6]
     if not cand:
         return ''
-    er = aim.get('edge_reasons') or {}
     by_um = _names_by_um(records)
     items = []
     for u in cand:
-        rs = [str(x) for x in (er.get(str(u)) or er.get(u) or [])][:3]
         sc_txt = f" vh{vh[u]:.2f}" if u in vh else ''
-        rtxt = f"〈{'/'.join(rs)}〉" if rs else ''
         items.append(f"{_esc(tiers[u])} <b>{u}</b> {_esc(by_um.get(u, '')[:9])}"
-                     f"{_esc(sc_txt)}{_esc(rtxt)}")
+                     f"{_esc(sc_txt)}")
     body = '　'.join(items)
     rest = len(tiers) - len(cand)
     if rest > 0:
@@ -1592,14 +1822,279 @@ def _pace_upset_html(analysis):
         lines.append("脚質構成: " + '　'.join(
             f"{emj.get(k, '⚪')}{_esc(k)}:{'・'.join(vs)}"
             for k, vs in groups.items() if k != '不明'))
+    if lines:
+        lines.append("<span style='color:#888;font-size:6.4pt;'>※展開恩恵(展開が向く馬)は"
+                     "検証で人気に織込み済みと確認済み。これは表示のみで買い妙味の主張ではありません。</span>")
     return _exbox("🏇 展開分析 & 波乱確率", '<br>'.join(lines)) if lines else ''
+
+
+_ZONE_ORDER = ['① 勝ちゾーン(このレースの軸候補)', '② 一撃ゾーン(穴)',
+              '③ 堅実(中位)', '④ 見送り']
+_ZONE_SHORT = {'① 勝ちゾーン(このレースの軸候補)': '① 勝ちゾーン',
+              '② 一撃ゾーン(穴)': '② 一撃(穴)',
+              '③ 堅実(中位)': '③ 堅実', '④ 見送り': '④ 見送り'}
+_ZONE_COLOR = {'① 勝ちゾーン(このレースの軸候補)': '#2f9e44',
+              '② 一撃ゾーン(穴)': '#f59f00',
+              '③ 堅実(中位)': '#1971c2', '④ 見送り': '#868e96'}
+
+
+def _quantile(values, q):
+    """パーセンタイル(線形補間・pandas Series.quantile()と同じ既定方式)。"""
+    s = sorted(values)
+    n = len(s)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return s[0]
+    pos = q * (n - 1)
+    lo = int(pos)
+    hi = min(lo + 1, n - 1)
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
+
+
+def _value_zone_scatter_svg(rows):
+    """複勝率×回収率マップの散布図(静的SVG)。SRA(🏠)のAltair散布図と同じ軸/ゾーン色/
+    ①勝ちゾーンの網掛け・境界線・凡例を印刷向けに再現する表示専用の可視化。
+    ゾーン閾値(y_hi/x_mid/x_hi)はrows(fuku/roi/odds)からapp.pyと同じ式で再計算するだけで、
+    新しい判定ロジックは追加しない。"""
+    pts = []
+    for r in (rows or []):
+        try:
+            um = int(r.get('馬番'))
+            roi = float(r.get('roi'))
+            fuku = float(r.get('fuku'))
+        except Exception:
+            continue
+        odds = None
+        try:
+            odds = float(r.get('odds'))
+        except Exception:
+            pass
+        pts.append({'um': um, 'name': str(r.get('name', ''))[:6], 'roi': roi, 'fuku': fuku,
+                    'odds': odds, 'zone': str(r.get('ゾーン', '④ 見送り'))})
+    if len(pts) < 2:
+        return ''
+    w, h = 640, 300
+    ml, mr, mt, mb = 40, 16, 14, 26
+    pw, ph = w - ml - mr, h - mt - mb - 34   # 下段34pxは凡例用に確保
+    roi_vals = [p['roi'] for p in pts]
+    fuku_vals = [p['fuku'] for p in pts]
+    x0, x1 = min(roi_vals + [95.0]) - 8, max(roi_vals + [110.0]) + 8
+    y0, y1 = max(0.0, min(fuku_vals) - 6), min(100.0, max(fuku_vals) + 8)
+    if x1 <= x0:
+        x1 = x0 + 1.0
+    if y1 <= y0:
+        y1 = y0 + 1.0
+
+    # ①勝ちゾーンの閾値(app.py 強適シートの散布図と同じ式): y_hi=複勝率上位25%、
+    # x_mid=健全馬(60倍以下)の回収率中央値、x_hi=同75%(②一撃の境界)。
+    y_hi = _quantile(fuku_vals, 0.75)
+    sane_roi = [p['roi'] for p in pts if p['odds'] is None or p['odds'] <= 60.0]
+    if not sane_roi:
+        sane_roi = roi_vals
+    x_mid = _quantile(sane_roi, 0.5)
+    x_hi = _quantile(sane_roi, 0.75)
+
+    def _px(roi):
+        return ml + (roi - x0) / (x1 - x0) * pw
+
+    def _py(fuku):
+        return mt + ph - (fuku - y0) / (y1 - y0) * ph
+
+    parts = [f'<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" '
+             f'style="width:100%;height:auto;display:block;margin:1mm 0;">']
+    # ①勝ちゾーン(右上コーナー)の薄い赤網掛け+ラベル(app.pyの_sm_rect/_sm_zlabと同じ判定域)
+    zx0 = max(_px(x_mid), ml)
+    if zx0 < ml + pw:
+        parts.append(f'<rect x="{zx0:.1f}" y="{mt:.1f}" width="{ml + pw - zx0:.1f}" '
+                     f'height="{_py(y_hi) - mt:.1f}" fill="#ffc9c9" fill-opacity="0.3"/>')
+        parts.append(f'<text x="{(zx0 + ml + pw) / 2:.1f}" y="{mt + 10:.1f}" font-size="9" '
+                     f'font-weight="700" fill="#e03131" text-anchor="middle">① 勝ちゾーン</text>')
+    parts.append(f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + ph}" stroke="#999" stroke-width="1"/>')
+    parts.append(f'<line x1="{ml}" y1="{mt + ph}" x2="{ml + pw}" y2="{mt + ph}" '
+                 f'stroke="#999" stroke-width="1"/>')
+    if x0 < 100 < x1:
+        rx = _px(100)
+        parts.append(f'<line x1="{rx:.1f}" y1="{mt}" x2="{rx:.1f}" y2="{mt + ph}" '
+                     f'stroke="#adb5bd" stroke-width="1" stroke-dasharray="3,3"/>')
+        parts.append(f'<text x="{rx:.1f}" y="{mt - 3}" font-size="9" fill="#adb5bd" '
+                     f'text-anchor="middle">EV100</text>')
+    if x0 < x_mid < x1:
+        rxm = _px(x_mid)
+        parts.append(f'<line x1="{rxm:.1f}" y1="{mt}" x2="{rxm:.1f}" y2="{mt + ph}" '
+                     f'stroke="#e03131" stroke-width="1" stroke-dasharray="5,4"/>')
+    if x0 < x_hi < x1:
+        rxh = _px(x_hi)
+        parts.append(f'<line x1="{rxh:.1f}" y1="{mt}" x2="{rxh:.1f}" y2="{mt + ph}" '
+                     f'stroke="#f59f00" stroke-width="1" stroke-dasharray="3,3"/>')
+    if y0 < y_hi < y1:
+        ryh = _py(y_hi)
+        parts.append(f'<line x1="{ml}" y1="{ryh:.1f}" x2="{ml + pw}" y2="{ryh:.1f}" '
+                     f'stroke="#e03131" stroke-width="1" stroke-dasharray="5,4"/>')
+    parts.append(f'<text x="{ml + pw / 2:.1f}" y="{mt + ph + 22:.1f}" font-size="10" fill="#555" '
+                 f'text-anchor="middle">回収率EV(%)</text>')
+    parts.append(f'<text x="10" y="{mt + ph / 2:.1f}" font-size="10" fill="#555" '
+                 f'text-anchor="middle" transform="rotate(-90 10 {mt + ph / 2:.1f})">複勝率(%)</text>')
+    for yv in (0, 25, 50, 75, 100):
+        if y0 <= yv <= y1:
+            yy = _py(yv)
+            parts.append(f'<line x1="{ml - 3}" y1="{yy:.1f}" x2="{ml}" y2="{yy:.1f}" stroke="#999"/>')
+            parts.append(f'<text x="{ml - 6}" y="{yy:.1f}" font-size="8" fill="#777" '
+                         f'text-anchor="end" dominant-baseline="middle">{yv}</text>')
+
+    placed = []
+
+    def _fits(bx0, by0, bx1, by1):
+        for (px0, py0, px1, py1) in placed:
+            if not (bx1 < px0 or bx0 > px1 or by1 < py0 or by0 > py1):
+                return False
+        return True
+
+    dots, labels = [], []
+    for p in sorted(pts, key=lambda p: -p['fuku']):
+        cx, cy = _px(p['roi']), _py(p['fuku'])
+        color = _ZONE_COLOR.get(p['zone'], '#868e96')
+        dots.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="7" fill="{color}" '
+                    f'fill-opacity="0.85" stroke="#fff" stroke-width="1"/>')
+        label = f"{p['um']}{_esc(p['name'])}"
+        lw = max(3.6 * len(label) + 4, 14)
+        lh = 10
+        candidates = [(cx - lw / 2, cy - 9 - lh, cx + lw / 2, cy - 9),
+                     (cx - lw / 2, cy + 9, cx + lw / 2, cy + 9 + lh),
+                     (cx + 8, cy - lh / 2, cx + 8 + lw, cy + lh / 2),
+                     (cx - 8 - lw, cy - lh / 2, cx - 8, cy + lh / 2)]
+        chosen = next((c for c in candidates if _fits(*c)), candidates[0])
+        placed.append(chosen)
+        tx, ty = (chosen[0] + chosen[2]) / 2, (chosen[1] + chosen[3]) / 2
+        labels.append(f'<text x="{tx:.1f}" y="{ty:.1f}" font-size="7.5" fill="#333" '
+                      f'text-anchor="middle" dominant-baseline="middle">{label}</text>')
+    parts.extend(dots)
+    parts.extend(labels)
+
+    # 凡例(ゾーン色の説明): 下段に横並びで配置
+    ly = h - 12
+    lx = ml
+    for z in _ZONE_ORDER:
+        color = _ZONE_COLOR[z]
+        lbl = _ZONE_SHORT.get(z, z)
+        parts.append(f'<circle cx="{lx + 5:.1f}" cy="{ly:.1f}" r="5" fill="{color}" '
+                     f'fill-opacity="0.85" stroke="#fff" stroke-width="1"/>')
+        parts.append(f'<text x="{lx + 13:.1f}" y="{ly:.1f}" font-size="8.5" fill="#333" '
+                     f'dominant-baseline="middle">{_esc(lbl)}</text>')
+        lx += 13 + len(lbl) * 8.6 + 16
+    parts.append('</svg>')
+    return ''.join(parts)
+
+
+def _value_zone_chart_html(race_id):
+    """📊 強適シート散布図(複勝率×回収率マップの図版)。既存value_zoneテーブルと同じ
+    データ・同じゾーン判定を図で見せるだけの追加ビュー(既定OFF・任意で紙面に追加)。"""
+    d = load_value_zone(race_id)
+    rows = (d or {}).get('rows') or []
+    if not rows:
+        return ''
+    svg = _value_zone_scatter_svg(rows)
+    if not svg:
+        return ''
+    note = ("縦=複勝率(単勝オッズ別の実測値)／横=回収率EV(モデル推定勝率×オッズ・目安)。"
+            "色は複勝率×回収率マップと同じゾーン判定(緑=①勝ちゾーン/橙=②一撃(穴)/青=③堅実/灰=④見送り)。"
+            "単勝は市場効率的で『必ず儲かる』ではありません(表示専用)。")
+    box = _exbox("📊 強適シート（複勝率×回収率の散布図）", svg + f"<div class='exnote'>{note}</div>")
+    return box.replace("class='exbox'", "class='exbox exwide'", 1)
+
+
+def _value_zone_html(race_id):
+    """📈複勝率×回収率マップの結果をテーブル形式で紙面化(印刷コストを抑えテキスト表に)。
+
+    SRA散布図と同じゾーン判定(①勝ちゾーン=複勝率上位25%×回収率が健全馬の中央値以上、
+    等)をそのまま転記するだけ。新しい判定基準は作らない。
+    """
+    d = load_value_zone(race_id)
+    rows = (d or {}).get('rows') or []
+    if not rows:
+        return ''
+    by_zone = {z: [] for z in _ZONE_ORDER}
+    for r in rows:
+        by_zone.setdefault(r.get('ゾーン', '④ 見送り'), []).append(r)
+    lines = []
+    for z in _ZONE_ORDER:
+        rs = sorted(by_zone.get(z) or [], key=lambda r: -(r.get('fuku') or 0))
+        if not rs:
+            continue
+        items = []
+        for r in rs[:6]:
+            items.append(f"{_esc(r.get('馬番'))}{_esc(str(r.get('name', ''))[:6])}"
+                         f"(複{_esc(r.get('fuku'))}%/回{_esc(r.get('roi'))}%)")
+        lines.append(f"<b>{_esc(_ZONE_SHORT.get(z, z))}</b>: " + '　'.join(items))
+    note = ("複=複勝率(単勝オッズ別の実測値)／回=回収率EV(モデル推定勝率×オッズ・目安)。"
+            "①勝ちゾーン=複勝率がレース内上位25%×回収率が健全馬の中央値以上"
+            "(最も信頼できる軸候補)。単勝は市場効率的で『必ず儲かる』ではありません。")
+    box = _exbox("📈 複勝率×回収率マップ（ゾーン別）", '<br>'.join(lines) + f"<div class='exnote'>{note}</div>")
+    return box.replace("class='exbox'", "class='exbox exwide'", 1)
+
+
+def _developer_thoughts_html(race_id):
+    """🧠開発者の思考プロセス。core/philosophy.pyの判定結果をそのまま紙面化する。
+
+    LLM呼び出しなし・新規ロジックなし。統合ビュー(合議)の結論を再掲しつつ、
+    『どの順番で・何を根拠に判断したか』を①〜⑧の番号付きで見せるだけの層。
+    """
+    d = load_philosophy(race_id)
+    if not d or not d.get('steps'):
+        return ''
+    final = d.get('final') or {}
+    steps = d.get('steps') or []
+
+    def _join(ul):
+        return '・'.join(str(u) for u in (ul or [])) or 'なし'
+
+    lines = []
+    if final.get('skip'):
+        _why = '・'.join(final.get('skip_reasons') or [])
+        lines.append(f"⛔ <b>このレースは見送り推奨</b>" + (f"（{_esc(_why)}）" if _why else ''))
+    else:
+        lines.append(f"✅ <b>この思考で選んだ買い方: {_esc(str(final.get('plan', '')))}</b>")
+    lines.append(f"本命 {_join(final.get('honmei'))}　｜　相手 {_join(final.get('aite'))}"
+                 f"　｜　穴 {_join(final.get('ana'))}　｜　消し {_join(final.get('keshi'))}")
+    lines.append("<hr style='border:none;border-top:0.4px solid #ddd;margin:1mm 0;'>")
+    for s in steps:
+        if not s.get('enabled', True):
+            continue
+        no = _esc(str(s.get('no', '')))
+        name = _esc(str(s.get('name', '')))
+        verdict = _esc(str(s.get('verdict', '')))
+        lines.append(f"<b>{no} {name}</b> → <b>{verdict}</b>")
+        for r in (s.get('reasons') or [])[:3]:
+            lines.append(f"<span style='margin-left:3mm;color:#666;font-size:6.6pt;'>・{_esc(str(r))}</span>")
+    box = _exbox("🧠 開発者の思考プロセス（この予想の考え方）", '<br>'.join(lines))
+    return box.replace("class='exbox'", "class='exbox exwide'", 1)
+
+
+def _commentary_html(race_id):
+    """🎭AIコメント欄。core/newspaper_commentary.pyが生成したスナップショットを紙面化。
+
+    新しい予想は含まない読み物枠(合議結果の解説のみ)。スナップショットが無い
+    (=ユーザーがボタンで生成していない)レースには何も出さない。
+    """
+    from core import newspaper_commentary as nc
+    d = nc.load_commentary(race_id)
+    comments = (d or {}).get('comments') or []
+    if not comments:
+        return ''
+    lines = []
+    for c in comments:
+        lines.append(f"{_esc(c.get('emoji', ''))} <b>{_esc(c.get('name', ''))}</b>: "
+                     f"{_esc(c.get('comment', ''))}")
+    box = _exbox("🎭 AIコメント欄（合議結果の解説・読み物）", '<br>'.join(lines))
+    return box.replace("class='exbox'", "class='exbox exwide'", 1)
 
 
 def _j5_html(race_id):
     """🏇 騎手係数込み 総合スコア(J5)。SRAで表示していた表をそのまま紙面化。
 
     影響率スライダー依存の表なので、保存時の重みを併記する(再現性の担保)。
-    黄金ライン/DB条件も拾うが、DB条件は外部サイト集計=参考表示である旨を明記する。
+    スコア/順位/変動は本紙の強適表・合議カードと重複するため割き、
+    内訳(騎手係数の根拠)とDB条件内訳(参考表示)を中心に見せる。
     """
     d = load_j5(race_id)
     rows = (d or {}).get('rows') or []
@@ -1612,29 +2107,33 @@ def _j5_html(race_id):
         v = r.get(k)
         return '' if v is None else str(v)
 
-    head = ('<tr><th>順</th><th>変動</th><th>馬番</th><th>馬名</th><th>騎手</th>'
-            '<th>騎手係数</th><th>黄金</th><th>騎手込み</th></tr>')
+    def _um_key(r):
+        try:
+            return int(r.get('馬番'))
+        except Exception:
+            return 999
+    rows_sorted = sorted(rows, key=_um_key)
+
+    head = ('<tr><th>馬番</th><th>馬名</th><th>騎手</th>'
+            '<th>騎手係数</th><th>黄金</th><th>内訳</th><th>DB条件内訳</th></tr>')
     body = []
-    for r in rows[:18]:
-        chg = _f(r, '順位変動')
-        # ↑=騎手で評価UP / ↓=DOWN。モノクロでも読めるよう記号のまま出す
+    for r in rows_sorted[:18]:
         body.append(
-            f"<tr><td>{_esc(_f(r, '騎手込み順位'))}</td>"
-            f"<td>{_esc(chg)}</td>"
-            f"<td><b>{_esc(_f(r, '馬番'))}</b></td>"
+            f"<tr><td><b>{_esc(_f(r, '馬番'))}</b></td>"
             f"<td>{_esc(_f(r, '馬名')[:9])}</td>"
             f"<td>{_esc(_f(r, '騎手')[:6])}</td>"
             f"<td>{_esc(_f(r, '騎手係数'))}</td>"
             f"<td>{_esc(_f(r, '黄金ライン'))}</td>"
-            f"<td>{_esc(_f(r, '騎手込みスコア'))}</td></tr>")
+            f"<td>{_esc(_f(r, '内訳'))}</td>"
+            f"<td>{_esc(_f(r, 'DB条件内訳'))}</td></tr>")
     tbl = (f"<table class='sub'><thead>{head}</thead>"
            f"<tbody>{''.join(body)}</tbody></table>")
-    note = ("※『変動』は強適スコア順位からの変化(↑＝騎手で評価UP)。"
-            "黄金ライン🥇＝騎手×厩舎の連対40%+。"
-            "騎手係数は検証済みエッジ強度に合わせた保守的設定。")
+    note = ("黄金ライン🥇＝騎手×厩舎の連対40%+。騎手係数は検証済みエッジ強度に合わせた保守的設定。"
+            "『DB条件内訳』＝db-keiba集計の騎手別・条件別回収率(📗儲かる条件/📕苦手条件)で、"
+            "外部サイトの集計値=当アプリの検証を通した数字ではなく参考表示のみ。")
     box = _exbox(f"🏇 騎手係数込み 総合スコア{w_txt}",
                  tbl + f"<div class='exnote'>{note}</div>")
-    # 8列あるので幅広ボックスにする(標準幅32.8%だと潰れる)
+    # 7列あるので幅広ボックスにする(標準幅32.8%だと潰れる)
     return box.replace("class='exbox'", "class='exbox exwide'", 1)
 
 
@@ -1734,13 +2233,30 @@ def _alerts_html(race_id, cv, records):
             f"（このレースで発動した警告・妙味）</span>{''.join(divs)}</div>")
 
 
+def resolve_page_format(orientation):
+    """orientation設定('landscape'/'portrait'/'a3_portrait')→(pdf_format, is_landscape)。
+
+    @page CSS(build_newspaper_html)とhtml_to_pdf()のPlaywright呼び出しの両方が
+    ここを通ることで、ページサイズの二重管理によるズレ(2026-07診断)を防ぐ。
+    A3縦(297×420mm)はA4横(297×210mm)と同じ幅で高さがちょうど2倍のため、
+    既存の%ベースCSSのまま『A4横2枚ぶんの内容が1枚に収まる』設計が成立する。
+    """
+    if orientation == 'a3_portrait':
+        return 'A3', False
+    if orientation == 'portrait':
+        return 'A4', False
+    return 'A4', True  # 既定: landscape
+
+
 def build_newspaper_html(race_ids, opts=None):
     """選択レースを1つの印刷用HTMLに組版。(html, 収録情報リスト) を返す。"""
     o = dict(DEFAULT_OPTS)
     o.update(opts or {})
     sec = dict(DEFAULT_OPTS['sections'])
     sec.update((opts or {}).get('sections') or {})
-    landscape = o.get('orientation', 'landscape') != 'portrait'
+    bet_types = dict(DEFAULT_OPTS['bet_types'])
+    bet_types.update((opts or {}).get('bet_types') or {})
+    _pdf_fmt, landscape = resolve_page_format(o.get('orientation', 'landscape'))
     font_pt = float(o.get('font_pt') or 6.8)
     mono = bool(o.get('mono'))
     accent = '#111' if mono else '#b3001b'
@@ -1810,10 +2326,16 @@ def build_newspaper_html(race_ids, opts=None):
         cv_html = _consensus_html(cv, records, mono) if sec.get('consensus') else ''
         analysis = load_analysis(rid)
         extras = []
+        if sec.get('dev_thoughts'):
+            extras.append(_developer_thoughts_html(rid))
+        if sec.get('ai_commentary'):
+            extras.append(_commentary_html(rid))
+        if sec.get('value_zone'):
+            extras.append(_value_zone_html(rid))
         if sec.get('alerts'):
             extras.append(_alerts_html(rid, cv, records))
         if sec.get('bets'):
-            extras.append(_bets_html(rid))
+            extras.append(_bets_html(rid, bet_types))
         if sec.get('pace'):
             extras.append(_pace_html(rid, records))
         if sec.get('pace_upset'):
@@ -1832,6 +2354,8 @@ def build_newspaper_html(race_ids, opts=None):
             extras.append(_odds_moves_html(rid, records))
         if sec.get('evidence'):
             extras.append(_evidence_html(analysis))
+        if sec.get('value_zone_chart'):
+            extras.append(_value_zone_chart_html(rid))
         extras_html = ''.join(x for x in extras if x)
         if extras_html:
             extras_html = f"<div class='extras'>{extras_html}</div>"
@@ -1895,7 +2419,7 @@ def build_newspaper_html(race_ids, opts=None):
             out_blocks.append(_blk)
         race_blocks = out_blocks
 
-    page_size = 'A4 landscape' if landscape else 'A4 portrait'
+    page_size = f"{_pdf_fmt} {'landscape' if landscape else 'portrait'}"
     css = f"""
     @page {{ size: {page_size}; margin: 8mm 7mm 10mm 7mm; }}
     * {{ box-sizing: border-box; }}
@@ -1925,23 +2449,23 @@ def build_newspaper_html(race_ids, opts=None):
     .hbox b.t {{ color: {accent}; font-size: 7.5pt; margin-right: 1.2mm; }}
     /* extras: flexだと『入りきらない行の箱群ごと次ページへジャンプ』して大きな空白が
        できるため、印刷分割に強い inline-block 流し込みにする */
-    .extras {{ display: block; margin-top: 1.4mm; font-size: 0; }}
-    .exbox {{ border: 0.5px solid #bbb; padding: 0.8mm 1.5mm; font-size: 7.5pt;
-              line-height: 1.55; background: #fff; page-break-inside: avoid;
+    .extras {{ display: block; margin-top: 1mm; font-size: 0; }}
+    .exbox {{ border: 0.5px solid #bbb; padding: 0.5mm 1.3mm; font-size: 7.3pt;
+              line-height: 1.35; background: #fff; page-break-inside: avoid;
               display: inline-block; vertical-align: top; width: 32.8%;
-              margin: 0 0.25% 1.2mm 0; }}
+              margin: 0 0.25% 0.8mm 0; }}
     .exttl {{ font-weight: 800; color: {accent}; display: block;
-              border-bottom: 0.5px solid #ddd; margin-bottom: 0.5mm; }}
+              border-bottom: 0.5px solid #ddd; margin-bottom: 0.3mm; }}
     .exwide {{ width: 66.2%; }}
     /* exbox内の小テーブル(J5=騎手係数込みスコア等)。紙面の主表(.kt)より一段小さく */
-    .sub {{ width: 100%; border-collapse: collapse; font-size: 6.6pt; margin-top: 0.4mm; }}
-    .sub th, .sub td {{ border: 0.4px solid #ddd; padding: 0.25mm 0.7mm;
+    .sub {{ width: 100%; border-collapse: collapse; font-size: 6.6pt; margin-top: 0.3mm; }}
+    .sub th, .sub td {{ border: 0.4px solid #ddd; padding: 0.2mm 0.7mm;
                         text-align: center; white-space: nowrap; }}
     .sub th {{ background: {'#f2f2f2' if mono else '#f7eaec'}; font-weight: 700; }}
     .sub td:nth-child(4), .sub td:nth-child(5) {{ text-align: left; }}
-    .exnote {{ font-size: 6.4pt; color: #666; margin-top: 0.4mm; line-height: 1.4; }}
-    .albox {{ border-left: 1mm solid #999; padding: 0.7mm 1.5mm; margin: 0.5mm 0;
-              font-size: 7.5pt; line-height: 1.5; }}
+    .exnote {{ font-size: 6.4pt; color: #666; margin-top: 0.3mm; line-height: 1.25; }}
+    .albox {{ border-left: 1mm solid #999; padding: 0.4mm 1.3mm; margin: 0.3mm 0;
+              font-size: 7.3pt; line-height: 1.3; }}
     .al-warn {{ background: {'#f0f0f0' if mono else '#fff6e0'};
                 border-color: {'#666' if mono else '#e09b00'}; }}
     .al-info {{ background: {'#f4f4f4' if mono else '#e9f0fb'};
@@ -1953,17 +2477,20 @@ def build_newspaper_html(race_ids, opts=None):
                                 text-align: left; word-break: break-all; }}
     table.ev th {{ background: {'#eee' if mono else '#f3e6e6'}; }}
     .cvrow {{ display: flex; gap: 1.5mm; margin: 0 0 1mm 0; align-items: stretch; }}
-    .regime {{ font-size: 7.5pt; color:#333; writing-mode: vertical-rl; text-orientation: mixed;
-               border: 0.5px solid #bbb; padding: 0.6mm 0.4mm; }}
-    .cvcard {{ flex: 1; border: 0.5px solid #bbb; padding: 0.5mm 1.2mm; background: #fff;
-               min-height: 5mm; }}
-    .cvttl {{ font-size: 7.5pt; font-weight: 800; margin-bottom: 0.2mm; }}
-    .cvbody {{ font-size: 8pt; line-height: 1.3; }}
+    .cvcard {{ flex: 1; border: 0.5px solid #bbb; padding: 0.3mm 1.2mm; background: #fff;
+               min-height: 0; }}
+    .cvttl {{ font-size: 7pt; font-weight: 800; margin-bottom: 0.1mm; }}
+    .cvbody {{ font-size: 7.5pt; line-height: 1.15; }}
     .buymeta {{ font-size: 8pt; color:#222; margin: 0 0 1mm 0; }}
     table.kt {{ border-collapse: collapse; width: 100%; font-size: {font_pt}pt;
                 table-layout: auto;
                 {'page-break-inside: avoid;' if o.get('keep_table', True) else ''} }}
     table.kt thead {{ display: table-header-group; }}
+    /* 診断済み(2026-07・Playwright実測): この行のavoidにより、ページ末尾に収まりきらない
+       行は丸ごと次ページへ送られ、ページ末尾に数mmの余白が残る(行高が不揃いなため発生位置は
+       レースごとに変わる)。行を裂いて読みにくくするより望ましいため維持するが、ページを
+       縦に長くする(A3縦=A4横の2倍高)ことで発生頻度・余白量の両方が減る想定
+       (実測: 14頭A4横で余白13.8px/711.9px時点で発生→A3縦での再測定は開発ログ参照)。 */
     table.kt tr {{ page-break-inside: avoid; }}
     table.kt th {{ background: {'#e8e8e8' if mono else '#f3e6e6'}; border: 0.4px solid #888;
                    padding: 0.6mm 0.8mm; font-size: {max(font_pt - 0.6, 4.5):.1f}pt;
@@ -1995,8 +2522,13 @@ def build_newspaper_html(race_ids, opts=None):
 # PDF出力(Playwright chromium・requirements既存依存のみ)
 # ────────────────────────────────────────────────────────────
 
-def html_to_pdf(html_str, landscape=True, scale=1.0, page_numbers=True, timeout_s=180):
-    """HTML→PDF bytes。Streamlitスレッドのasyncioループ衝突を避けるため別スレッド実行。"""
+def html_to_pdf(html_str, landscape=True, scale=1.0, page_numbers=True, timeout_s=180,
+                page_format='A4'):
+    """HTML→PDF bytes。Streamlitスレッドのasyncioループ衝突を避けるため別スレッド実行。
+
+    page_format: 'A4'(既定) or 'A3'。HTML内の@page CSS(build_newspaper_html側)と
+    必ず一致させること(resolve_page_format()を両方から呼ぶと自動的に揃う)。
+    """
     def _work():
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -2007,7 +2539,7 @@ def html_to_pdf(html_str, landscape=True, scale=1.0, page_numbers=True, timeout_
                 foot = ("<div style='font-size:7px;width:100%;text-align:center;color:#666;'>"
                         "<span class='pageNumber'></span> / <span class='totalPages'></span></div>")
                 pdf = pg.pdf(
-                    format='A4', landscape=bool(landscape), print_background=True,
+                    format=str(page_format or 'A4'), landscape=bool(landscape), print_background=True,
                     scale=max(0.1, min(2.0, float(scale or 1.0))),
                     margin={'top': '8mm', 'bottom': '11mm', 'left': '7mm', 'right': '7mm'},
                     display_header_footer=bool(page_numbers),

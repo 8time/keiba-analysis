@@ -20,6 +20,15 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PREFS_PATH = os.path.join(_ROOT, 'user_prefs.json')
 
 
+def _orientation_value(label):
+    """用紙ラジオの表示ラベル→opts['orientation']の内部値。"""
+    if label.startswith('A3'):
+        return 'a3_portrait'
+    if label.startswith('A4 横'):
+        return 'landscape'
+    return 'portrait'
+
+
 def _load_prefs():
     try:
         with open(_PREFS_PATH, 'r', encoding='utf-8') as f:
@@ -427,9 +436,14 @@ def render():
         title = _r1[0].text_input("題字", value=prefs.get('title', '強適競馬新聞'), key="np_title")
         subtitle = _r1[1].text_input("サブタイトル（空欄=発行日を自動）",
                                      value=prefs.get('subtitle', ''), key="np_sub")
-        orientation = _r1[2].radio("用紙", ['A4 横(推奨)', 'A4 縦'],
-                                   index=0 if prefs.get('orientation', 'landscape') == 'landscape' else 1,
-                                   key="np_orient")
+        _orient_opts = ['A4 横(推奨)', 'A4 縦', 'A3 縦(コンビニ印刷向け)']
+        _orient_val = prefs.get('orientation', 'landscape')
+        _orient_idx = {'landscape': 0, 'portrait': 1, 'a3_portrait': 2}.get(_orient_val, 0)
+        orientation = _r1[2].radio("用紙", _orient_opts, index=_orient_idx, key="np_orient",
+                                   help="A3縦=A4横のちょうど2倍の高さ(297×420mm)。"
+                                        "A4横2ページ分の内容が1枚に収まりやすく、"
+                                        "セブンイレブン等のネットプリントでA3カラー印刷に"
+                                        "対応した設定です(印刷料金は店舗により異なります)。")
 
         _r2 = st.columns(3)
         font_pt = _r2[0].slider("テーブル基本フォント(pt)", 5.0, 11.0,
@@ -548,14 +562,35 @@ def render():
         sec_bets = _s2[1].checkbox("おすすめ買い目(3連複/3連単/馬連馬単/ワイド)",
                                    value=bool(prefs.get('sec_bets', True)), key="np_s_bets",
                                    help="SRAで各エンジンを開いた時の買い目を自動保存→紙面化。未生成のレースは非表示")
-        sec_pace = _s2[2].checkbox("展開・隊列(4角想定+AI照合💀)",
+        sec_pace = _s2[2].checkbox("展開・隊列(直線到達想定+AI照合💀)",
                                    value=bool(prefs.get('sec_pace', True)), key="np_s_pace")
         sec_odds = _s2[3].checkbox("オッズ動向(朝一↔直前)",
                                    value=bool(prefs.get('sec_odds', True)), key="np_s_odds",
                                    help="オッズ記録(📥/常駐ランナー)があるレースのみ表示")
+        if sec_bets:
+            st.caption("↳ おすすめ買い目の券種を選択")
+            _bt = st.columns(5)
+            bt_trio = _bt[0].checkbox("3連複", value=bool(prefs.get('bt_trio', True)),
+                                      key="np_bt_trio")
+            bt_trifecta = _bt[1].checkbox("3連単", value=bool(prefs.get('bt_trifecta', True)),
+                                          key="np_bt_trifecta")
+            bt_quinella = _bt[2].checkbox("馬連", value=bool(prefs.get('bt_quinella', True)),
+                                          key="np_bt_quinella")
+            bt_exacta = _bt[3].checkbox("馬単", value=bool(prefs.get('bt_exacta', True)),
+                                        key="np_bt_exacta")
+            bt_wide = _bt[4].checkbox("ワイド", value=bool(prefs.get('bt_wide', True)),
+                                      key="np_bt_wide")
+        else:
+            bt_trio = bool(prefs.get('bt_trio', True))
+            bt_trifecta = bool(prefs.get('bt_trifecta', True))
+            bt_quinella = bool(prefs.get('bt_quinella', True))
+            bt_exacta = bool(prefs.get('bt_exacta', True))
+            bt_wide = bool(prefs.get('bt_wide', True))
         _s3 = st.columns(4)
-        sec_elim = _s3[0].checkbox("消去フィルター(消去クロス+残し馬)",
-                                   value=bool(prefs.get('sec_elim', True)), key="np_s_elim")
+        sec_elim = _s3[0].checkbox("消去フィルター(強適消去エンジンの消去馬+消去クロス+残し馬)",
+                                   value=bool(prefs.get('sec_elim', True)), key="np_s_elim",
+                                   help="🎯強適消去エンジンを実行したレースは、残し/ボーダー残し"
+                                        "以外(消去された馬)の馬名も紙面に載ります。")
         sec_vh = _s3[1].checkbox("穴馬ハンター(妙味馬+根拠)",
                                  value=bool(prefs.get('sec_vh', True)), key="np_s_vh")
         sec_evidence = _s3[2].checkbox("📊判定根拠エビデンス表",
@@ -570,11 +605,82 @@ def render():
         sec_alerts = _s4[2].checkbox("🚨条件アラート集約(荒れ予報/軸不可/末脚妙味/枠順)",
                                      value=bool(prefs.get('sec_alerts', True)), key="np_s_alerts",
                                      help="レースごとに条件が揃った時だけ出る警告・妙味を1ブロックに集約")
-        sec_j5 = _s4[3].checkbox("🏇騎手係数込みスコア(黄金ライン/順位変動)",
+        sec_j5 = _s4[3].checkbox("🏇騎手係数込みスコア(黄金ライン/内訳/DB条件内訳)",
                                  value=bool(prefs.get('sec_j5', False)), key="np_s_j5",
                                  help="🏠SRAの『騎手係数込み 総合スコア』表を紙面に追加します。"
                                       "SRAでそのレースを解析した時の表示内容（騎手影響率スライダーの値ごと）"
                                       "をそのまま載せます。SRAで開いていないレースには出ません。")
+        _s5 = st.columns(4)
+        sec_devth = _s5[0].checkbox("🧠開発者の予想プロセス(思考の見える化)",
+                                    value=bool(prefs.get('sec_devth', True)), key="np_s_devth",
+                                    help="①〜⑧の思考プロセス(何を根拠にどう判断したか)をそのまま紙面化。"
+                                         "新しい予想を作るのではなく、上の合議カードと同じ結論に至った"
+                                         "考え方の順番を見せるだけです。🏠SRAでそのレースを解析していないと"
+                                         "出ません。")
+        sec_ai_commentary = _s5[1].checkbox("🎭AIコメント欄(4-6人格・要API課金)",
+                                            value=bool(prefs.get('sec_ai_commentary', False)),
+                                            key="np_s_aicom",
+                                            help="合議結果(本命/相手/穴/消し)を4-6人格が解説する読み物欄。"
+                                                 "新しい予想は作らず、既にある結論をなぞって説明するだけです。"
+                                                 "ONにするとこの下に生成ボタンが出ます(生成にはAPI課金が"
+                                                 "発生するため自動生成はしません)。")
+        sec_value_zone = _s5[2].checkbox("📈複勝率×回収率マップ(ゾーン別)",
+                                         value=bool(prefs.get('sec_value_zone', True)),
+                                         key="np_s_vzone",
+                                         help="🏠SRAの散布図(①勝ちゾーン等)をテーブル形式で紙面化。"
+                                              "図ではなく表にすることでPDF生成コストを抑えています。"
+                                              "🏠SRAでそのレースを解析していないと出ません。")
+        sec_value_zone_chart = _s5[3].checkbox("📊強適シート散布図(図版・既定OFF)",
+                                               value=bool(prefs.get('sec_value_zone_chart', False)),
+                                               key="np_s_vzone_chart",
+                                               help="複勝率×回収率マップと同じデータを図(散布図)で"
+                                                    "追加表示します。紙面の末尾(余ったスペース)に"
+                                                    "配置されますが、頭数が多いレースでは1ページ増える"
+                                                    "ことがあります。コンビニ印刷は容量に関わらず"
+                                                    "料金定額の場合が多いため、空きを活用したい時にON。")
+
+        if sec_ai_commentary:
+            with st.expander("🎭 AIコメント欄の生成", expanded=False):
+                st.caption("収録レースぶんの合議結果を4-6人格に解説させます。"
+                           "一度生成すればレースごとに保存され、次回以降は課金なしで再利用されます。")
+                _com_est = None
+                try:
+                    from core import newspaper_commentary as _nc_est
+                    _com_est = _nc_est.estimate_cost(len(sel_rids))
+                except Exception:
+                    pass
+                if _com_est:
+                    st.info(f"⚡ 呼び出し回数の目安: {_com_est['n_races']}R × "
+                           f"{_com_est['n_personas']}人格 = **{_com_est['calls']}コール**"
+                           "（実際の料金は使用量により変動します。生成済みレースはスキップされ"
+                           "コールされません）")
+                if st.button(f"🎭 {len(sel_rids)}R ぶんコメントを生成", key="np_gen_commentary",
+                             disabled=not sel_rids):
+                    import os as _os_com
+                    from dotenv import load_dotenv as _ld_com
+                    _ld_com(override=True)
+                    _gk = _os_com.getenv("GEMINI_API_KEY")
+                    if not _gk:
+                        st.error("GEMINI_API_KEYが設定されていません(.env等を確認してください)。")
+                    else:
+                        from core import newspaper_commentary as _nc_gen
+                        _ok, _skip, _fail = 0, 0, 0
+                        _prog = st.progress(0.0)
+                        for _i, _rid in enumerate(sel_rids, 1):
+                            if _nc_gen.load_commentary(_rid):
+                                _skip += 1
+                            else:
+                                try:
+                                    _cm = _nc_gen.generate_commentary(_rid, _gk)
+                                    if _cm:
+                                        _nc_gen.write_commentary_snapshot(_rid, _cm)
+                                        _ok += 1
+                                    else:
+                                        _fail += 1
+                                except Exception:
+                                    _fail += 1
+                            _prog.progress(_i / max(len(sel_rids), 1))
+                        st.success(f"生成完了: 新規{_ok}件 / 既存流用{_skip}件 / 失敗{_fail}件")
         footer_text = st.text_input("フッター注記（毎号入れる注意書き等）",
                                     value=prefs.get('footer_text',
                                                     '本紙は検証済みエッジの合議に基づく参考情報です。馬券の購入は自己責任で。'),
@@ -583,7 +689,7 @@ def render():
         if st.button("💾 この設定を既定として保存", key="np_save_prefs"):
             ok = _save_prefs({
                 'title': title, 'subtitle': subtitle,
-                'orientation': 'landscape' if orientation.startswith('A4 横') else 'portrait',
+                'orientation': _orientation_value(orientation),
                 'font_pt': font_pt, 'scale': scale, 'cell_max': cell_max,
                 'row_order': {'アプリ表示順(スコア順)': 'app', '馬番順': 'umaban', '人気順': 'pop'}[row_order],
                 'col_mode': {'アプリの表示列(保存列順)': 'app', '全列': 'all', '軽量セット': 'lite',
@@ -597,7 +703,11 @@ def render():
                 'sec_odds': sec_odds, 'sec_elim': sec_elim, 'sec_vh': sec_vh,
                 'sec_evidence': sec_evidence, 'sec_pci': sec_pci,
                 'sec_upset': sec_upset, 'sec_stress': sec_stress,
-                'sec_alerts': sec_alerts, 'sec_j5': sec_j5,
+                'sec_alerts': sec_alerts, 'sec_j5': sec_j5, 'sec_devth': sec_devth,
+                'sec_ai_commentary': sec_ai_commentary, 'sec_value_zone': sec_value_zone,
+                'sec_value_zone_chart': sec_value_zone_chart,
+                'bt_trio': bt_trio, 'bt_trifecta': bt_trifecta, 'bt_quinella': bt_quinella,
+                'bt_exacta': bt_exacta, 'bt_wide': bt_wide,
                 'footer_text': footer_text,
             })
             st.toast("設定を保存しました ✅" if ok else "保存に失敗しました ⚠️")
@@ -606,7 +716,7 @@ def render():
     st.subheader("③ 発行")
     opts = {
         'title': title, 'subtitle': subtitle,
-        'orientation': 'landscape' if orientation.startswith('A4 横') else 'portrait',
+        'orientation': _orientation_value(orientation),
         'scale': scale, 'font_pt': font_pt, 'cell_max': cell_max,
         'row_order': {'アプリ表示順(スコア順)': 'app', '馬番順': 'umaban', '人気順': 'pop'}[row_order],
         'col_mode': {'アプリの表示列(保存列順)': 'app', '全列': 'all', '軽量セット': 'lite',
@@ -621,7 +731,11 @@ def render():
                      'odds_moves': sec_odds, 'elim': sec_elim, 'vh': sec_vh,
                      'evidence': sec_evidence, 'pci': sec_pci,
                      'pace_upset': sec_upset, 'stress': sec_stress,
-                     'alerts': sec_alerts, 'j5': sec_j5},
+                     'alerts': sec_alerts, 'j5': sec_j5, 'dev_thoughts': sec_devth,
+                     'ai_commentary': sec_ai_commentary, 'value_zone': sec_value_zone,
+                     'value_zone_chart': sec_value_zone_chart},
+        'bet_types': {'trio': bt_trio, 'trifecta': bt_trifecta, 'quinella': bt_quinella,
+                      'exacta': bt_exacta, 'wide': bt_wide},
     }
 
     if st.button(f"📰 新聞を発行する（{len(sel_rids)}R → PDF）", type="primary",
@@ -635,8 +749,9 @@ def render():
             out = {'html': html, 'issued': issued, 'fname': f"keiba_shimbun_{_ts}",
                    'pdf': None, 'pdf_err': None}
             try:
+                _pdf_fmt, _pdf_landscape = np_mod.resolve_page_format(opts['orientation'])
                 out['pdf'] = np_mod.html_to_pdf(
-                    html, landscape=(opts['orientation'] == 'landscape'),
+                    html, landscape=_pdf_landscape, page_format=_pdf_fmt,
                     scale=scale, page_numbers=page_numbers)
             except Exception as e:
                 out['pdf_err'] = f"{type(e).__name__}: {e}"

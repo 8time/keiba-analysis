@@ -310,123 +310,183 @@ def _knowledge_conservative(csv_text='', meta=None):
     )
 
 
-def _knowledge_longshot(csv_text='', meta=None):
-    return (
-        '\n【あなたの専門知識: 穴馬シグナル】\n'
-        '・単複乖離(単≥10×複≤3): 勝率2.5→7%。最強穴シグナル。\n'
-        '・末脚偏差top3×6番人気以下: ベース超ROI。5-10倍では効かない。\n'
-        '・ハンデ戦: +7.9pp/z5.2。フルゲート16+: z5.9。\n'
-        '・1番人気抜け(オッズ比≥1.8): 穴型+3.9pp。\n'
-        '・3連複②型(人気-穴-穴): 最頻46%でROI最高。\n'
-    )
 
 
-def _knowledge_blood(csv_text='', meta=None):
-    blood_data = load_blood_stats(csv_text) if csv_text else ''
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 検証済みシグナル担当の知識パック(2026-07再設計)
+# 旧ペルソナ(血統単体/展開単体/調教単体/距離単体/強制逆張り)は単体でpriced-inと
+# 確定済みのため廃止し、実際にholdoutで残差有意と確認済みのモジュールへ差し替え。
+# ここから下の関数は core/ の検証済みモジュールを直接呼ぶ(新規ロジックは作らない)。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _parse_horse_rows(csv_text):
+    """CSVから馬ごとの{name,umaban,waku,pop,jockey}を返す(名前解決の材料集め用)。"""
+    import io, csv as csvmod
+    out = []
+    if not csv_text:
+        return out
+    try:
+        reader = csvmod.DictReader(io.StringIO(csv_text))
+        for row in reader:
+            nm = (row.get('馬名') or row.get('Name') or '').strip()
+            if not nm or nm == '-':
+                continue
+            def _num(key):
+                v = (row.get(key) or '').strip()
+                try:
+                    return int(float(v))
+                except (TypeError, ValueError):
+                    return None
+            out.append({
+                'name': nm, 'umaban': _num('馬番'), 'waku': _num('枠'),
+                'pop': _num('人気'), 'jockey': (row.get('騎手') or '').strip(),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def _knowledge_corrected_time(csv_text='', meta=None):
+    """🔵補正Tオタク: 直近7走×同一馬場の最高補正タイム(検証済み最強シグナル・holdout z+10.4)。"""
+    from core import corrected_time as _ct
+    from core import jockey_jv as _jj
+    surf = (meta or {}).get('surface', '')
+    rows = _parse_horse_rows(csv_text)
+    lines = []
+    for h in rows:
+        kt, _ = _jj.resolve_horse(h['name'])
+        if not kt:
+            continue
+        fig = _ct.get_figure(kt, surface=surf)
+        if fig and fig.get('fig') is not None:
+            lines.append(f"{h.get('umaban', '?')}番{h['name']}: 補正T {fig['fig']:.0f}"
+                         f"({fig.get('runs', 0)}走)")
     base = (
-        '\n【あなたの専門知識: 血統】\n'
-        '・血統は予測に完全織込み。唯一の妙味=道悪×血統×人気上位帯。\n'
-        '  FADE群(ディープ/サンデー系): 芝道悪で崩落。\n'
-        '  POWER群(米国型): ダ稍重+7.2pp。\n'
+        '\n【あなたの専門知識: 補正タイム(検証済み最強シグナル・荒れ予報holdout z+10.4)】\n'
+        '・補正タイム=直近7走×同一馬場の最高値(高いほど速い)。数値が高い馬ほど信頼できる。\n'
+        '・本命の補強に強く効く(+5pp)。穴には弱い(+1pp)ので過信しすぎない。\n'
     )
-    if blood_data:
-        base += f'\n【今回の出走馬の血統成績(DB)】\n{blood_data}\n'
+    if lines:
+        base += '\n【今回の補正タイム(DB)】\n' + '\n'.join(lines) + '\n'
     return base
 
 
-def _knowledge_pace(csv_text='', meta=None):
-    pace_data = ''
-    if meta:
-        jyo, sf, dist = meta.get('jyo', ''), meta.get('surface', ''), meta.get('distance', '')
-        if jyo and sf and dist:
-            try:
-                pace_data = load_course_pace(jyo, sf, int(dist))
-            except Exception:
-                pass
+def _knowledge_lap33(csv_text='', meta=None):
+    """🌀33ラップ使いのラプ: 中盤3F-上がり3Fの適合判定(人気薄6+でholdout z+3.3〜+6.8)。"""
+    from core import lap33 as _l3
+    from core import jockey_jv as _jj
+    surf = (meta or {}).get('surface', '')
+    try:
+        kyori = int((meta or {}).get('distance') or 0)
+    except (TypeError, ValueError):
+        kyori = 0
+    rows = _parse_horse_rows(csv_text)
+    course = _l3.course_avg33(surf, kyori) if (surf and kyori) else None
+    lines = []
+    for h in rows:
+        kt, _ = _jj.resolve_horse(h['name'])
+        if not kt:
+            continue
+        fit = _l3.horse_fit33(kt)
+        if fit.get('avg_lap33') is None:
+            continue
+        match_txt = ''
+        if course and course.get('avg'):
+            m = _l3.fit_match(fit['avg_lap33'], course['avg'])
+            match_txt = {'True': '⚡適合', 'False': '不適合'}.get(str(m), '')
+        lines.append(f"{h.get('umaban', '?')}番{h['name']}: 33ラップ{fit['avg_lap33']:+.2f}"
+                     f"({fit.get('lean', '?')}) {match_txt}")
     base = (
-        '\n【あなたの専門知識: 展開】\n'
-        '・展開恩恵は織込み済み。当日バイアス合致馬も妙味ゼロ。\n'
-        '・逆張り=外有利日×内枠×1-3人気=危険(-4.6pp/z-3.8)。\n'
-        '・ハイペース→差し有利。スロー→前残り。上がり3Fはレース内top3順位が重要。\n'
+        '\n【あなたの専門知識: 33ラップ理論(検証済み・人気薄6番人気以下限定でz+3.3〜+6.8)】\n'
+        '・馬の得意ペース型(瞬発力型/持久力型)とコース平均が一致(適合)する馬は人気薄で来やすい。\n'
+        '・人気上位馬では独立エッジ無し(織込み済み)。適合の話は人気薄の馬でのみ意味を持つ。\n'
     )
-    if pace_data:
-        base += f'\n{pace_data}\n'
+    if lines:
+        base += '\n【今回の33ラップ適合(DB)】\n' + '\n'.join(lines) + '\n'
     return base
 
 
-def _knowledge_data(csv_text='', meta=None):
-    payout_data = ''
-    if meta:
-        jyo, sf, dist = meta.get('jyo', ''), meta.get('surface', ''), meta.get('distance', '')
-        if jyo and sf and dist:
-            try:
-                payout_data = load_payout_patterns(jyo, sf, int(dist))
-            except Exception:
-                pass
+def _knowledge_spurt(csv_text='', meta=None):
+    """🔥末脚読みハヤ: 上がり3Fがスロー由来か(信頼)/ハイ由来か(バテ差し注意・z≈0)。"""
+    from core import pace_spurt as _ps
+    from core import jockey_jv as _jj
+    rows = _parse_horse_rows(csv_text)
+    lines = []
+    for h in rows:
+        kt, _ = _jj.resolve_horse(h['name'])
+        if not kt:
+            continue
+        q = _ps.spurt_quality(kt)
+        if q.get('tag'):
+            lines.append(f"{h.get('umaban', '?')}番{h['name']}: {q['tag']}"
+                         f"(スロー{q['slow']}/ハイ{q['high']})")
     base = (
-        '\n【あなたの専門知識: 統計】\n'
-        '・予測精度の92%は人気。単勝+ROIポケットなし。\n'
-        '・厩舎当コース勝率≥20%のみ妙味。消去クロス重複で複勝率31→10%。\n'
-        '・ストレス: 小柄×馬体減-2pp/芝×後方ぐせ-1.5ppのみ。\n'
+        '\n【あなたの専門知識: 末脚指数(検証済み)】\n'
+        '・前走スローペースで上がり上位だった馬(🐢)は次走も信頼できる(z+3.8〜8.5)。\n'
+        '・ハイペース由来の上がり上位(⚡)は次走では効果なし(z≈0・バテ差し注意)。\n'
+        '・ペースの中身を見ずに「上がりが速い」だけで判断すると同じ罠にはまる。\n'
     )
-    if payout_data:
-        base += f'\n{payout_data}\n'
+    if lines:
+        base += '\n【今回の末脚判定(DB)】\n' + '\n'.join(lines) + '\n'
     return base
 
 
-def _knowledge_training(csv_text='', meta=None):
-    training_data = load_training_data(csv_text) if csv_text else ''
+def _knowledge_jpower(csv_text='', meta=None):
+    """🏇騎手力屋パワ: 騎手のみの力(JPower偏差値・50=平均・実力として持続確認済み)。"""
+    from core import jockey_jv as _jj
+    rows = _parse_horse_rows(csv_text)
+    lines = []
+    for h in rows:
+        if not h.get('jockey'):
+            continue
+        jp = _jj.jockey_power(h['jockey'])
+        if jp.get('jpower') is not None:
+            lines.append(f"{h.get('umaban', '?')}番{h['name']}: 騎手{h['jockey']} "
+                         f"JPower{jp['jpower']:.0f}({jp.get('rides', 0)}騎乗)")
     base = (
-        '\n【あなたの専門知識: 調教】\n'
-        '・調教A-D単体は妙味にならない(織込み可能性大)。\n'
-        '・重要: 普段より動いているか。前回比3F 0.5秒↑は注目。\n'
+        '\n【あなたの専門知識: 騎手力JPower(検証済み・holdout方向維持z+2.0)】\n'
+        '・JPower=騎手のみの力を偏差値化(50が平均)。数値が高い騎手ほど実力として持続する。\n'
+        '・効果量は小さめ(比較用)。予測を全部これで決めるほどの強さではない点は正直に伝えよ。\n'
     )
-    if training_data:
-        base += f'\n【直近調教(DB)】\n{training_data}\n'
+    if lines:
+        base += '\n【今回のJPower(DB)】\n' + '\n'.join(lines) + '\n'
     return base
 
 
-def _knowledge_waku(csv_text='', meta=None):
-    return (
-        '\n【あなたの専門知識: 枠順】\n'
-        '・枠順はLTR重み0(織込み済み)。バイアス×内枠で危険人気検出。\n'
-        '・短距離: 内枠やや有利。長距離: 枠の影響薄。\n'
-        '・新潟外/東京: 外枠不利少。中山/阪神内: 内枠有利傾向。\n'
-    )
-
-
-def _knowledge_roi(csv_text='', meta=None):
-    return (
-        '\n【あなたの専門知識: 回収率】\n'
-        '・単勝+ROI不可能。勝つには見送り/券種最適化/点数絞り。\n'
-        '・3連複②型(人気-穴-穴)が最良。ハンデ戦+7.9ppが本物エッジ。\n'
-        '・1人気複勝≈65%。1人気切りはハイリスク。\n'
-    )
-
-
-def _knowledge_contrarian(csv_text='', meta=None):
-    return (
-        '\n【あなたの専門知識: 過剰人気検知】\n'
-        '・初ブリ/距離短縮/お帰り/前走好時計 = 過剰人気パターン(全否定済み)。\n'
-        '・外有利日の内枠人気馬 = 複勝-4.6pp。\n'
-        '・4-5番人気帯 = 中途半端な危険人気ゾーン。\n'
-    )
-
-
-def _knowledge_jockey(csv_text='', meta=None):
-    jk_data = ''
-    if csv_text and meta:
-        jyo, sf = meta.get('jyo', ''), meta.get('surface', '')
-        if jyo and sf:
-            jk_data = load_trainer_jockey_course(csv_text, jyo, sf)
+def _knowledge_dirt_draw(csv_text='', meta=None):
+    """🎰枠信号師ワク: ダート枠順バイアス(外枠×1-3人気+4.5pp/内枠×4-5人気-3.9pp・検証済)。"""
+    from core import track_bias as _tb
+    surf = str((meta or {}).get('surface', '') or '')
+    if 'ダ' not in surf:
+        return (
+            '\n【あなたの専門知識: 枠順(ダート限定のエッジ)】\n'
+            '・検証済みの枠順エッジはダート戦限定(外枠×1-3人気/内枠×4-5人気)。\n'
+            '・今回は芝またはダート以外のため、このエッジは対象外。無理に枠を語らない。\n'
+        )
+    race_id = str((meta or {}).get('race_id', '') or '')
+    jyo = race_id[4:6] if len(race_id) >= 6 else None
+    try:
+        kyori = int((meta or {}).get('distance') or 0) or None
+    except (TypeError, ValueError):
+        kyori = None
+    rows = _parse_horse_rows(csv_text)
+    lines = []
+    for h in rows:
+        if h.get('waku') is None or h.get('pop') is None:
+            continue
+        sig = _tb.dirt_draw_signal(h['waku'], h['pop'], 'ダート', jyo=jyo, kyori=kyori)
+        if sig:
+            tag = '🟢外枠軸補強' if sig['type'] == 'boost' else '🔻内枠危険'
+            lines.append(f"{h.get('umaban', '?')}番{h['name']}: 枠{h['waku']} {tag}")
     base = (
-        '\n【あなたの専門知識: 騎手】\n'
-        '・騎手全体勝率はLTR重み0(織込み済み)。コース限定成績で見よ。\n'
-        '・トップ騎手の乗替わり(降ろされ)は危険材料。\n'
-        '・連敗ストリークは予測に効かない(検証済み誤謬)。\n'
+        '\n【あなたの専門知識: ダート枠順バイアス(検証済み)】\n'
+        '・外枠(6-8)×1-3番人気=複勝残差+4.5pp(z+9.4)。軸に向く強い材料。\n'
+        '・内枠(1-3)×4-5番人気=複勝残差-3.9pp(z-6.0)。軸から外す目安。\n'
     )
-    if jk_data:
-        base += f'\n【騎手コース成績(DB)】\n{jk_data}\n'
+    if lines:
+        base += '\n【今回の枠信号(DB)】\n' + '\n'.join(lines) + '\n'
+    else:
+        base += '\n該当する枠信号の馬は今回いない。無理に枠の話を作らないこと。\n'
     return base
 
 
@@ -609,106 +669,63 @@ def _anonymize_posts(posts):
 # エージェント定義
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ── ペルソナ構成(2026-07再設計) ──
+# 旧構成は「人気を見るな」という縛りが全ペルソナ共通で入っていた(このファイル自身が
+# _VERIFIED_TRUTHに『予測精度の92%は人気の力』と書いているのに矛盾)うえ、多くの
+# knowledge_fnが使い回し(血統師ケイ/道悪博士ヌマが同一knowledge_fn等)で個性が
+# 見た目だけだった。→ 各ペルソナに実際にholdoutで残差有意と確認済みのモジュールを
+# 1つずつ割り当て、「人気無視」の強制をやめ「担当シグナルを主軸に、市場と一致するなら
+# 素直に一致を報告」という自然な個性に変更(repo/opus_brief_agent_forum_redesign.md参照)。
 BASE_AGENTS = [
     {'id': 'ken', 'name': '保守派ケン', 'trip': '◆KenHoshu', 'icon': '🛡️',
      'knowledge_fn': _knowledge_conservative, 'truth_level': 'full',
-     'system': 'あなたは競馬予想エージェント「保守派ケン」。堅実・保守的。'
-               '人気上位馬(1-3番人気)を軸にする。リスクを指摘し穴馬への過信を戒める。落ち着いた敬語。'
-               '【制約】◎は1-3番人気から選べ。'},
-    {'id': 'taku', 'name': '穴党タク', 'trip': '◆TakuAna', 'icon': '🎯',
-     'knowledge_fn': _knowledge_longshot, 'truth_level': 'none',
-     'system': 'あなたは競馬予想エージェント「穴党タク」。大穴狙いのプロ。'
-               'オッズ表の歪み、過小評価された馬を見つけるのがあなたの仕事。'
-               'データ（過去走・上がり・血統）から人気薄で走れる馬を特定せよ。タメ口で熱い。'
-               '【絶対制約】◎は必ず5番人気以下から選べ。人気馬を◎にしたら失格。'
-               '人気順ではなく、過去走の上がりタイムや血統適性を根拠にせよ。'},
-    {'id': 'kei', 'name': '血統師ケイ', 'trip': '◆KeiBlood', 'icon': '🧬',
-     'knowledge_fn': _knowledge_blood, 'truth_level': 'minimal',
-     'system': 'あなたは競馬予想エージェント「血統師ケイ」。血統データだけで勝負する。'
-               '父・母父の条件別成績（複勝率・回収率）が全て。人気は一切無視。'
-               '血統成績が良い馬を◎にせよ。人気に関わらず血統適性が最も高い馬を選べ。'
-               '知的で断定的。【制約】人気順に言及するな。血統根拠のみで選べ。'},
-    {'id': 'riku', 'name': 'ペース職人リク', 'trip': '◆RikuPace', 'icon': '⏱️',
-     'knowledge_fn': _knowledge_pace, 'truth_level': 'minimal',
-     'system': 'あなたは競馬予想エージェント「ペース職人リク」。展開だけで勝負する。'
-               '逃げ馬の数からペースを予測し、展開が向く馬を選べ。'
-               '上がり3Fが速い馬、位置取りが有利な馬をデータから判断。'
-               '職人気質で簡潔。【制約】人気順ではなく展開・位置取り・上がりデータで選べ。'},
-    {'id': 'mari', 'name': 'データ屋マリ', 'trip': '◆MariData', 'icon': '📊',
-     'knowledge_fn': _knowledge_data, 'truth_level': 'full',
-     'system': 'あなたは競馬予想エージェント「データ屋マリ」。数値・統計重視。'
-               'スコア、オッズの数値から冷徹に判断。理系女子風で淡々。'
-               '数値根拠必須。戦闘力スコアとオッズのギャップに注目。'},
+     'system': 'あなたは競馬予想エージェント「保守派ケン」。市場(人気・オッズ)を基準に、'
+               '他のエージェントの逆張りが行き過ぎていないかブレーキ役を務める。'
+               '人気上位馬(1-3番人気)を軸にする。リスクを指摘し穴馬への過信を戒める。落ち着いた敬語。'},
+    {'id': 'hoseiT', 'name': '補正Tオタク', 'trip': '◆HoseiT', 'icon': '🔵',
+     'knowledge_fn': _knowledge_corrected_time, 'truth_level': 'full',
+     'system': 'あなたは競馬予想エージェント「補正Tオタク」。補正タイム(荒れ予報最強シグナル・'
+               '検証z+10.4)を主軸に語る。数値が高い馬を評価するが、市場(人気)と一致するなら'
+               '素直にそう報告せよ。無理に逆張りする必要はない。オタク気質で数値を熱く語る。'},
+    {'id': 'lap33', 'name': '33ラップ使いのラプ', 'trip': '◆Lap33', 'icon': '🌀',
+     'knowledge_fn': _knowledge_lap33, 'truth_level': 'full',
+     'system': 'あなたは競馬予想エージェント「33ラップ使いのラプ」。33ラップ理論(人気薄6番人気'
+               '以下限定で検証z+3.3〜+6.8)を主軸に語る。人気上位馬では効かないと正直に言う。'
+               '職人気質で簡潔。'},
+    {'id': 'hayaSpurt', 'name': '末脚読みハヤ', 'trip': '◆HayaSpurt', 'icon': '🔥',
+     'knowledge_fn': _knowledge_spurt, 'truth_level': 'full',
+     'system': 'あなたは競馬予想エージェント「末脚読みハヤ」。末脚指数(スロー由来の上がりのみ'
+               '信頼・検証z+3.8〜8.5)を主軸に語る。ハイペース由来の上がりは効かないと正直に'
+               '言う。熱血でテンポ良く話す。'},
+    {'id': 'powerJk', 'name': '騎手力屋パワ', 'trip': '◆PowerJk', 'icon': '🏇',
+     'knowledge_fn': _knowledge_jpower, 'truth_level': 'full',
+     'system': 'あなたは競馬予想エージェント「騎手力屋パワ」。騎手力JPower(検証済み・'
+               '実力として持続確認済みだが効果量は小さめ)を主軸に語る。過信せず控えめに'
+               '評価すること。理系・淡々とした口調。'},
+    {'id': 'wakuDirt', 'name': '枠信号師ワク', 'trip': '◆WakuDirt', 'icon': '🎰',
+     'knowledge_fn': _knowledge_dirt_draw, 'truth_level': 'full',
+     'system': 'あなたは競馬予想エージェント「枠信号師ワク」。ダート枠順バイアス'
+               '(外枠×1-3人気+4.5pp/内枠×4-5人気-3.9pp・検証済)を主軸に語る。'
+               '芝レースやダート以外ではこのエッジは使えないと正直に言う。老練で簡潔。'},
 ]
 
-_EXTRA_AGENTS = [
-    {'id': 'rina', 'name': '調教見リナ', 'trip': '◆RinaTraining', 'icon': '👀',
-     'knowledge_fn': _knowledge_training, 'truth_level': 'none',
-     'system': '競馬予想エージェント「調教見リナ」。調教時計だけで判断する。'
-               '時計が速い馬＝仕上がり良好。前回より3F短縮している馬に注目。'
-               '人気は見るな。調教データだけで◎を選べ。元気で直感的。'},
-    {'id': 'waku', 'name': '枠順師ワク', 'trip': '◆WakuMaster', 'icon': '🎰',
-     'knowledge_fn': _knowledge_waku, 'truth_level': 'minimal',
-     'system': '競馬予想エージェント「枠順師ワク」。枠番とコース形態だけで判断。'
-               '内枠有利/外枠有利をコースから判断し、有利な枠の馬を選べ。老練。'
-               '【制約】人気順ではなく枠順の有利不利で選べ。'},
-    {'id': 'numa', 'name': '道悪博士ヌマ', 'trip': '◆NumaDirt', 'icon': '🌧️',
-     'knowledge_fn': _knowledge_blood, 'truth_level': 'minimal',
-     'system': '競馬予想エージェント「道悪博士ヌマ」。馬場状態と血統の相性だけで判断。'
-               '良馬場ならパワー不要、道悪ならパワー系血統。研究者風。'},
-    {'id': 'sou', 'name': '回収率鬼ソウ', 'trip': '◆SouROI', 'icon': '💹',
-     'knowledge_fn': _knowledge_roi, 'truth_level': 'full',
-     'system': '競馬予想エージェント「回収率鬼ソウ」。'
-               'オッズと実力の乖離を探す。人気馬のオッズが低すぎれば危険、人気薄のオッズが高すぎれば妙味。'
-               '戦闘力スコアとオッズを比較し、割安な馬を◎にせよ。ドライ。'},
-    {'id': 'michi', 'name': '距離鑑定士ミチ', 'trip': '◆MichiDist', 'icon': '📏',
-     'knowledge_fn': _knowledge_data, 'truth_level': 'none',
-     'system': '競馬予想エージェント「距離鑑定士ミチ」。過去走の距離実績だけで判断。'
-               '同距離での好走歴がある馬を◎にせよ。人気は無視。過去走データを読め。物静か。'},
-    {'id': 'jin', 'name': '騎手読みジン', 'trip': '◆JinJockey', 'icon': '🏇',
-     'knowledge_fn': _knowledge_jockey, 'truth_level': 'none',
-     'system': '競馬予想エージェント「騎手読みジン」。騎手のコース成績だけで判断。'
-               '当該コースでの勝率が高い騎手の馬を◎にせよ。人気は無視。競馬記者風。'},
-    {'id': 'amano', 'name': '逆張り師アマノ', 'trip': '◆AmanoContra', 'icon': '🔄',
-     'knowledge_fn': _knowledge_contrarian, 'truth_level': 'none',
-     'system': '競馬予想エージェント「逆張り師アマノ」。天邪鬼。'
-               '1番人気を絶対に◎にするな。人気薄で過小評価されている馬を探せ。'
-               '過去走で好走しているのに人気が低い馬がいないか？挑発的。'
-               '【絶対制約】◎は4番人気以下から選べ。'},
-    {'id': 'zun', 'name': '統計オタクズン', 'trip': '◆ZunStats', 'icon': '🤓',
-     'knowledge_fn': _knowledge_data, 'truth_level': 'full',
-     'system': '競馬予想エージェント「統計オタクズン」。数値の異常値を探す。'
-               '戦闘力スコアが人気より高い馬、上がり3Fが際立つ馬を見つけろ。オタク風。'},
-    {'id': 'yuu', 'name': 'メンタル読みユウ', 'trip': '◆YuuMental', 'icon': '🧠',
-     'knowledge_fn': _knowledge_conservative, 'truth_level': 'minimal',
-     'system': '競馬予想エージェント「メンタル読みユウ」。'
-               '馬体重の変化、休み明け、輸送の影響を重視。大幅増減の馬は危険。'
-               '安定した馬体重の馬を◎にせよ。共感的。'},
-    {'id': 'kiri', 'name': '配当計算キリ', 'trip': '◆KiriPayout', 'icon': '🧮',
-     'knowledge_fn': _knowledge_roi, 'truth_level': 'full',
-     'system': '競馬予想エージェント「配当計算キリ」。'
-               '3連複の配当構造から最も効率的な3頭を逆算。'
-               '人気馬1頭+穴馬2頭の組み合わせが最も配当効率が良い。計算機的。'},
-]
+_EXTRA_AGENTS = []  # 旧エキストラ(血統/展開/調教/距離単体・強制逆張り)は全てpriced-in
+                    # 確定済みのため廃止。追加人格が必要になった場合はBASE_AGENTSと同じ
+                    # 「検証済みモジュール1つを担当」方針で追加すること(単体要因の復活は禁止)。
 
 _STYLES = ['断定的で強気', '慎重で疑い深い', 'ぶっきらぼうだが鋭い', '冷静沈着で理論派',
            '感情的で熱い', '皮肉屋', '楽観的', '悲観的', 'ユーモア交じり', '哲学的']
-_FOCUS = ['オッズの歪み', '過去成績', 'コース実績', '距離実績', '馬体重変化',
-          '前走内容', 'ローテーション', '同条件相性', '相手関係', '展開利']
+_FOCUS = ['補正タイム', '33ラップ適合', '末脚指数', '騎手力', 'ダート枠信号', '市場(人気)基準']
 
 
 # 各knowledge_fnが与える「情報の切り口」ラベル(人格選択UIで多様性=脱相関を見える化)
 _KNOWLEDGE_FOCUS = {
-    '_knowledge_conservative': '人気・リスク',
-    '_knowledge_longshot': '穴・オッズ歪み',
-    '_knowledge_blood': '血統',
-    '_knowledge_pace': '展開・ペース',
-    '_knowledge_data': 'データ・統計',
-    '_knowledge_training': '調教',
-    '_knowledge_waku': '枠順・コース',
-    '_knowledge_roi': '回収率・オッズ乖離',
-    '_knowledge_jockey': '騎手',
-    '_knowledge_contrarian': '逆張り',
+    '_knowledge_conservative': '人気・市場基準',
+    '_knowledge_corrected_time': '補正タイム',
+    '_knowledge_lap33': '33ラップ適合',
+    '_knowledge_spurt': '末脚指数',
+    '_knowledge_jpower': '騎手力(JPower)',
+    '_knowledge_dirt_draw': 'ダート枠信号',
 }
 
 
@@ -748,9 +765,11 @@ def generate_agents(n=5, csv_text='', meta=None, models=None):
         for i in range(min(extras_needed, len(_EXTRA_AGENTS))):
             agents.append(dict(_EXTRA_AGENTS[i]))
         remaining = n - len(agents)
-        _kfns = [_knowledge_conservative, _knowledge_longshot, _knowledge_data,
-                 _knowledge_pace, _knowledge_contrarian, _knowledge_roi,
-                 _knowledge_blood, _knowledge_training, _knowledge_waku, _knowledge_jockey]
+        # BASE_AGENTS(6体)を超えて要求された分は既存6人格の担当を再利用する
+        # (旧: 血統/展開/調教単体等priced-in確定済みの知識関数を使い回していた不具合を修正。
+        #  単体要因の復活を禁止する方針のため、ここも検証済みモジュールのみで循環させる)。
+        _kfns = [_knowledge_conservative, _knowledge_corrected_time, _knowledge_lap33,
+                 _knowledge_spurt, _knowledge_jpower, _knowledge_dirt_draw]
         for j in range(remaining):
             style = _STYLES[j % len(_STYLES)]
             focus = _FOCUS[j % len(_FOCUS)]
@@ -847,8 +866,9 @@ def _build_system_with_knowledge(agent, csv_text='', meta=None):
     elif truth_level == 'minimal':
         base += '\n\n' + _TRUTH_MINIMAL
     base += (
-        '\n\n重要: 人気順に従うだけの予想は価値がない。あなたの専門性に基づいた独自の視点を出せ。\n'
-        'データ（過去走の着順・上がり3F・馬体重・血統成績・調教時計）を読み、根拠を述べよ。\n'
+        '\n\n重要: あなたの担当シグナルを主軸に述べよ。市場(人気・オッズ)と一致するなら'
+        'それも正直に報告せよ。無理に人気を無視したり逆張りする必要はない'
+        '(このアプリの検証では予測精度の大半は人気の力であることが分かっている)。\n'
         '予想形式:\n'
         '◎XX番（馬名）理由 / ○XX番（馬名）理由 / ▲XX番（馬名）理由\n'
         '自信度: XX%'
@@ -1170,7 +1190,14 @@ def weighted_consensus(all_posts, weights=None):
     """aggregate_predictions のエージェント重み付き版(カード8)。
     weights={agent_id: w}。未知/欠損エージェントは平均重みで中立。
     weights=None or 空 → 全員均等(=aggregate_predictionsと同結果)。
-    戻り値: aggregate_predictions と同形式の sorted[(um, dict)]。"""
+    戻り値: aggregate_predictions と同形式の sorted[(um, dict)]。
+
+    ※2026-07ペルソナ再設計との移行安全性: 旧agent_id(ken/kei/riku等・廃止済み)の
+    過去精算は data/agent_retrospective.json に残したまま削除していない
+    (agent_weights()もそのまま計算する)。ただし新ペルソナのid(hoseiT/lap33等)は
+    現行のsession_postsにしか登場しないため、旧idの重みはdefault_w(平均重み)の
+    算出にのみ寄与し、新ペルソナ全員が同じdefault_wを受け取る=実質均等スタートになる。
+    新ペルソナの実績が台帳に貯まるにつれ、自然にBrier加重が効いてくる設計。"""
     weights = weights or {}
     default_w = (sum(weights.values()) / len(weights)) if weights else 1.0
     votes = {}

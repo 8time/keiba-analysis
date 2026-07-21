@@ -620,6 +620,13 @@ _PACE_TUNE = {
 
 _TAC_ANCHOR = {'逃げ': 0.06, '先行': 0.30, '中団': 0.60, '後方': 0.88}
 
+# 逃げ/先行の判定境界(forward値 0=最前〜1=最後方)。build_pace_context(隊列・ペース判定)と
+# describe_pace(1行コメント)の両方がここを見る。2026-07までコメント側だけ0.18で、
+# forwardが0.18〜0.20の馬が「隊列ではハナ争い/コメントでは単騎逃げ」と食い違っていた。
+NIGE_FORWARD_MAX = 0.20
+SENKO_FORWARD_MAX = 0.42
+OIKOMI_FORWARD_MIN = 0.72
+
 
 def tactics_forward(jockey=None, trainer=None):
     """騎手・厩舎の脚質傾向(core/jockey_tactics・trainer_tactics)→道中ポジションprior
@@ -717,7 +724,7 @@ def build_pace_context(horses, profiles=None, distance=None, surface=None,
 
     # ── 2. 逃げ候補とペース分類 ──
     order = sorted(forward, key=lambda u: (forward[u], u))
-    nige_umas = [u for u in order if forward[u] < 0.20] or order[:1]
+    nige_umas = [u for u in order if forward[u] < NIGE_FORWARD_MAX] or order[:1]
     ctx['nige_umas'] = nige_umas
     ctx['contested'] = len(nige_umas) >= 2
 
@@ -1294,9 +1301,18 @@ def describe_pace(horses, pace_map=None, profiles=None, layout=None, pace_ctx=No
             return prof['ten']
         return h['score']
 
-    nige = [h for h in horses if _eff(h) < 0.18]
-    senko = [h for h in horses if 0.18 <= _eff(h) < 0.42]
-    oikomi = [h for h in horses if _eff(h) >= 0.72]
+    # 逃げ馬は pace_ctx が確定済みならそれを正本にする(隊列/ペース判定と必ず一致させる)。
+    # pace_ctx が無い呼び出し(単体テスト等)のみ同じ閾値でローカル判定にフォールバック。
+    _ctx_nige = (pace_ctx or {}).get('nige_umas')
+    if _ctx_nige:
+        _nige_set = {int(u) for u in _ctx_nige}
+        nige = [h for h in horses if h.get('umaban') in _nige_set]
+    else:
+        nige = [h for h in horses if _eff(h) < NIGE_FORWARD_MAX]
+    _nige_ids = {h.get('umaban') for h in nige}
+    senko = [h for h in horses
+             if h.get('umaban') not in _nige_ids and _eff(h) < SENKO_FORWARD_MAX]
+    oikomi = [h for h in horses if _eff(h) >= OIKOMI_FORWARD_MIN]
     parts = []
     if pace_ctx:
         _leader = pace_ctx.get('leader')

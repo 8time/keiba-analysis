@@ -19,5 +19,10 @@
   "Base": 1.0,
   "Stress": 0.0,
   "ScoringSignal": 1.0,
-  "TopBattleBonus": 0.0
+  "TopBattleBonus": 0.0,
+  "CorrectedT": 0.0,
+  "JPower": 0.0,
+  "SpurtIdx": 0.0,
+  "Lap33": 0.0,
+  "JPowerTop3": 0.1
 }

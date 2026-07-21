@@ -2,6 +2,10 @@
 """🏛️ 集合知 — pages/collective.py
 
 複数LLMエージェント(個性違い)がレースデータ+DB実データで討論する2ch風掲示板。
+個性=それぞれ検証済みシグナル1つを担当(2026-07再設計。core/agent_forum.py
+BASE_AGENTS参照)。旧「知らないことが個性」設計は、人気(市場情報)を全員に
+禁止しつつ既にpriced-inと確定済みの単一要因(血統/展開/調教単体等)だけで
+判断させる矛盾した作りで機能しなかったため廃止した。
 論文ベースの5つの改善:
   1. 自信度付き重み投票 (ReConcile)
   2. 匿名化ラウンド (権威バイアス除去)
@@ -44,7 +48,9 @@ def render():
     st.header("🏛️ 集合知（エージェント掲示板）")
     st.caption(
         "個性の異なるLLMエージェントたちがDB実データで討論し、合議で予想。"
-        "各エージェントは「知らないこと」が違う＝個性。"
+        "各エージェントは検証済みシグナル(補正タイム/33ラップ/末脚指数/騎手力/"
+        "ダート枠信号等)を1つずつ担当＝それが個性。市場(人気・オッズ)は禁止せず、"
+        "担当シグナルが市場と一致する時は素直に一致を報告させる。"
         "論文ベース: 自信度重み投票 / 匿名化R2 / 回顧学習 / モデル混合 / 分科会方式。"
     )
 
@@ -160,14 +166,15 @@ def render():
                     f"　｜　レースID: `{_bridge_rid}`　｜　{len(_bridge_df)}頭"
                 )
                 _show_cols = [c for c in [
-                    'Umaban', 'Name', 'Popularity', 'Odds',
+                    'Umaban', 'Waku', 'Name', 'Jockey', 'Popularity', 'Odds',
                     'BattleScore', 'Projected Score', 'SpeedIndex',
                     'AvgAgari', 'AvgPosition', 'Suitability (Y)',
                     'sire', 'broodmareSire', 'WeightHistory',
                 ] if c in _bridge_df.columns]
                 _export_df = _bridge_df[_show_cols].copy() if _show_cols else _bridge_df
                 _rename = {
-                    'Umaban': '馬番', 'Name': '馬名', 'Popularity': '人気',
+                    'Umaban': '馬番', 'Waku': '枠', 'Name': '馬名', 'Jockey': '騎手',
+                    'Popularity': '人気',
                     'Odds': '単勝オッズ', 'BattleScore': '戦闘力',
                     'Projected Score': '予測スコア', 'SpeedIndex': 'スピード指数',
                     'AvgAgari': '平均上がり', 'AvgPosition': '平均位置取り',
@@ -182,7 +189,9 @@ def render():
                 _csv_text = _buf.getvalue()
                 _meta_parts = []
                 if _bridge_meta:
-                    _meta_dict = _bridge_meta
+                    _meta_dict = dict(_bridge_meta)
+                    # race_id(場コード等の導出に使う。ダート枠信号ペルソナ等が参照)
+                    _meta_dict['race_id'] = _bridge_rid
                     for k in ['race_name', 'surface', 'distance', 'condition', 'grade']:
                         v = _bridge_meta.get(k)
                         if v:

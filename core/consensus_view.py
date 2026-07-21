@@ -203,7 +203,7 @@ def build_edge_sets(df, meta, race_id):
                     _addr(ereason, u, f"🏠厩舎当ｺｰｽ{_twr*100:.0f}%")
             if tc and jky:
                 gl = jj.jockey_trainer_combo(jky, tc)
-                if gl and gl.get('rides', 0) >= 10 and gl.get('top2', 0) >= 0.40:
+                if jj.is_golden_line(gl):
                     _addr(ereason, u, f"⭐黄金ライン{gl['top2']*100:.0f}%")
 
         for u, rk in ct.field_ranks(ctfig).items():

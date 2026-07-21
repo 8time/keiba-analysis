@@ -23,23 +23,32 @@ _BIG_COURSES = {'東京', '阪神', '新潟', '中京'}
 
 
 def lookup_track_cond(year, monthday, jyo, db_path=None):
-    """track_cond テーブルからクッション値・ダート含水率を引く。
-    戻り値: {'cushion': float|None, 'dirt_moisture': float|None}"""
+    """track_cond テーブルからクッション値・含水率(芝/ダート)を引く。
+    芝含水率(turf_moist_goal/turf_moist_4c)はJRA公式アーカイブPDF取り込み
+    (scripts/update_track_cond_from_jra.py)のみが持つ列で、古いレコードにはNone。
+    戻り値: {'cushion','dirt_moisture','turf_moist_goal','turf_moist_4c',
+             'dirt_moist_4c','course'} 全てfloat|str|None"""
     db = db_path or JV_DB_PATH
-    out = {'cushion': None, 'dirt_moisture': None}
+    out = {'cushion': None, 'dirt_moisture': None, 'turf_moist_goal': None,
+           'turf_moist_4c': None, 'dirt_moist_4c': None, 'course': None}
     if not os.path.exists(db):
         return out
     try:
         con = sqlite3.connect(db)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(track_cond)").fetchall()}
+        extra = [c for c in ('turf_moist_goal', 'turf_moist_4c', 'dirt_moist_4c', 'course')
+                 if c in cols]
+        sel = ', '.join(['cushion', 'dirt_moisture'] + extra)
         row = con.execute(
-            "SELECT cushion, dirt_moisture FROM track_cond "
-            "WHERE year=? AND monthday=? AND jyo=?",
+            f"SELECT {sel} FROM track_cond WHERE year=? AND monthday=? AND jyo=?",
             (str(year), str(monthday).zfill(4), str(jyo).zfill(2))
         ).fetchone()
         con.close()
         if row:
             out['cushion'] = row[0]
             out['dirt_moisture'] = row[1]
+            for i, c in enumerate(extra, start=2):
+                out[c] = row[i]
     except Exception:
         pass
     return out
@@ -141,6 +150,47 @@ def cushion_day_shift(year, monthday, jyo, db_path=None):
         }
     except Exception:
         return None
+
+
+# ── 種牡馬×クッション値の絶対水準(9.5閾値)適性(2026-07大規模検証)
+# scripts/cushion_theory_backtest.py: 芝13.7万頭(2020-09〜2026-06)・人気統制残差・
+# train/holdout両窓一致のみ採用。資料(クッション値理論PDF)の名指し16頭中12頭は
+# 崩落(コース別×9.5閾値は多重検定の過学習)。サトノダイヤモンドは資料の
+# 「京都1200で硬〇」と逆に、pooledでは軟〇が真(コース限定主張は汎化しない)。
+# 前日比シフト版(_SIRE_CUSHION_AFFINITY)とは定義が別(水準vs変化)なので独立に併設。
+_SIRE_CUSHION_LEVEL = {
+    'ダイワメジャー': {'pref': 'hard',
+                       'note': '硬め(9.5+)で人気統制残差+2.7/+8.0pp(train/holdout)'},
+    'ハービンジャー': {'pref': 'soft',
+                       'note': '軟め(9.4-)が得意。硬めコントラスト-4.0/-13.1pp'},
+    'リアルスティール': {'pref': 'soft',
+                         'note': '軟め(9.4-)が得意。硬めコントラスト-4.1/-4.3pp'},
+    'サトノダイヤモンド': {'pref': 'soft',
+                           'note': '軟め(9.4-)が得意。硬め-3.2/-3.1pp(資料の京都硬〇説と逆)'},
+}
+
+
+def sire_cushion_level_flag(sire_name, cushion):
+    """当日のクッション値の絶対水準(9.5閾値)×種牡馬の検証済み適性フラグ。
+    シフト版(sire_cushion_flag=前日比)とは独立の水準ベース判定。
+    戻り値: {'flag': '🟢適合'|'🔴不適', 'detail': str} or None"""
+    if cushion is None:
+        return None
+    try:
+        c = float(cushion)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0:
+        return None
+    aff = _SIRE_CUSHION_LEVEL.get(sire_name)
+    if not aff:
+        return None
+    is_hard = c >= 9.5
+    matched = (aff['pref'] == 'hard') == is_hard
+    lvl = f"クッション{c:.1f}(硬め9.5+)" if is_hard else f"クッション{c:.1f}(軟め9.4-)"
+    if matched:
+        return {'flag': '🟢適合', 'detail': f"父{sire_name}: 本日{lvl}は得意水準。{aff['note']}"}
+    return {'flag': '🔴不適', 'detail': f"父{sire_name}: 本日{lvl}は苦手水準。{aff['note']}"}
 
 
 def sire_cushion_flag(sire_name, shift_info):

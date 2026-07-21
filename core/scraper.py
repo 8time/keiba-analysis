@@ -57,6 +57,38 @@ VENUE_NAMES = {
     "65": "帯広"
 }
 
+def venue_race_label(race_id):
+    """race_id → '東京11R' の表示ラベル。判定不能なら ''。
+    race_id = YYYY(4)+jyo(2)+kai(2)+nichi(2)+race(2) の12桁。"""
+    s = str(race_id or '')
+    if len(s) < 12 or not s[:12].isdigit():
+        return ''
+    venue = VENUE_NAMES.get(s[4:6], '')
+    try:
+        no = int(s[10:12])
+    except ValueError:
+        return ''
+    if not venue or no <= 0:
+        return ''
+    return f"{venue}{no}R"
+
+
+_WEEKDAY_JA = ['月', '火', '水', '木', '金', '土', '日']
+
+
+def format_race_date(date_val):
+    """'20260517' → '2026/05/17(日)'。判定不能なら ''。
+    metadata['date_val'](YYYYMMDD)をそのまま渡せる。"""
+    s = str(date_val or '').strip()
+    if len(s) != 8 or not s.isdigit():
+        return ''
+    try:
+        d = datetime.strptime(s, '%Y%m%d')
+    except ValueError:
+        return ''
+    return f"{d.year}/{d.month:02d}/{d.day:02d}({_WEEKDAY_JA[d.weekday()]})"
+
+
 def _is_nar(race_id):
     """Checks if race_id belongs to NAR (local horse racing)."""
     try:

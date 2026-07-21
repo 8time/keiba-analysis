@@ -560,6 +560,48 @@ _COURSE_PRIOR_FALLBACK = 0.08   # 平均頭数12-13頭の逆数(キャッシュ�
 # (shrunk>=0.20 は3年で57回しか発火せず実質機能しない)。
 TRAINER_COURSE_GATE = 0.18
 
+# ── 黄金ライン(騎手×調教師 連対率)のゲート ──
+# 検証: scripts/golden_line_backtest.py (2016-2026・77.5万騎乗・リークフリー累積集計)
+# 連対率帯ごとの3着内残差(人気統制) train / holdout:
+#   25-35% : +1.25pp(z+10.1) / +0.13pp(z+0.4)  … holdoutで消える=不採用
+#   35-40% : +2.44pp(z+10.8) / +2.48pp(z+3.3)  ★両窓最強＝期待値ゾーン(🥇)
+#   40-50% : +1.28pp(z +4.4) / +0.99pp(z+1.2)
+#   50%+   : +0.39pp(z +0.7) / -0.10pp(z-0.1)  … 強いが人気で織込み済み
+# 人気薄(6番人気以下)の単勝ROIも 35-40%が95.9%/88.5%と最良(40-49%は68.4%/48.0%)。
+# ただしどの帯も100%未満＝儲かる印ではなく「軸信頼度と手を伸ばす順番」の目安。
+# 旧ゲートは0.40単独で、最も妙味のある35-40%帯を丸ごと取りこぼしていた(2026-07修正)。
+GOLD_MIN_RIDES = 10      # フラグ用の最小騎乗数(消去/合議/妙味スキャナ)
+GOLD_TOP2_WEAK = 0.30    # △ 参考表示のみ(holdoutで再現せず=判定には使わない)
+GOLD_TOP2_GATE = 0.35    # 🥇 期待値ゾーンの下限。ここから上だけが判定ゲートを通る
+GOLD_TOP2_STRONG = 0.40  # 🥇🥇 名門コンビ(織込み済み)
+
+
+def golden_line_mark(combo, min_rides=GOLD_MIN_RIDES):
+    """騎手×調教師の成績(jockey_trainer_comboの戻り値)→表示マーク。
+    '🥇🥇'(連対40%+) / '🥇'(35-40%) / '△'(30-35%・参考) / ''(非該当)。
+
+    ⚠ '△'は目視で拾うための参考表示であり、検証(holdout残差+0.13pp/z+0.4)では
+      エッジを再現できていない帯。買い/消しの判定に使ってはいけない
+      (判定は is_golden_line=35%以上 を使うこと)。判定の正本はここ1か所。"""
+    if not combo:
+        return ''
+    try:
+        rides = int(combo.get('rides') or 0)
+        top2 = float(combo.get('top2') or 0.0)
+    except (TypeError, ValueError):
+        return ''
+    if rides < min_rides or top2 < GOLD_TOP2_WEAK:
+        return ''
+    if top2 >= GOLD_TOP2_STRONG:
+        return '🥇🥇'
+    return '🥇' if top2 >= GOLD_TOP2_GATE else '△'
+
+
+def is_golden_line(combo, min_rides=GOLD_MIN_RIDES):
+    """黄金ライン該当か(🥇/🥇🥇のみ・△は含めない)。
+    消去エンジン/合議/妙味スキャナはこちらを使う(検証済みの35%以上に限定)。"""
+    return golden_line_mark(combo, min_rides) in ('🥇', '🥇🥇')
+
 
 def course_prior_winrate(jyo, surface, db_path=None):
     """当コース(場×馬場)の『全体の平均勝率』。縮小推定の引き寄せ先(prior_mean)。
@@ -880,8 +922,14 @@ def jockey_factor(jockey_name, venue=None, distance=None, trainer_code=None,
     J4バックテスト（283万走）で『人気以上に来る』と確認できた要素のみで構成:
       ① USM（実力・人気以上に走らせるか）… 下位は沈み上位は上振れ（弱いが一貫）
       ② 場相性（当該場連対率 vs 全体）
-      ③ 黄金ライン（騎手×調教師 連対率）… 40%以上で 勝ち+2pp/連対+3pp の最強シグナル
+      ③ 黄金ライン（騎手×調教師 連対率）… 40%以上で 勝ち+2pp/連対+3pp
     ※調子(連敗/hot)は検証で予測力ゼロだったため係数には不採用（表示は別途参考）。
+
+    ⚠ 係数の段(0.30/0.40)は旧較正のまま。2026-07の再検証(golden_line_backtest.py)では
+      残差は 35-40% が最強・40%+ は弱い・50%+ はほぼゼロ(織込み済み)で、この段付けとは
+      向きが逆。ただし係数を触ると Projected Score 全体が動きLTR/recall@7の再検証が要る
+      ため、今回はフラグ/表示ゲート(GOLD_TOP2_GATE=0.35)のみ更新し係数は据え置いた。
+      係数の見直しは weight_sweep 系のバックテストを通してから行うこと。
     """
     base = jockey_base_stats(jockey_name, venue=venue, distance=distance,
                              db_path=db_path, before_key=before_key)
