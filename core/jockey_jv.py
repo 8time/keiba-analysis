@@ -925,11 +925,21 @@ def jockey_factor(jockey_name, venue=None, distance=None, trainer_code=None,
       ③ 黄金ライン（騎手×調教師 連対率）… 40%以上で 勝ち+2pp/連対+3pp
     ※調子(連敗/hot)は検証で予測力ゼロだったため係数には不採用（表示は別途参考）。
 
-    ⚠ 係数の段(0.30/0.40)は旧較正のまま。2026-07の再検証(golden_line_backtest.py)では
-      残差は 35-40% が最強・40%+ は弱い・50%+ はほぼゼロ(織込み済み)で、この段付けとは
-      向きが逆。ただし係数を触ると Projected Score 全体が動きLTR/recall@7の再検証が要る
-      ため、今回はフラグ/表示ゲート(GOLD_TOP2_GATE=0.35)のみ更新し係数は据え置いた。
-      係数の見直しは weight_sweep 系のバックテストを通してから行うこと。
+    適用範囲(2026-07 実査): この係数の呼び出しは jockey_factor_by_name 経由の
+    app.py(J5表「騎手係数込み 総合スコア」)1か所のみ。Projected Score / LTR /
+    買い目 / 消去エンジン / 合議 には入らず、動かせるのはJ5表の並び順だけ。
+
+    段(0.30/0.40)を据え置く理由 — 検証済み(2026-07):
+      golden_line_backtest.py: 連対率帯の3着内残差は 35-40% が最強・40%+ は弱い・
+        50%+ はほぼゼロ(織込み済み)で、この段付けとは向きが逆に見える。
+      しかし jockey_coef_recall7_backtest.py で並び順への寄与を直接測ると、
+        段を検証準拠(35-40%を最大)に変えても recall@7 は改善しない:
+          能力ベース win@7  train 現行+0.20pp / 検証準拠+0.15pp、holdout 現行±0 / 検証準拠-0.05pp
+          市場ベース win@7  両窓とも全変種 ±0.01pp 以内(差が出ない)
+      理由: 係数差は3.4%(1.035↔1.07)で該当も3-6%のため、上位7頭の境界をまたぐ
+      並べ替えがほとんど起きない。残差(オッズに対する上振れ)と順位は別問題。
+      → 変更しても得が無く churn だけ増えるため現状維持。再挑戦するなら
+      「係数を大きくする」など別軸で、必ず同スクリプトの両窓 recall@7 を通すこと。
     """
     base = jockey_base_stats(jockey_name, venue=venue, distance=distance,
                              db_path=db_path, before_key=before_key)
