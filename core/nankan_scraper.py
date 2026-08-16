@@ -30,6 +30,7 @@ NANKAN_VENUES = {
 NETKEIBA_TO_NANKAN_VENUE = {
     "42": "18", "43": "19", "44": "20", "45": "21",
 }
+NANKAN_TO_NETKEIBA_VENUE = {v: k for k, v in NETKEIBA_TO_NANKAN_VENUE.items()}
 
 _last_request_ts = [0.0]
 
@@ -124,6 +125,53 @@ def derive_nankan_race_id(netkeiba_race_id, date_yyyymmdd):
     if not program_id:
         return None
     return f"{program_id}{race_num}"
+
+
+def nankan_url_to_netkeiba_race_id(url_or_digits):
+    """nankankeiba.com の URL または16-18桁数字 → nar.netkeiba.com の12桁race_id。
+
+    入力例:
+      https://www.nankankeiba.com/syousai/2026072921050303.do  (レース詳細16桁)
+      https://www.nankankeiba.com/uma_shosai/2026072921050301.do  (馬詳細=末尾2桁は馬番)
+      2026072921050303  (16桁直接入力)
+    16桁構造: date(8) + nankan_venue(2) + kaiji(2) + day(2) + race(2)
+
+    戻り値: (netkeiba_race_id:str, race_no:int, venue_name:str) or (None, None, None)
+    変換には nar.netkeiba.com のレース一覧を1回取得する(日付単位キャッシュ)。
+    """
+    s = re.sub(r"\D", "", str(url_or_digits or ""))
+    if 'uma_shosai' in str(url_or_digits):
+        s = s[:16]
+    if len(s) < 16:
+        return None, None, None
+    s = s[:16]
+    date8 = s[:8]
+    nk_venue = s[8:10]
+    race_no_str = s[14:16]
+    try:
+        race_no = int(race_no_str)
+    except ValueError:
+        return None, None, None
+
+    net_venue = NANKAN_TO_NETKEIBA_VENUE.get(nk_venue)
+    if not net_venue:
+        return None, None, None
+
+    venue_names = {"42": "浦和", "43": "船橋", "44": "大井", "45": "川崎"}
+    vname = venue_names.get(net_venue, "?")
+
+    from core.scraper import get_today_race_list
+    races = get_today_race_list(date8)
+    for r in races:
+        rid = str(r.get('race_id', ''))
+        if len(rid) >= 12 and rid[4:6] == net_venue:
+            rid_race = rid[10:12]
+            try:
+                if int(rid_race) == race_no:
+                    return rid, race_no, vname
+            except ValueError:
+                continue
+    return None, None, None
 
 
 def fetch_program_races(program_id):

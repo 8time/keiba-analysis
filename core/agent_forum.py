@@ -388,13 +388,15 @@ def _knowledge_lap33(csv_text='', meta=None):
         if not kt:
             continue
         fit = _l3.horse_fit33(kt)
-        if fit.get('avg_lap33') is None:
+        # 2026-08: 好走時平均×距離判定に統一(scripts/lap33_distance_backtest.py)
+        val = _l3.horse_lap33_value(fit)
+        if val is None:
             continue
         match_txt = ''
         if course and course.get('avg'):
-            m = _l3.fit_match(fit['avg_lap33'], course['avg'])
-            match_txt = {'True': '⚡適合', 'False': '不適合'}.get(str(m), '')
-        lines.append(f"{h.get('umaban', '?')}番{h['name']}: 33ラップ{fit['avg_lap33']:+.2f}"
+            match_txt = {'○': '⚡適合(○)', '△': '適合(△)'}.get(
+                _l3.fit_distance(val, course['avg']), '')
+        lines.append(f"{h.get('umaban', '?')}番{h['name']}: 33ラップ{val:+.2f}"
                      f"({fit.get('lean', '?')}) {match_txt}")
     base = (
         '\n【あなたの専門知識: 33ラップ理論(検証済み・人気薄6番人気以下限定でz+3.3〜+6.8)】\n'

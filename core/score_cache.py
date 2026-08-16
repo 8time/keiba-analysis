@@ -23,13 +23,14 @@ def _path(race_id):
 
 
 def write_scores(race_id, df):
-    """df(Umaban/Projected Score/BattleScore を含む)から umaban->scores を保存。"""
+    """df(Umaban/Projected Score/BattleScore/LTR を含む)から umaban->scores を保存。"""
     if not race_id or df is None:
         return
     try:
         import pandas as pd
         rows = {}
         pcol = 'Projected Score' if 'Projected Score' in df.columns else None
+        has_ltr = 'LTR' in df.columns
         for _, r in df.iterrows():
             try:
                 um = int(pd.to_numeric(r.get('Umaban'), errors='coerce'))
@@ -37,9 +38,11 @@ def write_scores(race_id, df):
                 continue
             proj = pd.to_numeric(r.get(pcol), errors='coerce') if pcol else None
             battle = pd.to_numeric(r.get('BattleScore'), errors='coerce') if 'BattleScore' in df.columns else None
+            ltr = pd.to_numeric(r.get('LTR'), errors='coerce') if has_ltr else None
             rows[str(um)] = {
                 'proj': float(proj) if proj == proj and proj is not None else None,
                 'battle': float(battle) if battle == battle and battle is not None else None,
+                'ltr': float(ltr) if ltr == ltr and ltr is not None else None,
             }
         if not rows:
             return
@@ -241,6 +244,101 @@ def read_keep(race_id):
         with open(p, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return set(int(u) for u in (data.get('keep') or []))
+    except Exception:
+        return None
+
+
+def _stress_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.stress.json")
+
+
+def write_stress(race_id, stress_dict):
+    """🐎ストレス係数/最終予測を保存(🧹消去クロスから参照)。
+    stress_dict = {umaban(int): {'coef': float, 'bottomk': bool}}"""
+    if not race_id or not stress_dict:
+        return
+    try:
+        rows = {}
+        for um, v in stress_dict.items():
+            rows[str(int(um))] = {
+                'coef': float(v.get('coef')) if v.get('coef') is not None else None,
+                'bottomk': bool(v.get('bottomk')),
+            }
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_stress_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'stress': rows},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_stress(race_id):
+    """{umaban(int): {'coef': float|None, 'bottomk': bool}} or None。"""
+    if not race_id:
+        return None
+    p = _stress_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        out = {}
+        for k, v in (data.get('stress') or {}).items():
+            try:
+                out[int(k)] = {
+                    'coef': v.get('coef'),
+                    'bottomk': bool(v.get('bottomk')),
+                }
+            except Exception:
+                continue
+        return out or None
+    except Exception:
+        return None
+
+
+def _j5_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.j5.json")
+
+
+def write_j5(race_id, j5_dict):
+    """騎手係数(J5)を保存(🧹消去クロスから参照)。
+    j5_dict = {umaban(int): {'mult': float, 'note': str}}"""
+    if not race_id or not j5_dict:
+        return
+    try:
+        rows = {}
+        for um, v in j5_dict.items():
+            rows[str(int(um))] = {
+                'mult': float(v.get('mult', 1.0)),
+                'note': str(v.get('note', '')),
+            }
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_j5_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'j5': rows},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_j5(race_id):
+    """{umaban(int): {'mult': float, 'note': str}} or None。"""
+    if not race_id:
+        return None
+    p = _j5_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        out = {}
+        for k, v in (data.get('j5') or {}).items():
+            try:
+                out[int(k)] = {'mult': v.get('mult', 1.0), 'note': v.get('note', '')}
+            except Exception:
+                continue
+        return out or None
     except Exception:
         return None
 

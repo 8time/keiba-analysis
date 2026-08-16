@@ -947,15 +947,21 @@ def _format_race_data_for_llm(df: pd.DataFrame, meta: dict = None) -> str:
 # MELCHIOR: 最も分析的な最新Flash → 論理・科学者気質
 # BALTHASAR: 高RPMで安定した3.1系 → 慎重・保守的
 # CASPER: 軽量なLite系 → 直感・感覚的（速い応答=直感的）
+# 世代を意図的に混在させている(2026-07-23)。理由:
+#  ・3.x のGAモデルは 3.6-flash / 3.5-flash-lite の2つしかなく、3機に別モデルを
+#    割り当てられない(同一モデル2機は「異なるAIが人格を形成」の設計意図に反する)
+#  ・**3.x系ではtemperatureが無視される**(実測)。CASPERの個性は temp=0.85 の
+#    直感・創造性が源泉の一つなので、効く世代(2.5)に意図的に残している
+#  ・世代混在による引数の違い(thinking_budget/thinking_level)は core/gemini_compat.py が吸収
 MAGI_MODELS = {
-    'MELCHIOR': 'gemini-2.5-flash',          # 5 RPM / 論理重視
-    'BALTHASAR': 'gemini-3.1-flash-lite-preview',  # 15 RPM / 安定重視
-    'CASPER': 'gemini-2.5-flash-lite',        # 10 RPM / 直感重視
+    'MELCHIOR': 'gemini-3.6-flash',          # 推論最適化 / 論理重視
+    'BALTHASAR': 'gemini-3.5-flash-lite',    # 安定重視。preview版から移行
+    'CASPER': 'gemini-2.5-flash-lite',        # 10 RPM / 直感重視(temp=0.85が効く世代を維持)
 }
 # フォールバック順（モデルが使えない場合）
 MODEL_FALLBACKS = [
     'gemini-2.5-flash-lite',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.5-flash-lite',
     'gemini-2.5-flash',
 ]
 
@@ -995,18 +1001,21 @@ def _call_magi_unit(
 
         for model_name in model_order:
             try:
+                # temperatureは効く世代(2.5系)にだけ渡す。3.5以降は無視され、
+                # 将来世代では400になる予告があるため(core/gemini_compat.py)。
+                # ⚠一律削除はNG: CASPERはtemp=0.85が人格の源泉の一つ。
+                from core import gemini_compat as _gc
                 cfg = genai_types.GenerateContentConfig(
                     system_instruction=persona,
-                    temperature=temperature,
                     max_output_tokens=1024,
+                    **_gc.sampling_kwargs(model_name, temperature=temperature),
                 )
-                # gemini-2.5/3.x系は思考モードがデフォルトON → 無効化してJSONのみ取得
-                try:
-                    cfg.thinking_config = genai_types.ThinkingConfig(
-                        thinking_budget=0
-                    )
-                except Exception:
-                    pass  # モデルがthinking_configに非対応の場合は無視
+                # 思考モードはデフォルトON → 最小化してJSONのみ取得する。
+                # ⚠ 2.5系は thinking_budget、3.5以降は thinking_level しか受け付けず
+                #   (逆を渡すと400)、MAGIは両世代を混在＋相互フォールバックするため
+                #   モデルごとに振り分ける。詳細は core/gemini_compat.py
+                from core import gemini_compat as _gc
+                _gc.apply_thinking(cfg, genai_types, model_name, level='MINIMAL')
                 response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
@@ -1105,13 +1114,13 @@ def run_magi_llm_deliberation(
             'model': MAGI_MODELS['MELCHIOR'],
             'temp': 0.2,    # 低温=論理的・再現性重視
             'persona': MELCHIOR_PERSONA,
-            'label': 'gemini-2.5-flash (論理・科学者)',
+            'label': 'gemini-3.6-flash (論理・科学者)',
         },
         'BALTHASAR': {
             'model': MAGI_MODELS['BALTHASAR'],
             'temp': 0.35,   # 中低温=慎重・保守的
             'persona': BALTHASAR_PERSONA,
-            'label': 'gemini-3.1-flash-lite (安定・保守)',
+            'label': 'gemini-3.5-flash-lite (安定・保守)',
         },
         'CASPER': {
             'model': MAGI_MODELS['CASPER'],

@@ -163,7 +163,7 @@ class KaggleChatClient:
         - コードのみを出力し、解説は含めないでください。
         """
 
-        models_to_try = ["gemini-3.1-flash-lite-preview"]
+        models_to_try = ["gemini-3.5-flash-lite"]  # preview版から移行(2026-07-23)
         last_error = ""
 
         for model_id in models_to_try:
@@ -175,9 +175,8 @@ class KaggleChatClient:
                     response = self.client.models.generate_content(
                         model=model_id,
                         contents=[prompt],
-                        config=genai_types.GenerateContentConfig(
-                            temperature=0.1
-                        )
+                        # temperatureは3.5以降で無視されるため渡さない(将来世代では400)
+                        config=None
                     )
                     
                     code = self._extract_code(response.text)
@@ -235,12 +234,16 @@ class KaggleChatClient:
         """
         AI呼び出しにリトライとモデルフォールバックを適用する汎用メソッド。
         contents: 文字列のリスト（システムプロンプト等を含む）
+
+        temperature は効くモデル世代(2.5系)にのみ渡される。3.5以降では無視され、
+        将来世代では400になる予告があるため(core/gemini_compat.py)。
         """
+        from core import gemini_compat as _gc
         if not self.client:
             return "API Key が設定されていないため、AI機能を利用できません。"
 
         import time
-        models_to_try = ["gemini-3.1-flash-lite-preview"]
+        models_to_try = ["gemini-3.5-flash-lite"]  # preview版から移行(2026-07-23)
         last_error = ""
 
         for model_id in models_to_try:
@@ -251,7 +254,10 @@ class KaggleChatClient:
                     response = self.client.models.generate_content(
                         model=model_id,
                         contents=contents,
-                        config=genai_types.GenerateContentConfig(temperature=temperature)
+                        # temperatureは効く世代にだけ渡す(core/gemini_compat.py)。
+                        # 引数は呼び出し側の互換のため残してある。
+                        config=genai_types.GenerateContentConfig(
+                            **_gc.sampling_kwargs(model_id, temperature=temperature))
                     )
                     if response and response.text:
                         return response.text

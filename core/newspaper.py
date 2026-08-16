@@ -27,8 +27,21 @@ SC_DIR = os.path.join(ROOT, 'data', 'score_cache')
 VENUE_BY_CODE = {
     '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
     '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉',
+    '30': '門別', '35': '盛岡', '36': '水沢',
     '42': '浦和', '43': '船橋', '44': '大井', '45': '川崎',
+    '46': '金沢', '47': '笠松', '48': '名古屋',
+    '50': '園田', '51': '姫路', '54': '高知', '55': '佐賀', '65': '帯広',
 }
+
+_EAST_VENUES = {'札幌', '函館', '福島', '新潟', '東京', '中山'}
+_WEST_VENUES = {'中京', '京都', '阪神', '小倉'}
+
+def _venue_region(venue_name):
+    if venue_name in _EAST_VENUES:
+        return 'east'
+    if venue_name in _WEST_VENUES:
+        return 'west'
+    return None
 
 # ────────────────────────────────────────────────────────────
 # スナップショット保存(SRAから呼ばれる)
@@ -84,7 +97,7 @@ def _meta_from_df(df, meta=None):
     except Exception:
         pass
     if meta:
-        for k in ('condition', 'course', 'race_name', 'venue', 'date'):
+        for k in ('condition', 'course', 'race_name', 'venue', 'date', 'post_time'):
             if meta.get(k) and not m.get(k):
                 m[k] = _scalar(meta.get(k))
     m['n_horses'] = int(len(df))
@@ -482,7 +495,9 @@ SCAN_PATH = os.path.join(NP_DIR, 'scan_digest.json')
 # ダイジェストに保存するスキャン結果のキー(重いbreakdown等は落とす)
 _SCAN_KEEP = ('id', 'title', 'gate', 'vscore', 'vlabel', 'arare_prob', 'no_fav',
               'value_horses', 'ana_horses', 'danger_horses', 'n_h', 'surf', 'dist',
-              'cls', 'cond', 'post_time', 'date_val', 'skips')
+              'cls', 'cond', 'post_time', 'date_val', 'skips',
+              # レース単位の軸信頼度(表示専用・scripts/time_pop_overlap_backtest.py)
+              'axis_conf')
 
 
 def write_scan_digest(rows):
@@ -922,7 +937,17 @@ def _consensus_csv_cols(race_id, umabans):
     見落とした。結論列を同梱し「どの列が検証済みでどう使うか」を明示する。"""
     cv = load_consensus(race_id)
     if not cv:
-        return {}, {}
+        # 合議未計算でも列自体は必ず出す。列ごと消えると受け手(特にLLM)が
+        # 「列が無い＝データ破損/添付ミス」と誤読して分析を止めてしまう
+        # (2026-08 実例: 合議無しレースのCSVでGPTが分析を拒否)。
+        # 『欠落』ではなく『未計算』だと分かる値を入れる。
+        na = '(合議未計算)'
+        return ({'合議役割': {u: na for u in umabans},
+                 '検証シグナル根拠': {u: '' for u in umabans},
+                 '🧩シグナル重複数': {u: '' for u in umabans},
+                 '妙味馬tier': {u: '' for u in umabans},
+                 '危険材料': {u: '' for u in umabans}},
+                {'R荒れ予報%': na, 'R妙味度': na, 'R決着タイプ判定': na})
     groups = cv.get('groups') or {}
     role_lbl = {'honmei': '◎本命', 'aite': '〇相手', 'osae': '△押さえ',
                 'ana': '🎯穴(検証シグナル)', 'keshi': '✖切る'}
@@ -1016,8 +1041,13 @@ def build_csv_bytes(race_id):
         _ins = min(len(out.columns), 6)   # 馬名近くの読みやすい位置に挿入
         for cname in reversed(list(per_horse.keys())):
             out.insert(_ins, cname, [per_horse[cname].get(u, '') for u in _ums])
-        for cname, val in race_level.items():
-            out[cname] = val
+        # レース単位の判定は末尾でなく先頭付近に置く。100列目付近にあると
+        # CSVを途中までしか読まない受け手に丸ごと見落とされる。
+        for cname in reversed(list(race_level.keys())):
+            val = race_level[cname]
+            if cname in out.columns:
+                out.drop(columns=[cname], inplace=True)
+            out.insert(_ins, cname, [val] * len(out))
     except Exception:
         pass
     csv = out.to_csv(index=False).encode('utf-8-sig')
@@ -1108,15 +1138,125 @@ def _col_slug(c):
 
 
 def _cell_html(c, v, max_chars):
-    """セルHTML。狭い列の値を要所で改行する。
-    - JPower(騎手力): 『1 👑62(▲+25)』の括弧手前で改行
-    - JockeyChange(乗替): 『木幡巧也→丹内』の矢印の後ろで改行
-    """
+    """セルHTML。狭い列の値を要所で改行する。"""
     s = _fmt_cell(v, max_chars)
     if c == 'JPower' and '(' in s:
         s = s.replace('(', '<br>(', 1)
     elif c == 'JockeyChange' and '→' in s:
         s = s.replace('→', '→<br>', 1)
+        s = f"<span style='color:#c33'>{s}</span>"
+    # ── NAR独自列のビジュアル強化(色はSRA展開MAPのSTYLE_COLORSに準拠) ──
+    elif c == 'Style':
+        _sv = str(v or '')
+        if _sv == '逃':
+            s = f"<span style='color:#fff;background:#E63946;padding:1px 4px;border-radius:3px;font-weight:bold' title='逃げ馬(複勝率52%)'>🏃{s}</span>"
+        elif _sv == '先':
+            s = f"<span style='color:#F4A261;font-weight:bold' title='先行(複勝率36%)'>{s}</span>"
+        elif _sv == '差':
+            s = f"<span style='color:#457B9D;font-weight:bold'>{s}</span>"
+        elif _sv == '追':
+            s = f"<span style='color:#6A4C93;font-weight:bold'>{s}</span>"
+    elif c == 'JockeyChange':
+        _jc_str = str(v or '')
+        if _jc_str == '初騎乗':
+            s = f"<span style='color:#c33;font-weight:bold'>⚠{s}</span>"
+        elif _jc_str == '乗替':
+            s = f"<span style='color:#c33'>🔄{s}</span>"
+        elif _jc_str == '継続':
+            s = f"<span style='color:#1a5fb4'>✓{s}</span>"
+        elif _jc_str == '-':
+            s = f"<span style='color:#1a5fb4'>{s}</span>"
+    elif c == 'JFactor':
+        try:
+            _jfv = float(v)
+            if _jfv >= 1.2:
+                s = f"<span style='color:#fff;background:#2a7;padding:1px 3px;border-radius:3px;font-weight:bold'>{s}</span>"
+            elif _jfv >= 1.1:
+                s = f"<span style='color:#2a7;font-weight:bold'>{s}</span>"
+            elif _jfv <= 0.85:
+                s = f"<span style='color:#c33'>{s}</span>"
+        except (TypeError, ValueError):
+            pass
+    elif c == 'BattleScore':
+        try:
+            _bsv = float(v)
+            if _bsv >= 80:
+                s = f"<span style='color:#fff;background:#d44;padding:1px 4px;border-radius:3px;font-weight:bold'>◎{s}</span>"
+            elif _bsv >= 65:
+                s = f"<span style='color:#c55;font-weight:bold'>○{s}</span>"
+            elif _bsv >= 50:
+                s = f"<span style='font-weight:bold'>▲{s}</span>"
+            elif _bsv < 20:
+                s = f"<span style='color:#999'>{s}</span>"
+        except (TypeError, ValueError):
+            pass
+    elif c == 'FormIdx':
+        try:
+            _fiv = float(v)
+            if _fiv >= 40:
+                s = f"<span style='color:#2a7;font-weight:bold'>{s}</span>"
+            elif _fiv >= 25:
+                s = f"<span style='font-weight:bold'>{s}</span>"
+            elif _fiv < 10:
+                s = f"<span style='color:#999'>{s}</span>"
+        except (TypeError, ValueError):
+            pass
+    elif c == 'Bloodline':
+        _bl = str(v or '')
+        if 'ダ' in _bl:
+            s = f"<span style='color:#964B00;font-weight:bold'>{s}</span>"
+        elif 'SS' in _bl:
+            s = f"<span style='color:#2a5db0'>{s}</span>"
+    elif c == 'Weight':
+        _wv = str(v or '')
+        if _wv.endswith('P'):
+            s = s.replace('P', '')
+            s = f"<span style='color:#964B00;font-weight:bold' title='穴馬×大型馬(パワー型・人気薄で妙味)'>🐴{s}</span>"
+    elif c == 'Trainer':
+        _trv = str(v or '')
+        if _trv.endswith('E'):
+            s = s[:-1] if s.endswith('E') else s
+            s = f"<span style='color:#1a6;font-weight:bold' title='遠征馬(穴馬×厩舎が適性を見て送り出し)'>✈{s}</span>"
+    elif c == 'Interval':
+        try:
+            _iv = int(v)
+            if _iv <= 7:
+                s = f"<span style='font-weight:bold' title='連闘級'>{s}日</span>"
+            elif _iv <= 13:
+                s = f"<span title='中1-2週'>{s}日</span>"
+            else:
+                s = f"{s}日"
+        except (TypeError, ValueError):
+            pass
+    elif c == 'OddsGap':
+        _ogv = str(v or '')
+        if '断層A' in _ogv:
+            s = f"<span style='color:#fff;background:#d44;padding:1px 4px;border-radius:3px;font-weight:bold' title='1番人気の前に断層=1強'>{s}</span>"
+        elif '断層B' in _ogv:
+            s = f"<span style='color:#fff;background:#c55;padding:1px 4px;border-radius:3px;font-weight:bold' title='2番人気の前に断層=2頭強し'>{s}</span>"
+        elif '断層D1' in _ogv:
+            s = f"<span style='color:#fff;background:#b33;padding:1px 4px;border-radius:3px;font-weight:bold' title='1-2間+2-3間に断層=上位2頭圧倒的'>{s}</span>"
+        elif '断層D2' in _ogv:
+            s = f"<span style='color:#fff;background:#b33;padding:1px 4px;border-radius:3px;font-weight:bold' title='2-3間+3-4間に断層'>{s}</span>"
+        elif '断層C' in _ogv or '断層D' in _ogv:
+            s = f"<span style='color:#c55;font-weight:bold'>{s}</span>"
+    elif c == 'SpurtIdx':
+        _siv = str(v or '')
+        if '🔥' in _siv:
+            s = f"<span style='color:#d44;font-weight:bold' title='レース内の末脚上位3頭(人気薄なら妙味あり)'>{s}</span>"
+        elif _siv.startswith('-') and _siv != '-':
+            s = f"<span style='color:#999'>{s}</span>"
+    elif c == 'LTR':
+        try:
+            _lv = int(v)
+            if _lv >= 80:
+                s = f"<span style='color:#fff;background:#2a7;padding:1px 4px;border-radius:3px;font-weight:bold'>{s}</span>"
+            elif _lv >= 60:
+                s = f"<span style='color:#2a7;font-weight:bold'>{s}</span>"
+            elif _lv <= 20:
+                s = f"<span style='color:#999'>{s}</span>"
+        except (TypeError, ValueError):
+            pass
     return s
 
 
@@ -1147,7 +1287,7 @@ DEFAULT_OPTS = {
                  'dev_thoughts': True,   # 開発者の思考プロセス(既定ON・差別化の核)
                  'ai_commentary': False,  # AIコメント欄(既定OFF・課金が発生するため)
                  'value_zone': True,    # 複勝率×回収率マップ(テーブル形式・既定ON)
-                 'value_zone_chart': False},  # 同内容の散布図版(強適シート・既定OFF・空きスペース埋め用)
+                 'value_zone_chart': False},  # 同内容の散布図版(ZONEシート・既定OFF・空きスペース埋め用)
     'bet_types': {'trio': True, 'trifecta': True, 'quinella': True,
                   'exacta': True, 'wide': True},  # おすすめ買い目セクション内の券種別ON/OFF
     'footer_text': '',
@@ -1238,6 +1378,95 @@ def _consensus_html(cv, records, mono=False):
             f"<div class='cvttl' style='color:{c};'>{_esc(ttl)}</div>"
             f"<div class='cvbody'>{_names(ul)}</div></div>")
     return f"<div class='cvrow'>{''.join(cards)}</div>"
+
+
+def _digest_html(cv, records, meta, mono=False):
+    """レースダイジェスト — 馬柱の前に合議の要約を大きく視覚的に表示。"""
+    if not cv:
+        return ''
+    groups = cv.get('groups') or {}
+    aim = cv.get('aim') or {}
+    forecast = cv.get('forecast') or {}
+    by_um = _names_by_um(records)
+
+    def _stars(score):
+        try:
+            s = float(score)
+        except (TypeError, ValueError):
+            return ''
+        n = min(5, max(0, round(s / 20)))
+        return '★' * n + '☆' * (5 - n)
+
+    def _score_of(umaban):
+        for r in records:
+            try:
+                if int(r.get('Umaban', -1)) == umaban:
+                    return r.get('BattleScore') or r.get('FormIdx') or 0
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    def _edge_text(um):
+        a = aim.get(str(um)) or {}
+        reasons = []
+        for _k in ('edge_reasons', 'danger_reasons'):
+            d = a.get(_k) or {}
+            for vs in d.values():
+                reasons.extend(vs)
+        return '／'.join(reasons[:3]) if reasons else ''
+
+    rows = []
+    # 記号を重ねすぎない: 以前は『★穴』の★(役割)と★★★★☆(点数)で同じ記号が
+    # 別の意味に使われていて紛らわしかったため、役割側の★を外した。
+    marks = [('honmei', '◎', '#f0a020'), ('aite', '○', '#12a594'),
+             ('osae', '▲', '#607d8b'), ('ana', '穴', '#9c27b0')]
+    for key, mark, col in marks:
+        ul = groups.get(key) or []
+        for u in ul:
+            try:
+                u = int(u)
+            except (TypeError, ValueError):
+                continue
+            sc = _score_of(u)
+            name = strip_name_deco(by_um.get(u, ''), 8)
+            edge = _edge_text(u)
+            c = '#555' if mono else col
+            # 馬番は丸数字(⑦)でなく素の数字。総合点は★ゲージでなく数値にする。
+            try:
+                _sc_disp = f"{float(sc):.0f}点"
+            except (TypeError, ValueError):
+                _sc_disp = ''
+            rows.append(
+                f"<tr><td style='color:{c};font-weight:bold;font-size:1.1em;'>{mark}</td>"
+                f"<td style='font-weight:bold;font-size:1.1em;text-align:right;"
+                f"padding-right:6px;'>{u}</td>"
+                f"<td style='font-weight:bold;'>{_esc(name)}</td>"
+                f"<td style='color:{c};font-weight:bold;'>{_sc_disp}</td>"
+                f"<td style='font-size:0.85em;color:#666;'>{_esc(edge)}</td></tr>")
+
+    arare_prob = forecast.get('arare_prob')
+    arare_line = ''
+    if arare_prob is not None:
+        pct = int(arare_prob * 100)
+        _lv = '高め' if pct >= 60 else ('ふつう' if pct >= 40 else '低め')
+        arare_line = (f"<div style='margin-top:6px;font-size:0.95em;'>"
+                      f"波乱度 <b>{_lv}</b>（荒れ予報 {pct}%）</div>")
+    pace = meta.get('pace_prediction') or {}
+    pace_line = ''
+    if pace.get('pace'):
+        pace_line = (f"<div style='font-size:0.95em;'>"
+                     f"展開 {_esc(pace['pace'])}"
+                     f"{'(' + _esc(pace.get('comment', '')) + ')' if pace.get('comment') else ''}"
+                     f"</div>")
+
+    if not rows:
+        return ''
+    return (
+        f"<div class='digest' style='border:2px solid {'#888' if mono else '#f0a020'};"
+        f"border-radius:8px;padding:8px 12px;margin:6px 0;'>"
+        f"<div style='font-weight:bold;font-size:1.0em;margin-bottom:4px;'>このレースは…</div>"
+        f"<table style='border-collapse:collapse;width:100%;'>{''.join(rows)}</table>"
+        f"{pace_line}{arare_line}</div>")
 
 
 def _buymeta_html(race_id, show_gate=True, show_buy=True):
@@ -1525,15 +1754,13 @@ def _pace_html(race_id, records):
     直線到達(finish)は4角位置+決め手+適性+総合力+人気の合成(pace_map.predict_finish)。
     旧スナップショット(finish未保存)は4角位置(pos4)にフォールバックする。"""
     pc = load_pace(race_id)
-    ai_danger = None
     rear = None
     try:
         from core import score_cache as sc
-        ai_danger = sc.read_tenkai_danger(race_id)
         rear = sc.read_rear(race_id)
     except Exception:
         pass
-    if not pc and not ai_danger:
+    if not pc and not rear:
         return ''
     lines = []
     disp = {}
@@ -1583,11 +1810,13 @@ def _pace_html(race_id, records):
             lines.append('　'.join(meta_p))
     by_um = _names_by_um(records)
     rear_group = None
-    if ai_danger:
-        nm = '・'.join(f"{u}{by_um.get(u, '')[:6]}" for u in sorted(ai_danger))
-        lines.append(f"💀 AI展開照合=両AIが後方帯で合意: {nm}")
-        rear_group = ai_danger
-    elif rear:
+    # 後方グループは**必ず自前の展開MAP**を使う。
+    # 以前は🤝netkeiba AI展開予測との照合結果(score_cache.read_tenkai_danger)があれば
+    # 「💀AI展開照合=両AIが後方帯で合意」に差し替えていたが、紙面は配布物なので
+    # 他社(netkeiba)の予測に依存する行を載せない方針にした(2026-07-23)。
+    # ・アプリ内の🤝照合表示は私的利用のため従来どおり残す(app.py側は変更なし)
+    # ・展開恩恵はpriced-in([[verified_tenkai_priced_in]])で紙面価値への寄与も乏しい
+    if rear:
         lines.append("後方グループ(展開MAP): " + '・'.join(str(u) for u in sorted(rear)))
         rear_group = rear
     if not lines:
@@ -1828,14 +2057,26 @@ def _pace_upset_html(analysis):
     return _exbox("🏇 展開分析 & 波乱確率", '<br>'.join(lines)) if lines else ''
 
 
-_ZONE_ORDER = ['① 勝ちゾーン(このレースの軸候補)', '② 一撃ゾーン(穴)',
-              '③ 堅実(中位)', '④ 見送り']
-_ZONE_SHORT = {'① 勝ちゾーン(このレースの軸候補)': '① 勝ちゾーン',
-              '② 一撃ゾーン(穴)': '② 一撃(穴)',
-              '③ 堅実(中位)': '③ 堅実', '④ 見送り': '④ 見送り'}
-_ZONE_COLOR = {'① 勝ちゾーン(このレースの軸候補)': '#2f9e44',
-              '② 一撃ゾーン(穴)': '#f59f00',
-              '③ 堅実(中位)': '#1971c2', '④ 見送り': '#868e96'}
+# ゾーン名は2026-08にX軸を『回収率EV』→『アプリの評価』へ変えた際に改名した。
+# 旧スナップショットも読めるよう、新旧どちらの名前も並べておく(先頭記号で突き合わせる)。
+_ZONE_ORDER = ['① 本命ゾーン(両方が高評価)', '② 妙味ゾーン(アプリだけ高評価)',
+               '③ 危険ゾーン(市場だけ高評価)', '④ 見送り(両方が低評価)',
+               '① 勝ちゾーン(このレースの軸候補)', '② 一撃ゾーン(穴)',
+               '③ 堅実(中位)', '④ 見送り']
+_ZONE_SHORT = {'① 本命ゾーン(両方が高評価)': '① 本命',
+               '② 妙味ゾーン(アプリだけ高評価)': '② 妙味',
+               '③ 危険ゾーン(市場だけ高評価)': '③ 危険',
+               '④ 見送り(両方が低評価)': '④ 見送り',
+               '① 勝ちゾーン(このレースの軸候補)': '① 勝ちゾーン',
+               '② 一撃ゾーン(穴)': '② 一撃(穴)',
+               '③ 堅実(中位)': '③ 堅実', '④ 見送り': '④ 見送り'}
+_ZONE_COLOR = {'① 本命ゾーン(両方が高評価)': '#2f9e44',
+               '② 妙味ゾーン(アプリだけ高評価)': '#f59f00',
+               '③ 危険ゾーン(市場だけ高評価)': '#e03131',
+               '④ 見送り(両方が低評価)': '#868e96',
+               '① 勝ちゾーン(このレースの軸候補)': '#2f9e44',
+               '② 一撃ゾーン(穴)': '#f59f00',
+               '③ 堅実(中位)': '#1971c2', '④ 見送り': '#868e96'}
 
 
 def _quantile(values, q):
@@ -1861,7 +2102,10 @@ def _value_zone_scatter_svg(rows):
     for r in (rows or []):
         try:
             um = int(r.get('馬番'))
-            roi = float(r.get('roi'))
+            # 2026-08 にX軸を『回収率EV(roi)』→『アプリの評価(abil)』へ変更した。
+            # 旧スナップショットにはroiしか入っていないので両対応にする。
+            _x = r.get('abil')
+            roi = float(r.get('roi') if _x is None else _x)
             fuku = float(r.get('fuku'))
         except Exception:
             continue
@@ -1886,7 +2130,7 @@ def _value_zone_scatter_svg(rows):
     if y1 <= y0:
         y1 = y0 + 1.0
 
-    # ①勝ちゾーンの閾値(app.py 強適シートの散布図と同じ式): y_hi=複勝率上位25%、
+    # ①勝ちゾーンの閾値(app.py ZONEシートの散布図と同じ式): y_hi=複勝率上位25%、
     # x_mid=健全馬(60倍以下)の回収率中央値、x_hi=同75%(②一撃の境界)。
     y_hi = _quantile(fuku_vals, 0.75)
     sane_roi = [p['roi'] for p in pts if p['odds'] is None or p['odds'] <= 60.0]
@@ -1987,7 +2231,7 @@ def _value_zone_scatter_svg(rows):
 
 
 def _value_zone_chart_html(race_id):
-    """📊 強適シート散布図(複勝率×回収率マップの図版)。既存value_zoneテーブルと同じ
+    """📊 ZONEシート散布図(複勝率×回収率マップの図版)。既存value_zoneテーブルと同じ
     データ・同じゾーン判定を図で見せるだけの追加ビュー(既定OFF・任意で紙面に追加)。"""
     d = load_value_zone(race_id)
     rows = (d or {}).get('rows') or []
@@ -1999,7 +2243,7 @@ def _value_zone_chart_html(race_id):
     note = ("縦=複勝率(単勝オッズ別の実測値)／横=回収率EV(モデル推定勝率×オッズ・目安)。"
             "色は複勝率×回収率マップと同じゾーン判定(緑=①勝ちゾーン/橙=②一撃(穴)/青=③堅実/灰=④見送り)。"
             "単勝は市場効率的で『必ず儲かる』ではありません(表示専用)。")
-    box = _exbox("📊 強適シート（複勝率×回収率の散布図）", svg + f"<div class='exnote'>{note}</div>")
+    box = _exbox("📊 ZONEシート（複勝率×回収率の散布図）", svg + f"<div class='exnote'>{note}</div>")
     return box.replace("class='exbox'", "class='exbox exwide'", 1)
 
 
@@ -2023,12 +2267,16 @@ def _value_zone_html(race_id):
             continue
         items = []
         for r in rs[:6]:
+            _x = r.get('abil')
+            _xlbl = ('評' if _x is not None else '回')
+            _xval = _x if _x is not None else r.get('roi')
             items.append(f"{_esc(r.get('馬番'))}{_esc(str(r.get('name', ''))[:6])}"
-                         f"(複{_esc(r.get('fuku'))}%/回{_esc(r.get('roi'))}%)")
+                         f"(複{_esc(r.get('fuku'))}%/{_xlbl}{_esc(_xval)})")
         lines.append(f"<b>{_esc(_ZONE_SHORT.get(z, z))}</b>: " + '　'.join(items))
-    note = ("複=複勝率(単勝オッズ別の実測値)／回=回収率EV(モデル推定勝率×オッズ・目安)。"
-            "①勝ちゾーン=複勝率がレース内上位25%×回収率が健全馬の中央値以上"
-            "(最も信頼できる軸候補)。単勝は市場効率的で『必ず儲かる』ではありません。")
+    note = ("複=市場の評価(単勝オッズ別の実測複勝率)／評=アプリの評価(レース内0-100)。"
+            "①本命=両方が高い／②妙味=アプリだけ高く市場が安い／③危険=市場だけ高い／"
+            "④見送り=両方低い。境界はレース内の中央値。"
+            "単勝は市場効率的で『必ず儲かる』ではありません。")
     box = _exbox("📈 複勝率×回収率マップ（ゾーン別）", '<br>'.join(lines) + f"<div class='exnote'>{note}</div>")
     return box.replace("class='exbox'", "class='exbox exwide'", 1)
 
@@ -2073,19 +2321,41 @@ def _developer_thoughts_html(race_id):
 def _commentary_html(race_id):
     """🎭AIコメント欄。core/newspaper_commentary.pyが生成したスナップショットを紙面化。
 
-    新しい予想は含まない読み物枠(合議結果の解説のみ)。スナップショットが無い
-    (=ユーザーがボタンで生成していない)レースには何も出さない。
+    5人格が**それぞれ別の検証済みシグナルを担当**して出した◎を並べる読み物枠。
+    各人単独の◎は単体で儲かると検証されたものではない(検証済みなのは
+    『独立シグナルが一致すると複勝率が上がる』の方)。よって見出しと注記で
+    「意見が割れたか一致したか」を読ませる作りにし、個々の◎を買い推奨にしない。
+    スナップショットが無い(=ボタン未実行)レースには何も出さない。
+
+    旧形式のスナップショット(umaban無し)も描画できるよう後方互換を保つ。
     """
     from core import newspaper_commentary as nc
     d = nc.load_commentary(race_id)
     comments = (d or {}).get('comments') or []
     if not comments:
         return ''
-    lines = []
+    lines, tally = [], None
     for c in comments:
-        lines.append(f"{_esc(c.get('emoji', ''))} <b>{_esc(c.get('name', ''))}</b>: "
-                     f"{_esc(c.get('comment', ''))}")
-    box = _exbox("🎭 AIコメント欄（合議結果の解説・読み物）", '<br>'.join(lines))
+        if c.get('mode') == 'summary':
+            tally = c.get('tally') or tally
+        um = c.get('umaban')
+        # 担当シグナル名(lens)は長いので先頭の指標名だけ出す(紙面の幅制約)
+        lens = str(c.get('lens') or '').split('/')[0].strip()
+        head = (f"{_esc(c.get('emoji', ''))} <b>{_esc(c.get('name', ''))}</b>"
+                + (f"<span style='color:#888;font-size:6.4pt;'>［{_esc(lens)}］</span>"
+                   if lens else ''))
+        if um is not None:
+            mark = '⚠軸回避' if c.get('mode') == 'cut' else '◎'
+            head += (f" <b style='color:#c00;'>{_esc(mark)}{_esc(str(um))}番"
+                     f"{_esc(c.get('pick_name', ''))}</b>")
+        lines.append(f"{head}: {_esc(c.get('comment', ''))}")
+    if tally:
+        n = tally.get('agree_n') or 0
+        note = (f"※4人は別々のデータを見ています。一致{n}人"
+                if n >= 2 else "※4人は別々のデータを見ています。今回は一致なし")
+        lines.append(f"<span style='color:#888;font-size:6.4pt;'>{_esc(note)}"
+                     "／一致が多いほど複勝圏の信頼度が上がります（単勝の推奨ではありません）</span>")
+    box = _exbox("🎭 AIコメント欄（5人が別々のデータで予想）", '<br>'.join(lines))
     return box.replace("class='exbox'", "class='exbox exwide'", 1)
 
 
@@ -2094,7 +2364,7 @@ def _j5_html(race_id):
 
     影響率スライダー依存の表なので、保存時の重みを併記する(再現性の担保)。
     スコア/順位/変動は本紙の強適表・合議カードと重複するため割き、
-    内訳(騎手係数の根拠)とDB条件内訳(参考表示)を中心に見せる。
+    内訳(騎手係数の根拠)を中心に見せる。騎手係数・係数の意味を赤/青で色分け。
     """
     d = load_j5(race_id)
     rows = (d or {}).get('rows') or []
@@ -2115,22 +2385,37 @@ def _j5_html(race_id):
     rows_sorted = sorted(rows, key=_um_key)
 
     head = ('<tr><th>馬番</th><th>馬名</th><th>騎手</th>'
-            '<th>騎手係数</th><th>黄金</th><th>内訳</th><th>DB条件内訳</th></tr>')
+            '<th>騎手係数</th><th>係数</th><th>黄金</th><th>内訳</th></tr>')
     body = []
     for r in rows_sorted[:18]:
+        coef_val = 1.0
+        try:
+            coef_val = float(r.get('騎手係数', 1.0))
+        except (TypeError, ValueError):
+            pass
+        if coef_val >= 1.02:
+            cc = 'color:#e03131;font-weight:bold'
+        elif coef_val >= 1.005:
+            cc = 'color:#e8590c'
+        elif coef_val >= 0.995:
+            cc = ''
+        elif coef_val >= 0.98:
+            cc = 'color:#1971c2'
+        else:
+            cc = 'color:#1971c2;font-weight:bold'
+        coef_meaning = _esc(_f(r, '係数の意味'))
         body.append(
             f"<tr><td><b>{_esc(_f(r, '馬番'))}</b></td>"
             f"<td>{_esc(_f(r, '馬名')[:9])}</td>"
             f"<td>{_esc(_f(r, '騎手')[:6])}</td>"
-            f"<td>{_esc(_f(r, '騎手係数'))}</td>"
+            f"<td style='{cc}'>{_esc(_f(r, '騎手係数'))}</td>"
+            f"<td style='{cc}'>{coef_meaning}</td>"
             f"<td>{_esc(_f(r, '黄金ライン'))}</td>"
-            f"<td>{_esc(_f(r, '内訳'))}</td>"
-            f"<td>{_esc(_f(r, 'DB条件内訳'))}</td></tr>")
+            f"<td>{_esc(_f(r, '内訳'))}</td></tr>")
     tbl = (f"<table class='sub'><thead>{head}</thead>"
            f"<tbody>{''.join(body)}</tbody></table>")
     note = ("黄金ライン🥇＝騎手×厩舎の連対40%+。騎手係数は検証済みエッジ強度に合わせた保守的設定。"
-            "『DB条件内訳』＝db-keiba集計の騎手別・条件別回収率(📗儲かる条件/📕苦手条件)で、"
-            "外部サイトの集計値=当アプリの検証を通した数字ではなく参考表示のみ。")
+            "赤＝騎手で評価UP／青＝騎手で評価DOWN。")
     box = _exbox(f"🏇 騎手係数込み 総合スコア{w_txt}",
                  tbl + f"<div class='exnote'>{note}</div>")
     # 7列あるので幅広ボックスにする(標準幅32.8%だと潰れる)
@@ -2153,19 +2438,26 @@ def _stress_html(analysis, records):
 
     def _pop(r):
         try:
-            return int(r.get('人気'))
+            return int(r.get('人') or r.get('人気'))
         except Exception:
             return 99
+
+    def _um(r):
+        return r.get('番') or r.get('馬番')
+
+    def _reason(r):
+        return str(r.get('要因') or r.get('ストレス要因') or '')
+
     trap = [r for r in rows if _coef(r) < 0.92 and _pop(r) <= 6]
     if trap:
         lines.append("⚠ 過剰評価トラップ(1-6番人気×係数&lt;0.92): " + '　'.join(
-            f"<b>{r.get('馬番')}</b>{_esc(str(r.get('馬名', ''))[:8])}"
-            f"({r.get('人気')}人気/係数{_esc(str(r.get('ストレス係数')))})"
-            f"〈{_esc(str(r.get('ストレス要因', ''))[:40])}〉" for r in trap))
+            f"<b>{_um(r)}</b>{_esc(str(r.get('馬名', ''))[:8])}"
+            f"({_pop(r)}人気/係数{_esc(str(r.get('ストレス係数')))})"
+            f"〈{_esc(_reason(r)[:40])}〉" for r in trap))
     debuff = [r for r in rows if _coef(r) < 1.0 and r not in trap]
     if debuff:
         lines.append("デバフ該当: " + '　'.join(
-            f"{r.get('馬番')}{_esc(str(r.get('馬名', ''))[:7])}"
+            f"{_um(r)}{_esc(str(r.get('馬名', ''))[:7])}"
             f"({_esc(str(r.get('ストレス係数')))})" for r in debuff[:8]))
     bot2 = _ints(d.get('bottom2'))
     if bot2:
@@ -2275,6 +2567,19 @@ def build_newspaper_html(race_ids, opts=None):
         records = _sort_records(_recs_all, o.get('row_order', 'app'))
         labels = v.get('labels') or {}
         meta = v.get('meta') or {}
+        _vr = _venue_region(meta.get('venue', ''))
+        if _vr:
+            for _er in records:
+                _tz = _er.get('Tozai')
+                if _tz and _tz != _vr:
+                    try:
+                        _ep = int(_er.get('Popularity') or _er.get('Pop') or 0)
+                    except (TypeError, ValueError):
+                        _ep = 0
+                    if _ep >= 7:
+                        _tv = _er.get('Trainer') or ''
+                        if not str(_tv).endswith('E'):
+                            _er['Trainer'] = str(_tv) + 'E'
         # アプリの強適テーブル色分け(Styler計算済みセルCSS)を継承。モノクロ時と
         # 行数不一致(古いスナップショット)時は適用しない。
         smap = {}
@@ -2283,46 +2588,142 @@ def build_newspaper_html(race_ids, opts=None):
             if _sty and int(_sty.get('n_rows') or -1) == len(_recs_all):
                 smap = _sty.get('styles') or {}
         cv = load_consensus(rid)
+        _ev_labels = {}
+        try:
+            _ana = load_analysis(rid)
+            if _ana and _ana.get('ev_labels'):
+                _ev_labels = _ana['ev_labels'].get('data') or {}
+        except Exception:
+            pass
+        # ⚠ ここには以前『SRA未実行時のフォールバック』として、jravan.dbのオッズ帯平均勝率から
+        #   _roi = その馬のオッズ × 帯の平均勝率 を計算し、>=1.0 なら '✨EV>1' を付ける処理があった。
+        #   帯平均を個体に当てはめる誤りで、各帯の上端(帯内で最も人気の無い馬)だけで機械的に
+        #   1.0を超える帯量子化アーティファクトだった。実測(2022-25・14.7万頭)で点灯馬の
+        #   単勝ROIは79.1%(勝率5.27%)・非点灯78.0%(9.98%)＝妙味ゼロ。
+        #   [[verified_tansho_roi_efficient]](単勝は全帯で+ROIポケット無し)と整合。
+        #   2026-08-15 に削除。妙味表示は🔥+ファクター(オッズと独立に検証済み)のみとする。
+        #   ＝ _ev_labels は SRA(強適消去エンジン)が書いたスナップショットのみを使う。
         badge, buyline = _buymeta_html(rid, sec.get('gate'), sec.get('buymeta'))
 
         rn = race_no(rid)
         cond = f"｜馬場 {meta.get('condition')}" if meta.get('condition') else ''
         surface = f"{meta.get('surface', '')}{meta.get('distance', '')}m" \
             if meta.get('distance') else str(meta.get('surface') or '')
+        _pt = meta.get('post_time')
+        _pt_part = f"｜発走{_esc(str(_pt))}" if _pt else ''
+        _pp = meta.get('pace_prediction')
+        _nar_pace_tag = ''
+        if _pp:
+            _pc = _pp.get('pace', '')
+            _pcmt = _pp.get('comment', '')
+            _nar_pace_tag = (f"<span class='rmeta' style='margin-left:8px;color:#c55;'>"
+                             f"展開:{_esc(_pc)}({_esc(_pcmt)})</span>")
         hdr = (f"<div class='racehdr'>"
                f"<span class='rno'>{_esc(meta.get('venue', '?'))} {rn or '?'}R</span>"
                f"<span class='rname'>{_esc(meta.get('race_name', ''))}</span>"
                f"<span class='rmeta'>{_esc(surface)}{_esc(cond)}"
-               f"｜{_esc(str(meta.get('date') or ''))}｜{_esc(str(meta.get('n_horses') or len(records)))}頭"
+               f"｜{_esc(str(meta.get('date') or ''))}{_pt_part}｜{_esc(str(meta.get('n_horses') or len(records)))}頭"
                f"{'｜' + _esc(v.get('sort_label')) + '順' if v.get('sort_label') else ''}</span>"
+               f"{_nar_pace_tag}"
                f"{badge}</div>")
 
-        thead = ''.join(
-            f"<th class='{_col_slug(c)}'>{_header_cell(labels.get(c, c))}</th>" for c in cols)
-        body_rows = []
-        for i, r in enumerate(records):
-            cls = []
-            if i % 2 == 1:
-                cls.append('zeb')
-            try:
-                rk = int(float(r.get('Rank', 0)))
-            except Exception:
-                rk = 0
-            if not mono and o.get('row_order', 'app') == 'app' and rk in (1, 2, 3):
-                cls.append(f"top{rk}")
-            _rsty = smap.get(str(r.get('_pos'))) or {}
-            _tds = []
-            for c in cols:
-                _css = _rsty.get(c)
-                _attr = f" style=\"{_esc(_css)}\"" if _css else ''
-                _tds.append(f"<td class='{_col_slug(c)}'{_attr}>"
-                            f"{_cell_html(c, r.get(c), int(o.get('cell_max') or 0))}</td>")
-            body_rows.append(f"<tr class='{' '.join(cls)}'>{''.join(_tds)}</tr>")
+        _pr_re = re.compile(r'^(前走|[2-5]走前)')
+
+        # NAR通常版: 過去走を別テーブルに分離して横幅を確保
+        _nar_split = bool(meta.get('nar') and any(_pr_re.match(c) for c in cols))
+        if _nar_split:
+            cols_main = [c for c in cols if not _pr_re.match(c)]
+            cols_past = ['Umaban', 'Name'] + [c for c in cols if _pr_re.match(c)]
+        else:
+            cols_main = cols
+            cols_past = []
+
+        def _build_tbl(target_cols):
+            th = ''.join(
+                f"<th class='{_col_slug(c)}{' pr' if _pr_re.match(c) else ''}'>"
+                f"{_header_cell(labels.get(c, c))}</th>" for c in target_cols)
+            rows = []
+            for i, r in enumerate(records):
+                cls = []
+                if i % 2 == 1:
+                    cls.append('zeb')
+                try:
+                    rk = int(float(r.get('Rank', 0)))
+                except Exception:
+                    rk = 0
+                if not mono and o.get('row_order', 'app') == 'app' and rk in (1, 2, 3):
+                    cls.append(f"top{rk}")
+                _rsty = smap.get(str(r.get('_pos'))) or {}
+                _tds = []
+                for c in target_cols:
+                    _css = _rsty.get(c)
+                    _hot = False
+                    if c == 'Sire' and r.get(c):
+                        _st = r.get('_sire_tier')
+                        _hot = bool(r.get('_sire_hot'))
+                        if _st is None:
+                            try:
+                                from core.nar_scraper import _NAR_DIRT_TIER, _sire_venue_match
+                                _st = _NAR_DIRT_TIER.get(str(r[c]).strip(), '')
+                                if not _hot:
+                                    _hot = _sire_venue_match(
+                                        str(r[c]).strip(),
+                                        meta.get('venue', ''),
+                                        meta.get('distance'))
+                            except Exception:
+                                _st = ''
+                        if _st == 'S':
+                            _css = (_css + ';' if _css else '') + 'color:#c00;font-weight:bold'
+                        elif _st == 'A':
+                            _css = (_css + ';' if _css else '') + 'color:#1a5fb4;font-weight:bold'
+                    _attr = f" style=\"{_esc(_css)}\"" if _css else ''
+                    _pr_cls = ' pr' if _pr_re.match(c) else ''
+                    _val = _cell_html(c, r.get(c), int(o.get('cell_max') or 0))
+                    if _hot and c == 'Sire':
+                        _val = f"\U0001f525{_val}"
+                    if _css and 'background-color' in _css and c in ('BattleScore', 'JockeyChange'):
+                        import re as _re
+                        _val = _re.sub(r"color:#[0-9a-fA-F]{3,6}", "color:#fff", _val)
+                    if c == 'Name' and _ev_labels:
+                        _um_s = str(r.get('Umaban', ''))
+                        _evl = _ev_labels.get(_um_s, '')
+                        if '+ファクター' in _evl:
+                            _val += "<span style='color:#e63946;font-size:0.75em' title='＋ファクター(人気薄8番以下×検証済み市場エッジ。test2023-25で単勝ROI108.8%/無印63.7%・n=453)'> 🔥+F</span>"
+                        # ✨EV>1 は**掲載しない**(2026-08-15 削除)。
+                        # 判定式が「その馬のオッズ × そのオッズ帯の平均勝率 >= 1.0」で、
+                        # 帯の平均勝率を個体に当てはめているため、**各帯の上端(帯内で最も
+                        # 人気が無い馬)だけで機械的に点灯する**帯量子化アーティファクト。
+                        # 実測(2022-25・14.7万頭): 点灯馬の単勝ROI 79.1%(勝率5.27%) vs
+                        # 非点灯 78.0%(9.98%)＝100%を全く超えず、勝率はむしろ半分。
+                        # ツールチップの『実測回収率100%超』は事実に反していた。
+                        # [[verified_tansho_roi_efficient]](単勝は全帯で+ROIポケット無し)と整合。
+                        # Alert列では2026-07-12に同じ理由で非掲載化済みだったが、
+                        # 新聞側に反映漏れがあり『買えるサイン』として誤読されていた。
+                        # 再掲載しないこと。妙味は🔥+F(オッズと独立な検証済みシグナル)のみ。
+                    _tds.append(f"<td class='{_col_slug(c)}{_pr_cls}'{_attr}>{_val}</td>")
+                rows.append(f"<tr class='{' '.join(cls)}'>{''.join(_tds)}</tr>")
+            return th, rows
+
+        thead_main, body_main = _build_tbl(cols_main)
+        if _nar_split:
+            thead_past, body_past = _build_tbl(cols_past)
+            table_html = (
+                f"<table class='kt'><thead><tr>{thead_main}</tr></thead>"
+                f"<tbody>{''.join(body_main)}</tbody></table>"
+                f"<div class='past-sep'>過去走</div>"
+                f"<table class='kt kt-past'><thead><tr>{thead_past}</tr></thead>"
+                f"<tbody>{''.join(body_past)}</tbody></table>")
+        else:
+            table_html = (
+                f"<table class='kt'><thead><tr>{thead_main}</tr></thead>"
+                f"<tbody>{''.join(body_main)}</tbody></table>")
+
         note = ("<div class='fbnote'>※このレースはSRAスナップショット未保存のため代表列で再構成"
                 "（🏠で再解析すると表示中の全列が紙面化されます）</div>"
                 if v.get('source') == 'full' else '')
 
         hp_html = _header_plus_html(cv, v, rid) if sec.get('header_plus') else ''
+        digest_html = _digest_html(cv, records, meta, mono) if sec.get('digest') else ''
         cv_html = _consensus_html(cv, records, mono) if sec.get('consensus') else ''
         analysis = load_analysis(rid)
         extras = []
@@ -2362,9 +2763,8 @@ def build_newspaper_html(race_ids, opts=None):
 
         race_blocks.append(
             f"<section class='race'>"
-            f"{hdr}{hp_html}{cv_html}{buyline}"
-            f"<table class='kt'><thead><tr>{thead}</tr></thead>"
-            f"<tbody>{''.join(body_rows)}</tbody></table>{note}{extras_html}</section>")
+            f"{hdr}{hp_html}{digest_html}{cv_html}{buyline}"
+            f"{table_html}{note}{extras_html}</section>")
         toc_rows.append(
             f"<tr><td>{_esc(meta.get('venue', '?'))}{rn or '?'}R</td>"
             f"<td>{_esc(meta.get('race_name', ''))}</td>"
@@ -2503,12 +2903,25 @@ def build_newspaper_html(race_ids, opts=None):
     table.kt th.col-BloodStats, table.kt td.col-BloodStats {{ min-width: 11mm; }} /* 血統実績: -1文字ぶん(13→11) */
     table.kt th.col-CorrectedT, table.kt td.col-CorrectedT {{ min-width: 15mm; }} /* 補正T: +2文字ぶん */
     table.kt th.col-SpurtIdx, table.kt td.col-SpurtIdx {{ min-width: 13mm; }}     /* 末脚指数: +1文字ぶん */
+    table.kt th.col-OddsGap, table.kt td.col-OddsGap {{ min-width: 14mm; }}       /* オッズ断層: 『断層D1』で収まる幅 */
     table.kt th.col-Lap33, table.kt td.col-Lap33 {{ max-width: 13mm; }}          /* 33ラップ: -2文字ぶん(狭める) */
     table.kt th.col-WeightCarried, table.kt td.col-WeightCarried {{ min-width: 8mm; }} /* 斤量: +1文字ぶん */
+    .past-sep {{ font-size: {max(font_pt - 0.5, 5):.1f}pt; font-weight: 700;
+                  margin: 1.5mm 0 0.5mm 0; padding: 0.3mm 1mm;
+                  background: {'#ddd' if mono else '#e8eef5'}; border-left: 3px solid {'#888' if mono else '#6688bb'};
+                  color: {'#333' if mono else '#335'}; }}
+    table.kt-past th {{ background: {'#e8e8e8' if mono else '#e0e8f3'} !important; }}
     tr.zeb td {{ background: #f6f6f6; }}
     tr.top1 td {{ background: {'#f6f6f6' if mono else '#fff3d6'}; }}
     tr.top2 td {{ background: {'#f6f6f6' if mono else '#eef3fb'}; }}
     tr.top3 td {{ background: {'#f6f6f6' if mono else '#f2ece4'}; }}
+    /* 過去走ゾーン(前走〜5走前): 薄い別色で情報エリアを区別 */
+    th.pr {{ background: {'#e8e8e8' if mono else '#e8eef5'} !important; }}
+    td.pr {{ background: {'#f4f4f4' if mono else '#f0f4fa'} !important; }}
+    tr.zeb td.pr {{ background: {'#efefef' if mono else '#e8edf4'} !important; }}
+    tr.top1 td.pr {{ background: {'#f0f0f0' if mono else '#f5efd0'} !important; }}
+    tr.top2 td.pr {{ background: {'#f0f0f0' if mono else '#e5eef8'} !important; }}
+    tr.top3 td.pr {{ background: {'#f0f0f0' if mono else '#ebe6dd'} !important; }}
     .fbnote {{ font-size: 7pt; color: #777; margin-top: 0.8mm; }}
     .ftr {{ font-size: 7.5pt; color:#555; border-top: 0.5px solid #999; margin-top: 2mm;
             padding-top: 1mm; }}
@@ -2878,4 +3291,988 @@ def build_conclusion_card_html(race_ids, opts=None):
             f"危険＝検証済みアンチ市場(脆い本命/断層直下/休み明け等)　"
             f"切る＝消去クロス重複3+の強い切り対象"
             f"</div>")
+    return html, issued
+
+
+# ────────────────────────────────────────────────────────────
+# 初心者競馬新聞 (Beginner-Friendly Newspaper)
+# ────────────────────────────────────────────────────────────
+
+_BEGINNER_MARK = {'honmei': '◎', 'aite': '○', 'osae': '▲', 'ana': '☆', 'keshi': '✖'}
+_BEGINNER_MARK_LABEL = {
+    'honmei': ('◎ 本命', '最も3着以内に入りやすいと判定された馬'),
+    'aite':   ('○ 対抗', '本命に次いで有力な馬'),
+    'osae':   ('▲ 単穴', '人気は落ちるが実力が侮れない馬'),
+    'ana':    ('☆ 穴馬', '検証済みの強みを持つ人気薄。配当の上乗せ要員'),
+    'keshi':  ('✖ 消し', '弱点が重なっており見送り推奨'),
+    # 印ではないが凡例に並べる(過去走が無い馬の扱いを誤解させないため)
+    'chu':    ('注 データ無し', '過去走の記録が無い馬。弱いのではなく判断材料が無いだけで、'
+                              '上位に来ることもあります'),
+}
+_BEGINNER_COLORS = {
+    'honmei': '#e74c3c', 'aite': '#2980b9', 'osae': '#27ae60',
+    'ana':    '#8e44ad', 'keshi': '#95a5a6',
+}
+
+
+def _beginner_win_prob(odds):
+    """単勝オッズから概算勝率(%)を算出。控除率25%を補正。"""
+    try:
+        o = float(odds)
+        if o <= 0:
+            return None
+        raw = 100.0 / o
+        return min(99, round(raw * 0.80, 1))
+    except Exception:
+        return None
+
+
+def _beginner_score_100(records, key='Projected Score'):
+    """レース内のProjected Score(or BattleScore)を0-100に正規化。"""
+    vals = {}
+    for r in records:
+        try:
+            v = float(r.get(key, ''))
+            um = int(r.get('Umaban', 0))
+            vals[um] = v
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return {}
+    mn, mx = min(vals.values()), max(vals.values())
+    rng = mx - mn if mx > mn else 1
+    return {u: round((v - mn) / rng * 80 + 20) for u, v in vals.items()}
+
+
+def _beginner_waku(rec):
+    """枠番を取り出す。view の Waku は '内 2' / '外 7' / '5' の表示文字列なので
+    そのまま int() すると必ず失敗して 0 になる(紙面の枠色が全部灰色になる不具合)。"""
+    raw = rec.get('Waku', rec.get('枠', ''))
+    m = re.search(r'\d+', str(raw))
+    if m:
+        return int(m.group())
+    # Waku欠損時は馬番と頭数から推定できないため0(色なし)を返す
+    return 0
+
+
+def strip_name_deco(name, limit=None):
+    """馬名から表示用の装飾( '(🔥)' 等)を外す。
+
+    素で name[:8] のように切ると 'チョコラテ (🔥' と装飾の途中で切れて
+    紙面に壊れた文字列が出る。先に装飾を落としてから切ること。
+    """
+    s = str(name or '')
+    s = re.sub(r'\s*[（(][^）)]*[）)]\s*$', '', s).strip()
+    s = re.sub(r'[🔥⭐★☆👑💣💀🅑]', '', s).strip()
+    return s[:limit] if limit else s
+
+
+def _beginner_name(rec, limit=14):
+    """馬名から装飾を外して切り詰める(初心者紙面用)。"""
+    return strip_name_deco(rec.get('Name', rec.get('馬名', '')), limit)
+
+
+def _beginner_pop(rec):
+    m = re.search(r'\d+', str(rec.get('Popularity', rec.get('人気', ''))))
+    return int(m.group()) if m else None
+
+
+def _beginner_odds(rec):
+    m = re.search(r'\d+(?:\.\d+)?', str(rec.get('Odds', rec.get('単勝', ''))))
+    return float(m.group()) if m else None
+
+
+def _beginner_place_rate(rec, is_nar=False):
+    """馬券内率(=複勝率)。オッズ別の実測カーブ(検証済み)を使う。"""
+    try:
+        from core import axis_selector as _axs
+    except Exception:
+        return None
+    v = _axs.fuku_rate(_beginner_pop(rec), _beginner_odds(rec), is_nar=is_nar)
+    return round(float(v), 1) if v is not None else None
+
+
+def _beginner_marks(records, cv, scores_100):
+    """馬番→(役割キー, 印) を決める。
+
+    合議スナップショット(cv.json)があればそれを最優先で使う。無い場合でも
+    紙面が印なしの空同然にならないよう、view列(🎯軸馬候補=AxisMark)と
+    総合力順から組み立てる。cv無しは『🏠で解析したが合議未保存』の
+    レースで普通に起きる(実際に発行済みPDFが印なしになっていた)。
+    """
+    groups = (cv.get('groups') or {}) if cv else {}
+    out = {}
+    if groups:
+        # 合議の相手/押さえは頭数が多い(18頭で▲が7頭等)。初心者紙面では
+        # 印が多いほど迷うので、総合力の高い順に上限を設けて絞る。
+        # 上限は出走頭数に応じて調整する: 12頭で10頭に印が付くと
+        # 『ほぼ全馬に印』になり選別の意味が無くなるため(実測で発生)。
+        _n = len([r for r in records if _int_or(r.get('Umaban')) is not None])
+        if _n >= 15:
+            _CAP = {'honmei': 1, 'aite': 1, 'osae': 2, 'ana': 1, 'keshi': 3}
+        elif _n >= 11:
+            _CAP = {'honmei': 1, 'aite': 1, 'osae': 1, 'ana': 1, 'keshi': 2}
+        else:
+            _CAP = {'honmei': 1, 'aite': 1, 'osae': 1, 'ana': 1, 'keshi': 1}
+        for g, mark in _BEGINNER_MARK.items():
+            us = []
+            for u in (groups.get(g) or []):
+                iu = _int_or(u)
+                if iu is not None and iu not in out:
+                    us.append(iu)
+            us.sort(key=lambda u: -scores_100.get(u, 0))
+            for u in us[:_CAP.get(g, 3)]:
+                out[u] = (g, mark)
+        if out:
+            return out
+
+    # ── フォールバック: AxisMark(◎〇▲) → 総合力順 の順に埋める ──
+    ranked = sorted(records,
+                    key=lambda r: -scores_100.get(_int_or(r.get('Umaban')), 0))
+    taken = set()
+    for rec in records:
+        um = _int_or(rec.get('Umaban'))
+        if um is None:
+            continue
+        am = str(rec.get('AxisMark', '') or '')
+        g = ('honmei' if '◎' in am else
+             'aite' if ('〇' in am or '○' in am) else
+             'osae' if '▲' in am else None)
+        if g and g not in {v[0] for v in out.values()}:
+            out[um] = (g, _BEGINNER_MARK[g])
+            taken.add(um)
+    for g in ('honmei', 'aite', 'osae'):
+        if g in {v[0] for v in out.values()}:
+            continue
+        for rec in ranked:
+            um = _int_or(rec.get('Umaban'))
+            if um is None or um in taken:
+                continue
+            out[um] = (g, _BEGINNER_MARK[g])
+            taken.add(um)
+            break
+
+    # ☆穴: 人気薄(6番人気以下)で総合力が最も高い馬(検証済みエッジ帯と同じ発想)
+    for rec in ranked:
+        um = _int_or(rec.get('Umaban'))
+        pop = _beginner_pop(rec)
+        if um is None or um in taken or pop is None or pop < 6:
+            continue
+        out[um] = ('ana', _BEGINNER_MARK['ana'])
+        taken.add(um)
+        break
+
+    # ✖消し: 総合力が下位の馬。少頭数で2頭消すと印だらけになるので頭数で調整。
+    _cut_cap = 2 if len(ranked) >= 11 else 1
+    n_cut = 0
+    for rec in reversed(ranked):
+        if n_cut >= _cut_cap:
+            break
+        um = _int_or(rec.get('Umaban'))
+        if um is None or um in taken:
+            continue
+        out[um] = ('keshi', _BEGINNER_MARK['keshi'])
+        taken.add(um)
+        n_cut += 1
+    return out
+
+
+def _int_or(v, default=None):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _beginner_last3(race_id, limit=3):
+    """馬番→近走[(馬場記号, 距離, 着順), ...]。score_cacheのfull.json(PastRuns)から取る。
+    view.jsonには過去走が入っていないためこちらを参照する。
+
+    ⚠ 全レースで取れるわけではない:
+      ・地方競馬かんたん新聞の経路(race_idが'NAR'始まり)はfull.jsonを書かない
+      ・nar.netkeibaはPast走セルが無い開催があり PastRuns=[] になる
+        (南関東4場はnankan_scraperのブリッジで埋まるが門別等は埋まらない)
+    取れなかったレースは空dictを返し、紙面側で『データなし』と明示する。
+    """
+    out = {}
+    try:
+        d = _read_full(race_id)
+    except Exception:
+        return out
+    for rec in ((d or {}).get('records') or []):
+        um = _int_or(rec.get('Umaban'))
+        if um is None:
+            continue
+        runs = []
+        for pr in (rec.get('PastRuns') or [])[:limit]:
+            dist = _int_or(pr.get('Distance'))
+            rank = _int_or(pr.get('Rank'))
+            if dist and rank:
+                s = str(pr.get('Surface') or '')
+                surf = 'ダ' if 'ダ' in s else ('芝' if '芝' in s else '')
+                runs.append((surf, dist, rank))
+        if runs:
+            out[um] = runs
+    return out
+
+
+def _beginner_stars(ratio, lo, hi):
+    """比率を5段階の★表現にする(lo以下=★1 / hi以上=★5)。"""
+    try:
+        f = (float(ratio) - lo) / max(hi - lo, 1e-9)
+    except (TypeError, ValueError):
+        return None
+    n = max(1, min(5, int(round(f * 4)) + 1))
+    return '★' * n + '☆' * (5 - n)
+
+
+def _beginner_course_feature(race_id, meta):
+    """コースの特徴(先行有利/内枠有利/差し届く)を実測10年分から★表示にする。
+
+    core.track_bias.course_empirical_bias は『そのコースで勝った馬の
+    4角3番手以内率/内枠率』の実績集計。予想エッジの主張ではなく
+    コース性質の説明として出す(展開・枠はpriced-in＝買い材料にはしない)。
+    """
+    try:
+        from core import track_bias as _tb
+        jyo = str(race_id)[4:6]
+        dist = _int_or(meta.get('distance'))
+        cb = _tb.course_empirical_bias(jyo, meta.get('surface', ''), dist)
+    except Exception:
+        return None
+    if not cb:
+        return None
+    front = cb.get('front_rate')
+    inner = cb.get('inner_rate')
+    rows = []
+    s = _beginner_stars(front, 0.35, 0.70)
+    if s:
+        rows.append(('先行有利', s))
+    s = _beginner_stars(inner, 0.22, 0.50)
+    if s:
+        rows.append(('内枠有利', s))
+    s = _beginner_stars(1.0 - (front or 0.5), 0.30, 0.65)
+    if s:
+        rows.append(('差し届く', s))
+    if front is not None:
+        if front >= 0.55:
+            note = 'ハイペースになりにくく、先行馬に有利なコース形態。'
+        elif front <= 0.40:
+            note = '差し・追い込みも届きやすく、決め手が問われるコース。'
+        else:
+            note = '極端な脚質の偏りは小さく、力どおりに決まりやすい。'
+    else:
+        note = ''
+    return {'rows': rows, 'note': note, 'n': cb.get('n')}
+
+
+# 合議の根拠ラベル→初心者向けの言い換え。
+# 根拠は2系統ある: build_edge_setsが返す絵文字つき日本語('⭐黄金ライン'等)と、
+# 内部キー('spurt_top3'等)。どちらも同じ表に通して絵文字を紙面から締め出す。
+_BEGINNER_PLAIN = {
+    '黄金ライン': '騎手と厩舎の相性が良い',
+    '厩舎当ｺｰｽ': 'このコースが得意な厩舎',
+    '厩舎当コース': 'このコースが得意な厩舎',
+    '道悪軸': '渋った馬場に強い',
+    '末脚top': '終いの脚が上位',
+    'spurt_top3': '終いの脚が上位',
+    'lap33_fit': 'レースの流れが合う',
+    'tanpuku_gap': 'オッズに妙味あり',
+    'corrtime_top3': '持ち時計が優秀',
+    'golden_line': '騎手と厩舎の相性が良い',
+    'blood_power': '血統が合う',
+    'glass_fav': '人気ほど堅くない',
+    'rotation_long': '休み明け',
+    'prev_win_demerit': '前走勝ちの反動',
+    'front_overbet': '逃げ馬で人気先行',
+    'danger_popular_inner': '枠順が不利',
+}
+
+
+def _beginner_plain(label):
+    """根拠ラベルを平易な日本語にする。未知ラベルは絵文字と記号を落として返す。"""
+    s = str(label or '').strip()
+    if not s:
+        return ''
+    for key, plain in _BEGINNER_PLAIN.items():
+        if key in s:
+            return plain
+    # 未知ラベルは絵文字を除去して素の文字だけ残す(紙面に絵文字を出さない)
+    s = re.sub(r'[^\wぁ-んァ-ヶー一-龠々ａ-ｚＡ-Ｚ()（）・%＋+\-]', '', s)
+    return s[:12]
+
+
+def _beginner_style_map(records):
+    """レース内の平均位置取りから 馬番→'front'/'back' を返す(上位/下位1/3)。"""
+    vals = {}
+    for r in records:
+        um = _int_or(r.get('Umaban'))
+        m = re.search(r'\d+(?:\.\d+)?', str(r.get('AvgPosition', '') or ''))
+        if um is not None and m:
+            vals[um] = float(m.group())
+    if len(vals) < 4:
+        return {}
+    order = sorted(vals, key=lambda u: vals[u])
+    k = max(1, len(order) // 3)
+    out = {u: 'front' for u in order[:k]}
+    out.update({u: 'back' for u in order[-k:]})
+    return out
+
+
+def _beginner_horse_comment(um, aim, groups, by_um, rec=None, role=None, style=None):
+    """馬ごとの一言コメント。
+
+    合議(cv.json)があればその根拠を平易化して使い、無ければ view の列
+    (末脚/補正T/33ラップ/脚質/不安要素/人気)から組み立てる。cv無しの
+    レースでコメントが全部空になるのを防ぐ。
+    """
+    reasons = (aim.get('edge_reasons') or {}).get(str(um)) or []
+    dangers = (aim.get('danger_reasons') or {}).get(str(um)) or []
+    combo = int((aim.get('combo') or {}).get(str(um), 0))
+
+    if role is None:
+        for g in ('honmei', 'aite', 'osae', 'ana', 'keshi'):
+            if um in [int(x) for x in (groups.get(g) or [])]:
+                role = g
+                break
+
+    parts = []
+    if role == 'honmei':
+        parts.append('崩れにくい軸馬。')
+    elif role == 'aite':
+        parts.append('能力上位。相手筆頭。')
+    elif role == 'osae':
+        parts.append('展開が向けば上位争い。')
+    elif role == 'ana':
+        parts.append('人気薄だが一発あり。')
+    elif role == 'keshi':
+        parts.append('今回は様子見。')
+
+    if reasons:
+        simplified = [s for s in (_beginner_plain(r) for r in reasons[:2]) if s]
+        if simplified:
+            parts.append('強み: ' + '、'.join(simplified))
+
+    if dangers:
+        simp_d = [s for s in (_beginner_plain(d) for d in dangers[:2]) if s]
+        if simp_d:
+            parts.append('注意: ' + '、'.join(simp_d))
+
+    if combo >= 3:
+        parts.append(f'好材料が{combo}個重複 → 要注目')
+    elif combo == 2:
+        parts.append('好材料が2個重複')
+
+    # ── cv由来の材料が無い場合は view 列から拾う ──
+    if rec is not None and len(parts) <= 1:
+        good, bad = [], []
+        # 脚質はレース内の相対順位で言う。PCIType('前傾型'等)をそのまま使うと
+        # ダート短距離では全馬が同じ型になり『先行力あり』が全馬に並んで無意味になる。
+        if style == 'front':
+            good.append('前に行ける脚質')
+        elif style == 'back':
+            good.append('後方から差す脚質')
+        _sp = str(rec.get('SpurtIdx', '') or '')
+        if '🔥' in _sp:
+            good.append('末脚が上位')
+        elif '🐢' in _sp:
+            good.append('決め手は信頼できる')
+        if '⚡' in _sp:
+            bad.append('前崩れ頼みの決め手')
+        if '🔵' in str(rec.get('CorrectedT', '') or ''):
+            good.append('持ち時計が優秀')
+        if '🌀' in str(rec.get('Lap33', '') or ''):
+            good.append('流れが向く')
+        _al = str(rec.get('Alert', '') or '')
+        if '🔥+F' in _al:
+            good.append('人気薄だが好材料あり')
+        if '💣' in _al or '💀' in _al:
+            bad.append('人気ほど信頼できない')
+        _rf = str(rec.get('RiskFlags', '') or '')
+        if _rf and _rf not in ('-', 'nan', 'None'):
+            bad.append(_rf.replace(',', '・')[:18])
+        # ✖消しの馬に長所を並べると初心者には矛盾して見えるので短所だけにする
+        if good and role != 'keshi':
+            parts.append('　'.join(good[:2]) + '。')
+        if bad:
+            parts.append('注意: ' + '・'.join(bad[:2]) + '。')
+
+    return ' '.join(parts) if parts else ''
+
+
+def _beginner_recommended_bets(cv, records, marks=None):
+    """初心者向けのかんたん買い目。
+
+    合議(cv.json)があればその本命/相手/押さえを使う。無い場合は
+    marks(_beginner_marksのフォールバック結果)から組み立てて、
+    紙面から買い目セクションが丸ごと消えないようにする。
+    """
+    groups = (cv.get('groups') or {}) if cv else {}
+    honmei = [int(x) for x in (groups.get('honmei') or [])]
+    aite = [int(x) for x in (groups.get('aite') or [])]
+    osae = [int(x) for x in (groups.get('osae') or [])]
+    if not honmei and marks:
+        _by_role = {}
+        for u, (g, _m) in marks.items():
+            _by_role.setdefault(g, []).append(u)
+        honmei = _by_role.get('honmei') or []
+        aite = _by_role.get('aite') or []
+        osae = (_by_role.get('osae') or []) + (_by_role.get('ana') or [])
+    if not honmei:
+        return ''
+
+    # 買い目の馬名も装飾( '(🔥)' 等)を外す。_names_by_um は表示名そのままなので
+    # 『5番マイネルラジェム (🔥)』のように紙面へ絵文字が出てしまう。
+    by_um = {}
+    for r in records:
+        u = _int_or(r.get('Umaban'))
+        if u is not None:
+            by_um[u] = _beginner_name(r)
+
+    # 券種は馬連・馬単の2つだけに絞る(初心者が最初に買うのはこの2つ。
+    # 3連複/ワイドまで載せると紙面が縦に伸びて1レース1ページに収まらない)。
+    axis = honmei[0]
+    partners = [u for u in (aite + osae) if u != axis][:3]
+    if not partners:
+        return ''
+
+    _WAKU_BG = {1: '#fff', 2: '#000', 3: '#c00', 4: '#00f',
+                5: '#ff0', 6: '#0a0', 7: '#f80', 8: '#f69'}
+    waku_of = {}
+    for r in records:
+        u = _int_or(r.get('Umaban'))
+        if u is not None:
+            waku_of[u] = _beginner_waku(r)
+
+    def _chip(u):
+        w = waku_of.get(u, 0)
+        bg = _WAKU_BG.get(w, '#ddd')
+        fg = '#fff' if w in (2, 3, 4, 6) else '#000'
+        return (f"<span class='bchip' style='background:{bg};color:{fg};'>{u}</span>")
+
+    axis_chip = _chip(axis)
+    partner_chips = ''.join(_chip(u) for u in partners)
+    n = len(partners)
+
+    return (
+        f"<div class='bg-betgrid'>"
+        f"<div class='bg-bet'>"
+        f"<div class='bg-bet-title'>馬連（軸1頭ながし）</div>"
+        f"<div class='bg-bet-line'>{axis_chip}<span class='bop'>－</span>{partner_chips}</div>"
+        f"<div class='bg-bet-meta'>{n}点　2頭が1・2着（順不同）／的中しやすさ ★★★☆☆</div>"
+        f"</div>"
+        f"<div class='bg-bet'>"
+        f"<div class='bg-bet-title'>馬単（1着固定）</div>"
+        f"<div class='bg-bet-line'>{axis_chip}<span class='bop'>→</span>{partner_chips}</div>"
+        f"<div class='bg-bet-meta'>{n}点　{axis}番が1着で相手が2着／配当 ★★★☆☆</div>"
+        f"</div></div>"
+        f"<div class='bg-bet-axis'>軸 = {_esc(str(axis))}番 {_esc(by_um.get(axis, ''))}</div>")
+
+
+def build_beginner_newspaper_html(race_ids, opts=None):
+    """初心者向けの競馬新聞HTMLを組版する。
+
+    既存の build_newspaper_html とは独立した簡潔なレイアウト。
+    大きなフォント・色分け・平易な用語・かんたん買い目を提供する。
+    戻り値: (html_str, issued_list) / データ無しは ('', [])。
+    """
+    o = dict(opts or {})
+    title = o.get('title', 'かんたん競馬新聞')
+    subtitle = o.get('subtitle', '')
+    import datetime as _dt
+    today = subtitle or _dt.date.today().strftime('%Y年%m月%d日')
+
+    issued = []
+    race_blocks = []
+
+    skipped_races = []
+    for rid in race_ids:
+        v = load_view(rid)
+        if not v:
+            continue
+        records = v.get('records') or []
+        if not records:
+            continue
+        meta = v.get('meta') or {}
+        # 新馬戦は収録しない。全馬が過去走ゼロで、末脚・持ち時計・33ラップ等の
+        # 検証済み材料が丸ごと使えず、印も買い目も根拠が無いまま並ぶだけになる
+        # (2026-07-31 川崎4R新馬では✖消しにした馬が2着)。初心者向けに
+        # 『当てられない材料で当てられるように見せる』のは避ける。
+        if '新馬' in str(meta.get('race_name', '') or ''):
+            skipped_races.append(
+                f"{meta.get('venue', '')}{race_no(rid) or ''}R "
+                f"{meta.get('race_name', '')}")
+            continue
+        cv = load_consensus(rid)
+
+        groups = (cv.get('groups') or {}) if cv else {}
+        aim = (cv.get('aim') or {}) if cv else {}
+        forecast = (cv.get('forecast') or {}) if cv else {}
+        by_um = _names_by_um(records)
+
+        score_key = 'Projected Score' if any(
+            r.get('Projected Score') for r in records) else 'BattleScore'
+        scores_100 = _beginner_score_100(records, score_key)
+        mark_by_um = _beginner_marks(records, cv, scores_100)
+        _is_nar = str(rid)[4:6].isdigit() and int(str(rid)[4:6]) > 10
+        last3 = _beginner_last3(rid)
+        style_map = _beginner_style_map(records)
+
+        rn = race_no(rid)
+        surface = f"{meta.get('surface', '')}{meta.get('distance', '')}m" \
+            if meta.get('distance') else str(meta.get('surface') or '')
+        cond = meta.get('condition', '')
+        post_time = meta.get('post_time', '')
+        arare = forecast.get('arare_prob')
+        if arare is None:
+            # 合議スナップショットが無いレースでも荒れ度を出す(検証済みロジット。
+            # オッズ列だけで計算できるので view から復元する)。
+            try:
+                from core import value_scanner as _vs_bg
+                _ol = [o for o in (_beginner_odds(r) for r in records) if o]
+                if _ol:
+                    arare = _vs_bg.arare_prob(_ol, meta, len(records))
+            except Exception:
+                arare = None
+        arare_pct = round(float(arare) * 100) if arare is not None else None
+
+        # 頭数で密度を切り替える(A4縦1枚に1レースを収めるため)。
+        # 実測: 既定の行高53pxでは10頭まで。18頭は1行36px以内に詰める必要がある。
+        _nh = len(records)
+        _dens = '' if _nh <= 10 else ('dz' if _nh <= 13 else 'dzz')
+        race_html = f"<div class='bg-race {_dens}'>".replace(' ">', '">')
+        race_html += (
+            f"<div class='bg-race-hdr'>"
+            f"<span class='bg-venue'>{_esc(meta.get('venue', '?'))} {rn or '?'}R</span>"
+            f"<span class='bg-rname'>{_esc(meta.get('race_name', ''))}</span>"
+            f"</div>")
+        # ── レース情報 / コースの特徴 / 荒れ度 の3枚組ボックス ──
+        _rows_info = []
+        if surface:
+            _rows_info.append(('コース', surface))
+        if cond:
+            _rows_info.append(('馬場', str(cond)))
+        if post_time:
+            _rows_info.append(('発走時刻', str(post_time)))
+        _rows_info.append(('頭数', f"{meta.get('n_horses', len(records))}頭立て"))
+        if meta.get('date'):
+            _rows_info.append(('日付', str(meta['date'])))
+        _info_html = ''.join(
+            f"<div class='bg-i-row'><span class='bg-i-k'>{_esc(k)}</span>"
+            f"<span class='bg-i-v'>{_esc(v)}</span></div>" for k, v in _rows_info)
+
+        _cf = _beginner_course_feature(rid, meta)
+        _cf_html = ''
+        if _cf and _cf['rows']:
+            _cf_html = (
+                f"<div class='bg-box'><div class='bg-box-ttl'>"
+                f"コースの特徴（{_esc(meta.get('venue', ''))}{_esc(surface)}）</div>")
+            for _k, _stars in _cf['rows']:
+                _cf_html += (f"<div class='bg-i-row'><span class='bg-i-k'>{_esc(_k)}</span>"
+                             f"<span class='bg-stars'>{_esc(_stars)}</span></div>")
+            if _cf.get('note'):
+                _cf_html += f"<div class='bg-cf-note'>{_esc(_cf['note'])}</div>"
+            _cf_html += "</div>"
+
+        _ar_html = ''
+        if arare_pct is not None:
+            _lv = max(1, min(6, int(round(arare_pct / 100 * 6)) or 1))
+            if arare_pct >= 60:
+                _ar_lbl, _ar_col = '高め', '#e74c3c'
+                _ar_tip = '波乱含み。☆穴馬も相手に入れると配当アップのチャンス。'
+            elif arare_pct >= 40:
+                _ar_lbl, _ar_col = 'ふつう', '#f39c12'
+                _ar_tip = 'やや荒れ模様。人気馬だけに頼らない方が無難。'
+            else:
+                _ar_lbl, _ar_col = '低め', '#27ae60'
+                _ar_tip = '堅い決着が多い。本命◎を中心に組み立てを。'
+            _cells = ''.join(
+                f"<span class='bg-ar-cell' style='background:"
+                f"{_ar_col if _i < _lv else '#e5e8ea'};'></span>" for _i in range(6))
+            _ar_html = (
+                f"<div class='bg-box'><div class='bg-box-ttl'>荒れ度</div>"
+                f"<div class='bg-ar-wrap'><span class='bg-ar-lbl'>{_esc(_ar_lbl)}</span>"
+                f"{_cells}</div>"
+                f"<div class='bg-cf-note'>荒れ予報 {arare_pct}% — {_esc(_ar_tip)}</div></div>")
+        else:
+            # 荒れ度はオッズの散らばりから出すため、解析時にオッズが未発表だと
+            # 出せない。枠ごと消すと『表示バグ』に見えるので理由を出す。
+            _ar_html = (
+                "<div class='bg-box'><div class='bg-box-ttl'>荒れ度</div>"
+                "<div class='bg-cf-note'>オッズが未取得のため算出できません。"
+                "オッズが出てから🏠 Single Race Analysisで解析し直すと表示されます。"
+                "</div></div>")
+
+        _pp_b = meta.get('pace_prediction')
+        _pace_html = ''
+        if _pp_b:
+            _pace_html = (
+                f"<div class='bg-cf-note' style='color:#c0392b;font-weight:700;'>"
+                f"展開よそう: {_esc(_pp_b.get('pace', ''))}ペース — "
+                f"{_esc(_pp_b.get('comment', ''))}</div>")
+
+        race_html += (
+            f"<div class='bg-infogrid'>"
+            f"<div class='bg-box'><div class='bg-box-ttl'>レース情報</div>{_info_html}</div>"
+            f"{_cf_html}{_ar_html}</div>{_pace_html}")
+
+        # ── 新馬戦/データ皆無レースの警告 ──
+        # 過去走が無い馬ばかりのレースは、末脚・補正T・33ラップ等の検証済み材料が
+        # 全部欠ける。総合点は血統と騎手くらいしか根拠が無く、印も買い目も
+        # 「材料が無いまま並べただけ」になる。実際 2026-07-31 川崎4R(新馬)では
+        # ✖消しにした馬が2着に来た。読み手が数字を信用しすぎないよう明示する。
+        _nodata_n = sum(1 for r in records
+                        if not (last3.get(_int_or(r.get('Umaban'))) or []))
+        _is_shinba = '新馬' in str(meta.get('race_name', '') or '')
+        _low_info = _is_shinba or (_nodata_n >= max(1, int(len(records) * 0.7)))
+        if _low_info:
+            race_html += (
+                "<div class='bg-warn'>⚠ "
+                + ("<b>新馬戦です。</b>" if _is_shinba else "<b>過去走データがほとんどありません。</b>")
+                + "出走馬の過去走が無いため、末脚・持ち時計などの判断材料が使えません。"
+                "下の総合点・印・買い目は<b>参考度が大きく下がります</b>"
+                "（見送りも有力な選択です）。</div>")
+
+        def _sort_key(r):
+            um = _int_or(r.get('Umaban'), 99)
+            g = mark_by_um.get(um, ('z',))[0]
+            # 買う印(◎○▲☆)を上に集め、それ以外(無印と✖)は総合力順で並べる。
+            # ✖だけを最後に固定すると『20点の無印が51点の✖より上』になり
+            # 点数順が崩れて見えるため、✖も無印と同じ扱いにする。
+            order = {'honmei': 0, 'aite': 1, 'osae': 2, 'ana': 3}
+            return (order.get(g, 5), -scores_100.get(um, 0))
+        sorted_records = sorted(records, key=_sort_key)
+
+        # ── 出走表(参考デザイン準拠の表組み: 印/馬番/馬名/総合点/馬券内率/近3走/コメント) ──
+        _WAKU_BG = {1: '#fff', 2: '#000', 3: '#c00', 4: '#00f',
+                    5: '#ff0', 6: '#0a0', 7: '#f80', 8: '#f69'}
+        race_html += (
+            "<table class='bg-tbl'><thead><tr>"
+            "<th class='c-mark'>印</th><th class='c-um'>馬番</th>"
+            "<th class='c-name'>馬名<span class='th-sub'>騎手（斤量）</span></th>"
+            "<th class='c-score'>総合点<span class='th-sub'>100点満点</span></th>"
+            "<th class='c-rate'>馬券内率</th>"
+            "<th class='c-last3'>近3走<span class='th-sub'>距離・着順</span></th>"
+            "<th class='c-cmt'>コメント</th>"
+            "</tr></thead><tbody>")
+        for r in sorted_records:
+            um = _int_or(r.get('Umaban'))
+            if um is None:
+                continue
+            name = _beginner_name(r)
+            jockey = str(r.get('Jockey', r.get('騎手', '')) or '').strip()[:8]
+            futan = str(r.get('WeightCarried', '') or '').strip()
+            waku = _beginner_waku(r)
+            odds_val = _beginner_odds(r)
+            score = scores_100.get(um, 50)
+            role_key, mark_char = mark_by_um.get(um, (None, ''))
+            # role='' は『印を絞った結果この馬は無印』の意味。Noneを渡すと
+            # コメント側が合議groupsから役割を引き直し、無印馬に
+            # 『相手筆頭』等が出てしまう(印と本文が食い違う)。
+            comment = _beginner_horse_comment(um, aim, groups, by_um,
+                                              rec=r, role=(role_key or ''),
+                                              style=style_map.get(um))
+            # 多頭数はコメントが2〜3行に折り返して行高を押し上げるので刈り込む
+            _cmax = 44 if not _dens else (32 if _dens == 'dz' else 24)
+            if len(comment) > _cmax:
+                comment = comment[:_cmax].rstrip('　 、。') + '…'
+            place_rate = _beginner_place_rate(r, is_nar=_is_nar)
+            mark_color = _BEGINNER_COLORS.get(role_key, '#bbb')
+            waku_bg = _WAKU_BG.get(waku, '#ddd')
+            waku_fg = '#fff' if waku in (2, 3, 4, 6) else '#000'
+            bar_w = max(5, min(100, score))
+            bar_color = ('#e74c3c' if role_key == 'honmei' else
+                         '#27ae60' if score >= 70 else
+                         '#f39c12' if score >= 40 else '#95a5a6')
+
+            # 2段表示: 上段=馬場+距離 / 下段=着順。1行に詰めると数字が並んで読めない。
+            _l3 = ''.join(
+                f"<span class='l3'><span class='l3d'>{_esc(_sf)}{_d}</span>"
+                f"<span class='l3r r{min(_rk, 4)}'>{_rk}着</span></span>"
+                for _sf, _d, _rk in (last3.get(um) or []))
+            _jt = _esc(jockey) + (f"（{_esc(futan)}）" if futan and futan != '-' else '')
+            _od = f"{odds_val:.1f}倍" if odds_val is not None else '-'
+            _pr = f"{place_rate:.1f}%" if place_rate is not None else '-'
+
+            # 注: 過去走データが無い馬(転入初戦・新馬・出典に記録なし)。
+            # 弱いのではなく『判断材料が無い』だけで、実際に上位に来ることがある
+            # (2026-07-31 川崎2R 10番=データ無しで2着)。スコアは材料不足で低めに
+            # 出るため、読み手が誤って軽視しないよう明示する。
+            _nodata = not (last3.get(um) or [])
+            _mark_cell = (mark_char if mark_char
+                          else ("<span class='m-chu'>注</span>" if _nodata else ''))
+            _name_chu = ("<span class='chu-chip'>注</span>"
+                         if (_nodata and mark_char) else '')
+
+            race_html += (
+                f"<tr class='{'row-cut' if role_key == 'keshi' else ''}'>"
+                f"<td class='c-mark' style='color:{mark_color};'>{_mark_cell}</td>"
+                f"<td class='c-um'><span class='umb' style='background:{waku_bg};"
+                f"color:{waku_fg};'>{um}</span></td>"
+                f"<td class='c-name'><span class='hn'>{_esc(name)}{_name_chu}</span>"
+                f"<span class='hj'>{_jt}</span></td>"
+                f"<td class='c-score'><span class='sc'>{score}</span><span class='scu'>点</span>"
+                f"<div class='bar-bg'><div class='bar' style='width:{bar_w}%;"
+                f"background:{bar_color};'></div></div>"
+                f"<span class='odds'>{_od}</span></td>"
+                f"<td class='c-rate'>{_pr}</td>"
+                f"<td class='c-last3'>{_l3 or '<span class=\"nod\">データなし</span>'}</td>"
+                f"<td class='c-cmt'>{_esc(comment)}</td>"
+                f"</tr>")
+        race_html += "</tbody></table>"
+
+        # 近3走が1頭も取れなかったレースは理由を明示(空欄=不具合と誤解されるため)
+        if not last3:
+            race_html += (
+                "<div class='bg-cf-note'>※ このレースは過去走データを取得できていないため"
+                "「近3走」が空欄です（地方競馬はサイト側に過去走欄が無い開催があります）。"
+                "🏠 Single Race Analysis で解析し直すと表示される場合があります。</div>")
+
+        bets_html = _beginner_recommended_bets(cv, records, marks=mark_by_um)
+        if bets_html:
+            _bet_note = ("※ <b>このレースは判断材料が乏しいため、この買い目の信頼度は"
+                         "低いです。</b>見送りも有力です。" if _low_info else
+                         "※ 合議結果をもとにした参考例です。的中を保証するものでは"
+                         "ありません。")
+            race_html += (
+                f"<div class='bg-bets-section'>"
+                f"<div class='bg-section-title'>かんたん買い目ガイド</div>"
+                f"<div class='bg-bets-note'>{_bet_note}</div>"
+                f"{bets_html}</div>")
+
+        race_html += "</div>"
+
+        issued.append({
+            'race_id': rid, 'label': race_label({'race_id': rid, 'meta': meta}),
+            'n_rows': len(records), 'n_cols': 0, 'source': v.get('source', 'view'),
+        })
+        race_blocks.append(race_html)
+
+    if not race_blocks:
+        return '', []
+
+    guide_html = (
+        "<div class='bg-guide'>"
+        "<div class='bg-section-title'>印の見かた（はじめての方へ）</div>"
+        "<div class='bg-guide-grid'>")
+    for g in ('honmei', 'aite', 'osae', 'ana', 'keshi', 'chu'):
+        lbl, desc = _BEGINNER_MARK_LABEL[g]
+        col = _BEGINNER_COLORS.get(g, '#b26a00')
+        guide_html += (
+            f"<div class='bg-guide-item' style='border-left: 4px solid {col};'>"
+            f"<span class='bg-guide-mark' style='color:{col};'>{_esc(lbl)}</span>"
+            f"<span class='bg-guide-desc'>{_esc(desc)}</span></div>")
+    guide_html += "</div>"
+    guide_html += (
+        "<div class='bg-guide-tips'>"
+        "<b>初心者のためのヒント</b>"
+        "<ul>"
+        "<li><b>まず馬連から。</b>選んだ2頭が1・2着に入れば当たり（順番は問いません）。</li>"
+        "<li><b>馬単</b>は「1着まで当てる」ぶん難しいですが、その分だけ配当が上がります。</li>"
+        "<li><b>荒れ予報が高い時</b>は☆穴馬も相手に入れると配当アップのチャンス。</li>"
+        "<li><b>✖消しの馬</b>は弱点が多いので、買い目から外すことで点数を減らせます。</li>"
+        "<li><b>総合点のバー</b>が長い馬ほど、このレースで力を発揮しやすいと判定しています。</li>"
+        "<li><b>馬券内率</b>は「3着以内に入る割合」の実測目安（オッズ帯ごとの過去実績）です。</li>"
+        "<li><b>近3走</b>は直近3レースの「距離」と「着順」。同じ距離で好走していれば好材料。</li>"
+        "</ul></div></div>")
+
+    css = f"""
+    @page {{ size: A4 portrait; margin: 8mm; }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', 'Yu Gothic', sans-serif;
+            font-size: 11pt; color: #2c3e50; background: #fff; }}
+    .bg-page {{ max-width: 210mm; margin: 0 auto; padding: 5mm; }}
+    .bg-masthead {{ background: linear-gradient(135deg, #1a5276, #2980b9);
+                    color: #fff; padding: 6mm 8mm; border-radius: 4mm;
+                    margin-bottom: 5mm; page-break-inside: avoid; }}
+    .bg-daiji {{ font-size: 22pt; font-weight: 900; display: block; letter-spacing: 2px; }}
+    .bg-issue {{ font-size: 10pt; opacity: 0.85; display: block; margin-top: 2mm; }}
+    /* 1レース=1ページ。表紙(印の見かた)と同居させると溢れるので必ず改ページする */
+    .bg-race {{ background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 3mm;
+                padding: 3mm; margin-bottom: 0; page-break-inside: avoid;
+                page-break-before: always; }}
+    .bg-race-hdr {{ display: flex; align-items: baseline; gap: 3mm; margin-bottom: 1.5mm;
+                    border-bottom: 2px solid #2980b9; padding-bottom: 1.5mm; }}
+    .bg-venue {{ font-size: 13pt; font-weight: 900; color: #1a5276; }}
+    .bg-rname {{ font-size: 12pt; font-weight: 700; color: #2c3e50; }}
+    .bg-race-info {{ font-size: 9.5pt; color: #555; margin-bottom: 2mm; }}
+    /* レース情報 / コースの特徴 / 荒れ度 の3枚組 */
+    .bg-infogrid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm;
+                    margin-bottom: 2mm; }}
+    .bg-box {{ background: #fff; border: 1px solid #d6dde3; border-radius: 2mm;
+               padding: 1.5mm 2mm; }}
+    .bg-box-ttl {{ font-size: 8.2pt; font-weight: 800; color: #fff; background: #1a5276;
+                   border-radius: 1mm; padding: 0.6mm 1.5mm; margin-bottom: 1mm;
+                   text-align: center; }}
+    .bg-i-row {{ display: flex; justify-content: space-between; align-items: baseline;
+                 font-size: 7.8pt; padding: 0.3mm 0; }}
+    .bg-i-k {{ color: #1a5276; font-weight: 700; }}
+    .bg-i-v {{ color: #2c3e50; }}
+    .bg-stars {{ color: #f39c12; letter-spacing: 0.3px; font-size: 8.2pt; }}
+    .bg-cf-note {{ font-size: 7pt; color: #666; margin-top: 0.8mm; line-height: 1.35; }}
+    .bg-ar-wrap {{ display: flex; align-items: center; gap: 0.8mm; }}
+    .bg-ar-lbl {{ font-size: 8pt; font-weight: 700; color: #2c3e50; margin-right: 0.8mm; }}
+    .bg-ar-cell {{ display: inline-block; width: 3.8mm; height: 2.6mm; border-radius: 0.6mm; }}
+    /* 出走表 (A4縦1枚に1レースが収まるよう行を詰めている) */
+    .bg-tbl {{ width: 100%; border-collapse: collapse; font-size: 8.5pt; }}
+    .bg-tbl thead th {{ background: #f1f5f8; border-bottom: 2px solid #1a5276;
+                        color: #1a5276; font-size: 7.5pt; font-weight: 800;
+                        padding: 1mm 0.8mm; text-align: center; }}
+    .bg-tbl .th-sub {{ display: block; font-size: 6.2pt; font-weight: 500; color: #7a8a99; }}
+    .bg-tbl tbody td {{ border-bottom: 1px solid #e6ebef; padding: 0.7mm 0.8mm;
+                        vertical-align: middle; }}
+    .bg-tbl tr.row-cut {{ background: #fafbfc; color: #97a3ad; }}
+    .c-mark {{ width: 6%; text-align: center; font-size: 13pt; font-weight: 900; }}
+    .c-um {{ width: 6.5%; text-align: center; }}
+    .umb {{ display: inline-block; min-width: 4.8mm; padding: 0.3mm 0.7mm;
+            border: 1px solid #666; border-radius: 1mm; font-size: 9pt;
+            font-weight: 800; text-align: center; }}
+    .c-name {{ width: 21%; }}
+    .hn {{ display: block; font-size: 9.5pt; font-weight: 800; color: #1c2b36;
+           line-height: 1.12; }}
+    .hj {{ display: block; font-size: 6.8pt; color: #78868f; line-height: 1.15; }}
+    .c-score {{ width: 18%; text-align: center; }}
+    .sc {{ font-size: 11.5pt; font-weight: 900; color: #c0392b; }}
+    .scu {{ font-size: 7pt; color: #888; }}
+    .bar-bg {{ height: 1.8mm; background: #e9edf0; border-radius: 0.9mm;
+               overflow: hidden; margin: 0.5mm 0 0.3mm; }}
+    .bar {{ height: 100%; border-radius: 0.9mm; }}
+    .odds {{ font-size: 7pt; color: #667; }}
+    .c-rate {{ width: 9%; text-align: center; font-size: 9.5pt; font-weight: 700;
+               color: #2c3e50; }}
+    .c-last3 {{ width: 16%; text-align: center; white-space: nowrap; }}
+    .l3 {{ display: inline-block; border: 1px solid #dfe5ea; border-radius: 1mm;
+           padding: 0.4mm 1mm; margin: 0 0.3mm; text-align: center;
+           background: #fbfcfd; }}
+    .l3d {{ display: block; font-size: 6.6pt; color: #66757f; line-height: 1.15; }}
+    .l3r {{ display: block; font-size: 8pt; font-weight: 800; line-height: 1.15; }}
+    .l3r.r1 {{ color: #c0392b; }} .l3r.r2 {{ color: #1f6fb2; }}
+    .l3r.r3 {{ color: #1e8449; }} .l3r.r4 {{ color: #8a949c; }}
+    .nod {{ color: #b9c2c9; }}
+    .bg-warn {{ background: #fff4e5; border: 1.5px solid #e8a33d; border-radius: 2mm;
+                color: #8a5200; font-size: 8pt; line-height: 1.5;
+                padding: 1.5mm 2.5mm; margin-bottom: 2mm; }}
+    /* 注 = 過去走データが無い馬(弱いのではなく判断材料が無い) */
+    .m-chu {{ display: inline-block; font-size: 8.5pt; font-weight: 800; color: #b26a00;
+              border: 1.2px solid #e0a34a; background: #fff6e5;
+              border-radius: 1mm; padding: 0.1mm 0.9mm; line-height: 1.35; }}
+    .chu-chip {{ display: inline-block; font-size: 6.5pt; font-weight: 800; color: #b26a00;
+                 background: #fff2dc; border: 1px solid #e6bd80; border-radius: 1mm;
+                 padding: 0 0.7mm; margin-left: 1mm; vertical-align: middle; }}
+    .c-cmt {{ width: 20%; font-size: 7.2pt; color: #46535e; line-height: 1.4; }}
+    .bg-bets-section {{ background: #eaf2f8; border: 1px solid #aed6f1; border-radius: 2mm;
+                        padding: 2mm 2.5mm; margin-top: 2mm; }}
+    .bg-section-title {{ font-size: 10.5pt; font-weight: 800; color: #1a5276;
+                         margin-bottom: 1.2mm; border-bottom: 2px solid #2980b9;
+                         padding-bottom: 0.8mm; }}
+    .bg-bets-note {{ font-size: 7pt; color: #888; margin-bottom: 1.2mm; }}
+    .bg-betgrid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }}
+    .bg-bet {{ background: #fff; border: 1px solid #d5e8f0; border-radius: 2mm;
+               padding: 1.2mm 2mm; }}
+    .bg-bet-title {{ font-size: 8.5pt; font-weight: 800; color: #1a5276;
+                     text-align: center; }}
+    .bg-bet-line {{ display: flex; align-items: center; justify-content: center;
+                    gap: 0.8mm; margin: 1mm 0 0.8mm; flex-wrap: wrap; }}
+    .bchip {{ display: inline-block; min-width: 5.4mm; padding: 0.5mm 1mm;
+              border: 1px solid #666; border-radius: 1mm; font-size: 10pt;
+              font-weight: 900; text-align: center; }}
+    .bop {{ font-size: 10pt; font-weight: 800; color: #55606a; margin: 0 0.5mm; }}
+    .bg-bet-meta {{ font-size: 6.8pt; color: #7a858e; text-align: center; }}
+    .bg-bet-axis {{ font-size: 7.5pt; color: #46535e; margin-top: 1.2mm;
+                    text-align: center; }}
+    /* ── 多頭数レース用の密度調整(A4縦1枚に収めるため) ──
+       .dz = 11〜14頭 / .dzz = 15頭以上。近3走は2段→1段に畳み、
+       スコア/馬名/コメントを段階的に縮める。 */
+    .dz .bg-tbl tbody td {{ padding: 0.4mm 0.7mm; }}
+    .dz .hn {{ font-size: 8.6pt; }}
+    .dz .hj {{ font-size: 6.2pt; }}
+    .dz .c-mark {{ font-size: 11pt; }}
+    .dz .umb {{ font-size: 8.2pt; padding: 0.2mm 0.6mm; }}
+    .dz .sc {{ font-size: 10pt; }}
+    .dz .scu {{ font-size: 6.2pt; }}
+    .dz .bar-bg {{ height: 1.4mm; margin: 0.35mm 0 0.2mm; }}
+    .dz .odds {{ font-size: 6.4pt; }}
+    .dz .c-rate {{ font-size: 8.6pt; }}
+    .dz .l3 {{ padding: 0.2mm 0.6mm; margin: 0 0.2mm; }}
+    .dz .l3d {{ display: inline; font-size: 6.3pt; }}
+    .dz .l3r {{ display: inline; font-size: 6.8pt; margin-left: 0.4mm; }}
+    .dz .c-cmt {{ font-size: 6.6pt; line-height: 1.28; }}
+    .dz .bg-infogrid {{ gap: 1.5mm; margin-bottom: 1.5mm; }}
+    .dz .bg-box {{ padding: 1mm 1.5mm; }}
+    .dz .bg-bets-section {{ padding: 1.4mm 2mm; margin-top: 1.4mm; }}
+    .dz .bg-bet-meta {{ font-size: 6.2pt; }}
+
+    .dzz .bg-tbl tbody td {{ padding: 0.22mm 0.6mm; }}
+    .dzz .hn {{ font-size: 7.8pt; line-height: 1.08; }}
+    .dzz .hj {{ font-size: 5.6pt; line-height: 1.1; }}
+    .dzz .c-mark {{ font-size: 9.5pt; }}
+    .dzz .umb {{ font-size: 7.4pt; padding: 0.1mm 0.5mm; }}
+    .dzz .sc {{ font-size: 8.8pt; }}
+    .dzz .scu {{ font-size: 5.6pt; }}
+    .dzz .bar-bg {{ height: 1.1mm; margin: 0.25mm 0 0.15mm; }}
+    .dzz .odds {{ font-size: 5.8pt; }}
+    .dzz .c-rate {{ font-size: 7.8pt; }}
+    .dzz .l3 {{ padding: 0.1mm 0.45mm; margin: 0 0.15mm; }}
+    .dzz .l3d {{ display: inline; font-size: 5.7pt; }}
+    .dzz .l3r {{ display: inline; font-size: 6.2pt; margin-left: 0.3mm; }}
+    .dzz .c-cmt {{ font-size: 5.9pt; line-height: 1.2; }}
+    .dzz .bg-tbl thead th {{ padding: 0.6mm 0.6mm; font-size: 6.6pt; }}
+    .dzz .bg-tbl .th-sub {{ font-size: 5.4pt; }}
+    .dzz .bg-infogrid {{ gap: 1.2mm; margin-bottom: 1.2mm; }}
+    .dzz .bg-box {{ padding: 0.8mm 1.2mm; }}
+    .dzz .bg-box-ttl {{ font-size: 7.2pt; padding: 0.4mm 1mm; margin-bottom: 0.6mm; }}
+    .dzz .bg-i-row {{ font-size: 6.8pt; padding: 0.15mm 0; }}
+    .dzz .bg-cf-note {{ font-size: 6pt; margin-top: 0.5mm; }}
+    .dzz .bg-stars {{ font-size: 7.2pt; }}
+    .dzz .bg-ar-cell {{ width: 3mm; height: 2.1mm; }}
+    .dzz .bg-race-hdr {{ margin-bottom: 1mm; padding-bottom: 1mm; }}
+    .dzz .bg-venue {{ font-size: 11.5pt; }}
+    .dzz .bg-rname {{ font-size: 10.5pt; }}
+    .dzz .bg-bets-section {{ padding: 1mm 1.6mm; margin-top: 1mm; }}
+    .dzz .bg-section-title {{ font-size: 9pt; margin-bottom: 0.8mm; padding-bottom: 0.5mm; }}
+    .dzz .bg-bets-note {{ display: none; }}
+    .dzz .bg-bet-title {{ font-size: 7.6pt; }}
+    .dzz .bg-bet-line {{ margin: 0.6mm 0 0.5mm; }}
+    .dzz .bchip {{ font-size: 8.6pt; min-width: 4.6mm; padding: 0.3mm 0.7mm; }}
+    .dzz .bop {{ font-size: 8.6pt; }}
+    .dzz .bg-bet-meta {{ font-size: 5.8pt; }}
+    .dzz .bg-bet-axis {{ font-size: 6.4pt; margin-top: 0.7mm; }}
+
+    .bg-guide {{ background: #f0f9f4; border: 1px solid #a3d9a5; border-radius: 3mm;
+                 padding: 4mm; margin-bottom: 5mm; page-break-inside: avoid; }}
+    .bg-guide-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+                      gap: 2mm; margin-bottom: 3mm; }}
+    .bg-guide-item {{ background: #fff; padding: 2mm 3mm; border-radius: 2mm;
+                      display: flex; flex-direction: column; }}
+    .bg-guide-mark {{ font-size: 12pt; font-weight: 900; }}
+    .bg-guide-desc {{ font-size: 8.5pt; color: #555; }}
+    .bg-guide-tips {{ font-size: 9.5pt; color: #333; line-height: 1.6; }}
+    .bg-guide-tips ul {{ padding-left: 5mm; }}
+    .bg-guide-tips li {{ margin-bottom: 1mm; }}
+    .bg-footer {{ font-size: 7.5pt; color: #999; text-align: center; margin-top: 5mm;
+                  border-top: 1px solid #ddd; padding-top: 2mm; }}
+    @media print {{
+        .bg-race {{ page-break-inside: avoid; }}
+        .bg-guide {{ page-break-inside: avoid; }}
+    }}
+    """
+
+    html = (
+        f"<meta charset='utf-8'>"
+        f"<style>{css}</style>"
+        f"<div class='bg-page'>"
+        f"<div class='bg-masthead'>"
+        f"<span class='bg-daiji'>{_esc(title)}</span>"
+        f"<span class='bg-issue'>{_esc(today)} 発行　{len(issued)}レース収録</span>"
+        f"</div>"
+        f"{guide_html}"
+        f"{''.join(race_blocks)}"
+        f"<div class='bg-footer'>"
+        + (("収録を見送ったレース（新馬戦＝過去走が無く判断材料が足りないため）: "
+            + '　/　'.join(_esc(s) for s in skipped_races) + "<br>")
+           if skipped_races else "")
+        + f"本紙はAI分析に基づく参考情報です。馬券の購入は自己責任でお願いします。"
+        f"「総合力」はレース内での相対的な力関係を示す目安(100=最高/20=最低)であり、"
+        f"勝率を意味するものではありません。"
+        f"</div></div>")
     return html, issued

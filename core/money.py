@@ -273,6 +273,20 @@ CREATE TABLE IF NOT EXISTS bets (
   won INTEGER,
   payout INTEGER
 );
+
+-- ②見送ったレースの台帳。
+--    台帳が「買ったもの」しか持たないと「見送って正解だったか」が永久に分からない。
+--    スキャナーの🔴見送り推奨や自分の判断で見送ったレースをここに残し、
+--    後から「見送りは正しかったか」を集計する。
+CREATE TABLE IF NOT EXISTS skips (
+    skip_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT, race_id TEXT, reason TEXT, vscore REAL,
+    zone TEXT, mood TEXT,
+    settled INTEGER DEFAULT 0,
+    would_hit INTEGER,      -- 買っていたら当たっていたか(1/0)
+    would_payout INTEGER,   -- 買っていた場合の払戻(100円あたり換算)
+    note TEXT
+);
 """
 
 
@@ -283,10 +297,15 @@ class Ledger:
         self.con.row_factory = sqlite3.Row
         self.con.executescript(_DDL)
         # #8 Gate結果列＋#1 買い目メタ列(設計ミス分類用)を後方互換で追加
+        # ①感情 ②逸脱の記録も後方互換で追加。
+        #   mood: 冷静/やや熱/熱くなっている（自己申告・検証済みシグナルではなく
+        #         「熱くなった時だけ負けている」かを後から数字で見るための実観測台帳）
+        #   deviation: 上限超え/追い上げ/見送り推奨を購入 など、ルールからの逸脱
         for _col, _typ in (('gate_status', 'TEXT'), ('gate_lean', 'TEXT'),
                            ('gate_severity', 'INTEGER'),
                            ('n_points', 'INTEGER'), ('synth_odds', 'REAL'),
-                           ('has_danger', 'INTEGER'), ('has_value_ana', 'INTEGER')):
+                           ('has_danger', 'INTEGER'), ('has_value_ana', 'INTEGER'),
+                           ('mood', 'TEXT'), ('deviation', 'TEXT')):
             try:
                 self.con.execute(f"ALTER TABLE bets ADD COLUMN {_col} {_typ}")
             except Exception:
@@ -295,17 +314,20 @@ class Ledger:
 
     def record_prediction(self, race_id, umaban, bamei, pred_prob, odds, stake=100, bet_type='単勝',
                           gate_status=None, gate_lean=None, gate_severity=None,
-                          n_points=None, synth_odds=None, has_danger=None, has_value_ana=None):
+                          n_points=None, synth_odds=None, has_danger=None, has_value_ana=None,
+                          mood=None, deviation=None):
         self.con.execute(
             """INSERT INTO bets(ts,race_id,umaban,bamei,pred_prob,odds,stake,bet_type,
                                 gate_status,gate_lean,gate_severity,
-                                n_points,synth_odds,has_danger,has_value_ana)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                n_points,synth_odds,has_danger,has_value_ana,
+                                mood,deviation)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (datetime.datetime.now().isoformat(timespec='seconds'), race_id, umaban, bamei,
              pred_prob, odds, stake, bet_type, gate_status, gate_lean, gate_severity,
              n_points, synth_odds,
              None if has_danger is None else int(bool(has_danger)),
-             None if has_value_ana is None else int(bool(has_value_ana))))
+             None if has_value_ana is None else int(bool(has_value_ana)),
+             mood, deviation))
         self.con.commit()
 
     def settle(self, race_id, win_umaban, win_payout):
@@ -431,6 +453,96 @@ class Ledger:
         return {'bets': n, 'hit_rate': round(wins / n * 100, 1),
                 'roi': round(returned / staked * 100, 1) if staked else 0.0,
                 'profit': returned - staked, 'brier': round(brier, 4)}
+
+    # ── ② 見送りレースの記録・集計 ─────────────────────
+    def record_skip(self, race_id, reason='', vscore=None, zone=None,
+                    mood=None, note=''):
+        """見送ったレースを記録する。買った記録と対にして初めて判断が評価できる。"""
+        self.con.execute(
+            "INSERT INTO skips(ts,race_id,reason,vscore,zone,mood,note) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (datetime.datetime.now().isoformat(timespec='seconds'),
+             str(race_id), reason, vscore, zone, mood, note))
+        self.con.commit()
+
+    def settle_skip(self, race_id, would_hit, would_payout=0):
+        """見送ったレースの答え合わせ。would_hit=買っていたら当たっていたか。"""
+        self.con.execute(
+            "UPDATE skips SET settled=1, would_hit=?, would_payout=? WHERE race_id=?",
+            (int(bool(would_hit)), int(would_payout or 0), str(race_id)))
+        self.con.commit()
+
+    def skip_report(self):
+        """見送りの成績。'見送って正解だった率'と、買っていた場合のROIを出す。
+
+        ⚠買っていた場合のROIが100%を割っていれば見送りは正しかったということ。
+          [[verified_hot_hand_selective]]の通り、最大のレバーは「買わないこと」。
+        """
+        rows = list(self.con.execute("SELECT * FROM skips"))
+        done = [r for r in rows if r['settled']]
+        if not done:
+            return {'n': len(rows), 'settled': 0}
+        hit = sum(1 for r in done if r['would_hit'])
+        spend = len(done) * 100
+        ret = sum(int(r['would_payout'] or 0) for r in done)
+        by_zone = {}
+        for r in done:
+            z = r['zone'] or '(未設定)'
+            d = by_zone.setdefault(z, [0, 0, 0])
+            d[0] += 1
+            d[1] += 1 if r['would_hit'] else 0
+            d[2] += int(r['would_payout'] or 0)
+        return {'n': len(rows), 'settled': len(done),
+                'hit_rate': hit / len(done) * 100,
+                'would_roi': ret / spend * 100 if spend else 0,
+                'correct_rate': (len(done) - hit) / len(done) * 100,
+                'by_zone': {z: {'n': v[0], 'hit': v[1] / v[0] * 100,
+                                'roi': v[2] / (v[0] * 100) * 100}
+                            for z, v in by_zone.items()}}
+
+    # ── ① 感情別の成績 ────────────────────────────
+    def mood_report(self):
+        """気分(冷静/やや熱/熱い)別の的中率とROI。
+
+        自己申告なので検証済みシグナルではない。「熱くなった時だけ負けている」
+        かどうかを**自分のデータで**確かめるための実観測台帳。
+        """
+        out = {}
+        for r in self.con.execute(
+                "SELECT mood, COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s "
+                "FROM bets WHERE settled=1 GROUP BY mood"):
+            k = r['mood'] or '(未記録)'
+            n = r['n'] or 0
+            if not n:
+                continue
+            out[k] = {'n': n, 'hit': (r['w'] or 0) / n * 100,
+                      'roi': (r['p'] or 0) / (r['s'] or 1) * 100,
+                      'stake_avg': (r['s'] or 0) / n}
+        return out
+
+    # ── ③ ルールからの逸脱 ───────────────────────────
+    def deviation_report(self):
+        """逸脱の種類別の件数・ROI。資料の核心「修正すべきはルールからの逸脱のみ」。"""
+        out = {}
+        for r in self.con.execute(
+                "SELECT deviation, COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s "
+                "FROM bets WHERE settled=1 AND deviation IS NOT NULL "
+                "AND deviation<>'' GROUP BY deviation"):
+            n = r['n'] or 0
+            if not n:
+                continue
+            out[r['deviation']] = {
+                'n': n, 'hit': (r['w'] or 0) / n * 100,
+                'roi': (r['p'] or 0) / (r['s'] or 1) * 100}
+        # 逸脱なしの対照群
+        r0 = self.con.execute(
+            "SELECT COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s FROM bets "
+            "WHERE settled=1 AND (deviation IS NULL OR deviation='')").fetchone()
+        if r0 and r0['n']:
+            out['（逸脱なし）'] = {
+                'n': r0['n'], 'hit': (r0['w'] or 0) / r0['n'] * 100,
+                'roi': (r0['p'] or 0) / (r0['s'] or 1) * 100}
+        return out
 
     def reflection(self):
         """予測勝率の帯ごとに『予測 vs 実際』を比較→較正のズレと次回ルールを生成"""

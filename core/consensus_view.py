@@ -3,7 +3,7 @@
 
 2つの役割:
 1. build_edge_sets(): 1レース分の『検証済みエッジ/危険馬/穴セット』を全馬について1回だけ
-   計算する(旧app.pyインライン _aim ブロックの抽出=全券種・強適シートで共有)。
+   計算する(旧app.pyインライン _aim ブロックの抽出=全券種・ZONEシートで共有)。
 2. integrate(): 荒れ予報レジーム(trio_lean)別に、独立した検証済みエッジを合議して
    本命/相手/穴/消しへ再グルーピングする。
 
@@ -30,6 +30,7 @@ def build_edge_sets(df, meta, race_id):
     """
     empty = {'edge': set(), 'danger': set(), 'ana': set(), 'veto': set(),
              'combo': {}, 'elim': {}, 'vh': {}, 'vh_tier': {},
+             'ana_pop_min': 6, 'ana_pop_reason': 'default',
              'edge_reasons': {}, 'danger_reasons': {}}
     try:
         import re as _re_cv
@@ -41,6 +42,7 @@ def build_edge_sets(df, meta, race_id):
         from core import bloodline as bl
         from core import lap33 as l3
         from core import elim_cross as ec
+        from core import longshot_threshold as lst
 
         meta = meta or {}
         surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
@@ -62,6 +64,7 @@ def build_edge_sets(df, meta, race_id):
             l33c = None
 
         ctfig = {}; spurt = {}; ana = set(); danger = set(); veto = set()
+        ana_pop_min, ana_pop_reason = lst.default_threshold(df, meta)
         bld = {}; jpw = {}; elim = {}   # elim=消去クロスの来にくさフラグ重複数(切る判定用)
         odds_map = {}                   # um -> 単勝オッズ(妙味馬ハンター軽量スコア用)
         ereason = {}; dreason = {}
@@ -91,7 +94,7 @@ def build_edge_sets(df, meta, race_id):
                 continue
             u = int(un)
             pop = pd.to_numeric(r.get('Popularity'), errors='coerce')
-            if pd.notnull(pop) and pop >= 6:
+            if pd.notnull(pop) and pop >= ana_pop_min:
                 ana.add(u)
             _od = pd.to_numeric(r.get('Odds'), errors='coerce')
             if pd.notnull(_od) and _od > 0:
@@ -126,7 +129,10 @@ def build_edge_sets(df, meta, race_id):
                 layoff_days=_lay_days,
                 win_odds=(float(_od) if pd.notnull(_od) and _od > 0 else None),
                 place_mid=place_mid_map.get(u),
-                sex_age=str(r.get('SexAge', '') or ''), month=month)
+                sex_age=str(r.get('SexAge', '') or ''), month=month,
+                # 美浦→関西遠征×1-3人気(verified_ensei_east_to_west)。
+                # Tozaiはscraper.extract_tozai_from_row由来('east'/'west')、jyoはレースIDの5-6桁目。
+                tozai=r.get('Tozai'), jyo=jyo)
             if vr['severity'] >= 1:
                 danger.add(u)
                 for rs in vr['reasons']:
@@ -165,9 +171,12 @@ def build_edge_sets(df, meta, race_id):
                 except Exception:
                     pass
                 if l33c:
+                    # 2026-08: 好走時平均×距離<=0.5秒に変更(scripts/lap33_distance_backtest.py)。
+                    # 旧『符号一致』は人気薄の74.8%が該当し絞れていなかった → 23.9%へ。
+                    # 残差は holdout +1.42pp → +1.83pp と改善。
                     try:
-                        hv3 = (l3.horse_fit33(kt) or {}).get('avg_lap33')
-                        if hv3 is not None and l3.fit_match(hv3, l33c['avg']) is True:
+                        hv3 = l3.horse_lap33_value(l3.horse_fit33(kt))
+                        if l3.fit_distance(hv3, l33c['avg']) == '○':
                             _addr(ereason, u, '⚡33ラップ適合')
                     except Exception:
                         pass
@@ -240,6 +249,7 @@ def build_edge_sets(df, meta, race_id):
 
         return {'edge': set(ereason.keys()), 'danger': danger, 'ana': ana,
                 'veto': veto, 'combo': combo, 'elim': elim,
+                'ana_pop_min': ana_pop_min, 'ana_pop_reason': ana_pop_reason,
                 'vh': vh, 'vh_tier': vh_tier,
                 'edge_reasons': ereason, 'danger_reasons': dreason}
     except Exception:
@@ -275,6 +285,22 @@ def integrate(rows, aim, regime):
     vh_tier_map = aim.get('vh_tier') or {}
     mkval = {'◎': 3, '〇': 2, '▲': 1}
 
+    # ── Rank×VH 順位計算(着順ロール別クロス表示用) ──
+    # Rank = 素点(proj=LTR ability_score)降順。VH = VHスコア降順。
+    # 人気×VH相関0.94だが上位5頭内ではρ=0.16(独立)→ 交差は3着候補の品質指標。
+    _proj_sorted = sorted(
+        [(r.get('umaban'), float(r.get('proj') or 0)) for r in rows
+         if r.get('umaban') is not None],
+        key=lambda x: -x[1])
+    _rank_pos = {u: i + 1 for i, (u, _) in enumerate(_proj_sorted)}
+    _vh_sorted = sorted(vh_map.items(), key=lambda x: -x[1])
+    _vh_pos = {u: i + 1 for i, (u, _) in enumerate(_vh_sorted)}
+    _vn = len(_vh_sorted) + 1
+    for r in rows:
+        _u = r.get('umaban')
+        if _u is not None and _u not in _vh_pos:
+            _vh_pos[_u] = _vn; _vn += 1
+
     out = []
     for r in rows:
         u = r.get('umaban')
@@ -291,7 +317,8 @@ def integrate(rows, aim, regime):
         danger = u in danger_set
         veto = u in veto_set
         # value票は人気薄(6+)限定で数える(holdout検証はその母集団)。人気馬では素点(proj)に委ねる。
-        is_ana = (pop is not None and pop >= 6)
+        ana_pop_min = int(aim.get('ana_pop_min') or 6)
+        is_ana = (pop is not None and pop >= ana_pop_min)
         value_votes = sig6 if is_ana else 0
         votes = axis_v + market_v + value_votes  # 合議の一致数(consensus)
 
@@ -315,6 +342,8 @@ def integrate(rows, aim, regime):
         # 消去クロス重複が多い=来にくさ(検証:重複数→複勝率単調低下)。統合順位を下げて切る側へ
         bonus -= 4.0 * max(0, elim_n - 2)
 
+        _rp = _rank_pos.get(u, 99)
+        _vp = _vh_pos.get(u, 99)
         out.append({
             'umaban': u, 'name': r.get('name', ''), 'pop': pop, 'odds': r.get('odds'),
             'proj': round(base, 1), 'axis_mark': mk,
@@ -323,6 +352,11 @@ def integrate(rows, aim, regime):
             'danger': danger, 'veto': veto,
             'reasons': ' '.join(labs),
             'integ': round(base + bonus, 1),
+            'rank_pos': _rp, 'vh_pos': _vp,
+            'cross_rv': ('◎' if _rp <= 4 and _vp <= 4 and abs(_rp - _vp) <= 2
+                         else '○' if _rp <= 5 and _vp <= 5
+                         else '△' if max(_rp, _vp) <= 8 and min(_rp, _vp) <= 5
+                         else ''),
         })
 
     out.sort(key=lambda x: -x['integ'])
@@ -345,6 +379,11 @@ def integrate(rows, aim, regime):
             continue
         h['role'] = '◎本命'; honmei.append(h['umaban']); assigned.add(h['umaban']); break
     _cut_top_guard = max(3, len(out) // 3)          # 統合上位1/3は切らない(最良予測器が生存判定)
+    # 精鋭の中でVHスコア上位3頭のみ切らないガード対象(全精鋭だと復活が多すぎる)
+    _elite_ums = {h['umaban'] for h in out if h.get('vh_tier') == '🎯精鋭'}
+    _elite_top3 = set(
+        sorted(_elite_ums, key=lambda u: -(vh_map.get(u) or 0))[:3]
+    ) if _elite_ums else set()
     for idx, h in enumerate(out):                   # 切る = 消去クロス重複≥3(来にくさ大)を強気に
         if h['umaban'] in assigned:
             continue
@@ -355,10 +394,9 @@ def integrate(rows, aim, regime):
         #             うちcombo3+×消去3+は穴ループで🔥敗者復活として明示(revival_backtest z+2.21)。
         #  ②軸候補◎〇 … オッズ実複勝率が上位(最直接の3着内根拠)。
         #  ③統合スコア上位1/3 … 検証AI(LTR)含む素点が高い=最良予測器が生存と判定した馬。
-        #  ④妙味馬ハンター精鋭 … 軽量スコアの上位運用点(recall0.5・precision2.6x)。combo=0でも
-        #     オッズ順序+補正T連続量で拾える層の救済(Fable検証: combo0好走の6割を捕捉)。
+        #  ④妙味馬ハンター精鋭top3 … VHスコア上位3頭のみ(全精鋭だと復活過多)。
         if (h['combo'] >= 2 or h['axis_mark'] in ('◎', '〇') or idx < _cut_top_guard
-                or h.get('vh_tier') == '🎯精鋭'):
+                or h['umaban'] in _elite_top3):
             continue
         _en = h.get('elim', 0)
         _pop_top = (h['pop'] is not None and h['pop'] <= 5)   # 人気上位=priced-in
@@ -368,7 +406,8 @@ def integrate(rows, aim, regime):
     for h in out:                                   # 穴 = 人気薄(6+)×comboが活きるゾーン(combo≥2)
         if h['umaban'] in assigned:
             continue
-        if (h['pop'] is not None and h['pop'] >= 6) and h['combo'] >= 2:
+        ana_pop_min = int(aim.get('ana_pop_min') or 6)
+        if (h['pop'] is not None and h['pop'] >= ana_pop_min) and h['combo'] >= 2:
             # 切る帯(消去3+)から復活したcombo3+は🔥敗者復活として明示
             if h.get('elim', 0) >= 3 and h['combo'] >= 3:
                 h['role'] = f"🔥敗者復活(combo{h['combo']}/消去{h['elim']})"
@@ -390,6 +429,21 @@ def integrate(rows, aim, regime):
         else:
             # 押さえ=切らずに残す中位馬(実際に着内に来るのでグレー扱いにしない)。独立グループで返す。
             h['role'] = '押さえ'; osae.append(h['umaban'])
+    # ── R×Vクロス判定(レースレベル: Rank上位4頭とVH上位4頭の重複数) ──
+    _top4_r = {h['umaban'] for h in sorted(out, key=lambda x: x.get('rank_pos', 99))[:4]}
+    _top4_v = {h['umaban'] for h in sorted(out, key=lambda x: x.get('vh_pos', 99))[:4]}
+    _cross_n = len(_top4_r & _top4_v)
+    if _cross_n >= 4:
+        _cross_lbl = '🔥強クロス'
+    elif _cross_n >= 3:
+        _cross_lbl = '○クロス成立'
+    elif _cross_n >= 2:
+        _cross_lbl = '△弱クロス'
+    else:
+        _cross_lbl = '●不一致'
+
     return {'horses': out, 'regime': regime,
             'groups': {'honmei': honmei, 'aite': aite, 'ana': ana_g,
-                       'osae': osae, 'keshi': keshi}}
+                       'osae': osae, 'keshi': keshi},
+            'cross': {'n': _cross_n, 'of': 4, 'label': _cross_lbl,
+                      'top4_rank': _top4_r, 'top4_vh': _top4_v}}

@@ -25,14 +25,15 @@
     "SpurtIdx",
     "Lap33",
     "Projected Score",
-    "JockeyChange"
+    "JockeyChange",
+    "EV"
   ],
   "single_race_col_dup_right": [
     "Umaban",
     "Name"
   ],
   "newspaper": {
-    "title": "強適競馬新聞",
+    "title": "AI競馬新聞",
     "subtitle": "",
     "orientation": "a3_portrait",
     "font_pt": 6.8,
@@ -47,6 +48,7 @@
     "page_numbers": true,
     "exclude_cols": [],
     "sec_cover": true,
+    "sec_digest": false,
     "sec_cv": true,
     "sec_buy": true,
     "sec_gate": true,

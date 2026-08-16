@@ -23,20 +23,19 @@
 FLAG_DEFS = [
     ('form3',   '近3走着外',   '直近3走すべて4着以下(3着内なし)'),
     ('nofuku5', '5走複勝0',    '直近5走(3走以上)で一度も3着内なし'),
-    ('slow3f',  '末脚下位',    '末脚指数が低い(上がり3Fが相対的に遅い)'),
     ('back',    '後方脚質(4角)', '直近3走平均の4角通過位置が後方(出走頭数比≥0.78)=その馬の習性'),
     ('layoff',  '半年休み',    '前走から180日以上の長期休養明け'),
     ('distbig', '距離大変更',  '前走から距離が±400m以上変わる'),
     ('zogen',   '体重±16k',    '当日馬体重の増減が±16kg以上'),
     ('age8',    '8歳上',       '8歳以上の高齢'),
-    ('pcidev',  'PCI乖離',     '事前平均PCIがフィールド平均から±6以上乖離(検証済・人気内包の弱フラグ)'),
     ('lhandi',  '軽ハンデ',    'ハンデ戦で斤量≤51kg(検証済 残差-2.3pp z=-4.9 全人気帯で負)'),
     ('train',   '調教C以下',   '調教評価がC以下(検証不可・実観測フラグ)'),
     ('battle',  '総合力下位',  '🏠Single Race Analysisの総合戦闘力が下位30%(検証不可・人気内包)'),
     ('proj',    '予測下位',    '🏠Single Race Analysisの予測スコアが下位30%(検証不可・人気内包)'),
     ('pmback',  '展開後方(直線)', '展開MAPの最終直線=想定到達位置が後方の馬(着順履歴/決め手/適性の合成・'
                                '4角位置ではない。出馬数依存5〜8頭・予測。展開はpriced-in＝検証不可)'),
-    ('stress1', 'スト1',       '🐎Stressの係数≤0.98(検証済デバフ: 小柄×馬体減/芝×後方/馬体増)'),
+    ('agari3f', '上り3F下位',  'レース内で末脚指数(上がり3F)が下位39%の馬。'
+                               'フィールド相対の来にくさ指標(検証不可・人気内包)'),
     ('stress2', 'スト2',       '🐎Stressの最終予測が全馬中 下から2以内(検証済: scripts/stress2_bottomk_backtest.py・'
                               '人気だけのbottom-Kには入らないのにstress調整で新規脱落した馬の残差がholdout z-2.83'
                               '=単なる地力の低さとは別の追加情報あり。K=2がholdout最強)'),
@@ -44,14 +43,26 @@ FLAG_DEFS = [
                                '誤消去2.5%=97.5%安全。単独列は人気織込みで弱いが両列交差は強い消去)'),
     ('multiweak', '多列弱点',   '末脚/平均位置/近走着順/補正Tの4列のうち3列以上でレース内ワースト3級'
                                '(検証済: 複勝率6.7%・誤消去6.0%=94%安全・約0.9頭/R。botcrossより広く消せる)'),
-    ('poplow',   '人気下位',    'レース内で人気が最も無い側3頭(市場評価が最も低い)。複勝率は最低(3.2%)だが'
+    ('poplow',   '不人気',      '出走頭数の下位34%の馬(18頭なら下位6頭)。複勝率は最低帯だが'
                                '残差-0.6pp=ほぼ人気織込み＝市場の見立てそのもの。相手絞りの実務軸だが独立エッジではない'),
+    ('rklow_vh', '実力下位×圏外', 'アプリの実力Rankが下位56%で、かつ穴馬ハンターの'
+                               '🎯精鋭/🕸️広域網のどちらにも入らない馬。'
+                               '検証(scripts/elim_ranklow_vhout_backtest.py・vh学習期間外の'
+                               '2025-2026/67,885頭): 該当29.1%・3着内率3.1%・3着内馬の取りこぼし4.3%。'
+                               '既存の不人気(31.4%消して3着内率3.9%/取りこぼし5.7%)より効率が良い。'
+                               'ただし実力Rankも穴ハンターも市場情報を内包するため独立エッジではなく相手絞り用'),
     ('jlow',     '騎手実績下位', 'レース内で騎手の通算複勝率が最も低い側3頭(検証: 複勝率11.5%・残差-0.5pp)。'
                                '判断は通算複勝率が最適=直近成績/連敗は予測に効かない(検証済の誤謬)。'
                                'これも人気に相関する実務軸で独立エッジは弱い'),
+    ('jweak',    '騎手弱材料',  '🏇騎手係数込みスコアの4要素がすべて低水準: '
+                               '騎手係数≤1.0／馬連携≤99／場連対≤15%／黄金≤20%。'
+                               '内訳に表示が無い項目は非該当扱い(検証不可・人気内包)'),
     ('tenkai2',  '展開2',       'netkeiba AI展開予測との照合で💀(危険位置一致)=netkeibaの4コーナー隊列と'
                                'アプリの到達位置が"ともに後方帯"で合意した馬。展開後方と意味は重なるが'
                                '2つのAIの合意点。🏠SRAの🤝照合を実行すると点灯(展開恩恵はpriced-in・表示補助)'),
+    ('ltr_low',  '検証AI下位',  '🤖検証AI(LTR)スコアがレース内下位50%の馬。'
+                               'LTRは人気/オッズを内包する予測モデルのため独立エッジではなく、'
+                               'battle/projと同じ相手絞り用。BAND(推定複勝率)には非算入'),
 ]
 FLAG_DEFS_ORDER = [k for k, _, _ in FLAG_DEFS]
 FLAG_LABEL = {k: lbl for k, lbl, _ in FLAG_DEFS}
@@ -63,10 +74,12 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 #  ・botcross/multiweak: 独立検証済だがBAND較正外。既存列の相対版で二重計上になるため除外。
 #  ・poplow/jlow: 市場評価(人気)・騎手実績=priced-in軸。相手絞りの実務軸だがBAND(独立弱点の
 #    重ね)には入れない(人気そのものを重複に足すと重複が人気を追うだけになるため)。
-UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'stress1', 'stress2',
-              'botcross', 'multiweak', 'poplow', 'jlow', 'tenkai2'}
+#  ・rklow_vh: 実力Rank(LTR)と穴ハンター(vh2)はどちらも市場情報を内包する。
+#    絞りの効率は既存poplowより良いが、独立弱点ではないのでBANDには入れない。
+UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'agari3f', 'stress2',
+              'botcross', 'multiweak', 'poplow', 'jlow', 'jweak', 'tenkai2', 'rklow_vh', 'ltr_low'}
 # 『過信しない列』= 重複には数えるが独立エッジでない(表示で明るい赤背景×黄文字にする)。
-CAUTION_KEYS = {'battle', 'proj', 'pmback', 'pcidev', 'poplow', 'jlow'}
+CAUTION_KEYS = {'battle', 'proj', 'pmback', 'agari3f', 'poplow', 'jlow', 'jweak', 'rklow_vh', 'ltr_low'}
 # 『展開2』(netkeiba AI照合の💀)= ヘッダを青背景×黄文字にする列。
 BLUE_KEYS = {'tenkai2'}
 # 『強い消去理由』= 人気統制後も独立して来にくさが強い/絶対複勝率が極端に低い検証済みフラグ
@@ -125,7 +138,8 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
                   prev_dist=None, cur_dist=None, zogen=None, age=None,
                   training_grade=None, include_train=True,
                   battle_low=False, proj_low=False, pci_dev=None, pm_back=False,
-                  is_handicap=False, futan=None, stress1=False, stress2=False):
+                  is_handicap=False, futan=None, stress1=False, stress2=False,
+                  ltr_low=False, jweak=False):
     """1頭の点灯フラグ集合(set of key)を返す。すべて pre-race 情報のみ。
     引数は app 側で ctx/horse_elim_stats/出馬表から渡す。"""
     f = set()
@@ -134,8 +148,6 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
         f.add('form3')
     if len(l5) >= 3 and sum(l5) == 0:
         f.add('nofuku5')
-    if spurt_index is not None and spurt_runs >= SLOW3F_MIN_RUNS and spurt_index <= SLOW3F_TH:
-        f.add('slow3f')
     if avg_c4ratio is not None and avg_c4ratio >= BACK_RATIO_TH:
         f.add('back')
     gap = _daygap(prev_date, race_date) if (prev_date and race_date) else None
@@ -151,12 +163,6 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
     try:
         if age is not None and int(age) >= AGE_OLD:
             f.add('age8')
-    except (TypeError, ValueError):
-        pass
-    # PCI乖離(検証済の弱フラグ): 事前平均PCIがフィールド平均から±PCI_DEV_BIG以上
-    try:
-        if pci_dev is not None and abs(float(pci_dev)) >= PCI_DEV_BIG:
-            f.add('pcidev')
     except (TypeError, ValueError):
         pass
     # 軽ハンデ: ハンデ戦(juryo='4')で斤量≤51kg
@@ -177,10 +183,12 @@ def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,
         f.add('proj')
     if pm_back:
         f.add('pmback')
-    if stress1:
-        f.add('stress1')
     if stress2:
         f.add('stress2')
+    if ltr_low:
+        f.add('ltr_low')
+    if jweak:
+        f.add('jweak')
     return f
 
 

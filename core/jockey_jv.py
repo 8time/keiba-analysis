@@ -205,8 +205,8 @@ def jockey_base_stats(jockey_name, venue=None, distance=None, db_path=None,
 _VENUE = {'01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
           '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉',
           '30': '門別', '35': '盛岡', '36': '水沢', '42': '浦和', '43': '船橋',
-          '44': '大井', '45': '川崎', '46': '船橋', '47': '高知', '48': '金沢',
-          '50': '笠松', '51': '名古屋', '54': '園田', '55': '佐賀', '58': '佐賀',
+          '44': '大井', '45': '川崎', '46': '金沢', '47': '笠松', '48': '名古屋',
+          '50': '園田', '51': '姫路', '54': '高知', '55': '佐賀',
           '65': '帯広'}
 
 
@@ -915,6 +915,50 @@ def jockey_factor_by_name(jockey_name, horse_name=None, venue=None, distance=Non
                          db_path=db_path, before_key=before_key)
 
 
+def usm_band(u3):
+    """馬連携(USM)の数値 → 初心者にも良し悪しが分かる日本語ラベル。
+
+    100が「平均」だが、それだけでは101が良いのか悪いのか判断できないという
+    指摘を受けて追加(2026-07-23)。閾値は思いつきではなく**実分布**で決めた:
+      2024-25に300騎乗以上の騎手40人の top3_usm →
+      min66 / 25%=91 / 中央103 / 75%=114 / max135
+    """
+    try:
+        v = int(u3)
+    except (TypeError, ValueError):
+        return ''
+    if v >= 115:
+        return 'よく引き出す'
+    if v >= 105:
+        return 'やや引き出す'
+    if v >= 95:
+        return 'ふつう'
+    if v >= 85:
+        return 'やや低い'
+    return '低い'
+
+
+def coef_band(mult):
+    """騎手係数 → 「馬の評価をどう動かすか」の日本語ラベル。
+
+    1.00が中立。閾値は実分布(同40人・東京芝1600)で決めた:
+      min0.959 / 25%=0.989 / 中央1.004 / 75%=1.017 / max1.040
+    """
+    try:
+        v = float(mult)
+    except (TypeError, ValueError):
+        return ''
+    if v >= 1.02:
+        return '上げる'
+    if v >= 1.005:
+        return 'やや上げる'
+    if v >= 0.995:
+        return 'ほぼ変えない'
+    if v >= 0.98:
+        return 'やや下げる'
+    return '下げる'
+
+
 def jockey_factor(jockey_name, venue=None, distance=None, trainer_code=None,
                   db_path=None, before_key=None, expected=None):
     """
@@ -954,7 +998,11 @@ def jockey_factor(jockey_name, venue=None, distance=None, trainer_code=None,
         u3 = usm.get('top3_usm')
         if u3:
             mult *= 1.0 + _clamp((u3 - 100) / 100.0 * 0.12, -0.05, 0.04)
-            parts.append(f"USM{u3}")
+            # 表示名は「馬連携」。USM(馬力絞り出しメーター)の実体は
+            # 『その騎手がオッズ帯の期待値に対してどれだけ上振れて走らせるか』なので、
+            # 略語を避けた平易な表示にしている(内部の関数名/キーは usm のまま)。
+            # 数字だけでは良し悪しが判断できないため日本語ラベルを併記する。
+            parts.append(f"馬連携{u3}({usm_band(u3)})")
     # ② 場相性
     if base['venue'] and base['venue']['rides'] >= 20 and ov['top2'] > 0:
         ratio = base['venue']['top2'] / ov['top2']

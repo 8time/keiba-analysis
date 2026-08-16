@@ -125,15 +125,17 @@ def _call_retro_unit(unit_name: str, persona: str, prompt: str,
         last_err = None
         for model_name in model_order:
             try:
+                # temperatureは効く世代(2.5系)にだけ渡す(core/gemini_compat.py)
+                from core import gemini_compat as _gc0
                 cfg = genai_types.GenerateContentConfig(
                     system_instruction=persona,
-                    temperature=temperature,
                     max_output_tokens=1200,
+                    **_gc0.sampling_kwargs(model_name, temperature=temperature),
                 )
-                try:
-                    cfg.thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
-                except Exception:
-                    pass
+                # 2.5系=thinking_budget / 3.5以降=thinking_level(逆を渡すと400)。
+                # model_orderで世代が混ざるためモデルごとに振り分ける(core/gemini_compat.py)
+                from core import gemini_compat as _gc
+                _gc.apply_thinking(cfg, genai_types, model_name, level='MINIMAL')
                 resp = client.models.generate_content(
                     model=model_name, contents=prompt, config=cfg
                 )

@@ -52,8 +52,8 @@ VENUE_NAMES = {
     # NAR (南関東の正しい場コード: 42浦和/43船橋/44大井/45川崎。
     #  track_bias.py/nankan_scraper.pyと一致。実査確認済=jyo44は大井・jyo43は船橋)
     "30": "門別", "35": "盛岡", "36": "水沢", "42": "浦和", "43": "船橋",
-    "44": "大井", "45": "川崎", "46": "船橋", "47": "高知", "48": "金沢",
-    "50": "笠松", "51": "名古屋", "54": "園田", "55": "佐賀", "58": "佐賀",
+    "44": "大井", "45": "川崎", "46": "金沢", "47": "笠松", "48": "名古屋",
+    "50": "園田", "51": "姫路", "54": "高知", "55": "佐賀",
     "65": "帯広"
 }
 
@@ -1161,8 +1161,18 @@ def fetch_place_odds_api(race_id):
             mn = mx = 0.0
             try:
                 if isinstance(val, dict):
-                    mn = float(val.get('OddsMin', val.get('odds_min', val.get('Odds', 0)) or 0) or 0)
-                    mx = float(val.get('OddsMax', val.get('odds_max', mn) or mn) or mn)
+                    # ⚠ 単一キー 'Odds' を複勝として拾ってはいけない。
+                    # netkeibaのNAR APIは type=1/2/b1 のどれでも {'Odds':..,'Ninki':..}
+                    # ＝**単勝オッズ**を返す。以前はこれを Odds→Min/Max に流用していたため、
+                    # 単勝オッズを複勝オッズと誤認し、🥃ガラス人気馬(単複乖離)の判定が
+                    # 「単勝 vs 単勝」の無意味な比較になっていた(2026-08 発覚)。
+                    # 複勝オッズは必ず Min/Max のレンジで来るので、それが無ければ複勝ではない。
+                    _mn_raw = val.get('OddsMin', val.get('odds_min'))
+                    _mx_raw = val.get('OddsMax', val.get('odds_max'))
+                    if _mn_raw is None:
+                        continue
+                    mn = float(_mn_raw or 0)
+                    mx = float(_mx_raw if _mx_raw is not None else mn)
                 elif isinstance(val, (list, tuple)) and len(val) >= 2:
                     def _f(x):
                         try: return float(str(x).replace(',', ''))
@@ -1317,6 +1327,12 @@ def fetch_comprehensive_result(race_id):
         d_text = name_box.find('div', class_='RaceData01').text if name_box.find('div', class_='RaceData01') else ""
         m_dist = re.search(r'(\d+)m', d_text)
         if m_dist: dist = int(m_dist.group(1))
+        # レース正式名称(追加取得なし)。出馬表の過去走セルは名前がセル幅で
+        # 切り詰められる(例『シンザン記』)ため、こちらを表示に使えるようにする。
+        # ※結果ページでは <h1 class="RaceName"> (divではない)。
+        _rn = name_box.find(class_='RaceName')
+        if _rn:
+            res['race_info']['race_name'] = _rn.get_text(strip=True)
     res['race_info']['distance'] = dist
     
     # 2. Result Table
@@ -1564,6 +1580,55 @@ def fetch_advanced_data_playwright(race_id, top_horse_ids=None):
         
     return {}
 
+def extract_tozai(raw_trainer_text):
+    """調教師テキストから東西所属を抽出。'east'(美浦)/'west'(栗東)/None。
+
+    netkeibaの表記ゆれに対応:
+      shutuba_past.html … 『栗東・宮本』『美浦・田中』  ← 括弧なし・中黒区切り(実データで確認)
+      他ページ/旧形式   … 『[東]田中博康』『(西)矢作芳人』
+    ⚠ 括弧の無い裸の『東』『西』は照合しない。調教師名に含まれる場合
+      (西園/西村/東田 等)を所属と誤認するため。地名(美浦/栗東)は一意なので裸でも可。
+    """
+    import re
+    if not raw_trainer_text:
+        return None
+    t = str(raw_trainer_text).strip()
+    if '美浦' in t:
+        return 'east'
+    if '栗東' in t:
+        return 'west'
+    if re.search(r'[\[（(]\s*(東|East)\s*[\]）)]', t, re.I):
+        return 'east'
+    if re.search(r'[\[（(]\s*(西|West)\s*[\]）)]', t, re.I):
+        return 'west'
+    return None
+
+
+def extract_tozai_from_row(row):
+    """出走表の1行から東西所属を取る。extract_trainer と同じ探索順で
+    『生テキスト』(美浦/栗東の接頭辞を含む)を拾ってから判定する。
+
+    ⚠ 以前は td.Trainer だけを見ていたが、shutuba_past.html には
+      td.Trainer が存在せず(調教師は a[href*=/trainer/] 配下)、
+      取得率が実測0%だった。探索順を extract_trainer に揃えて修正。
+    """
+    import re
+    for finder in (
+            lambda: row.find('td', class_=re.compile(r'Trainer|trainer|厩舎', re.I)),
+            lambda: row.find('a', href=re.compile(r'/trainer/')),
+            lambda: row.find(['dt', 'div'], class_='Horse05')):
+        try:
+            el = finder()
+        except Exception:
+            el = None
+        if el is None:
+            continue
+        tz = extract_tozai(el.get_text(' ', strip=True))
+        if tz:
+            return tz
+    return None
+
+
 def normalize_trainer_name(name):
     if not name or name in ['-', '不明', '']: return None
     name = name.strip()
@@ -1677,6 +1742,38 @@ def extract_race_metadata(soup, race_date_val=""):
         logger.warning(f"Failed to extract race metadata: {e}")
     return metadata
 
+
+# 過去走セルのレース名からグレード表記を取り出す(PastRuns['Grade']用)。
+# netkeibaはローマ数字表記(GI/GII/GIII)。'GI'は'GII'/'GIII'の**部分文字列**なので
+# `'GI' in race_name` で判定すると GII/GIII まで G1 と誤判定する(旧実装のバグ)。
+# 対策: ①空白/改行で区切ったトークンの完全一致を優先 ②見つからない時だけ、
+#       直後にI/数字が続かないことを確認する正規表現で拾う(長い表記から順に評価)。
+_GRADE_TOKEN_MAP = {
+    'GIII': 'G3', 'GⅢ': 'G3', 'G3': 'G3', '(G3)': 'G3', 'GIII)': 'G3',
+    'GII': 'G2', 'GⅡ': 'G2', 'G2': 'G2', '(G2)': 'G2', 'GII)': 'G2',
+    'GI': 'G1', 'GⅠ': 'G1', 'G1': 'G1', '(G1)': 'G1', 'GI)': 'G1',
+}
+_GRADE_FALLBACK = (('GIII', 'G3'), ('GⅢ', 'G3'), ('G3', 'G3'),
+                   ('GII', 'G2'), ('GⅡ', 'G2'), ('G2', 'G2'),
+                   ('GI', 'G1'), ('GⅠ', 'G1'), ('G1', 'G1'))
+
+
+def _parse_grade_token(race_name):
+    """レース名 → 'G1'/'G2'/'G3' or None(重賞表記なし)。"""
+    s = str(race_name or '').strip()
+    if not s:
+        return None
+    toks = [t for t in re.split(r'\s+', s) if t]
+    for t in reversed(toks):          # グレードは末尾に付くため後ろから探す
+        g = _GRADE_TOKEN_MAP.get(t.strip('（）()'))
+        if g:
+            return g
+    for pat, lbl in _GRADE_FALLBACK:  # 区切り無しで連結されている場合の保険
+        if re.search(re.escape(pat) + r'(?![IⅠ0-9])', s):
+            return lbl
+    return None
+
+
 def get_race_data(race_id, use_storage=True):
     """Main function to scrape race card data with ROBUST EXTRACTION.
 
@@ -1727,8 +1824,44 @@ def get_race_data(race_id, use_storage=True):
                                 logger.info(f"[Storage] Re-fetched {len(_odds_map)} live odds for {race_id}")
                         except Exception as _oe:
                             logger.warning(f"[Storage] Live odds re-fetch failed: {_oe}")
-                        
+
+                        # ── 発走前(締切前)の予想オッズで補完 ──
+                        # fetch_win_odds は確定オッズAPIなので締切前は空。この分岐は
+                        # 関数末尾の予想オッズ補完へ進まず return するため、ここでも
+                        # 同じ補完を行わないと『キャッシュ有り＝オッズ無し』が固定される。
+                        # (📰一括解析は use_storage=True でここを通り、荒れ度が出なかった)
+                        try:
+                            _need = ('Odds' not in _stored.columns) or \
+                                    (_pd.to_numeric(_stored['Odds'], errors='coerce')
+                                     .fillna(0) <= 0).any()
+                            if _need:
+                                _exp_o, _exp_p = fetch_expected_odds(race_id)
+                                if _exp_o:
+                                    _stored = _stored.copy()
+                                    _um_i = _pd.to_numeric(_stored['Umaban'], errors='coerce')
+                                    _cur = _pd.to_numeric(
+                                        _stored.get('Odds'), errors='coerce').fillna(0) \
+                                        if 'Odds' in _stored.columns else _um_i * 0
+                                    _stored['Odds'] = [
+                                        (_exp_o.get(int(u), o) if _pd.notna(u) and float(o) <= 0 else o)
+                                        for u, o in zip(_um_i, _cur)]
+                                    if _exp_p:
+                                        _curp = _pd.to_numeric(
+                                            _stored.get('Popularity'), errors='coerce').fillna(99) \
+                                            if 'Popularity' in _stored.columns else _um_i * 0 + 99
+                                        _stored['Popularity'] = [
+                                            (_exp_p.get(int(u), p) if _pd.notna(u) and int(p) == 99 else p)
+                                            for u, p in zip(_um_i, _curp)]
+                                    _stored.attrs['odds_is_expected'] = True
+                                    logger.info(
+                                        f"[Storage] Filled {len(_exp_o)} expected odds for {race_id}")
+                        except Exception as _ee:
+                            logger.warning(f"[Storage] expected-odds fill failed: {_ee}")
+
                         _res_df = _stored.reset_index(drop=True)
+                        # reset_index で attrs が落ちることがあるので明示的に引き継ぐ
+                        if _stored.attrs.get('odds_is_expected'):
+                            _res_df.attrs['odds_is_expected'] = True
                         # --- Re-fetch metadata for cached data ---
                         try:
                             _url = f"https://nar.netkeiba.com/race/shutuba.html?race_id={race_id}" if _is_nar(race_id) else f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
@@ -1929,6 +2062,7 @@ def get_race_data(race_id, use_storage=True):
         # Trainer (厩舎)
         # modified to return None instead of '-' on fail
         h_data['Trainer'] = extract_trainer(row)
+        h_data['Tozai'] = extract_tozai_from_row(row)
 
         # sex-age and weight
         weight_tds = row.find_all('td', class_=re.compile(r'Weight', re.I))
@@ -1971,9 +2105,35 @@ def get_race_data(race_id, use_storage=True):
         else:
             h_data['Weight'] = "発走前のため未公開"
 
-        # Bloodline placeholder
-        h_data['Bloodline'] = "-"
-        
+        # ── 血統(父/母/母父)を出馬表から直接取得 ──
+        # shutuba_past.html の Horse_Info は
+        #   div.Horse01=父 / div.Horse02=馬名 / div.Horse03=母 / div.Horse04=(母父)
+        # という構造(実データで確認済)。
+        # ⚠ 以前は Bloodline='-' のプレースホルダのみで、血統は jravan.db(horses)への
+        #   フォールバックに100%依存していた。しかし jravan.db の血統は契約停止で
+        #   2023年から劣化し2024年デビュー馬の母名取得率は8.5%まで落ちている
+        #   (scripts調査・repo/jravan_todo.md)。ここで取れば契約状態に依存しなくなる。
+        h_data['sire'] = ''
+        h_data['dam'] = ''
+        h_data['broodmareSire'] = ''
+        try:
+            if h_info:
+                _d1 = h_info.find('div', class_=re.compile(r'\bHorse01\b'))
+                _d3 = h_info.find('div', class_=re.compile(r'\bHorse03\b'))
+                _d4 = h_info.find('div', class_=re.compile(r'\bHorse04\b'))
+                if _d1:
+                    h_data['sire'] = _d1.get_text(' ', strip=True)
+                if _d3:
+                    h_data['dam'] = _d3.get_text(' ', strip=True)
+                if _d4:
+                    # '(ディープインパクト)' → 'ディープインパクト'
+                    h_data['broodmareSire'] = _d4.get_text(' ', strip=True).strip('（）()［］[] ')
+        except Exception:
+            pass
+        _bl = [x for x in (h_data['sire'], h_data['broodmareSire']) if x]
+        h_data['Bloodline'] = ' / '.join(_bl) if _bl else "-"
+
+
         # 1. Real-time odds from API or Playwright (Using string key for Umaban matching)
         h_data['Odds'] = win_odds_map.get(str(h_data['Umaban']).zfill(2), 0.0)
         
@@ -1981,6 +2141,8 @@ def get_race_data(race_id, use_storage=True):
         h_data['Popularity'] = popularity_map.get(str(h_data['Umaban']).zfill(2), 99)
         
         # Fallback for Odds/Popularity if real-time fetching failed
+        # 注: この行(row)は shutuba_past.html(馬柱)由来でオッズ列を持たない。
+        # 発走前の『予想オッズ』は後段の fetch_expected_odds() で別ページから補う。
         if h_data['Popularity'] == 99 or h_data['Odds'] == 0.0:
             pop_td = row.find('td', class_=re.compile(r'Popular|Ninki'))
             if pop_td:
@@ -1993,7 +2155,8 @@ def get_race_data(race_id, use_storage=True):
             if odds_td and h_data['Odds'] == 0.0:
                 txt = odds_td.get_text(strip=True)
                 m_odds = re.search(r'(\d+\.?\d*)', txt)
-                if m_odds: h_data['Odds'] = float(m_odds.group(1))
+                if m_odds:
+                    h_data['Odds'] = float(m_odds.group(1))
 
         # --- Past Runs Extraction ---
         past_runs = []
@@ -2001,13 +2164,23 @@ def get_race_data(race_id, use_storage=True):
         
         for p_td in past_tds:
             run = {
-                'Rank': 99, 'Time': 0, 'Distance': 0, 'Surface': '', 
-                'Agari': 0.0, 'AgariType': 'Imputed', 'Passing': '8-8', 
+                'Rank': 99, 'Time': 0, 'Distance': 0, 'Surface': '',
+                'Agari': 0.0, 'AgariType': 'Imputed', 'Passing': '8-8',
                 'PassingType': 'Imputed', 'Grade': 'OP', 'Date': '2000.01.01',
                 'Condition': '良', 'Popularity': 99, 'TimeIndexRank': 99,
-                'Weight': 55.0, 'Margin': 9.9
+                'Weight': 55.0, 'Margin': 9.9,
+                # 『前走内容』パネル用(core/prev_race.py)。既存キーは一切変更しない追加分。
+                # RaceId は同セル内の <a href="https://db.netkeiba.com/race/{12桁}"> から取れる
+                # ＝出馬表HTMLに元から含まれており追加取得は不要。3着馬との差の算出に使う。
+                'RaceId': None, 'RaceName': '', 'WinnerName': '',
+                'FieldSize': None, 'PrevUmaban': None, 'Baba': '',
             }
             full_text = p_td.text.strip()
+
+            # 前走レースID(同セル内リンク・追加フェッチ不要)
+            m_rid = re.search(r'/race/(\d{12})', str(p_td))
+            if m_rid:
+                run['RaceId'] = m_rid.group(1)
             
             # Data01 (Rank/Date/Venue)
             d01 = p_td.find('div', class_='Data01')
@@ -2024,9 +2197,9 @@ def get_race_data(race_id, use_storage=True):
             d02 = p_td.find('div', class_='Data02')
             if d02:
                 race_name = d02.text.strip()
-                if 'G1' in race_name or 'GI' in race_name: run['Grade'] = 'G1'
-                elif 'G2' in race_name or 'GII' in race_name: run['Grade'] = 'G2'
-                elif 'G3' in race_name or 'GIII' in race_name: run['Grade'] = 'G3'
+                run['RaceName'] = race_name   # 生のレース名(重賞/L判定は core/prev_race.py 側で行う)
+                _gr = _parse_grade_token(race_name)
+                if _gr: run['Grade'] = _gr
                 elif 'OP' in race_name or '(L)' in race_name: run['Grade'] = 'OP'
                 elif '3勝' in race_name or '1600万' in race_name: run['Grade'] = '3勝'
                 elif '2勝' in race_name or '1000万' in race_name: run['Grade'] = '2勝'
@@ -2049,6 +2222,16 @@ def get_race_data(race_id, use_storage=True):
                     run['PrevJockey'] = m_pj.group(1).strip()
                 else:
                     run['PrevJockey'] = "-"
+
+                # 前走の頭数・馬番 e.g "8頭 4番 3人 小沢大仁 56.0"
+                # 頭数は「18頭立ての8着」と「8頭立ての8着」を区別する文脈情報。
+                # 馬番は前走レース結果から自馬を特定する(馬名照合より確実)ために使う。
+                m_fs = re.search(r'(\d+)頭', txt)
+                if m_fs:
+                    run['FieldSize'] = int(m_fs.group(1))
+                m_ub = re.search(r'頭\s*(\d+)番', txt)
+                if m_ub:
+                    run['PrevUmaban'] = int(m_ub.group(1))
 
             # Data04 (Popularity/Odds)
             d04 = p_td.find('div', class_='Data04')
@@ -2083,6 +2266,11 @@ def get_race_data(race_id, use_storage=True):
                         run['Time'] = int(parts[0]) * 60 + float(parts[1])
                     else:
                         run['Time'] = float(parts[0])
+
+                # 前走の馬場状態 e.g "芝1600 1:37.1 良"（『不良』を『良』と誤検出しない順で照合）
+                m_baba = re.search(r'(不良|稍重|重|良)\s*$', t05)
+                if m_baba:
+                    run['Baba'] = m_baba.group(1)
             
             # Data06 (Passing/Agari)
             d06 = p_td.find('div', class_='Data06')
@@ -2107,7 +2295,8 @@ def get_race_data(race_id, use_storage=True):
                     run['Agari'] = float(m_aga.group(1))
                     run['AgariType'] = 'Real'
 
-            # Data07 (Margin)
+            # Data07 (Margin) e.g "クールデイトナ (0.3)"
+            # 馬名は着外なら勝ち馬、自身が勝った場合は2着馬(この時Marginは負)。
             d07 = p_td.find('div', class_='Data07')
             if d07:
                 t07 = d07.text.strip()
@@ -2116,6 +2305,9 @@ def get_race_data(race_id, use_storage=True):
                     run['Margin'] = float(m_mar.group(1))
                 else:
                     run['Margin'] = 9.9
+                m_wn = re.match(r'^(.+?)\s*[\(（]', t07)
+                if m_wn:
+                    run['WinnerName'] = m_wn.group(1).strip()
             
             past_runs.append(run)
         
@@ -2163,6 +2355,28 @@ def get_race_data(race_id, use_storage=True):
                 _rp = dict(res_pop) if utils_type.is_non_empty_pandas(res_pop) else res_pop
                 df['Popularity'] = df['Umaban'].map(lambda u: _rp.get(u, 99) if pd.notna(u) else 99)
 
+        # 3. 発走前(投票締切前)の最終手段: 出馬表の『予想オッズ』
+        #    確定オッズAPIもresult.htmlも空になる時間帯で、ここが唯一の供給源。
+        #    これが無いと Odds=0 のまま妙味度/荒れ確率が計算できない。
+        if (df['Odds'] == 0.0).any():
+            try:
+                exp_odds, exp_pop = fetch_expected_odds(race_id)
+                if exp_odds:
+                    _um_i = pd.to_numeric(df['Umaban'], errors='coerce')
+                    df['Odds'] = [
+                        (exp_odds.get(int(u), o) if pd.notna(u) and float(o or 0) == 0.0
+                         else o)
+                        for u, o in zip(_um_i, df['Odds'])]
+                    if exp_pop:
+                        df['Popularity'] = [
+                            (exp_pop.get(int(u), p) if pd.notna(u) and int(p or 99) == 99
+                             else p)
+                            for u, p in zip(_um_i, df['Popularity'])]
+                    df.attrs['odds_is_expected'] = True
+                    logger.info(f"Filled {len(exp_odds)} expected odds for {race_id}")
+            except Exception as _ee:
+                logger.warning(f"expected-odds fallback failed: {_ee}")
+
     # --- [NEW] Extract Metadata for Dashboard ---
     metadata = extract_race_metadata(soup, race_date_val)
     df.attrs['metadata'] = metadata
@@ -2177,6 +2391,52 @@ def get_race_data(race_id, use_storage=True):
         logger.info(f"Debug: Compiled DataFrame with {len(df)} horses.")
         
     return df
+
+def fetch_expected_odds(race_id):
+    """出馬表(shutuba.html)の『予想オッズ』と人気を取得する。
+
+    get_race_data() は過去走を取るため shutuba_past.html(馬柱)を読んでおり、
+    そちらにはオッズ列が無い。確定オッズAPIも投票締切前は空を返すため、
+    発走前は Odds=0 のままになり妙味度/荒れ確率が計算できなかった。
+    通常の出馬表には締切前でも『予想オッズ』が出ているのでそれを拾う。
+
+    ⚠ 予想オッズは市場の確定オッズではなく主催者/netkeiba側の想定値。
+      検証済みロジットは確定オッズで較正しているため、これで出した
+      妙味度・荒れ確率は『暫定』として扱うこと。
+    戻り値: ({umaban(int): odds(float)}, {umaban(int): ninki(int)})
+    """
+    dom = 'nar.netkeiba.com' if _is_nar(race_id) else 'race.netkeiba.com'
+    url = f"https://{dom}/race/shutuba.html?race_id={race_id}"
+    odds_map, pop_map = {}, {}
+    try:
+        html = fetch_robust_html(url)
+        if not html:
+            return odds_map, pop_map
+        soup = BeautifulSoup(html, 'html.parser')
+        rows = soup.find_all('tr', class_=re.compile(r'HorseList'))
+        for row in rows:
+            um_td = row.find('td', class_=re.compile(r'Umaban'))
+            if not um_td:
+                continue
+            m_um = re.search(r'\d+', um_td.get_text(strip=True))
+            if not m_um:
+                continue
+            um = int(m_um.group())
+            # 予想オッズは <td class="Popular Txt_R">16.2</td>、
+            # 人気は <td class="Popular Txt_C">5</td>。クラス名に "Odds" が
+            # 入らないので、小数=オッズ / 小さい整数=人気 で判別する。
+            for td in row.find_all('td', class_=re.compile(r'Popular|Ninki|Odds', re.I)):
+                txt = td.get_text(strip=True).replace(',', '')
+                if not txt or txt in ('--', '-', '**'):
+                    continue
+                if re.fullmatch(r'\d+\.\d+', txt) and um not in odds_map:
+                    odds_map[um] = float(txt)
+                elif re.fullmatch(r'\d{1,2}', txt) and um not in pop_map:
+                    pop_map[um] = int(txt)
+    except Exception as e:
+        logger.warning(f"fetch_expected_odds failed for {race_id}: {e}")
+    return odds_map, pop_map
+
 
 def fetch_result_odds_pop(race_id):
     """

@@ -60,7 +60,16 @@
       "Bash(py -m pytest tests/ -v)",
       "Bash(pip install:*)",
       "Bash(py -c \"import requests, json, zlib, base64; race_id=''202506010811''; domain=''race.netkeiba.com''; api_url=f''https://{domain}/api/api_get_jra_odds.html''; params={''pid'':''api_get_jra_odds'',''race_id'':race_id,''type'':''b7'',''compress'':''1'',''output'':''json''}; headers={''User-Agent'':''Mozilla/5.0'',''Accept'':''application/json, text/javascript, */*; q=0.01'',''Referer'':f''https://{domain}/odds/index.html?type=b7&race_id={race_id}'',''X-Requested-With'':''XMLHttpRequest''}; resp=requests.get\\(api_url,params=params,headers=headers,timeout=15\\); print\\(f''Status: {resp.status_code}''\\); data=resp.json\\(\\); print\\(f''Keys: {list\\(data.keys\\(\\)\\)}''\\); print\\(f''status: {data.get\\(\"\"status\"\"\\)}''\\); print\\(f''reason: {data.get\\(\"\"reason\"\"\\)}''\\); raw=data.get\\(''data'',''''\\); print\\(f''data type: {type\\(raw\\).__name__}, len: {len\\(str\\(raw\\)\\)}''\\)\")",
-      "Bash(py:*)"
+      "Bash(py:*)",
+      "Bash(python scripts/batch_sra_publish.py --help)",
+      "Bash(python scripts/batch_sra_publish.py --date 20260802 --url http://localhost:19999)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(python -c ' *)",
+      "Bash(python tests/smoke.py)",
+      "Read(//c/Users/kimnhaty/.gemini/antigravity/scratch/keiba_analysis/**)",
+      "Bash(python -c \"import os; print\\(os.path.getmtime\\('data/newspaper/202648071502.view.json'\\)\\)\")",
+      "Bash(python scripts/batch_sra_publish.py --race-ids 202648071502 --no-skip-existing --sra-only --timeout-sra 120)",
+      "Bash(python scripts/batch_sra_publish.py --race-ids 202648071502 --no-skip-existing --sra-only --timeout-sra 360)"
     ]
   }
 }

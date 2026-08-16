@@ -95,8 +95,15 @@ def render():
             key="hunter_url"
         )
     with col_th:
+        # 既定6は動かさない。検証(scripts/longshot_threshold_backtest.py)で、4に下げると
+        # 候補に4-5番人気が入りVHが人気順の劣化版になる(少頭数×堅いでVH2頭 59.1% vs
+        # 人気2頭 59.6% ＝ -0.5ppで負ける)ことが判明したため。
+        # 少頭数×堅いレースでは代わりに『相手候補(4-5番人気)』を別枠で案内する(下部)。
         pop_threshold = st.number_input("穴馬しきい値(人気)", min_value=4, max_value=18, value=6,
-                                        help="この人気以下を穴馬候補とする", key="hunter_th")
+                                        help="この人気以下を穴馬候補とする。"
+                                             "既定6は検証済み（4に下げると穴馬スコアが"
+                                             "人気順とほぼ同じになり独自の価値が消えます）。",
+                                        key="hunter_th")
 
     if not race_url:
         st.info("レースURLまたはIDを入力してください。")
@@ -251,6 +258,39 @@ def render():
     if cond_tags:
         st.info("　".join(cond_tags))
 
+    # ── 🎯相手候補(4-5番人気) ── 少頭数×堅いレースでのみ表示 ──
+    # 穴馬(6番人気以降＝市場の見落とし)とは**役割が違う**ので別枠にする。
+    # 検証(scripts/longshot_threshold_backtest.py・少頭数×堅い4,991R):
+    #   3着内が全て5番人気以内で決まる率が60.1%(多頭数32.1%の約2倍)
+    #   → ここでは穴を掘るより上位人気の取りこぼしを防ぐ方が現実に合う。
+    # ⚠ この帯は市場が既に評価済みなので、選び方はVHではなく**人気順**が正しい
+    #   (同プール内でVH上位2頭は人気上位2頭に -0.5pp 負ける)。
+    try:
+        from core import longshot_threshold as _lst
+        _cb = _lst.companion_band(df, meta)
+    except Exception:
+        _cb = None
+    if _cb:
+        _comp = []
+        for _, _cr in df.iterrows():
+            _cp = _safe_int(_cr.get('Popularity'), 99)
+            if _cb['lo'] <= _cp <= _cb['hi']:
+                _comp.append((_cp, _safe_int(_cr.get('Umaban')),
+                              str(_cr.get('Name', '')), _safe_float(_cr.get('Odds'))))
+        _comp.sort()
+        if _comp:
+            st.success(
+                f"🎯 **相手候補（{_cb['lo']}〜{_cb['hi']}番人気）** — {_cb['reason']}　"
+                + " ／ ".join(f"**{u}番 {nm}**（{p}人気 {o:.1f}倍）"
+                              for p, u, nm, o in _comp))
+            st.caption(
+                "このレース形（少頭数×上位人気が堅い）では、**3着内が全て5番人気以内で"
+                "決まる率が60.1%**（多頭数32.1%の約2倍・4,991R実測）。"
+                "穴を掘るより上位人気の取りこぼしを防ぐ方が現実に合います。"
+                "この帯は市場が既に評価済みなので、下の穴馬スコアではなく**人気順**で"
+                "見てください（同じ範囲では穴馬スコアは人気順に負けます）。"
+                "※穴馬しきい値は6のまま維持しています。")
+
     # ── 全馬のPastRunsを収集(前走上がり順位計算用) ──
     all_past_runs = []
     for _, row in df.iterrows():
@@ -269,14 +309,36 @@ def render():
 
     # ── 妙味馬ハンター 軽量スコア(検証済 recall70%@2.09x) ──
     # build_edge_setsが補正T/末脚/血統/combo/消去/オッズからvh_score(市場順序+補正T連続量)を返す。
-    _vh_map = {}; _vh_tier = {}
+    _vh_map = {}; _vh_tier = {}; _vh_edge_reasons = {}
     try:
         from core import consensus_view as _cvh
         _aim_vh = _cvh.build_edge_sets(df, meta, race_id)
         _vh_map = _aim_vh.get('vh') or {}
         _vh_tier = _aim_vh.get('vh_tier') or {}
+        _vh_edge_reasons = _aim_vh.get('edge_reasons') or {}
     except Exception:
         pass
+
+    # 『前走内容』モジュール(表示専用・netkeibaのみ/JRA-VAN不使用)
+    try:
+        from core import prev_race as _prv
+    except Exception:
+        _prv = None
+
+    _VH_BADGE_PFX = [
+        ('🔵補正T', '🔵'), ('🔥末脚', '🔥'), ('⚡33', '⚡'),
+        ('👑騎手', '👑'), ('⭐黄金', '⭐'), ('🏠厩舎', '🏠'),
+        ('🧬血統回収', '💰'), ('🧬血統', '🧬'), ('🟢道悪', '🟢'),
+    ]
+    def _vh_badges(um):
+        bs = []
+        for r in (_vh_edge_reasons.get(um) or []):
+            rs = str(r)
+            for pfx, icon in _VH_BADGE_PFX:
+                if rs.startswith(pfx) and icon not in bs:
+                    bs.append(icon)
+                    break
+        return bs
 
     # ── 穴馬候補を抽出 ──
     candidates = []
@@ -527,6 +589,17 @@ def render():
         n_verified = len(signals_verified)
         n_ref = len(signals_ref)
 
+        _bdg = _vh_badges(umaban)
+        # 『前走内容』(表示専用・core/prev_race.py)。ここでは追加フェッチをせず、
+        # 出馬表HTMLに元から入っている情報だけを取り出す。3着馬との差は後段で一括取得。
+        # ⚠ スコア/ソート/材料数には一切influenceさせない(表示のみ)。
+        _pv = None
+        try:
+            _pv = _prv.extract(past_runs)
+            if _pv:
+                _pv['_name'] = name
+        except Exception:
+            _pv = None
         candidates.append({
             'pop': pop,
             'odds': odds,
@@ -543,79 +616,184 @@ def render():
             'n_total': n_verified + n_ref,
             'vh_score': _vh_map.get(umaban),
             'vh_tier': _vh_tier.get(umaban, ''),
+            'badges': _bdg,
+            'prev': _pv,
         })
 
     if not candidates:
         st.warning(f"{pop_threshold}番人気以下の馬がいません（全{n_horses}頭）。")
         return
 
+    # ── 『前走内容』の3着馬との差を一括取得(穴馬候補のみ・race_id単位で重複排除) ──
+    # 前走race_idは出馬表HTMLに元から入っているため、race_idを得るための取得は不要。
+    # 3着馬との差を出すため前走レース結果を1レースにつき1回だけ取得する
+    # (同じ前走を走った馬が複数いても共有)。結果はレース単位でsession_stateにキャッシュ。
+    # ⚠ ここで得た情報は表示専用。vh_score/妙味/ソート順/材料数には一切反映しない。
+    if _prv:
+        _pv_cache_key = f"_prevrace_results_{race_id}"
+        _pv_cache = st.session_state.setdefault(_pv_cache_key, {})
+        _pv_list = [c['prev'] for c in candidates if c.get('prev')]
+        _pv_rids = _prv.collect_race_ids(_pv_list)
+        _pv_todo = [r for r in _pv_rids if r not in _pv_cache]
+        if _pv_todo:
+            with st.spinner(f"前走レース結果を取得中… {len(_pv_todo)}件"
+                            f"（穴馬候補{len(_pv_list)}頭ぶん・重複は共有）"):
+                try:
+                    _prv.fetch_results(_pv_todo, cache=_pv_cache)
+                except Exception as _e_pv:
+                    st.caption(f"（前走結果の取得を一部スキップ: {_e_pv}）")
+        for _pv in _pv_list:
+            try:
+                _prv.attach_third_margin(_pv, _pv_cache)
+            except Exception:
+                pass
+
     # ── ソート: 妙味馬スコア(軽量vh)降順 → 検証済みフラグ数 → 人気順 ──
     # vhが使えないレース(オッズ欠損等)は従来のフラグ数ソートにフォールバック。
     candidates.sort(key=lambda c: (-(c['vh_score'] or -1), -c['n_verified'], -c['n_ref'], c['pop']))
+    _max_bdg = max((len(c.get('badges', [])) for c in candidates), default=0)
 
-    # ── 🕸️ 妙味馬 2段リスト(検証済み軽量スコア) ──
+    # ── 2カラムレイアウト: 左=精鋭 / 右=広域網 ──
     _elite = [c for c in candidates if c['vh_tier'] == '🎯精鋭']
     _net = [c for c in candidates if c['vh_tier'] == '🕸️広域網']
-    if _elite or _net:
-        def _mv_line(c):
-            _sc = f"{c['vh_score']*100:.0f}" if c['vh_score'] is not None else '-'
-            return f"**{c['umaban']}番 {c['name']}**({c['pop']}人気 {c['odds']:.1f}倍・妙味{_sc})"
-        _mv = ""
-        if _elite:
-            _mv += "🎯 **精鋭**(3着内率≈17-20%・基準の2.6倍): " + " / ".join(_mv_line(c) for c in _elite) + "\n\n"
-        if _net:
-            _mv += "🕸️ **広域網**(3着内率≈16%・2.1倍): " + " / ".join(_mv_line(c) for c in _net)
-        st.success(_mv)
-        st.caption(
-            "🕸️ 妙味馬スコア＝7番人気以下で3着内に来る馬を高再現率(recall70%)で網羅する検証済みショートリスト"
-            "(scripts/value_hunter_light.py)。主成分は市場のオッズ順序＋補正T連続量。"
-            "**⚠これは『3着内に来る馬の網羅リスト』であって『単勝で買えば儲かる(+EV)リスト』ではありません**"
-            "(単勝市場は効率的)。複勝/ワイド/3連複の相手・軸候補の絞り込みに使ってください。"
-        )
-        st.divider()
+    _other = [c for c in candidates if c['vh_tier'] not in ('🎯精鋭', '🕸️広域網')]
 
-    # ── サマリー ──
-    has_verified = [c for c in candidates if c['n_verified'] > 0]
-    if has_verified:
-        names_v = ", ".join(f"**{c['name']}**({c['n_verified']})" for c in has_verified[:3])
-        st.success(f"🎯 検証済みシグナル検出: {names_v}")
-    else:
-        st.info("検証済みシグナルを持つ穴馬候補はいません。参考情報を確認してください。")
+    def _render_prev_detail(pv):
+        """『前走内容』の詳細ブロック(見出し→条件→事実行)。表示専用。"""
+        st.markdown("**前走内容**（表示専用・妙味スコアには影響しません）")
+        _hd = _prv.detail_header(pv)
+        _cd = _prv.detail_condition(pv)
+        if _hd:
+            st.markdown(f"**{_hd}**")
+        if _cd:
+            st.caption(_cd)
+        for _k, _v in _prv.detail_rows(pv):
+            st.caption(f"{_k}：{_v}")
+        _b = _prv.badge(pv)
+        if _b:
+            st.markdown(f"<span style='color:#b8860b;font-weight:bold;'>{_b}</span>",
+                        unsafe_allow_html=True)
 
-    # ── 各馬の詳細表示 ──
-    for c in candidates:
-        emoji = c['vh_tier'] or ("🎯" if c['n_verified'] >= 2 else ("💡" if c['n_verified'] >= 1 else "📋"))
-        _vhtxt = f"　妙味{c['vh_score']*100:.0f}" if c['vh_score'] is not None else ""
-        with st.expander(
-            f"{emoji} {c['umaban']}番 {c['name']}　"
-            f"{c['pop']}人気 {c['odds']:.1f}倍　"
-            f"検証済{c['n_verified']} / 参考{c['n_ref']}{_vhtxt}",
-            expanded=(c['vh_tier'] == '🎯精鋭' or c['n_verified'] >= 1)
-        ):
-            col_v, col_r = st.columns(2)
-
-            with col_v:
-                st.markdown("##### 検証済みエッジ")
-                if c['signals_verified']:
-                    for s in c['signals_verified']:
-                        st.markdown(f"- {s}")
-                else:
-                    st.caption("なし")
-
-            with col_r:
-                st.markdown("##### 参考情報（priced-in）")
-                if c['signals_ref']:
-                    for s in c['signals_ref']:
-                        st.markdown(f"- {s}")
-                else:
-                    st.caption("なし")
-
-            if c['info_items']:
+    def _render_card(c, rank, tier='elite'):
+        _bdgs_c = c.get('badges', [])
+        _is_top = (rank == 1)
+        _sc = f"{c['vh_score']*100:.0f}" if c['vh_score'] is not None else '-'
+        _bdg_str = ''.join(_bdgs_c)
+        if _is_top:
+            _bg = '#fff0f0' if tier == 'elite' else '#fffde7'
+            _bd_color = '#e57373' if tier == 'elite' else '#ffd54f'
+        else:
+            _bg = '#ffffff'
+            _bd_color = '#e0e0e0'
+        _trophy_txt = '🏆 ' if _is_top else ''
+        _badge_html = (f"{_bdg_str}　<b>{len(_bdgs_c)}材料</b>") if _bdgs_c else \
+                      '<span style="color:#999">材料 0</span>'
+        # 『前走内容』行(表示専用・妙味/材料数とは別軸なので区切り線で分ける)
+        _pv_c = c.get('prev')
+        _pv_html = ''
+        if _prv and _pv_c:
+            _pv_sum = _prv.summary_line(_pv_c)
+            _pv_mgn = _prv.margin_line(_pv_c)
+            _pv_bdg = _prv.badge(_pv_c)
+            if _pv_sum:
+                _pv_html = (
+                    '<div style="margin-top:8px;padding-top:6px;'
+                    'border-top:1px dashed #ddd;font-size:0.92em;line-height:1.6;">'
+                    f'<span style="color:#777">前走：</span>{_pv_sum}'
+                    + (f'<br><span style="color:#555">{_pv_mgn}</span>' if _pv_mgn else '')
+                    + (f'<br><span style="color:#b8860b;font-weight:bold;">{_pv_bdg}</span>'
+                       if _pv_bdg else '')
+                    + '</div>'
+                )
+        st.markdown(f'''<div style="
+            background:{_bg};border:1px solid {_bd_color};
+            border-radius:8px;padding:12px 16px;margin-bottom:4px;">
+            <div style="font-weight:bold;font-size:1.05em;">
+                {_trophy_txt}{rank}位　{c['umaban']}番 {c['name']}
+            </div>
+            <div style="margin-top:4px;">
+                {c['pop']}人気　{c['odds']:.1f}倍　　妙味 <b>{_sc}</b>
+            </div>
+            <div style="margin-top:4px;">{_badge_html}</div>
+            {_pv_html}
+        </div>''', unsafe_allow_html=True)
+        with st.expander("前走内容 / 検証済み / 参考 / 基本データ", expanded=False):
+            if _prv and _pv_c:
+                _render_prev_detail(_pv_c)
                 st.markdown("---")
-                st.markdown("##### 基本データ")
-                cols = st.columns(3)
-                for i, item in enumerate(c['info_items']):
-                    with cols[i % 3]:
+            if c['signals_verified']:
+                st.markdown("**検証済みエッジ**")
+                for s in c['signals_verified']:
+                    st.markdown(f"- {s}")
+            if c['signals_ref']:
+                st.markdown("**参考（priced-in）**")
+                for s in c['signals_ref']:
+                    st.markdown(f"- {s}")
+            if c['info_items']:
+                st.markdown("**基本データ**")
+                for item in c['info_items']:
+                    st.caption(item)
+            if not c['signals_verified'] and not c['signals_ref'] and not c['info_items']:
+                st.caption("情報なし")
+
+    if _elite or _net:
+        _col_l, _col_r = st.columns(2)
+        with _col_l:
+            st.markdown("#### 🎯 精鋭")
+            st.caption("3着内率≈17-20%　基準の2.6倍")
+            if _elite:
+                for _i, _c in enumerate(_elite):
+                    _render_card(_c, _i + 1, tier='elite')
+            else:
+                st.info("該当なし")
+        with _col_r:
+            st.markdown("#### 🕸️ 広域網")
+            st.caption("3着内率≈16%　基準の2.1倍")
+            if _net:
+                for _i, _c in enumerate(_net):
+                    _render_card(_c, _i + 1, tier='net')
+            else:
+                st.info("該当なし")
+        st.caption(
+            "🏆＝妙味スコア1位（検証済: 穴が来る時の的中率22%・ランダム8%の2.8倍）。"
+            "材料(🔵🔥⚡👑⭐🏠🧬💰🟢)は判断参考＝数が多い馬を選ぶと逆効果（VH1位が+4pp勝ち・検証済）。"
+            "⚠『3着内に来る馬の網羅リスト』であって『+EVリスト』ではありません。"
+        )
+    else:
+        st.info("🎯精鋭・🕸️広域網に該当する穴馬候補はいません。")
+
+    # ── tier外の穴馬候補 ──
+    if _other:
+        st.divider()
+        st.markdown("#### 📋 その他の穴馬候補")
+        for _c in _other:
+            _pv_o = _c.get('prev')
+            _pv_sum_o = _prv.summary_line(_pv_o) if (_prv and _pv_o) else ''
+            _pv_mgn_o = _prv.margin_line(_pv_o) if (_prv and _pv_o) else ''
+            _pv_bdg_o = _prv.badge(_pv_o) if (_prv and _pv_o) else ''
+            with st.expander(
+                f"📋 {_c['umaban']}番 {_c['name']}　"
+                f"{_c['pop']}人気 {_c['odds']:.1f}倍　"
+                f"検証済{_c['n_verified']} / 参考{_c['n_ref']}"
+                + (f"　｜ 前走：{_pv_sum_o}" if _pv_sum_o else '')
+                + (f"・{_pv_mgn_o}" if _pv_mgn_o else '')
+                + (f"　{_pv_bdg_o}" if _pv_bdg_o else ''),
+                expanded=False
+            ):
+                if _prv and _pv_o:
+                    _render_prev_detail(_pv_o)
+                    st.markdown("---")
+                if _c['signals_verified']:
+                    st.markdown("**検証済みエッジ**")
+                    for s in _c['signals_verified']:
+                        st.markdown(f"- {s}")
+                if _c['signals_ref']:
+                    st.markdown("**参考（priced-in）**")
+                    for s in _c['signals_ref']:
+                        st.markdown(f"- {s}")
+                if _c['info_items']:
+                    st.markdown("**基本データ**")
+                    for item in _c['info_items']:
                         st.caption(item)
 
     # ── 凡例 ──
@@ -637,6 +815,26 @@ def render():
 | 🏆 前走格上 | 参考 | 前走OP以上で凡走→相手が強かっただけの可能性 |
 | 📉 前走力出せず | 参考 | 前走人気≤5位なのに6着以下→不利/条件不適の可能性 |
 | 🔄 叩き2走目 | 参考 | 前走が長期休養明け初戦で凡走→実戦勘回復期待 |
+| ⭐ 重賞で好走 / 重賞で3着馬と接戦 | **検証済**（表示専用） | 前走が重賞/L かつ 3着馬との差≤0.3秒（文言は前走着順で変わるだけで条件は同一） |
+""")
+        st.markdown("""
+---
+**⭐ 重賞で好走 / ⭐ 重賞で3着馬と接戦 について**
+
+「前走が重賞またはL」かつ「前走の3着馬との差が0.3秒以内」に該当した事実を表示するものです。
+文言は前走1〜3着なら「重賞で好走」、4着以下なら「重賞で3着馬と接戦」と変わりますが、
+**判定条件は同一**です。
+**AI評価でも妙味でもありません。** 妙味スコア・材料数・順位には一切影響しません。
+
+検証内容（4期間・2016〜2026年6月）:
+Rank(能力評価)の分位で統制しても3着内率が**+5.5〜9pp**上がることを全期間で確認。
+ただし**複勝の回収率は安定してプラスにならず**、さらに穴馬ハンターの対象母集団
+(7番人気以下)で妙味スコアを統制すると追加効果はほぼ0でした。
+＝「当たりやすさは上がるが市場も既に知っている」情報のため、
+**スコアには組み込まず、人間が最終比較するための材料としてのみ表示**しています。
+
+⚠ 前走の3着馬との差が取得できなかった場合、条件を満たさないとは扱わず
+バッジを表示しません（推測で補完しません）。
 """)
         if _is_nankan:
             st.markdown("""

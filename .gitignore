@@ -34,3 +34,11 @@ elim_reasons.json
 # パドック観察タグ台帳(ユーザー個人データ)
 paddock_ledger.json
 data/paddock_media/
+
+# JRDB(他社データ・配布不可)
+data/jrdb/raw/
+data/jrdb/spec/
+data/jrdb/.credentials
+
+# Windowsのリダイレクト事故で生まれる空ファイル(NUL相当)
+nul

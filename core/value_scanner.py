@@ -406,10 +406,17 @@ def tanpuku_divergence(win_odds, place_mid):
 def odds_gap_anchors(odds_by_um, ratio=2.0, max_rank=6, max_odds=30.0):
     """『断層直前＝強グループの末端馬』の馬番set を返す。
     単勝オッズ昇順で、次の馬のオッズが ratio 倍以上に跳ねる直前の馬。
-    検証(90年代): 3着内残差+0.039(z+12.3)。ただし人気帯別で再検証した結果、
-    エッジは人気上位に集中（人気1-3=+0.068 z+14.3 / 人気4-6=+0.033 z+4.8 / 人気7+=+0.004 効果なし）、
-    オッズ≤10=+0.049/10-30=+0.030/30超=弱。→ 人気≤max_rank かつ オッズ≤max_odds の anchor のみ採用。
-    ※オッズDBが90年代のみのため要・現代再検証。"""
+
+    検証①(90年代): 3着内残差+0.039(z+12.3)。人気1-3=+0.068 / 4-6=+0.033 / 7+=効果なし、
+    オッズ≤10=+0.049 / 10-30=+0.030 / 30超=弱 → 人気≤max_rank かつ オッズ≤max_odds に限定。
+
+    検証②(2026-08・現代データで再検証完了 scripts/odds_structure_hunt.py):
+    jravan 2016-2025・train43万/holdout7万をオッズ帯統制で測り直し、**現代でも有効**と確認。
+      断層の深さでグラデーションする: 1.3倍以上 +0.50/+0.69pp / 1.5倍以上 +0.91/+1.33pp /
+      **2.0倍以上 +2.14pp(z+10.6) / +2.54pp(z+5.2)** ＝既定 ratio=2.0 が最も強い。
+      人気帯: 1-3番人気 +2.12/+2.63 / 4-7番人気 +1.24/+1.38 / 8-12番人気 ≈0 /
+      13番人気〜 マイナス → max_rank=6 の絞り込みも妥当。
+    (旧docstringの「要・現代再検証」はこれで解消)"""
     items = sorted([(u, float(o)) for u, o in (odds_by_um or {}).items()
                     if o and float(o) > 0], key=lambda x: x[1])
     anchors = set()
@@ -530,21 +537,24 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     if pop and pop >= 6 and si is not None and si >= 0.8 and sr >= 2:
         pos.append(f"🔥末脚救出(指数{si:.1f})")
 
-    # 🌀33ラップ適合(独立シグナル): 人気薄(6番人気以下)×馬の得意33ラップとコース平均が
-    # 符号一致(瞬発力型馬×瞬発力コース or 持久力型馬×持久力コース)。
-    # 検証(scripts/lap33_backtest.py train2021-24/holdout2025): 6番人気以下×適合で
-    # 複勝率残差 train+0.95pp(z+6.8)/holdout+0.92pp(z+3.3)=train/holdout安定の独立エッジ。
-    # 不適合(逆符号)側はholdoutで有意水準未達のため消去/危険フラグには使わない。
+    # 🌀33ラップ適合(独立シグナル): 人気薄(6番人気以下)限定。
+    # 2026-08 更新(scripts/lap33_distance_backtest.py): 判定を2点変更し精度を上げた。
+    #   ① 馬の値を『全走平均』→『好走時平均』へ(残差 +0.84pp → +1.42pp)
+    #   ② 判定を『符号一致』→『コース平均との距離<=0.5秒』へ
+    #      該当率 74.8% → 23.9% に絞れて残差は +1.42pp → +1.83pp(holdout z+3.12)。
+    #      絞るほど残差が単調増加(+1.42→+1.70→+1.83→+2.02)＝信号が本物の傍証。
+    # 旧方式は符号を見るだけで人気薄の3/4が該当してしまい実用性が低かった。
+    # 人気上位(1-3番人気)はどの方式でも効かない(z-1.5〜+1.4)ため対象外のまま。
     try:
         if pop and pop >= 6 and kt:
             from core import lap33 as _l3
             _l33_fit = _l3.horse_fit33(kt)
             _l33_course = _l3.course_avg33(surface, dist, jyo=jyo)
-            _l33_match = _l3.fit_match(
-                _l33_fit.get('avg_lap33'),
-                _l33_course.get('avg') if _l33_course else None)
-            if _l33_match is True:
-                pos.append(f"🌀33ラップ適合({_l33_fit['avg_lap33']:+.1f})")
+            _l33_val = _l3.horse_lap33_value(_l33_fit)
+            _l33_mark = _l3.fit_distance(
+                _l33_val, _l33_course.get('avg') if _l33_course else None)
+            if _l33_mark == '○':
+                pos.append(f"🌀33ラップ適合({_l33_val:+.1f})")
     except Exception:
         pass
 
@@ -559,11 +569,24 @@ def horse_value_factors(row, jj, jyo, surface, dist, month, min_year, place_mid=
     if gap_anchor:
         pos.append('オッズ断層上位')
 
+    # 補正T(生値・負=速い)。レース単位の軸信頼度
+    # (axis_selector.race_axis_confidence)で使う。ここでは既に resolve_horse 済みの
+    # kt を使い回すので追加のDB引きは corrected_time.db への1クエリだけ＝ほぼ無コスト。
+    ct_fig = None
+    if kt:
+        try:
+            from core import corrected_time as _ct_vs
+            _fg = _ct_vs.get_figure(kt, surface) or _ct_vs.get_figure(kt, None)
+            ct_fig = (_fg or {}).get('fig')
+        except Exception:
+            ct_fig = None
+
     return {
         'pos': pos, 'neg': neg, 'has_pos': bool(pos), 'has_neg': bool(neg),
         'div_level': div_level, 'anchor': bool(gap_anchor),
         'pop': int(pop) if pop == pop and pop else None,
         'odds': float(odds) if odds == odds and odds else None,
+        'ct_fig': float(ct_fig) if ct_fig is not None else None,
     }
 
 
@@ -587,7 +610,13 @@ def _same_jk(a, b):
 def scanner_priority(r):
     """Race Scanner の「買える順」Gate ソートキーを返す(タプル・降順で使う)。
     ゲート順: 見送りなし → 軸フロア → 危険なし → 相手質 → trio_lean明確。
-    r: results リストの1要素(dict)。app.py とバックテストで共用。"""
+    r: results リストの1要素(dict)。app.py とバックテストで共用。
+
+    ⚠ UIの『妙味馬の数』をここに「しきい値フラグ」として足してはいけない(2026-07-23に試して撤回)。
+      n_v(妙味馬数)が直後のキーにある以上、しきい値は n_v の単調関数なので順序が
+      完全に一致し、並びが1つも変わらない(実測で全しきい値の並びが同一)。
+      この設定を意味あるものにするには**絞り込み**にするしかない → app.py側で実装。
+    """
     if r.get('skips'):
         return (0, 0, 0, 0, 0, 0.0)
     axis = 1 if r.get('axis_floor', True) else 0

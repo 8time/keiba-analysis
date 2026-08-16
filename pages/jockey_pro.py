@@ -497,7 +497,9 @@ def render():
                             '騎手': str(_e.get('jockey_name', '')),
                             '📗買い条件': len(_b) if _d.get('found') else '-',
                             '📕消し条件': len(_f) if _d.get('found') else '-',
-                            '該当条件の内訳': (' / '.join(_b + [f"⚠{t}" for t in _f]) or '-')
+                            # fade側は dbkeiba.extract_conditions が既に⚠を付与済み。
+                            # ここで重ねると「⚠⚠芝7枠(単回53%)」になる(2026-07-23修正)。
+                            '該当条件の内訳': (' / '.join(_b + _f) or '-')
                             if _d.get('found') else '（db-keiba未収録 or 未取得）',
                         })
                     if _dbk_rows_jp:
@@ -507,9 +509,13 @@ def render():
                         st.dataframe(_dbk_df_jp, hide_index=True, use_container_width=True)
                     st.caption("📗＝その騎手が**儲かってきた条件**(単回100%+ or 複回95%+・20走以上)が"
                                "今日のレース条件(人気/コース/距離/競馬場/調教師など)と重複した数。"
-                               "📕＝苦手条件(複回55%以下)との重複。数字が大きいほど条件が向いています。"
+                               "📕＝苦手条件(複回55%以下)との重複。"
                                "出典=db-keiba.com(2021-2025集計・週1更新/2週間キャッシュ)。"
-                               "**外部集計で当アプリの検証は未実施＝参考表示のみ**（総合スコアには入れていません）。")
+                               "**⚠検証の結果、数字が大きくても当たりません**"
+                               "(scripts/dbkeiba_condition_backtest.py)。db-keibaの集計期間2021-25では"
+                               "効いて見える(複勝残差+1.2pp・z+8.9)のに、その前後の年では消えます"
+                               "(2026年 z+1.7／2016-20年 z+1.7)。📕苦手条件は**両期間で符号が逆**でした。"
+                               "**読み物・話のタネとしてお読みください**（総合スコアには入れていません）。")
                 except Exception as _dbk_e_jp:
                     st.caption(f"db-keiba条件チェックをスキップ: {_dbk_e_jp}")
 

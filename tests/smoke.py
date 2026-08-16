@@ -177,15 +177,15 @@ def main():
 
     def t_elim_stress():
         from core import elim_cross as ec
-        # スト1/スト2フラグ: 点灯するが band(推定複勝率)には算入しない(UNVERIFIED)
-        f = ec.compute_flags(stress1=True, stress2=True)
-        assert 'stress1' in f and 'stress2' in f, "スト1/2点灯"
-        assert ec.FLAG_LABEL['stress1'] == 'スト1' and ec.FLAG_LABEL['stress2'] == 'スト2'
-        assert 'stress1' in ec.UNVERIFIED and 'stress2' in ec.UNVERIFIED, "band非算入"
-        # 検証数はstressを除外(zogen+age8のみ=2)
-        f2 = ec.compute_flags(zogen=20, age=9, stress1=True, stress2=True)
-        assert ec.verified_count(f2) == 2, f"stressはband非算入, got {ec.verified_count(f2)}"
-    check("elim_cross.スト1/スト2(band非算入)", t_elim_stress)
+        # スト2フラグ: 点灯するが band(推定複勝率)には算入しない(UNVERIFIED)
+        f = ec.compute_flags(stress2=True)
+        assert 'stress2' in f, "スト2点灯"
+        assert ec.FLAG_LABEL['stress2'] == 'スト2'
+        assert 'stress2' in ec.UNVERIFIED, "band非算入"
+        # 検証数はstress2を除外(zogen+age8のみ=2)
+        f2 = ec.compute_flags(zogen=20, age=9, stress2=True)
+        assert ec.verified_count(f2) == 2, f"stress2はband非算入, got {ec.verified_count(f2)}"
+    check("elim_cross.スト2(band非算入)", t_elim_stress)
 
     def t_betfilter():
         from core import bet_filter as bf
@@ -704,11 +704,14 @@ def main():
         # 高齢(7歳+): 削除済み(66R台帳で3回中3回的中=逆効果)
         assert '高齢' not in str(dg.danger_veto(ninki=2, surface='芝', sex_age='牡8', top_jockey_swap=True)['reasons']), \
             "高齢は削除済み"
-        # 前走5着以下ソフト理由(検証済 train-1.5/holdout-1.8pp): 単独非表示・硬い危険と算入
-        assert dg.danger_veto(ninki=1, surface='芝', prev_chaku=8)['severity'] == 0, "前走5着以下単独は非表示"
-        _rp5 = dg.danger_veto(ninki=1, surface='芝', prev_chaku=8, top_jockey_swap=True)
-        assert '前走5着以下' in _rp5['reasons'] and _rp5['severity'] == 2, "前走5着以下+硬い危険で算入"
-        assert '前走5着以下' not in dg.danger_veto(ninki=1, surface='芝', prev_chaku=3)['reasons'], "前走4着以内は非該当"
+        # 前走5着以下 / 斤量比≥12.6%: scripts/danger_fav_audit.py の再検証で効果ゼロと判明し削除
+        # (前走5着以下は train+0.55pp / holdout-0.09pp、斤量比は両窓z≒0)。復活させないこと。
+        assert '前走5着以下' not in dg.danger_veto(
+            ninki=1, surface='芝', prev_chaku=8, top_jockey_swap=True)['reasons'], "前走5着以下は削除済み"
+        assert '斤量比' not in ''.join(dg.danger_veto(
+            ninki=1, surface='芝', kinratio=True, top_jockey_swap=True)['reasons']), "斤量比は削除済み"
+        # 前走逃げ: ソフト→硬いへ昇格(train-2.76pp/z-5.6, holdout-3.33pp/z-2.8)
+        assert dg.danger_veto(ninki=1, surface='芝', prev_kyaku='1')['severity'] == 1, "前走逃げは単独で算入"
         assert '⚠' in dg.axis_demote('◎ 60%', r1), "severity1で⚠付記"
         # 半年休み明けはソフト理由: 単独では危険にしない(精度低・NAR誤爆対策)
         assert dg.danger_veto(ninki=1, layoff_days=200)['severity'] == 0, "休み明け単独は危険にしない"
@@ -721,6 +724,34 @@ def main():
         assert '中9週+ローテ' in _r9w['reasons'] and _r9w['severity'] == 2, f"中9週+硬い危険で算入, got {_r9w}"
         assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)['reasons'], \
             "180日+は半年休み明け側(排他)"
+        # 美浦→関西遠征×1-3人気(verified_ensei_east_to_west)
+        # 複勝残差 train-5.00pp(z-6.05)/2024以降-4.55pp(z-3.37)。単独では自動除外しない材料。
+        for _jy in ('07', '08', '09', '10'):        # 中京/京都/阪神/小倉
+            _re = dg.danger_veto(ninki=1, tozai='east', jyo=_jy)
+            assert '美浦→関西遠征' in _re['reasons'], f"美浦→西場{_jy}で発火すべき, got {_re}"
+            assert _re['severity'] == 1 and _re['veto'] is False, \
+                f"遠征単独はseverity1かつveto不可, got {_re}"
+        assert dg.danger_veto(ninki=1, tozai='1', jyo='08')['reasons'], "DB形式tozai='1'も認識"
+        assert dg.danger_veto(ninki=1, tozai='east', jyo='8')['reasons'], "jyoゼロ埋め無しも認識"
+        for _nk in (4, 6, 7, 12):                   # 4人気以降は不安定/効果ゼロ帯なので適用外
+            assert '美浦→関西遠征' not in dg.danger_veto(
+                ninki=_nk, tozai='east', jyo='08')['reasons'], f"{_nk}人気には適用しない"
+        for _jy in ('01', '02', '05', '06'):        # 地元・北海道は対象外
+            assert '美浦→関西遠征' not in dg.danger_veto(
+                ninki=1, tozai='east', jyo=_jy)['reasons'], f"東場/中立{_jy}では発火しない"
+        assert '美浦→関西遠征' not in dg.danger_veto(
+            ninki=1, tozai='west', jyo='05')['reasons'], "西→東(関西馬の東征)には適用しない"
+        assert '美浦→関西遠征' not in dg.danger_veto(
+            ninki=1, tozai=None, jyo='08')['reasons'], "所属不明では発火しない"
+        # 他の危険材料と重なるとseverityが積み上がる(=単独では消さないが合わせ技で警戒)
+        _ren = dg.danger_veto(ninki=1, tozai='east', jyo='08', fillies_race=True)
+        assert _ren['severity'] == 2 and '美浦→関西遠征' in _ren['reasons'], \
+            f"遠征+他材料でseverity2, got {_ren}"
+        # スクレイパ側: 実HTMLの『栗東・宮本』形式(括弧なし)を認識できること
+        from core.scraper import extract_tozai as _etz
+        assert _etz('栗東・宮本') == 'west' and _etz('美浦・田中') == 'east', "中黒形式の所属抽出"
+        assert _etz('西園正都') is None and _etz('東田') is None, "調教師名の東西を誤認しない"
+
         assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=40, top_jockey_swap=True)['reasons'], \
             "63日未満は非該当"
         # ガラス人気馬(単複逆転FADE・検証z-8.5): 上位人気×単勝短い×複勝が帯中央比1.2倍↑=硬い危険
@@ -1032,12 +1063,12 @@ def main():
         np_vzc.write_value_zone_snapshot(rid, rows)
         try:
             h = np_vzc._value_zone_chart_html(rid)
-            assert '強適シート' in h and '<svg' in h, "強適シート散布図ボックスが生成される"
+            assert 'ZONEシート' in h and '<svg' in h, "ZONEシート散布図ボックスが生成される"
             assert h.startswith("<div class='exbox exwide'"), "exwideボックス(横幅66.2%)で生成"
             assert np_vzc._value_zone_chart_html('no_such_race_id') == '', "未保存レースは空"
         finally:
             os.remove(np_vzc._value_zone_path(rid))
-    check("newspaper.value_zone_chart(強適シート散布図)", t_np_value_zone_chart)
+    check("newspaper.value_zone_chart(ZONEシート散布図)", t_np_value_zone_chart)
 
     def t_np_value_zone_chart_wiring():
         # build_newspaper_html: 既定OFF/明示ONで表示が切り替わり、末尾(evidenceの後)に置かれること
@@ -1056,18 +1087,18 @@ def main():
         np_vzw.write_value_zone_snapshot(rid, rows)
         try:
             html_off, _ = np_vzw.build_newspaper_html([rid], {})
-            assert '強適シート' not in html_off, "既定(未指定)ではOFF"
+            assert 'ZONEシート' not in html_off, "既定(未指定)ではOFF"
             html_on, _ = np_vzw.build_newspaper_html(
                 [rid], {'sections': {'value_zone_chart': True}})
-            assert '強適シート' in html_on, "明示ONで表示"
-            assert html_on.index('強適シート（複勝率×回収率の散布図）') \
+            assert 'ZONEシート' in html_on, "明示ONで表示"
+            assert html_on.index('ZONEシート（複勝率×回収率の散布図）') \
                 > html_on.index('複勝率×回収率マップ（ゾーン別）'), \
                 "複勝率×回収率マップ(テーブル版)より後ろ=extras末尾寄りに配置"
         finally:
             for pth in (np_vzw._view_path(rid), np_vzw._value_zone_path(rid)):
                 if os.path.exists(pth):
                     os.remove(pth)
-    check("newspaper.build_newspaper_html(強適シート散布図のON/OFF配線)", t_np_value_zone_chart_wiring)
+    check("newspaper.build_newspaper_html(ZONEシート散布図のON/OFF配線)", t_np_value_zone_chart_wiring)
 
     def t_np_page_format():
         from core import newspaper as np_pf
@@ -1105,8 +1136,11 @@ def main():
         assert np_cf._cell_html('JPower', '52', 0) == '52', "デルタ無しはそのまま"
         assert np_cf._cell_html('BloodStats', '27%(256)', 0) == '27%(256)', "他列の括弧は改行しない"
         # 乗替(JockeyChange)は矢印の後ろで改行
-        assert np_cf._cell_html('JockeyChange', '木幡巧也→丹内', 0) == '木幡巧也→<br>丹内', "乗替は→の後で改行"
-        assert np_cf._cell_html('JockeyChange', '-', 0) == '-', "乗替なしはそのまま"
+        _jc_out = np_cf._cell_html('JockeyChange', '木幡巧也→丹内', 0)
+        assert '→<br>' in _jc_out, "乗替は→の後で改行"
+        assert 'color:#c33' in _jc_out, "乗替は赤テキスト"
+        _jc_dash = np_cf._cell_html('JockeyChange', '-', 0)
+        assert 'color:#1a5fb4' in _jc_dash, "乗替なしは青テキスト"
         # 列スラッグ(CSSクラス)
         assert np_cf._col_slug('Projected Score') == 'col-Projected_Score', "空白は_に畳む"
         assert np_cf._col_slug('Bloodline') == 'col-Bloodline'
@@ -1326,32 +1360,33 @@ def main():
     check("newspaper._vh_html(根拠タグ非表示)", t_vh_html_no_reason_tags)
 
     def t_j5_html_columns():
-        # 🏇騎手係数込みスコア: 内訳/DB条件内訳を表示、強適スコア/騎手込みスコア/騎手込み順位/変動は非表示
+        # 🏇騎手係数込みスコア: 内訳を表示+係数色分け、DB条件は削除済み
         from core import newspaper as np_j5t
         rid = 'smoketest_j5cols'
         rows = [
             {'馬番': 7, '馬名': 'テストG', '騎手': '武豊', '強適スコア': 88.5,
-             '騎手係数': 1.05, '黄金ライン': '🥇42%', 'DB条件': '📗2', '騎手込みスコア': 93.0,
-             '内訳': 'USM108・黄金ライン一致', 'DB条件内訳': '芝1800m得意/連闘は苦手',
+             '騎手係数': 1.05, '係数の意味': '上げる', '黄金ライン': '🥇42%',
+             '騎手込みスコア': 93.0, '内訳': 'USM108・黄金ライン一致',
              '騎手込み順位': 1, '順位変動': '↑2'},
             {'馬番': 3, '馬名': 'テストH', '騎手': '横山武', '強適スコア': 70.0,
-             '騎手係数': 0.98, '黄金ライン': '-', 'DB条件': '-', '騎手込みスコア': 68.6,
-             '内訳': '-', 'DB条件内訳': '-', '騎手込み順位': 2, '順位変動': '→'},
+             '騎手係数': 0.98, '係数の意味': 'やや下げる', '黄金ライン': '-',
+             '騎手込みスコア': 68.6, '内訳': '-',
+             '騎手込み順位': 2, '順位変動': '→'},
         ]
         try:
             np_j5t.write_j5_snapshot(rid, rows, weight=1.0)
             html = np_j5t._j5_html(rid)
-            assert 'USM108・黄金ライン一致' in html and '芝1800m得意' in html, \
-                "内訳/DB条件内訳は表示される"
+            assert 'USM108・黄金ライン一致' in html, "内訳は表示される"
             assert '🥇42%' in html and '1.05' in html, "黄金ライン/騎手係数は表示される"
+            assert 'DB条件' not in html, "DB条件列は削除済み"
+            assert 'color:#e03131' in html, "係数1.05は赤色になる"
+            assert 'color:#1971c2' in html, "係数0.98は青色になる"
             for tag in ('88.5', '93.0', '↑2', '70.0', '68.6'):
                 assert tag not in html, f"非表示にしたはずの値({tag})が残っている"
-            assert '<th>順</th>' not in html and '<th>変動</th>' not in html, \
-                "順位/変動の列見出しが残っている"
         finally:
             if os.path.exists(np_j5t._j5_path(rid)):
                 os.remove(np_j5t._j5_path(rid))
-    check("newspaper._j5_html(内訳/DB条件内訳中心の列構成)", t_j5_html_columns)
+    check("newspaper._j5_html(係数色分け・DB条件削除)", t_j5_html_columns)
 
     def t_bets_html_bet_types():
         # おすすめ買い目: 券種別ON/OFFで表示を絞り込める(3連複/3連単/馬連/馬単/ワイド)
@@ -1699,9 +1734,50 @@ def main():
         assert l3.fit_match(1.0, -1.5) is False
         assert l3.fit_match(0.1, 1.5, threshold=0.3) is None
         assert l3.fit_match(None, 1.5) is None
-        for fn in ('course_avg33', 'horse_fit33', 'race_mid3f_rate', 'race_lap33', 'lap33', 'fit_match'):
+        # fit_distance(2026-08採用): コース平均との距離で○(<=0.5)/△(<=1.0)/''(範囲外)
+        # 検証 scripts/lap33_distance_backtest.py: 人気薄holdoutで該当率74.8%→23.9%、
+        # 残差+1.42pp→+1.83pp。符号一致(旧)は該当馬が多すぎた。
+        assert l3.fit_distance(1.0, 1.2) == '○', "距離0.2は○"
+        assert l3.fit_distance(1.0, 1.5) == '○', "距離0.5は境界で○"
+        assert l3.fit_distance(1.0, 1.8) == '△', "距離0.8は△"
+        assert l3.fit_distance(1.0, 2.0) == '△', "距離1.0は境界で△"
+        assert l3.fit_distance(1.0, 2.5) == '', "距離1.5は範囲外"
+        assert l3.fit_distance(-1.0, -1.2) == '○', "負値同士でも距離で判定"
+        # 符号が違っても距離が近ければ○(符号一致方式との本質的な差)
+        assert l3.fit_distance(0.2, -0.2) == '○', "符号違いでも距離0.4なら○"
+        assert l3.fit_distance(None, 1.0) is None and l3.fit_distance(1.0, None) is None
+        # horse_lap33_value: 好走時平均(placed_avg)を優先、無ければ全走平均へフォールバック
+        assert l3.horse_lap33_value({'placed_avg': 1.5, 'avg_lap33': 0.2}) == 1.5, "好走時優先"
+        assert l3.horse_lap33_value({'placed_avg': None, 'avg_lap33': 0.2}) == 0.2, "無ければ全走平均"
+        assert l3.horse_lap33_value({'placed_avg': None, 'avg_lap33': None}) is None
+        assert l3.horse_lap33_value(None) is None
+        assert (l3.FIT_NEAR, l3.FIT_WIDE) == (0.5, 1.0), "しきい値は原典の±0.5/±1.0"
+        for fn in ('course_avg33', 'horse_fit33', 'race_mid3f_rate', 'race_lap33', 'lap33',
+                   'fit_match', 'fit_distance', 'horse_lap33_value'):
             assert hasattr(l3, fn), f"lap33.{fn} 欠落"
     check("33ラップ理論(lap33)の契約", t_lap33)
+
+    def t_longshot_threshold():
+        # 穴馬しきい値は**常に6**(検証: 4に下げるとVHが人気順に負ける)。
+        # 少頭数×堅いは『相手候補(4-5番人気)』を別枠で返すだけで、穴の定義は動かさない。
+        from core import longshot_threshold as lst
+        for n in (6, 8, 10, 12, 16, 18):
+            th, _ = lst.default_threshold(n_horses=n, odds_list=[1.8, 3.5, 6.0])
+            assert th == 6, f"穴馬しきい値は常に6であるべき ({n}頭で{th})"
+        assert lst.LONGSHOT_MIN == 6
+        assert (lst.COMPANION_LO, lst.COMPANION_HI) == (4, 5)
+        # 少頭数×堅い → 相手候補あり
+        b = lst.companion_band(n_horses=8, odds_list=[1.8, 3.5, 6.0])
+        assert b and b['lo'] == 4 and b['hi'] == 5, f"少頭数×堅いで相手候補, got {b}"
+        # 少頭数でも市場が開いていれば出さない
+        assert lst.companion_band(n_horses=8, odds_list=[5.0, 6.0, 7.0]) is None
+        # 多頭数では堅くても出さない
+        assert lst.companion_band(n_horses=16, odds_list=[1.8, 3.5, 6.0]) is None
+        # ★オッズ未取得は「判定不能」で決め打ちしない(旧実装は4を返す不具合があった)
+        assert lst.is_small_firm(n_horses=8, odds_list=[]) is None, "オッズ無しは判定不能"
+        assert lst.is_small_firm(n_horses=8, odds_list=[2.0]) is None, "3頭未満も判定不能"
+        assert lst.companion_band(n_horses=8, odds_list=[]) is None, "判定不能なら出さない"
+    check("穴馬しきい値/相手候補帯(longshot_threshold)", t_longshot_threshold)
 
     # ── Phase4: DB健全性 ──
     if not args.quick:

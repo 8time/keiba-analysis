@@ -68,7 +68,7 @@ def build_candidates(df, candset):
     candset: 'strong'(前走着差+騎手厩舎の全体成績) / 'cond'(条件特化=当馬場・当コース)
             / 'cond2'(血統×馬場・枠×コース・騎手当コース再挑戦) / 'all'。"""
     # results から不足列のみ取り込み(load_dataにjockey/trainer_codeが入った後は衝突回避のためwakuのみ)
-    need = [c for c in ('jockey_code', 'trainer_code', 'waku') if c not in df.columns]
+    need = [c for c in ('jockey_code', 'trainer_code', 'waku', 'minarai') if c not in df.columns]
     if need:
         con = sqlite3.connect(f'file:{JV_DB}?mode=ro', uri=True, timeout=20)
         jt = pd.read_sql(f"SELECT race_key, umaban, {', '.join(need)} FROM results", con)
@@ -176,6 +176,36 @@ def build_candidates(df, candset):
         df['cand_waku_dist_t3'] = df['_b']
         df.drop(columns=['_dbk4', '_tj', '_jsd', '_wd', '_b'], inplace=True)
         cands += ['cand_trainer_jockey_t3', 'cand_jockey_surf_dist_win', 'cand_waku_dist_t3']
+
+    if candset in ('cond7', 'all'):
+        # 第3イテレーション: 「減点方式」資料(The Sculptor's Funnel)が挙げる消し条件のうち、
+        # 台帳に検証記録が無い4項目だけを候補化する(既に検証済みのものは入れない:
+        # 前走着差=[[verified_prior_margin_debunk]] / 距離適性=[[verified_distance_affinity_pricedin]] /
+        # 中3週=[[verified_axis_ng_claims]] / 大型馬=[[verified_paddock_weight]] は再投入しない)。
+        s7 = df[['ketto_num', 'day', 'race_num', 'futan', 'minarai']].sort_values(
+            ['ketto_num', 'day', 'race_num'])
+        kt7 = s7['ketto_num']
+        fut = pd.to_numeric(s7['futan'], errors='coerce')
+        prev_fut = fut.groupby(kt7, sort=False).shift(1)
+
+        # ① 減量騎手→通常騎手の実質斤量増(資料: 前走☆▲△なら今回は実質+2kgの負担)
+        #    results.minarai は見習い区分コード。0/空以外なら減量騎手。
+        mina = pd.to_numeric(s7['minarai'], errors='coerce').fillna(0)
+        df['cand_minarai_lost'] = ((mina.groupby(kt7, sort=False).shift(1) > 0)
+                                   & (mina == 0)).astype(float).reindex(df.index)
+        # ② 今回斤量 − 前走斤量(資料: 3kg以上増で減点。閾値は木に決めさせる)
+        df['cand_futan_diff'] = (fut - prev_fut).reindex(df.index)
+        # ③ 前走の斤量そのもの(資料: 前走57.5kg=575以上を背負っていた過酷さ)
+        df['cand_prev_futan'] = prev_fut.reindex(df.index)
+        # ④ 休み明けからの使い詰め戦数(資料: 休み明け5〜6戦目で上積み無し)
+        #    前走間隔90日以上を"休み明け"とみなし、そこから1,2,3…と数え直す連番。
+        dt7 = pd.to_datetime(s7['day'].astype(str), format='%Y%m%d', errors='coerce')
+        gap7 = (dt7 - dt7.groupby(kt7, sort=False).shift(1)).dt.days
+        blk = (gap7.isna() | (gap7 >= 90)).astype(int).groupby(kt7, sort=False).cumsum()
+        df['cand_runs_since_rest'] = (blk.groupby([kt7, blk], sort=False)
+                                      .cumcount() + 1).reindex(df.index)
+        cands += ['cand_minarai_lost', 'cand_futan_diff', 'cand_prev_futan',
+                  'cand_runs_since_rest']
 
     if candset in ('cond6', 'all'):
         # 血統系(未検証の角度): 母父(BMS)×馬場/距離・ニックス(父×母父)。父×馬場はcond2で却下済み。
@@ -322,7 +352,7 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'cond6', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'cond6', 'cond7', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
                          'cond2=血統×馬場・枠×コース・騎手当コース / '
                          'cond3=騎手厩舎×距離帯・昇級代理 / '

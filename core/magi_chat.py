@@ -246,16 +246,20 @@ def _gen(prompt, api_key, system=None, temperature=0.6, max_tokens=400):
     import google.genai as genai
     from google.genai import types as gt
     client = genai.Client(api_key=api_key)
-    cfg_kwargs = dict(temperature=temperature, max_output_tokens=max_tokens)
+    cfg_kwargs = dict(max_output_tokens=max_tokens)
     if system:
         cfg_kwargs['system_instruction'] = system
-    cfg = gt.GenerateContentConfig(**cfg_kwargs)
-    try:
-        cfg.thinking_config = gt.ThinkingConfig(thinking_budget=0)
-    except Exception:
-        pass
     last = None
     for model in ('gemini-2.5-flash-lite', 'gemini-2.5-flash'):
+        # 思考設定はモデル世代で受け付ける引数が違い(2.5系=thinking_budget /
+        # 3.5以降=thinking_level・逆を渡すと400)、フォールバックで世代が混ざりうるため
+        # cfgをモデルごとに作る。詳細は core/gemini_compat.py
+        from core import gemini_compat as _gc
+        # temperatureも効く世代(2.5系)にだけ渡す
+        cfg = _gc.apply_thinking(
+            gt.GenerateContentConfig(**cfg_kwargs,
+                                     **_gc.sampling_kwargs(model, temperature=temperature)),
+            gt, model, level='MINIMAL')
         try:
             resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
             return (resp.text or '').strip()

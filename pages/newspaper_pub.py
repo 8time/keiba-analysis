@@ -136,82 +136,6 @@ def render_scan_digest_ui(rows, key_prefix='sd'):
             components.html(out['html'], height=560, scrolling=True)
 
 
-def _render_conclusion_cards(sel_rids):
-    """⑤½ 結論カード: 全レースの結論だけを1枚に圧縮したPDF/HTMLを発行。"""
-    st.subheader("🎯 結論カード（買い目まとめ）")
-    st.caption("フル新聞とは別に、**結論だけ**を1レース1カードに圧縮した出力。"
-               "軸・相手・穴・危険・買い目のみ。分析詳細は含みません。"
-               "noteの有料記事やLINE配信で「今日の推奨」として使えます。")
-
-    if not sel_rids:
-        st.info("上の①で収録レースを選んでください。")
-        return
-
-    _cc1, _cc2 = st.columns([2, 1])
-    _cc_title = _cc1.text_input("カード題字", value="今日の結論", key="cc_title")
-    _cc_mono = _cc2.checkbox("モノクロ", value=False, key="cc_mono")
-    _cc_excl = st.checkbox("スキャン新聞に載っているレースは除外する",
-                           value=True, key="cc_excl_scan",
-                           help="🔍スキャン新聞（ダイジェスト）に既に載っているレースを結論カードから外し、"
-                                "商品として重複しないようにします。")
-
-    # 除外対象のプレビュー
-    _cc_targets = list(sel_rids)
-    if _cc_excl:
-        try:
-            _sd = np_mod.load_scan_digest() or {}
-            _scan_ids = {str(r.get('id')) for r in (_sd.get('rows') or []) if r.get('id')}
-            _dropped = [r for r in sel_rids if str(r) in _scan_ids]
-            _cc_targets = [r for r in sel_rids if str(r) not in _scan_ids]
-            if _dropped:
-                st.caption(f"スキャン新聞と重複する {len(_dropped)}R を除外 → "
-                           f"結論カードは **{len(_cc_targets)}R** を収録")
-        except Exception:
-            pass
-
-    if st.button(f"🎯 結論カードを発行（{len(_cc_targets)}R）", type="primary", key="cc_publish",
-                 disabled=not _cc_targets):
-        with st.spinner("結論カードを生成中…"):
-            html, issued = np_mod.build_conclusion_card_html(
-                sel_rids, {'title': _cc_title, 'mono': _cc_mono, 'exclude_scan': _cc_excl})
-            if not html:
-                st.error("結論データがありません（合議または買い目のスナップショットが必要です／"
-                         "またはスキャン新聞と全て重複して除外されました）。")
-                return
-            _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-            out = {'html': html, 'issued': issued, 'fname': f"conclusion_{_ts}",
-                   'pdf': None, 'pdf_err': None}
-            try:
-                out['pdf'] = np_mod.html_to_pdf(html, landscape=False, scale=1.0,
-                                                 page_numbers=False)
-            except Exception as e:
-                out['pdf_err'] = f"{type(e).__name__}: {e}"
-            st.session_state['cc_out'] = out
-
-    out = st.session_state.get('cc_out')
-    if out:
-        issued = out['issued']
-        if out['pdf']:
-            _mc = st.columns(3)
-            _mc[0].metric("PDFサイズ", f"{len(out['pdf']) / 1024:.0f} KB")
-            _mc[1].metric("ページ数", np_mod.pdf_page_count(out['pdf']) or '—')
-            _mc[2].metric("収録レース", f"{len(issued)}R")
-            _dc1, _dc2 = st.columns(2)
-            _dc1.download_button("📥 結論カードPDF", data=out['pdf'],
-                                 file_name=out['fname'] + '.pdf', mime="application/pdf",
-                                 type="primary", use_container_width=True, key="cc_dl_pdf")
-            _dc2.download_button("🌐 HTML版", data=out['html'].encode('utf-8'),
-                                 file_name=out['fname'] + '.html', mime="text/html",
-                                 use_container_width=True, key="cc_dl_html")
-        else:
-            st.error(f"PDF変換に失敗: {out.get('pdf_err')}")
-            st.download_button("🌐 HTML版をダウンロード", data=out['html'].encode('utf-8'),
-                               file_name=out['fname'] + '.html', mime="text/html", key="cc_dl_html2")
-        with st.expander("👀 プレビュー", expanded=True):
-            import streamlit.components.v1 as components
-            components.html(out['html'], height=520, scrolling=True)
-
-
 def _render_track_record(sel_rids, races):
     """⑦ 成績台帳セクション: 予測登録・結果取得・成績表示。"""
     from core import track_record as tr
@@ -367,6 +291,213 @@ def _render_track_record(sel_rids, races):
         st.info("台帳にレースが登録されていません。上の「➕ レースを台帳に登録」から始めてください。")
 
 
+def _render_batch_analyze():
+    """⚡ 一括解析セクション(🔍スキャン結果 or 📅日付指定)。
+
+    1レースずつ🏠SRAを手で開く代わりに、まとめて自動解析する。
+    実処理は別プロセス(scripts/batch_sra_publish.py)で走らせ、ここは
+    進捗ファイル(core.batch_analyze.read_status)を読んで表示するだけにする。
+    ページ内で同期実行すると30〜60分ページが固まり、さらに自動化が
+    同じStreamlitサーバへ接続するため自己ブロックの危険がある。
+    """
+    import time as _t
+    from core import batch_analyze as _ba
+
+    st.subheader("⚡ まとめて解析（新聞のもとを作る）")
+    status = _ba.read_status()
+    running = _ba.is_running()
+
+    # ── 実行中: 進捗表示に専念する ──
+    if running:
+        i = status.get('i', 0)
+        n = status.get('n', 0) or 1
+        state = status.get('state', 'running')
+        _phase = '📰 新聞を組版中…' if state == 'publishing' else '🏇 解析中…'
+        st.progress(min(i / n, 1.0), text=f"{_phase} {i}/{status.get('n', 0)}R")
+        _m = st.columns(4)
+        _m[0].metric("完了", status.get('ok', 0))
+        _m[1].metric("スキップ", status.get('skipped', 0))
+        _m[2].metric("失敗", status.get('failed', 0))
+        _el = int(_t.time() - (status.get('started_ts') or _t.time()))
+        _m[3].metric("経過", f"{_el // 60}分{_el % 60}秒")
+        if status.get('lines'):
+            st.code('\n'.join(status['lines'][-10:]), language=None)
+        _bc = st.columns([1, 1, 3])
+        if _bc[0].button("⏹ 中止", key="np_batch_stop"):
+            _ba.stop_batch()
+            st.rerun()
+        if _bc[1].button("🔄 更新", key="np_batch_refresh"):
+            st.rerun()
+        st.caption("解析はこのページを閉じても裏で続きます。1レースあたり約1〜2分が目安です。")
+        _t.sleep(3)
+        st.rerun()
+        return
+
+    # ── 直前の実行結果 ──
+    if status and status.get('state') in ('done', 'error', 'stopped'):
+        _st = status['state']
+        _msg = (f"✅ 完了: {status.get('ok', 0)}R解析 / "
+                f"{status.get('skipped', 0)}R既存 / {status.get('failed', 0)}R失敗")
+        if _st == 'done':
+            st.success(_msg)
+        elif _st == 'stopped':
+            st.warning("⏹ 中止しました。" + _msg)
+        else:
+            st.error(f"❌ エラー: {status.get('error')}")
+        _pub = status.get('publish') or {}
+        if _pub.get('pdf_path') and os.path.exists(_pub['pdf_path']):
+            try:
+                with open(_pub['pdf_path'], 'rb') as f:
+                    st.download_button(f"📥 発行された新聞をダウンロード（{_pub.get('n', '?')}R）",
+                                       data=f.read(),
+                                       file_name=os.path.basename(_pub['pdf_path']),
+                                       mime="application/pdf", type="primary",
+                                       key="np_batch_dl")
+            except Exception:
+                pass
+        if _st in ('done', 'stopped'):
+            st.caption("解析したレースは下の「① 収録レースを選ぶ」にも出ています。"
+                       "列や用紙を変えて発行し直したい時は、いつも通り①②③をお使いください"
+                       "（出てこない時は①の「🔄 一覧を更新」を押してください）。")
+        if status.get('lines'):
+            with st.expander("実行ログを見る"):
+                st.code('\n'.join(status['lines']), language=None)
+        if st.button("🗑 この結果を消す", key="np_batch_clear"):
+            _ba.clear_status()
+            _races_cached.clear()
+            st.rerun()
+
+    # ── どのレースを解析するか ──
+    _src = st.radio("解析するレースの選び方",
+                    ['🔍 スキャン結果から（Race Scannerで絞ったレース）', '📅 日付を指定して全レース'],
+                    key="np_batch_src", horizontal=True)
+    use_scan = _src.startswith('🔍')
+
+    targets = []       # [{'race_id','venue','label'}]
+    date_str = datetime.date.today().strftime('%Y%m%d')
+
+    if use_scan:
+        # スキャン結果はディスク(data/newspaper/scan_digest.json)から毎回読み直す。
+        # 「新しくスキャンしたのに古い結果が出る」時はStreamlitがモジュールを
+        # プロセス内キャッシュしているのが原因なので、日時を必ず出して気付けるようにする。
+        _sd = np_mod.load_scan_digest()
+        if not _sd or not _sd.get('rows'):
+            st.info("スキャン結果がまだありません。🔍 Race Scanner (Batch) でスキャンしてから"
+                    "ここに戻ってください。")
+            return
+        _rows = _sd['rows']
+        _sd_dt = datetime.datetime.fromtimestamp(_sd.get('ts') or 0)
+        _sd_ts = _sd_dt.strftime('%m/%d %H:%M')
+        _age_min = (datetime.datetime.now() - _sd_dt).total_seconds() / 60
+        _rc1, _rc2 = st.columns([3, 1])
+        _rc1.caption(f"読み込んだスキャン結果: **{_sd_ts}**（{_age_min / 60:.1f}時間前）　全{len(_rows)}R"
+                     f"　対象日 {str((_rows[0] or {}).get('date_val') or '?')}")
+        if _rc2.button("🔄 スキャン結果を再読込", key="np_batch_reload",
+                       help="スキャンしたのに古い結果が出る時に押してください"):
+            st.rerun()
+        if _age_min > 60 * 12:
+            st.warning("⚠ このスキャン結果は12時間以上前のものです。"
+                       "新しくスキャンしたのにここが古いままなら、Streamlitを完全再起動"
+                       "（Ctrl+C → `streamlit run app.py`）してください。"
+                       "ブラウザのリロードや Rerun では直りません。")
+
+        _f1, _f2 = st.columns([1.4, 1.6])
+        _gate_lbl = _f1.radio("どのレースを解析する？",
+                              ['✅買えるレースだけ', '✅買える＋🟡軸注意', 'スキャンした全レース'],
+                              key="np_batch_gate",
+                              help="⛔見送りレースまで解析すると時間がぶんだけ長くなります")
+        _lean_lbl = _f2.radio("決着タイプ",
+                              ['すべて', '②穴妙味（荒れ・大穴）のみ', '本線向きのみ（荒れ回避）'],
+                              key="np_batch_lean", horizontal=True)
+        _gate_ok = {'✅買えるレースだけ': {'buy'},
+                    '✅買える＋🟡軸注意': {'buy', 'axis_warn'},
+                    'スキャンした全レース': None}[_gate_lbl]
+        _lean_want = {'すべて': None, '②穴妙味（荒れ・大穴）のみ': '②穴妙味向き',
+                      '本線向きのみ（荒れ回避）': '本線向き'}[_lean_lbl]
+        for r in _rows:
+            rid = str(r.get('id') or '')
+            if not rid:
+                continue
+            if _gate_ok is not None and str(r.get('gate') or '') not in _gate_ok:
+                continue
+            if _lean_want and np_mod._lean_of(r) != _lean_want:
+                continue
+            _vn = np_mod.VENUE_BY_CODE.get(rid[4:6], '?')
+            _rno = rid[-2:].lstrip('0') or '?'
+            _gi = {'buy': '✅', 'axis_warn': '🟡', 'skip': '⛔'}.get(str(r.get('gate') or ''), '')
+            targets.append({
+                'race_id': rid, 'venue': _vn,
+                'label': f"{_gi}{_vn}{_rno}R {r.get('title') or ''}".strip(),
+            })
+            if r.get('date_val'):
+                date_str = str(r['date_val'])[:8] or date_str
+    else:
+        _d = st.date_input("解析する開催日", value=datetime.date.today(), key="np_batch_date")
+        date_str = _d.strftime('%Y%m%d')
+        _lk = f"np_batch_list_{date_str}"
+        if st.button("🔍 この日のレースを調べる", key="np_batch_fetch"):
+            with st.spinner("開催レースを取得中…"):
+                try:
+                    st.session_state[_lk] = _ba.fetch_day_race_ids(date_str)
+                except Exception as e:
+                    st.session_state[_lk] = []
+                    st.error(f"レース一覧の取得に失敗しました: {e}")
+        _day = st.session_state.get(_lk)
+        if _day is None:
+            st.info("まず「🔍 この日のレースを調べる」を押すと、その日の開催レースが出ます。")
+            return
+        if not _day:
+            st.warning("この日には開催レースが見つかりませんでした（開催がない日かもしれません）。")
+            return
+        _all_venues = sorted({t.get('venue') or '?' for t in _day})
+        _vsel = st.multiselect("開催場をしぼる（空欄=すべて）", _all_venues,
+                               default=[], key="np_batch_venues")
+        targets = [{'race_id': t['race_id'], 'venue': t.get('venue') or '?',
+                    'label': f"{t.get('venue', '')}{t.get('race_num', '')}"}
+                   for t in _day if not _vsel or t.get('venue') in _vsel]
+
+    if not targets:
+        st.warning("条件に合うレースがありません。上の絞り込みをゆるめてください。")
+        return
+
+    # ── オプション ──
+    _o1, _o2 = st.columns(2)
+    do_elim = _o1.checkbox("消去フィルターも実行（✅残し/🧹消しを紙面に載せる）",
+                           value=True, key="np_batch_elim",
+                           help="OFFにすると速くなりますが、紙面の✅🛟🧹バッジが付きません")
+    do_publish = _o1.checkbox("解析が終わったら新聞も自動発行する",
+                              value=True, key="np_batch_pub",
+                              help="②紙面設定で保存した設定を使ってPDFを作ります")
+    skip_existing = _o2.checkbox("解析済みは飛ばす", value=True, key="np_batch_skip",
+                                 help="OFFにすると全レースを解析し直します（時間がかかります）")
+    with_signal = _o2.checkbox("🔬当日シグナルも取得（J◎/T◎/T●）", value=True,
+                               key="np_batch_signal",
+                               help="騎手◎・厩舎◎●を取得して強適スコアの🔬列に反映します。"
+                                    "当日全レースを走査しますが、結果は日付ごとに保存されるので"
+                                    "実際に走るのはその日の最初の1レースだけです（中央のみ）。")
+
+    _new = sum(1 for t in targets if not all(_ba._has_snapshots(t['race_id'])))
+    _est = max(1, (_new if skip_existing else len(targets))) * (2 if do_elim else 1.5)
+    st.caption(f"対象 **{len(targets)}R**（うち未解析 {_new}R）／ 所要目安 **約{int(_est)}分**")
+    with st.expander(f"対象レースを確認する（{len(targets)}R）"):
+        st.write('　/　'.join(t['label'] for t in targets))
+
+    if st.button(f"⚡ 一括解析を開始（{len(targets)}R）", type="primary",
+                 key="np_batch_start"):
+        pid = _ba.start_batch_subprocess(
+            date_str=date_str,
+            race_ids=[t['race_id'] for t in targets],
+            skip_existing=skip_existing,
+            sra_only=not do_elim, publish=do_publish,
+            with_signal=with_signal)
+        if pid:
+            st.success(f"解析を開始しました（PID {pid}）。進捗をここに表示します。")
+            _t.sleep(1)
+            st.rerun()
+        else:
+            st.error("解析プロセスの起動に失敗しました。")
+
+
 def render():
     st.title("📰 新聞発行")
     st.caption("🏠 Single Race Analysis で解析したレースを、A4のPDF競馬新聞として発行します。"
@@ -375,6 +506,14 @@ def render():
                "解析スナップショットが無い過去レースは代表列で再構成します。")
 
     prefs = _load_prefs()
+
+    # ⚡ 一括解析(1レースずつ🏠を開かずに済ませる導線)。
+    # 「発行できるレースがまだありません」でreturnする前に置く:
+    # 未解析ゼロの状態こそ、この機能が最も必要とされる場面のため。
+    with st.expander("⚡ スキャン結果をまとめて解析する（1レースずつ🏠を開かなくて済みます）",
+                     expanded=False):
+        _render_batch_analyze()
+    st.divider()
 
     # ────────────────── ① 収録レース選択 ──────────────────
     st.subheader("① 収録レースを選ぶ")
@@ -547,26 +686,38 @@ def render():
             "除外する列（紙面に載せない列）", options=list(_colpairs.keys()),
             default=_excl_saved, format_func=lambda c: _colpairs.get(c, c), key="np_excl")
 
+        _has_nar = any(str(r).startswith('NAR') or
+                       (len(str(r)) >= 6 and str(r)[4:6] > '10')
+                       for r in sel_rids)
+        _nar_tag = ' 🌟' if _has_nar else ''
+        if _has_nar:
+            st.info("🌟 地方競馬レースが含まれています。テーブル列が中央より少ないため、"
+                    "🌟マークのセクションをONにすると紙面の情報量が増えます。")
         st.markdown("**セクション**")
         _s = st.columns(4)
         sec_cover = _s[0].checkbox("表紙(目次+凡例)", value=bool(prefs.get('sec_cover', True)), key="np_s_cover")
-        sec_cv = _s[1].checkbox("合議カード(本命/相手/押さえ/穴/切る)",
+        sec_digest = _s[1].checkbox(f"📋レースダイジェスト(結論+展開+波乱度){_nar_tag}",
+                                    value=bool(prefs.get('sec_digest', _has_nar)), key="np_s_digest",
+                                    help="馬柱の前に本命◎/相手○/押さえ▲/穴を総合点つきで一覧表示。"
+                                         "地方版では紙面の情報量を補います")
+        sec_cv = _s[2].checkbox(f"合議カード(本命/相手/穴/切る){_nar_tag}",
                                 value=bool(prefs.get('sec_cv', True)), key="np_s_cv")
-        sec_buy = _s[2].checkbox("買い目メタ(点数/合成オッズ/残し馬)",
-                                 value=bool(prefs.get('sec_buy', True)), key="np_s_buy")
         sec_gate = _s[3].checkbox("Gate判定バッジ(買い/見送り)",
                                   value=bool(prefs.get('sec_gate', True)), key="np_s_gate")
         _s2 = st.columns(4)
-        sec_hplus = _s2[0].checkbox("予想ヘッダー(荒れ予報/妙味度/軸候補/危険人気馬)",
+        sec_buy = _s2[0].checkbox("買い目メタ(点数/合成オッズ/残し馬)",
+                                  value=bool(prefs.get('sec_buy', True)), key="np_s_buy")
+        sec_hplus = _s2[1].checkbox(f"予想ヘッダー(荒れ予報/妙味度/軸候補/危険人気馬){_nar_tag}",
                                     value=bool(prefs.get('sec_hplus', True)), key="np_s_hplus")
-        sec_bets = _s2[1].checkbox("おすすめ買い目(3連複/3連単/馬連馬単/ワイド)",
+        sec_bets = _s2[2].checkbox(f"おすすめ買い目(3連複/3連単/馬連馬単/ワイド){_nar_tag}",
                                    value=bool(prefs.get('sec_bets', True)), key="np_s_bets",
                                    help="SRAで各エンジンを開いた時の買い目を自動保存→紙面化。未生成のレースは非表示")
-        sec_pace = _s2[2].checkbox("展開・隊列(直線到達想定+AI照合💀)",
+        sec_pace = _s2[3].checkbox("展開・隊列(直線到達想定+AI照合💀)",
                                    value=bool(prefs.get('sec_pace', True)), key="np_s_pace")
-        sec_odds = _s2[3].checkbox("オッズ動向(朝一↔直前)",
-                                   value=bool(prefs.get('sec_odds', True)), key="np_s_odds",
-                                   help="オッズ記録(📥/常駐ランナー)があるレースのみ表示")
+        _s2b = st.columns(4)
+        sec_odds = _s2b[0].checkbox("オッズ動向(朝一↔直前)",
+                                    value=bool(prefs.get('sec_odds', True)), key="np_s_odds",
+                                    help="オッズ記録(📥/常駐ランナー)があるレースのみ表示")
         if sec_bets:
             st.caption("↳ おすすめ買い目の券種を選択")
             _bt = st.columns(5)
@@ -611,13 +762,13 @@ def render():
                                       "SRAでそのレースを解析した時の表示内容（騎手影響率スライダーの値ごと）"
                                       "をそのまま載せます。SRAで開いていないレースには出ません。")
         _s5 = st.columns(4)
-        sec_devth = _s5[0].checkbox("🧠開発者の予想プロセス(思考の見える化)",
+        sec_devth = _s5[0].checkbox(f"🧠開発者の予想プロセス(思考の見える化){_nar_tag}",
                                     value=bool(prefs.get('sec_devth', True)), key="np_s_devth",
                                     help="①〜⑧の思考プロセス(何を根拠にどう判断したか)をそのまま紙面化。"
                                          "新しい予想を作るのではなく、上の合議カードと同じ結論に至った"
                                          "考え方の順番を見せるだけです。🏠SRAでそのレースを解析していないと"
                                          "出ません。")
-        sec_ai_commentary = _s5[1].checkbox("🎭AIコメント欄(4-6人格・要API課金)",
+        sec_ai_commentary = _s5[1].checkbox(f"🎭AIコメント欄(4-6人格・要API課金){_nar_tag}",
                                             value=bool(prefs.get('sec_ai_commentary', False)),
                                             key="np_s_aicom",
                                             help="合議結果(本命/相手/穴/消し)を4-6人格が解説する読み物欄。"
@@ -630,7 +781,7 @@ def render():
                                          help="🏠SRAの散布図(①勝ちゾーン等)をテーブル形式で紙面化。"
                                               "図ではなく表にすることでPDF生成コストを抑えています。"
                                               "🏠SRAでそのレースを解析していないと出ません。")
-        sec_value_zone_chart = _s5[3].checkbox("📊強適シート散布図(図版・既定OFF)",
+        sec_value_zone_chart = _s5[3].checkbox("📊ZONEシート散布図(図版・既定OFF)",
                                                value=bool(prefs.get('sec_value_zone_chart', False)),
                                                key="np_s_vzone_chart",
                                                help="複勝率×回収率マップと同じデータを図(散布図)で"
@@ -698,7 +849,8 @@ def render():
                 'page_per_race': page_per_race, 'keep_table': keep_table,
                 'mono': mono, 'page_numbers': page_numbers,
                 'exclude_cols': exclude_cols,
-                'sec_cover': sec_cover, 'sec_cv': sec_cv, 'sec_buy': sec_buy, 'sec_gate': sec_gate,
+                'sec_cover': sec_cover, 'sec_digest': sec_digest,
+                'sec_cv': sec_cv, 'sec_buy': sec_buy, 'sec_gate': sec_gate,
                 'sec_hplus': sec_hplus, 'sec_bets': sec_bets, 'sec_pace': sec_pace,
                 'sec_odds': sec_odds, 'sec_elim': sec_elim, 'sec_vh': sec_vh,
                 'sec_evidence': sec_evidence, 'sec_pci': sec_pci,
@@ -725,7 +877,7 @@ def render():
         'exclude_cols': exclude_cols, 'page_per_race': page_per_race,
         'keep_table': keep_table, 'mono': mono,
         'page_numbers': page_numbers, 'footer_text': footer_text,
-        'sections': {'cover': sec_cover, 'consensus': sec_cv,
+        'sections': {'cover': sec_cover, 'digest': sec_digest, 'consensus': sec_cv,
                      'buymeta': sec_buy, 'gate': sec_gate,
                      'header_plus': sec_hplus, 'bets': sec_bets, 'pace': sec_pace,
                      'odds_moves': sec_odds, 'elim': sec_elim, 'vh': sec_vh,
@@ -852,9 +1004,223 @@ def render():
                                file_name=f"races_all_{datetime.date.today().strftime('%Y%m%d')}.csv",
                                mime="text/csv", key="np_dl_csv_all")
 
-    # ────────────────── ⑤½ 結論カード（1レース1枚の結論圧縮版） ──────────────────
+    # ────────────────── ⑤b 初心者競馬新聞（実験） ──────────────────
     st.divider()
-    _render_conclusion_cards(sel_rids)
+    st.subheader("🔰 初心者競馬新聞（実験版）")
+    st.caption("競馬初心者の方向けに、専門用語を減らして◎○▲☆の印と"
+               "スコアバー・かんたん買い目ガイドで構成したシンプルな新聞です。"
+               "上の①で選んだレースが対象になります。既存の強適競馬新聞とは別の紙面です。")
+
+    _bg_c1, _bg_c2 = st.columns([2, 1])
+    _bg_title = _bg_c1.text_input("新聞のタイトル", value="かんたん競馬新聞",
+                                   key="bg_title")
+    _bg_sub = _bg_c2.text_input("サブタイトル（空欄=今日の日付）", value="",
+                                 key="bg_sub")
+
+    if st.button(f"🔰 初心者新聞を発行する（{len(sel_rids)}R）", type="secondary",
+                 disabled=not sel_rids, key="bg_publish"):
+        with st.spinner("初心者向け紙面を組版中…"):
+            bg_opts = {'title': _bg_title, 'subtitle': _bg_sub}
+            bg_html, bg_issued = np_mod.build_beginner_newspaper_html(sel_rids, bg_opts)
+            if not bg_html:
+                st.error("紙面を作れませんでした（選択レースのデータが読めません）。")
+            else:
+                _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+                bg_out = {'html': bg_html, 'issued': bg_issued,
+                          'fname': f"beginner_shimbun_{_ts}",
+                          'pdf': None, 'pdf_err': None}
+                try:
+                    bg_out['pdf'] = np_mod.html_to_pdf(
+                        bg_html, landscape=False, scale=1.0, page_numbers=True)
+                except Exception as e:
+                    bg_out['pdf_err'] = f"{type(e).__name__}: {e}"
+                st.session_state['bg_out'] = bg_out
+
+    bg_out = st.session_state.get('bg_out')
+    if bg_out:
+        if bg_out['pdf']:
+            _bgm = st.columns(3)
+            _bgm[0].metric("PDFサイズ", f"{len(bg_out['pdf']) / 1024:.0f} KB")
+            _bgm[1].metric("ページ数", np_mod.pdf_page_count(bg_out['pdf']) or '—')
+            _bgm[2].metric("収録レース", f"{len(bg_out['issued'])}R")
+            _bgd1, _bgd2 = st.columns(2)
+            _bgd1.download_button("📥 PDFをダウンロード", data=bg_out['pdf'],
+                                  file_name=bg_out['fname'] + '.pdf', mime="application/pdf",
+                                  type="primary", use_container_width=True, key="bg_dl_pdf")
+            _bgd2.download_button("🌐 HTML版", data=bg_out['html'].encode('utf-8'),
+                                  file_name=bg_out['fname'] + '.html', mime="text/html",
+                                  use_container_width=True, key="bg_dl_html")
+        else:
+            st.error(f"PDF変換に失敗: {bg_out.get('pdf_err')}")
+            st.download_button("🌐 HTML版をダウンロード", data=bg_out['html'].encode('utf-8'),
+                               file_name=bg_out['fname'] + '.html', mime="text/html",
+                               key="bg_dl_html2")
+        with st.expander("👀 プレビュー", expanded=True):
+            import streamlit.components.v1 as components
+            components.html(bg_out['html'], height=640, scrolling=True)
+
+    # ────────────────── ⑤c 地方競馬(NAR)新聞 ──────────────────
+    st.divider()
+    st.subheader("🏇 地方競馬(NAR)かんたん新聞")
+    st.caption("地方競馬の出走表を keiba.go.jp から取得し、"
+               "初心者向けの◎○▲☆印つき新聞を発行します。"
+               "平日の地方開催に対応しています。")
+
+    from core import nar_scraper as nar
+
+    _nar_c1, _nar_c2 = st.columns([1, 1])
+    _nar_date = _nar_c1.date_input(
+        "開催日", value=datetime.date.today(), key="nar_date")
+    _nar_date_str = _nar_date.strftime('%Y/%m/%d')
+
+    if 'nar_venues' not in st.session_state:
+        st.session_state['nar_venues'] = None
+    if 'nar_fetched_rids' not in st.session_state:
+        st.session_state['nar_fetched_rids'] = []
+
+    if _nar_c2.button("🔍 開催場を検索", key="nar_search_venues"):
+        with st.spinner("keiba.go.jp で開催場を検索中…"):
+            nar.reset_session()
+            venues = nar.fetch_today_venues(_nar_date_str)
+            st.session_state['nar_venues'] = venues
+            st.session_state['nar_fetched_rids'] = []
+
+    _nar_venues = st.session_state.get('nar_venues')
+    if _nar_venues:
+        venue_labels = [f"{v['venue']}（{v['baba_code']}）" for v in _nar_venues]
+        _sel_venues = st.multiselect(
+            f"開催場を選択（{len(_nar_venues)}場開催）",
+            options=range(len(_nar_venues)),
+            default=list(range(len(_nar_venues))),
+            format_func=lambda i: venue_labels[i],
+            key="nar_sel_venues")
+
+        _nar_mc1, _nar_mc2 = st.columns([1, 1])
+        _nar_max_r = _nar_mc1.number_input(
+            "取得レース数（場ごとの上限）", min_value=1, max_value=12,
+            value=12, key="nar_max_races")
+        _nar_mode = _nar_mc2.radio(
+            "新聞の種類",
+            options=["通常版（過去走つき表形式）", "初心者版（◎印+スコアバー）"],
+            index=0, key="nar_mode", horizontal=True)
+        _nar_is_full = _nar_mode.startswith("通常")
+
+        if st.button(f"📥 出走表を取得して新聞データを作成",
+                     type="secondary",
+                     disabled=not _sel_venues, key="nar_fetch"):
+            selected = [_nar_venues[i] for i in _sel_venues]
+            # 騎手リーディングデータを自動取得(キャッシュ有効なら即返る)
+            with st.spinner("騎手リーディングデータを確認中…"):
+                try:
+                    jstats = nar.fetch_nar_jockey_stats()
+                    if jstats:
+                        st.toast(f"騎手データ: {len(jstats)}人のリーディング情報を読み込み済み")
+                except Exception:
+                    pass
+            nar.reset_session()
+            fetched_rids = []
+            _prog = st.progress(0, text="出走表を取得中…")
+            total = len(selected) * _nar_max_r
+            done = 0
+            for vi, venue in enumerate(selected):
+                races = nar.fetch_race_list(_nar_date_str, venue['baba_code'])
+                if not races:
+                    done += _nar_max_r
+                    continue
+                for r in races[:_nar_max_r]:
+                    _prog.progress(
+                        min(done / max(total, 1), 1.0),
+                        text=f"{venue['venue']} R{r['race_no']} を取得中…")
+                    entry = nar.fetch_entry_table(
+                        _nar_date_str, venue['baba_code'], r['race_no'])
+                    if entry:
+                        rid = nar.save_nar_for_newspaper(entry,
+                                                         full=_nar_is_full)
+                        if rid:
+                            fetched_rids.append(rid)
+                    done += 1
+            _prog.progress(1.0, text="完了")
+            st.session_state['nar_fetched_rids'] = fetched_rids
+            st.session_state['nar_is_full'] = _nar_is_full
+            st.success(f"{len(fetched_rids)}レースの出走表を取得しました。")
+
+    _nar_rids = st.session_state.get('nar_fetched_rids', [])
+    if _nar_rids:
+        _nar_sel = st.multiselect(
+            f"新聞に収録するレース（{len(_nar_rids)}R取得済み）",
+            options=_nar_rids,
+            default=_nar_rids,
+            key="nar_sel_rids")
+
+        _nc1, _nc2 = st.columns([2, 1])
+        _nar_full_saved = st.session_state.get('nar_is_full', False)
+        _default_title = "地方競馬新聞" if _nar_full_saved else "地方競馬かんたん新聞"
+        _nar_title = _nc1.text_input(
+            "タイトル", value=_default_title, key="nar_title")
+        _nar_sub = _nc2.text_input(
+            "サブタイトル", value="", key="nar_sub")
+
+        _btn_label = (f"🏇 NAR新聞を発行する（{len(_nar_sel)}R・"
+                      f"{'通常版' if _nar_full_saved else '初心者版'}）")
+        if st.button(_btn_label, type="primary",
+                     disabled=not _nar_sel, key="nar_publish"):
+            with st.spinner("地方競馬新聞を組版中…"):
+                nar_opts = {'title': _nar_title, 'subtitle': _nar_sub}
+                if _nar_full_saved:
+                    nar_opts['orientation'] = 'landscape'
+                    nar_html, nar_issued = np_mod.build_newspaper_html(
+                        _nar_sel, nar_opts)
+                else:
+                    nar_html, nar_issued = np_mod.build_beginner_newspaper_html(
+                        _nar_sel, nar_opts)
+                if not nar_html:
+                    st.error("紙面を作れませんでした。")
+                else:
+                    _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+                    _is_landscape = _nar_full_saved
+                    nar_out = {
+                        'html': nar_html, 'issued': nar_issued,
+                        'fname': f"nar_shimbun_{_ts}",
+                        'pdf': None, 'pdf_err': None,
+                    }
+                    try:
+                        nar_out['pdf'] = np_mod.html_to_pdf(
+                            nar_html, landscape=_is_landscape,
+                            scale=0.7 if _is_landscape else 1.0,
+                            page_numbers=True)
+                    except Exception as e:
+                        nar_out['pdf_err'] = f"{type(e).__name__}: {e}"
+                    st.session_state['nar_out'] = nar_out
+
+    nar_out = st.session_state.get('nar_out')
+    if nar_out:
+        if nar_out['pdf']:
+            _nm = st.columns(3)
+            _nm[0].metric("PDFサイズ", f"{len(nar_out['pdf']) / 1024:.0f} KB")
+            _nm[1].metric("ページ数",
+                          np_mod.pdf_page_count(nar_out['pdf']) or '—')
+            _nm[2].metric("収録レース", f"{len(nar_out['issued'])}R")
+            _nd1, _nd2 = st.columns(2)
+            _nd1.download_button(
+                "📥 PDFをダウンロード", data=nar_out['pdf'],
+                file_name=nar_out['fname'] + '.pdf',
+                mime="application/pdf",
+                type="primary", use_container_width=True, key="nar_dl_pdf")
+            _nd2.download_button(
+                "🌐 HTML版", data=nar_out['html'].encode('utf-8'),
+                file_name=nar_out['fname'] + '.html',
+                mime="text/html",
+                use_container_width=True, key="nar_dl_html")
+        else:
+            st.error(f"PDF変換に失敗: {nar_out.get('pdf_err')}")
+            st.download_button(
+                "🌐 HTML版をダウンロード",
+                data=nar_out['html'].encode('utf-8'),
+                file_name=nar_out['fname'] + '.html',
+                mime="text/html", key="nar_dl_html2")
+        with st.expander("👀 プレビュー", expanded=True):
+            import streamlit.components.v1 as components
+            components.html(nar_out['html'], height=640, scrolling=True)
 
     # ────────────────── ⑥ スキャン新聞（Race Scannerダイジェスト） ──────────────────
     st.divider()
@@ -869,70 +1235,6 @@ def render():
         _sd_ts = datetime.datetime.fromtimestamp(_sd.get('ts') or 0).strftime('%m/%d %H:%M')
         st.caption(f"最新スキャン: {_sd_ts}　全{len(_sd['rows'])}R")
         render_scan_digest_ui(_sd['rows'], key_prefix='np_sd')
-
-        # ── 厳選N鞍 → 結論カード (ワンクリック配信用) ──
-        st.markdown("---")
-        st.markdown("#### 🎯 厳選レース → 結論カード配信")
-        st.caption("スキャン上位から妙味度の高い鞍だけ選び、結論カード(軸/相手/買い目)を1枚で発行。"
-                   "noteの有料記事やLINE配信に「今日の厳選○鞍」として使えます。")
-        _pc1, _pc2, _pc3 = st.columns([1, 1, 1.5])
-        _pick_n = _pc1.slider("厳選鞍数", 1, 6, 3, 1, key="pick_n")
-        _pick_sort = _pc2.radio("選び方", ['妙味度順', '買える順'], horizontal=True, key="pick_sort")
-        _pick_title = _pc3.text_input("題字", value=f"今日の厳選{_pick_n}鞍", key="pick_title")
-
-        # フィルタ: buy gate only → sort → top N
-        _buy_rows = [r for r in _sd['rows'] if str(r.get('gate', '')) != 'skip']
-        if _pick_sort == '妙味度順':
-            _buy_rows.sort(key=lambda r: -(float(r.get('vscore') or 0)))
-        _top = _buy_rows[:_pick_n]
-        _top_ids = [str(r.get('id', '')) for r in _top if r.get('id')]
-
-        if _top_ids:
-            _names = [f"{np_mod.VENUE_BY_CODE.get(str(rid)[4:6], '')}{np_mod.race_no(rid)}R"
-                      for rid in _top_ids]
-            st.caption(f"対象: **{'　'.join(_names)}**（✅買えるレースから上位{_pick_n}鞍）")
-
-            if st.button(f"🎯 厳選{len(_top_ids)}鞍の結論カードを発行", type="primary", key="pick_go"):
-                with st.spinner("結論カードを生成中…"):
-                    html, issued = np_mod.build_conclusion_card_html(
-                        _top_ids, {'title': _pick_title})
-                    if not html:
-                        st.error("結論データなし（対象レースを先に🏠SRAで解析してください）。")
-                    else:
-                        _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-                        out_pick = {'html': html, 'issued': issued,
-                                    'fname': f"pick{len(issued)}_{_ts}", 'pdf': None, 'err': None}
-                        try:
-                            out_pick['pdf'] = np_mod.html_to_pdf(html, landscape=False,
-                                                                  scale=1.0, page_numbers=False)
-                        except Exception as e:
-                            out_pick['err'] = str(e)
-                        st.session_state['pick_out'] = out_pick
-
-            _po = st.session_state.get('pick_out')
-            if _po:
-                if _po['pdf']:
-                    _pm = st.columns(3)
-                    _pm[0].metric("PDF", f"{len(_po['pdf']) / 1024:.0f} KB")
-                    _pm[1].metric("レース数", f"{len(_po['issued'])}鞍")
-                    _pm[2].metric("ページ", np_mod.pdf_page_count(_po['pdf']) or '1')
-                    _pd1, _pd2 = st.columns(2)
-                    _pd1.download_button("📥 厳選カードPDF", data=_po['pdf'],
-                                         file_name=_po['fname'] + '.pdf', mime="application/pdf",
-                                         type="primary", use_container_width=True, key="pick_dl")
-                    _pd2.download_button("🌐 HTML版", data=_po['html'].encode('utf-8'),
-                                         file_name=_po['fname'] + '.html', mime="text/html",
-                                         use_container_width=True, key="pick_dl_h")
-                else:
-                    st.warning(f"PDF失敗: {_po.get('err')}")
-                    st.download_button("🌐 HTML版", data=_po['html'].encode('utf-8'),
-                                       file_name=_po['fname'] + '.html', mime="text/html",
-                                       key="pick_dl_h2")
-                with st.expander("👀 プレビュー", expanded=True):
-                    import streamlit.components.v1 as components
-                    components.html(_po['html'], height=420, scrolling=True)
-        else:
-            st.info("✅買えるレースがスキャン結果にありません。")
 
     # ────────────────── ⑦ 成績台帳 ──────────────────
     st.divider()

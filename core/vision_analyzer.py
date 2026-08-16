@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class VisionOddsAnalyzer:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-3.1-flash-lite-preview"
+        self.model_id = "gemini-3.5-flash-lite"  # preview版から移行・画像入力は実機確認済
 
     def analyze_odds_image(self, image_bytes: bytes):
         """
@@ -58,7 +58,7 @@ class VisionOddsAnalyzer:
         }
 
         import time
-        models_to_try = ["gemini-3.1-flash-lite-preview"]
+        models_to_try = ["gemini-3.5-flash-lite"]  # preview版から移行(2026-07-23)
         last_error = ""
 
         for model_id in models_to_try:
@@ -69,10 +69,10 @@ class VisionOddsAnalyzer:
                     response = self.client.models.generate_content(
                         model=model_id,
                         contents=[prompt, image],
+                        # temperatureは3.5以降で無視されるため渡さない(将来世代では400)
                         config=genai_types.GenerateContentConfig(
                             response_mime_type="application/json",
                             response_schema=schema,
-                            temperature=0.1
                         )
                     )
 

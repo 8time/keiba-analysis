@@ -82,6 +82,11 @@ PREV_WIN_DEMERIT = 1.5  # 前走1着の軽い減点(pp)。ATSU(圧勝)が立つ�
 FRONT_RATIO = 0.28      # 本物の先行とみなす平均通過位置比率(core/calculator.front_threshold と同値)
 FRONT_DEMERIT = 1.2     # 先行の軽い減点(pp)。前走1着の減点とは加算(独立に効くと検証済)
 
+# 牝馬限定戦×1番人気: オッズ統制した複勝率残差 train-1.1pp(z-1.54)/holdout-4.9pp(z-2.94)。
+# 2番人気以下は残差≈0で無効。1.5-3.0倍帯の「普通の1番人気」で-2.0〜-2.6pp。
+# trainのzが弱い(-1.54)のでまず保守的に1.0ppで導入し、実運用で監視する。
+FILLIES_DEMERIT = 1.0   # 牝馬限定×1番人気の軽い減点(pp)。前走1着/先行とは加算
+
 
 def _valid_odds(odds):
     try:
@@ -114,13 +119,15 @@ def _odds_fuku_smooth(o):
     return xs[-1][1]
 
 
-def _axis_conf(pop, table, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
+def _axis_conf(pop, table, odds=None, prev_win_margin=None, prev_chaku=None,
+               pos_ratio=None, fillies_race=False):
     """内部: 人気別複勝率テーブル table を使って信頼度を算出(JRA/NAR共通ロジック)。
 
     prev_chaku(前走着順)は任意。1着なら PREV_WIN_DEMERIT を引く(勝ち上がり直後は過剰人気)。
     圧勝(ATSU)が立つ場合は ATSU_DEMERIT のみ適用し二重計上しない(圧勝 ⊂ 前走1着)。
     pos_ratio(平均通過位置比率)は任意。FRONT_RATIO未満(=本物の先行)なら FRONT_DEMERIT を引く。
     前走1着の減点とは独立に効くと検証済みなので加算する。
+    fillies_race(bool)は任意。1番人気のみ FILLIES_DEMERIT を引く(2番人気以下は残差≈0で無効)。
     """
     try:
         p = int(pop)
@@ -148,6 +155,8 @@ def _axis_conf(pop, table, odds=None, prev_win_margin=None, prev_chaku=None, pos
             conf -= PREV_WIN_DEMERIT      # 圧勝でなくても『前走1着』は同様に過剰人気(検証済)
         if front:
             conf -= FRONT_DEMERIT         # 本物の先行も過剰人気(前走1着とは独立・検証済)
+        if fillies_race and p is not None and p == 1:
+            conf -= FILLIES_DEMERIT       # 牝馬限定×1番人気(2番人気以下は効果なし)
     elif p is not None:
         conf = table.get(p, max(8.0, table.get(1, 70.0) - (p - 1) * 11.0))
         if atsu:
@@ -157,27 +166,90 @@ def _axis_conf(pop, table, odds=None, prev_win_margin=None, prev_chaku=None, pos
     return round(max(0.0, min(conf, 95.0)), 1)
 
 
-def axis_confidence(pop, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
+def axis_confidence(pop, odds=None, prev_win_margin=None, prev_chaku=None,
+                    pos_ratio=None, fillies_race=False):
     """1頭の推定3着内信頼度(%)を返す(JRA/中央)。軸候補外(人気なし/MAX超)は None。
     オッズがあればオッズ基準、無ければ人気基準(POP_FUKU)。
     prev_chaku(前走着順)=1なら軽い減点、pos_ratio<0.28(本物の先行)ならさらに軽い減点。
-    どちらも『生の複勝率は高いがオッズがそれ以上に高い=過剰人気』(検証済・両窓有意)。"""
-    return _axis_conf(pop, POP_FUKU, odds, prev_win_margin, prev_chaku, pos_ratio)
+    どちらも『生の複勝率は高いがオッズがそれ以上に高い=過剰人気』(検証済・両窓有意)。
+    fillies_race=Trueなら1番人気のみ軽い減点(2番人気以下は残差≈0で無効)。"""
+    return _axis_conf(pop, POP_FUKU, odds, prev_win_margin, prev_chaku, pos_ratio,
+                      fillies_race=fillies_race)
 
 
-def axis_confidence_nar(pop, odds=None, prev_win_margin=None, prev_chaku=None, pos_ratio=None):
+def axis_confidence_nar(pop, odds=None, prev_win_margin=None, prev_chaku=None,
+                        pos_ratio=None, fillies_race=False):
     """NAR(地方)版。NAR実測の複勝率表(POP_FUKU_NAR)を人気基準で使う。
     地方はオッズ市場が中央ほど厚くなく、NAR較正は人気ベースなので odds は使わず人気基準に固定。
     地方は人気決着傾向が強く、JRA表だと1番人気(実78.7%)を過小評価する為の較正。
-    ※前走1着/先行の減点はオッズ基準(中央)で検証したものなので、人気基準のNARには適用しない。"""
+    ※前走1着/先行の減点はオッズ基準(中央)で検証したものなので、人気基準のNARには適用しない。
+    ※fillies_raceはNARでは人気基準パスに入り効果なし(中央のオッズ基準でのみ検証済)。"""
     return _axis_conf(pop, POP_FUKU_NAR, None, prev_win_margin, prev_chaku, pos_ratio)
+
+
+# ── レース単位の軸信頼度（補正Tトップ3 ∩ 人気トップ3 の重複数）──────────────
+# 検証: scripts/time_pop_overlap_backtest.py (31,613レース・補正T被覆率91%)
+#   重複数 → 1番人気の複勝率(holdout2025+recent2026の加重平均)
+#     0(13%) 57%  /  1(43%) 62%  /  2(38%) 68%  /  3(6%) 76%
+#   本線決着率も 26%→28%→36%→46% と単調。
+# ⚠ 荒れ予報には足さないこと。凍結オッズロジット(AUC0.690)との残差は
+#   両窓とも|z|<2で非有意＝荒れ予測としてはpriced-in([[verified_time_pop_overlap]])。
+#   使ってよいのは「軸が信頼できるか」の表示だけ。
+_RACE_AXIS_TABLE = {
+    0: (57, '⚠軸が立ちにくい', '実力上位と人気上位が食い違う'),
+    1: (62, 'ふつう', '実力上位と人気上位が1頭だけ一致'),
+    2: (68, '軸は立つ', '実力上位と人気上位が2頭一致'),
+    3: (76, '🎯勝負向き', '実力上位3頭と人気上位3頭が完全一致'),
+}
+
+
+def race_axis_confidence(horses):
+    """レース単位の軸信頼度。補正Tトップ3と人気トップ3が何頭重なるかを返す。
+
+    horses: [{'umaban':int, 'ninki':int|None, 'ct_fig':float|None}, ...]
+            ct_fig は補正タイム(負=速い)。None の馬は実力上位の判定から除く。
+    戻り値: {'overlap':0-3, 'label':str, 'fav_top3':int(%), 'why':str,
+             'time_top3':[馬番], 'pop_top3':[馬番]} / 判定不能なら None
+
+    判定不能: 補正Tを持つ馬が3頭未満、または人気が3頭分揃わないレース。
+    """
+    if not horses:
+        return None
+    ct, pop = [], []
+    for h in horses:
+        try:
+            um = int(h.get('umaban'))
+        except (TypeError, ValueError):
+            continue
+        f = h.get('ct_fig')
+        if f is not None:
+            try:
+                ct.append((float(f), um))
+            except (TypeError, ValueError):
+                pass
+        try:
+            n = int(h.get('ninki'))
+            if n >= 1:
+                pop.append((n, um))
+        except (TypeError, ValueError):
+            pass
+    if len(ct) < 3 or len(pop) < 3:
+        return None
+    ct.sort()                      # 補正Tは小さいほど速い
+    pop.sort()
+    t3 = {um for _v, um in ct[:3]}
+    p3 = {um for _n, um in pop[:3]}
+    ov = len(t3 & p3)
+    rate, label, why = _RACE_AXIS_TABLE[ov]
+    return {'overlap': ov, 'label': label, 'fav_top3': rate, 'why': why,
+            'time_top3': sorted(t3), 'pop_top3': sorted(p3)}
 
 
 def fuku_rate(pop, odds=None, is_nar=False):
     """全出走馬の推定複勝率(%)。軸候補ゲート(MAX_CAND_POP)を掛けない表示専用版。
 
     axis_confidence() は『軸マークを付けるか』の判定器なので7番人気以下を None で弾く。
-    強適シート(散布図)のように全馬をプロットする用途でそれを使うと人気薄が丸ごと消える為、
+    ZONEシート(散布図)のように全馬をプロットする用途でそれを使うと人気薄が丸ごと消える為、
     ゲート無しの複勝率だけをここで返す。軸マーク判定には使わないこと。
 
     オッズがある場合は階段テーブルでなく ODDS_FUKU_CURVE の対数補間を使う。階段のままだと
@@ -197,7 +269,7 @@ def fuku_rate(pop, odds=None, is_nar=False):
     return None
 
 
-def _marks(horses, conf_fn):
+def _marks(horses, conf_fn, fillies_race=False):
     out = {}
     scored = []
     for h in horses:
@@ -205,7 +277,8 @@ def _marks(horses, conf_fn):
         pwm = h.get('prev_win_margin')
         pch = h.get('prev_chaku')
         prr = h.get('pos_ratio')
-        conf = conf_fn(h.get('pop'), h.get('odds'), pwm, pch, prr)
+        conf = conf_fn(h.get('pop'), h.get('odds'), pwm, pch, prr,
+                       fillies_race=fillies_race)
         atsu = (pwm is not None and pwm >= ATSU_MARGIN)
         try:
             prev_win = (pch is not None and int(pch) == 1)
@@ -230,11 +303,12 @@ def _marks(horses, conf_fn):
     return out
 
 
-def axis_marks(horses):
+def axis_marks(horses, fillies_race=False):
     """horses: [{'name','pop','odds'(任意),'prev_win_margin'(任意),'prev_chaku'(任意)}]
     戻り: {name: {'mark': '◎'/'〇'/'▲'/'', 'conf': float|None, 'atsu': bool, 'prev_win': bool}}
+    fillies_race: 牝馬限定戦なら1番人気に-1.0pp減点(2番人気以下は効果なし)。
     """
-    return _marks(horses, axis_confidence)
+    return _marks(horses, axis_confidence, fillies_race=fillies_race)
 
 
 def axis_marks_nar(horses):

@@ -268,6 +268,111 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
             'warning': None}
 
 
+def recommend_trio_formation(horses, axis_umaban, ana_umaban, odds_map=None,
+                             n_points=10, band=None, band_hard=False, c_umaban=None):
+    """3連複フォーメーションモード: A群(軸)×B群(穴候補)×C群(相手候補)。
+
+    A群から1頭以上 かつ B群から1頭以上を必ず含む3頭の組み合わせを生成し、
+    スコア+帯フィルタで上位n_points点を返す。
+
+    horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
+    axis_umaban: A群の馬番リスト(人気1,2位＝軸馬候補◎〇)
+    ana_umaban: B群の馬番リスト(穴馬候補＝VH上位等)
+    c_umaban: C群の馬番リスト(3頭目候補)。Noneなら残り全員。指定すると3頭目をこの中に限定
+    odds_map: {frozenset({u1,u2,u3}): float}
+    band: 狙い目価格帯(lo,hi)。未指定は(10,150)=本線帯
+    band_hard: Trueなら帯外の組を除外(点数削減)。Falseならソフト加減点のみ(従来互換)
+    """
+    horses = [h for h in horses if h.get('umaban')]
+    by = {h['umaban']: h for h in horses}
+    a_set = set(int(u) for u in axis_umaban if int(u) in by)
+    b_set = set(int(u) for u in ana_umaban if int(u) in by) - a_set
+    if not a_set:
+        return {'bets': [], 'meta': {}, 'warning': 'A群(軸)が未指定です'}
+    if not b_set:
+        return {'bets': [], 'meta': {}, 'warning': 'B群(穴候補)が未指定です'}
+    lo, hi = band if band else (10.0, 150.0)
+    all_um = set(by)
+    if c_umaban is not None:
+        c_set = set(int(u) for u in c_umaban if int(u) in by) - a_set - b_set
+    else:
+        c_set = all_um - a_set - b_set
+    pool = a_set | b_set | c_set
+
+    pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= 4}
+    ana_set = {h['umaban'] for h in horses if h.get('pop') and 6 <= h['pop'] <= 12}
+
+    cand = set()
+    # A群1頭 + B群1頭 + 3頭目(pool内でa,bと異なる馬)
+    for a in a_set:
+        for b in b_set:
+            for x in pool - {a, b}:
+                cand.add(frozenset((a, b, x)))
+    # A群2頭 + B群1頭
+    if len(a_set) >= 2:
+        from itertools import combinations as _c2
+        for pair in _c2(a_set, 2):
+            for b in b_set:
+                cand.add(frozenset((*pair, b)))
+
+    scored = []
+    for fs in cand:
+        trio = tuple(sorted(fs))
+        has_a = any(u in a_set for u in trio)
+        has_b = any(u in b_set for u in trio)
+        if not (has_a and has_b):
+            continue
+        n_pop = sum(1 for u in trio if u in pop_set)
+        n_ana = sum(1 for u in trio if u in ana_set)
+        base = sum(by[u].get('score', 0) for u in trio)
+        bonus = 0.0
+        for u in trio:
+            al = str(by[u].get('alert', '') or '')
+            if u in ana_set and any(s in al for s in _VAL_SIGS):
+                bonus += 8.0
+            _mc = _COMBO_RE.search(al)
+            if _mc and u in ana_set:
+                bonus += 14.0 if int(_mc.group(1)) >= 3 else 10.0
+        odds = None
+        in_band = False
+        if odds_map:
+            odds = odds_map.get(fs)
+            if odds is not None:
+                if lo <= odds <= hi:
+                    in_band = True
+                    bonus += 15.0
+                elif odds < lo:
+                    if band_hard:
+                        continue
+                    bonus -= 10.0
+                elif odds > hi:
+                    if band_hard:
+                        continue
+                    bonus -= 6.0
+        scored.append({'combo': trio,
+                       'names': tuple(by[u].get('name', '') for u in trio),
+                       'odds': odds, 'in_band': in_band,
+                       'score': round(base + bonus, 1),
+                       'pop_ana': (n_pop, n_ana)})
+    if not scored:
+        return {'bets': [], 'meta': {'a_group': sorted(a_set), 'b_group': sorted(b_set)},
+                'warning': 'フォーメーションの条件に合う組合せがありません'}
+    scored.sort(key=lambda x: -x['score'])
+    bets = scored[:max(1, int(n_points))]
+    syn = None
+    if all(b['odds'] for b in bets):
+        inv = sum(1.0 / b['odds'] for b in bets)
+        syn = round(len(bets) / inv, 1) if inv else None
+    return {'bets': bets,
+            'meta': {'axis_mode': 'formation', 'n_points': len(bets),
+                     'target_band': (lo, hi), 'synthetic_odds': syn,
+                     'a_group': sorted(a_set), 'b_group': sorted(b_set),
+                     'c_group': sorted(c_set),
+                     'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
+                     'total_candidates': len(cand)},
+            'warning': None}
+
+
 def build_formation(col1, col2, col3):
     """3連複フォーメーション。1列目(軸)/2列目(対抗)/3列目(押さえ)の馬番リストから、
     各列1頭ずつ・3頭が相異なる組合せを生成(3連複=順不同なので重複排除)。

@@ -210,6 +210,11 @@ def horse_fit33(ketto_num, db_path=None, before_key=None, n_runs=10, min_runs=3)
 def fit_match(horse_avg_lap33, course_avg_lap33, threshold=0.0):
     """馬の得意33ラップとコース平均33ラップの符号一致(適合)を判定。
 
+    ⚠ 旧方式。符号を見るだけなので該当馬が多すぎる(実測で人気薄の**74.8%**が該当)。
+      コース平均は1コース1つの符号に固定されるため、瞬発力型コースでは
+      瞬発力型の馬が全員通ってしまう構造的な問題がある。
+      新規の判定には fit_distance() を使うこと(この関数は後方互換のため残置)。
+
     戻り値: True(適合・同符号) / False(不適合・逆符号) / None(データ不足)。
     """
     if horse_avg_lap33 is None or course_avg_lap33 is None:
@@ -217,3 +222,50 @@ def fit_match(horse_avg_lap33, course_avg_lap33, threshold=0.0):
     if abs(horse_avg_lap33) < threshold or abs(course_avg_lap33) < threshold:
         return None
     return (horse_avg_lap33 > 0) == (course_avg_lap33 > 0)
+
+
+# 距離判定のしきい値(原典PDF新聞の『±0.5秒ルール』に準拠)
+FIT_NEAR = 0.5     # ○ ドンピシャ
+FIT_WIDE = 1.0     # △ 守備範囲
+
+
+def fit_distance(horse_lap33, course_avg_lap33, near=FIT_NEAR, wide=FIT_WIDE):
+    """馬の得意33ラップと今回のコース平均33ラップの『距離』で適合を判定する。
+
+    符号一致(fit_match)ではなく、原典の『±0.5秒ルール』と同じ距離ベース。
+    |馬の値 − コース平均| が near以内なら'○'、wide以内なら'△'、それ以外は''。
+
+    検証(scripts/lap33_distance_backtest.py・train2021-24/holdout2025・
+      コース平均は2010-2020で凍結・馬の値は各レース時点より前の履歴のみ=リーク無し):
+      人気薄(6番人気以下)×好走時平均を使った場合の複勝残差(holdout)
+        符号一致(旧)  該当率74.8% → +1.42pp (z+4.28)
+        距離<=1.0     該当率44.2% → +1.70pp (z+3.93)
+        **距離<=0.5   該当率23.9% → +1.83pp (z+3.12)**  ★採用
+        距離<=0.3     該当率14.6% → +2.02pp (z+2.68)
+      絞るほど残差が単調に増える＝信号が本物である傍証。bootstrapは全方式で
+      95%CIが0を跨がない。人気上位(1-3番人気)はどの方式でも効かない(z-1.5〜+1.4)。
+
+    戻り値: '○' / '△' / ''(範囲外) / None(データ不足)
+    """
+    if horse_lap33 is None or course_avg_lap33 is None:
+        return None
+    d = abs(float(horse_lap33) - float(course_avg_lap33))
+    if d <= near:
+        return '○'
+    if d <= wide:
+        return '△'
+    return ''
+
+
+def horse_lap33_value(fit_dict):
+    """horse_fit33() の戻りから、適合判定に使うべき値を1つ選ぶ。
+
+    **好走時平均(placed_avg)を優先**する。検証で全走平均(avg_lap33)より明確に強い:
+      人気薄・holdout複勝残差 全走平均+0.84pp(z+2.97) → 好走時平均+1.42pp(z+4.28)。
+    「その馬が実際に走れた時のラップ」を得意条件とみなす原典の考え方に沿う。
+    好走歴が無い馬は全走平均にフォールバックする。
+    """
+    if not fit_dict:
+        return None
+    v = fit_dict.get('placed_avg')
+    return v if v is not None else fit_dict.get('avg_lap33')
