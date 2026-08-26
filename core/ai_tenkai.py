@@ -129,6 +129,20 @@ def fetch_tenkai_positions(race_id, html=None):
     return parse_tenkai_positions(html)
 
 
+def ranks_from_left(left_map):
+    """left%(小さいほど前)を番手(1=先頭)に変換する。{馬番: 番手}。"""
+    items = [(u, x) for u, x in (left_map or {}).items() if x is not None]
+    items.sort(key=lambda t: (t[1], t[0]))
+    return {u: i + 1 for i, (u, _) in enumerate(items)}
+
+
+def corner3_ranks(race_id, html=None):
+    """netkeiba AI展開予測の3コーナー番手 {馬番: 1=先頭}。取れなければ空dict。"""
+    pos = fetch_tenkai_positions(race_id, html=html)
+    c3 = {u: v.get("corner3") for u, v in pos.items() if v.get("corner3") is not None}
+    return ranks_from_left(c3)
+
+
 def corner4_bands(race_id, html=None, front_frac=0.40, back_frac=0.35):
     """race_id(またはhtml)から netkeiba AIの4コーナー帯 {umaban:'前'/'中'/'後'} を返す簡便関数。"""
     pos = fetch_tenkai_positions(race_id, html=html)

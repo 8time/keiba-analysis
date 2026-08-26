@@ -103,6 +103,24 @@ def sire_line(sire_name, db_path=None, _depth=0):
     return res
 
 
+# 血統SPの表用。薄い色＝系統の見分け（エッジ主張なし）。
+LINE_PALE = {
+    'サンデー系': '#FFF3E0',
+    'キンカメ系': '#E3F2FD',
+    'ミスプロ系': '#F3E5F5',
+    'ロベルト系': '#E8F5E9',
+    'ストームキャット系': '#FCE4EC',
+    'APインディ系': '#E0F7FA',
+    'ND欧州系': '#FFFDE7',
+    'その他米国系': '#EFEBE9',
+}
+
+
+def line_bg(name):
+    """父系統セルの薄い背景色。未知・その他は空。"""
+    return LINE_PALE.get(str(name or '').strip(), '')
+
+
 # 検証済み: 場×人気の軸信頼度(頭数帯コントロール後の複勝残差)
 # 全14場(JRA10+南関4)×芝ダ総当たり(train2021-24 |z|>=2.5 かつ holdout2025符号一致のみ採用)。
 # NARはNAR専用の人気×頭数ベースで較正。不採用の境界: 中山芝-2.1(holdoutで消滅)/

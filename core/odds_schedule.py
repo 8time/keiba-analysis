@@ -41,13 +41,20 @@ HEARTBEAT_PATH = os.path.join(
 # 超えていたら stale としてスキップ扱いにする(何時間も後に古い枠を記録しないため)。
 GRACE_MIN = 25
 
+# 本線の記録枠。同じレースで「朝一8:40」「発走15分前」「発走10分前」が揃うと
+# 朝一↔直前の観察ができる。12:00 / 発走30分前は任意。発走5分前は混雑しやすいので貯まってから。
 RECOMMENDED = [
     ('前日22:00', '前日夜', '前日の夜。夜→当日のドリフト(人気の移り変わり)観察の起点'),
-    ('08:40', '朝一', '午前8時40分。情報を持つ層の下地が入る前の基準値'),
-    ('12:00', '中間', '正午ごろ。想定人気との比較用'),
-    ('発走30分前', 'パドック前', 'パドック直前。おおよその投票が固まり始める'),
+    ('08:40', '朝一', '午前8時40分。大衆票が入る前の基準値'),
+    ('発走15分前', 'パドック後', '投票が固まり始めたあと。朝一との比較の本線'),
     ('発走10分前', '発走直前', '締切間際。パドック終わりで大勢が投票済み=最も実戦的'),
 ]
+OPTIONAL = [
+    ('12:00', '中間', '正午ごろ。想定人気との比較用（任意）'),
+    ('発走30分前', 'パドック前', 'パドック直前。おおよその投票が固まり始める（任意）'),
+]
+DEFAULT_CLOCK_TIMES = ['08:40']
+PREPOST_MINUTES = (15, 10)
 
 NIGHT_PREFIX = '前日'   # 前日夜枠のスロット表記/recordsキーの接頭辞(例: '前日22:00')
 
@@ -115,6 +122,32 @@ def minus_minutes(hhmm, mins):
         return ''
     base = datetime.strptime(n, '%H:%M') - timedelta(minutes=int(mins))
     return base.strftime('%H:%M')
+
+
+def prepost_hhmm(post_hhmm, minutes=None):
+    """発走時刻から N分前の時計時刻リスト（既定=15分前と10分前）。不正は空。"""
+    out = []
+    for m in list(minutes or PREPOST_MINUTES):
+        t = minus_minutes(post_hhmm, m)
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def attach_prepost_times(plan, post_by_rid, minutes=None, labels_by_rid=None):
+    """各レースに発走N分前の個別枠を足す。戻り値: (plan, 新規追加した枠の数)。"""
+    n = 0
+    labels_by_rid = labels_by_rid or {}
+    for rid, post in (post_by_rid or {}).items():
+        rid = str(rid)
+        label = labels_by_rid.get(rid) or rid
+        before = set(race_times(plan, rid))
+        for t in prepost_hhmm(post, minutes):
+            plan, added = add_race_time(plan, rid, label, t)
+            if added and added not in before:
+                n += 1
+                before.add(added)
+    return plan, n
 
 
 def race_times(plan, race_id):

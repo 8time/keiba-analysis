@@ -57,7 +57,9 @@ def main():
     CORE = ['track_bias', 'value_scanner', 'bet_filter', 'trio_engine',
             'bet_optimizer', 'corrected_time', 'jockey_jv', 'ltr_ranker',
             'money', 'elim_reasons', 'elim_cross', 'score_cache', 'bloodline',
-            'axis_selector', 'pace_map', 'paddock_ledger', 'consensus_view']
+            'axis_selector', 'pace_map', 'paddock_ledger', 'consensus_view',
+            'playbook_tickets', 'formation_stats', 'playbook_ledger',
+            'folklore_lib', 'gyaku_kami']
     for m in CORE:
         check(f"import core.{m}", lambda m=m: __import__(f'core.{m}', fromlist=['_']))
 
@@ -74,6 +76,7 @@ def main():
     def t_moist():
         from core import track_bias as tb
         assert tb.dirt_moisture_bloodtype('シニスターミニスター', 10.0)['flag'] == '🟢', "シニミニ高含水→🟢"
+        assert tb.dirt_moisture_bloodtype('シニスターミニスター', {'ok': True}) is None, "dictは無視"
     check("track_bias.dirt_moisture_bloodtype(シニミニ修正)", t_moist)
 
     def t_lean():
@@ -118,6 +121,51 @@ def main():
         assert vs.baba_code_to_label('3') == '重' and vs.baba_code_to_label(2) == '稍重'
         assert vs.baba_code_to_label('0') == '' and vs.baba_code_to_label('') == ''
     check("value_scanner.baba_code_to_label", t_baba_code)
+
+    def t_stake_caps():
+        from core import money as mo
+        r = mo.apply_stake_caps(2400, 30000, race_cap_pct=5.0, ticket_cap_pct=3.0,
+                                daily_spent=0, daily_cap_pct=15.0, race_spent=0)
+        assert r['ticket_cap'] == 900, r  # 30000*3%
+        assert r['stake'] == 900, r        # 1点上限で切る
+        assert '1点上限' in r['reasons']
+        r2 = mo.apply_stake_caps(200, 30000, ticket_cap_pct=3.0)
+        assert r2['stake'] == 200 and not r2['capped']
+        lit = mo.ops_light(30000, 20000, daily_spent=0, daily_cap=4500,
+                           stop_loss_pct=25.0)
+        assert lit['code'] == 'stop', lit  # 25%下落=22500ライン、20000は割る
+        ok = mo.ops_light(30000, 30000, daily_spent=4600, daily_cap=4500)
+        assert ok['code'] == 'stop', ok    # 今日の上限到達
+        eq = mo.equity_stats(30000, [32000, 28000, 31000])
+        assert eq['peak'] == 32000 and eq['max_dd_pct'] < -10
+    check("money.apply_stake_caps/ops_light", t_stake_caps)
+
+    def t_points_budget():
+        from core import money as mo
+        ok = mo.points_budget(10, 1500, unit=100)
+        assert ok['fits'] and ok['total'] == 1000, ok
+        ng = mo.points_budget(40, 1500, unit=100)
+        assert (not ng['fits']) and ng['max_points'] == 15 and ng['need'] == 4000, ng
+        z = mo.points_budget(0, 1500)
+        assert z['total'] == 0
+    check("money.points_budget", t_points_budget)
+
+    def t_ticket_line():
+        from core import money as mo
+        assert mo.haircut_odds(50, 0.3) == 35.0
+        assert mo.slip_pct_for('3連複', False) == 0.0
+        assert mo.slip_pct_for('3連複', True) == 0.25
+        empty = mo.ticket_line('3連複', 35.0, p=None, balance=100000,
+                               race_cap=5000, ticket_cap=3000, default_unit=100)
+        assert empty['stake'] == 100 and empty['status'] == '枠で買う', empty
+        skip = mo.ticket_line('3連複', 35.0, p=0.02, balance=100000,
+                              race_cap=5000, ticket_cap=3000, min_ev_pct=5.0)
+        # 2% * 35 = 0.70 EV → 見送り
+        assert skip['status'] == '見送り', skip
+        hit = mo.ticket_line('単勝', 5.0, p=0.30, balance=100000, kelly_frac=0.25,
+                             race_cap=5000, ticket_cap=3000, min_ev_pct=5.0)
+        assert hit['stake'] > 0 and hit['status'] in ('推奨', '少額'), hit
+    check("money.ticket_line", t_ticket_line)
 
     def t_scanner_gate():
         from core import value_scanner as vs
@@ -223,6 +271,44 @@ def main():
         assert {8, 10} <= set(r['bets'][0]['combo']), f"combo穴が最上位に来るべき, got {r['bets'][0]['combo']}"
     check("trio_engine.recommend_trio(🧩combo穴優先)", t_trio_combo_boost)
 
+    def t_companion_not_ana():
+        from core import trio_engine as te
+        # 穴しきい値は6のまま。companion=Trueの5番人気だけ auto本線プール／3連単ヒモに入る。
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i, 'pop': i, 'alert': ''}
+              for i in range(1, 9)]
+        r0 = te.recommend_trio(hs, pattern='本線', n_points=20)
+        um0 = {u for b in r0['bets'] for u in b['combo']}
+        assert 5 not in um0, f"フラグ無しで5番人気が混入 {sorted(um0)}"
+        hs[4]['companion'] = True
+        r1 = te.recommend_trio(hs, pattern='本線', n_points=20)
+        um1 = {u for b in r1['bets'] for u in b['combo']}
+        assert 5 in um1, f"相手候補の5番人気が3連複に入らない {sorted(um1)}"
+        r3 = te.recommend_trifecta(hs, axis_umaban=[1, 2], n_points=30, arare_prob=0.29)
+        assert 5 in (r3.get('meta') or {}).get('third', []), \
+            f"3連単ヒモに相手候補が入らない {(r3.get('meta') or {})}"
+    check("trio_engine 相手候補(4-5人気)は穴にせずプールへ", t_companion_not_ana)
+
+    def t_fixed_pool_keeps_user_horses():
+        from core import trio_engine as te
+        hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i, 'pop': i, 'alert': ''}
+              for i in range(1, 10)]
+        r0 = te.recommend_trio(hs, pattern='本線', n_points=20)
+        um0 = {u for b in r0['bets'] for u in b['combo']}
+        assert 5 not in um0, f"未指定なのに5番人気が混入 {sorted(um0)}"
+        r1 = te.recommend_trio(hs, pattern='本線', n_points=20, fixed_pool=True)
+        um1 = {u for b in r1['bets'] for u in b['combo']}
+        assert 5 in um1, f"使う馬プールなのに5番人気が消えた {sorted(um1)}"
+        assert r1.get('meta', {}).get('fixed_pool') is True
+        # 渡していない馬は足さない（1-6だけなら7は出ない）
+        hs6 = [h for h in hs if h['umaban'] <= 6]
+        r6 = te.recommend_trio(hs6, pattern='本線', n_points=20, fixed_pool=True)
+        um6 = {u for b in r6['bets'] for u in b['combo']}
+        assert um6 <= {1, 2, 3, 4, 5, 6} and 5 in um6, f"選択外が混入 or 5脱落 {sorted(um6)}"
+        # ②でもハード除外せず、選択した5番を含む組が候補に残る
+        r2 = te.recommend_trio(hs, pattern='②妙味', n_points=84, fixed_pool=True)
+        assert any(5 in b['combo'] for b in r2['bets']), "②でも使う馬の5番が候補に残るべき"
+    check("trio_engine.recommend_trio(fixed_pool=使う馬を再除外しない)", t_fixed_pool_keeps_user_horses)
+
     def t_combo_flow():
         from core import trio_engine as te
         # 🧩combo馬流し: ◎1軸×combo≥2馬流しで相手がcombo馬だけに絞られること
@@ -259,6 +345,44 @@ def main():
             f"band上書きが効いていない hi={_sc(r_hi)} lo={_sc(r_lo)}"
     check("trio_engine.band_from_value_label＋band上書き", t_value_band)
 
+    def t_venue_band_scale():
+        from core import trio_engine as te
+        import inspect
+        assert list(inspect.signature(te.band_from_value_label).parameters) == ['label']
+        assert 'venue' not in inspect.signature(te.recommend_trifecta).parameters
+        d = te.band_from_value_label('D')
+        tok = te.scale_band_for_venue(d, '東京', 'trio', 'D')
+        sap = te.scale_band_for_venue(d, '札幌', 'trio', 'D')
+        assert tok[0] < d[0] and tok[1] < d[1], f"東京Dは安め tok={tok} base={d}"
+        assert sap[0] > d[0], f"札幌Dは高め sap={sap} base={d}"
+        base_t = te.trifecta_band_from_trio(d)
+        t_tok = te.scale_band_for_venue(base_t, '東京', 'trifecta', 'D')
+        t_sap = te.scale_band_for_venue(base_t, '札幌', 'trifecta', 'D')
+        t_fuk = te.scale_band_for_venue(base_t, '福島', 'trifecta', None)
+        assert t_tok[0] < t_sap[0], f"3連単D 東京<{t_tok} 札幌{t_sap}"
+        assert t_fuk[1] > base_t[1], f"福島は全体スケールで高め {t_fuk} vs {base_t}"
+        assert te.scale_band_for_venue(d, '', 'trio', 'D') == (float(d[0]), float(d[1]))
+        assert te.scale_band_for_venue(None, '東京') is None
+        assert te.normalize_venue('05') == '東京'
+        assert te.normalize_venue('札幌競馬場') == '札幌'
+        assert te.normalize_venue('202601010101') == '札幌'
+        assert te.venue_band_scale('大井', 'trifecta', 'D') == 1.0
+        assert te.venue_band_scale('東京', 'trifecta', 'D') < 0.9
+        # 同じ妙味度なら東京の安さは「鉄板が多い」ほど強くない(SはDより1に近い)
+        assert te.venue_band_scale('東京', 'trifecta', 'S') > te.venue_band_scale('東京', 'trifecta', 'D')
+        assert te.typical_field_size('札幌') == 13
+        assert abs(te.field_band_scale(13, 'trifecta', '札幌') - 1.0) < 0.03
+        assert abs(te.field_band_scale(16, 'trifecta', '東京') - 1.0) < 0.03
+        assert te.field_band_scale(10, 'trifecta', '札幌') < 0.70
+        assert te.field_band_scale(18, 'trifecta', '東京') > 1.15
+        small = te.scale_band_for_venue(base_t, '札幌', 'trifecta', 'D', 10)
+        mid = te.scale_band_for_venue(base_t, '札幌', 'trifecta', 'D', 13)
+        big = te.scale_band_for_venue(base_t, '札幌', 'trifecta', 'D', 16)
+        assert small[0] < mid[0] < big[0], f"少頭数ほど帯が下がる {small} {mid} {big}"
+        # n_horses省略時は場だけ（既存呼び出し互換）
+        assert te.scale_band_for_venue(d, '札幌', 'trio', 'D') == sap
+    check("trio_engine.場ごとの狙い目帯", t_venue_band_scale)
+
     def t_trifecta():
         from core import trio_engine as te
         hs = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i * 3, 'pop': i, 'alert': ''}
@@ -276,6 +400,18 @@ def main():
         r_cf = te.recommend_trifecta(hs, axis_umaban=[2, 1], n_points=50, combo_flow=2)
         _himo_cf = set(r_cf['meta']['third']) - set(r_cf['meta']['first'])
         assert _himo_cf <= {10}, f"combo馬流し=ヒモは🧩2重複馬のみ, got {sorted(_himo_cf)}"
+        # フォーメーション穴はスコア最下位でも全点に残る(3連複B群と同じ)
+        hs_lo = [{'umaban': i, 'name': f'H{i}', 'score': 100 - i, 'pop': i, 'alert': ''}
+                 for i in range(1, 7)]
+        r_must = te.recommend_trifecta(
+            hs_lo, axis_umaban=[1, 2], n_points=30,
+            must_include=[6], arare_prob=0.29)
+        assert r_must['bets'] and all(6 in b['combo'] for b in r_must['bets']), \
+            f"must_includeの6が落ちた {[b['combo'] for b in r_must['bets'][:5]]}"
+        r_ax2 = te.recommend_trifecta(
+            hs_lo, axis_umaban=[1, 2], n_points=30, require_axis_all=True, arare_prob=0.29)
+        assert r_ax2['bets'] and all({1, 2} <= set(b['combo']) for b in r_ax2['bets']), \
+            f"2軸が全点に入らない {[b['combo'] for b in r_ax2['bets'][:5]]}"
         r_tw = te.recommend_trio(hs, n_points=56)
         assert len(r_tw['bets']) == 56, f"3連複56=8頭BOX級網羅(パターン絞り除外), got {len(r_tw['bets'])}"
         # ワイドおすすめ: 軸1頭×検証シグナル厳選で上位3点のみ(馬連/馬単と同じ作り)
@@ -296,6 +432,89 @@ def main():
         assert pst['first'][0].startswith('1着1固定(3点)'), f"1着固定まとめ, got {pst['first']}"
         assert pst['first2'][0].startswith('1→2→ 3,4'), f"1着→2着まとめ, got {pst['first2']}"
     check("trio_engine.recommend_trifecta(336cap/◎頭/🧩ヒモ/combo流し)", t_trifecta)
+
+    def t_playbook_tickets():
+        from core import playbook_tickets as pb
+        from core import formation_stats as fs
+        from core import trio_engine as te
+        from inspect import signature, getsource
+        params = list(signature(pb.build_tickets).parameters)
+        assert params == ['race_id', 'vscore', 'horses', 'axis_marks', 'ltr_scores']
+        src = getsource(pb.build_tickets)
+        assert '_calc_pro_scores' not in src
+        assert 'popularity_weight' not in src
+        assert fs.zone_code(49.9) == 'D' and fs.zone_code(50.0) == 'C'
+        assert fs.zone_code(69.9) == 'C' and fs.zone_code(70.0) == 'BA'
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr_rev = {i: float(9 - i) for i in range(1, 9)}  # 1が最強
+        ltr_c = {i: float(i) for i in range(1, 9)}        # 8が最強（人気と完全逆転）
+
+        def combos(rec, kind='trio'):
+            return {r['combo'] for r in rec.get(kind) or []}
+
+        # ◎〇=人気1・2 → D は 1-2-3 と 1-2-4。LTR逆転でも同じ
+        d12 = pb.build_tickets('R', 49.9, hs, {1: '◎', 2: '〇'}, ltr_rev)
+        assert d12['zone'] == 'D' and d12['n_points'] == 2
+        assert combos(d12) == {(1, 2, 3), (1, 2, 4)}
+        assert not d12['trifecta']
+
+        # ◎=人気1, 〇=人気3 でも holdout と同じく人気1-2 × 3-4
+        d13 = pb.build_tickets('R', 30, hs, {1: '◎', 3: '〇'}, ltr_rev)
+        assert d13['axis'] == [1, 2]
+        assert combos(d13) == {(1, 2, 3), (1, 2, 4)}
+        assert combos(d13) != {(1, 3, 2), (1, 3, 4)}
+
+        # ◎=人気2, 〇=人気5 でも券は人気1〜4固定
+        d25 = pb.build_tickets('R', 30, hs, {2: '◎', 5: '〇'}, ltr_rev)
+        assert combos(d25) == {(1, 2, 3), (1, 2, 4)}
+
+        # C: holdout tri_shape と同一の 30点。3連複は足さない
+        c = pb.build_tickets('R', 50.0, hs, {1: '◎', 2: '〇'}, ltr_c)
+        order = [8, 7, 6, 5, 4, 3, 2]
+        holdout = {(x, y, z) for x in order[:2] for y in order[:4] for z in order[:7]
+                   if len({x, y, z}) == 3}
+        got = combos(c, 'trifecta')
+        assert c['zone'] == 'C' and len(got) == 30 and got == holdout
+        assert set(te.build_trifecta_formation(order[:2], order[:4], order[:7])) == holdout
+        assert c['trio'] == [] and c['n_points'] == 30
+        ninki_form = set(te.build_trifecta_formation([1, 2], [1, 2, 3, 4], [1, 2, 3, 4, 5, 6, 7]))
+        assert got != ninki_form
+        c13 = pb.build_tickets('R', 69.9, hs, {1: '◎', 3: '〇'}, ltr_c)
+        assert combos(c13, 'trifecta') == holdout and c13['trio'] == []
+
+        hs6 = hs[:6]
+        ltr6 = {i: float(i) for i in range(1, 7)}
+        c6 = pb.build_tickets('R', 55, hs6, {1: '◎', 2: '〇'}, ltr6)
+        assert c6['skip'] and c6['n_points'] == 0
+
+        ba = pb.build_tickets('R', 70.0, hs, {1: '◎', 2: '〇'}, ltr_c)
+        assert ba['zone'] == 'BA' and ba['skip'] and ba['n_points'] == 0
+        assert ba['trio'] == [] and ba['trifecta'] == []
+    check("playbook_tickets D/C/B-A 分離", t_playbook_tickets)
+
+    def t_battle_recency_and_odds_fill():
+        from datetime import datetime
+        import pandas as _pd
+        from core import calculator as calc
+        from core import scraper as sc
+        ref = datetime(2026, 8, 1)
+        assert calc._is_within_days('2026.07.01', ref, 365) is True
+        assert calc._is_within_days('2025.08.15', ref, 365) is True
+        assert calc._is_within_days('2025.07.01', ref, 365) is False
+        # 2020は '202' を含むが、365日外
+        assert calc._is_within_days('2020.01.01', ref, 365) is False
+        df = _pd.DataFrame({
+            'Umaban': [1, 2, 3],
+            'Odds': [2.5, 0.0, 12.0],
+            'Popularity': [1, 99, 3],
+        })
+        sc.fill_missing_odds_pop(df, {1: 9.9, 2: 4.4, 3: 99.0}, {1: 9, 2: 2, 3: 8})
+        assert float(df['Odds'].iloc[0]) == 2.5, '既存オッズを上書きしない'
+        assert float(df['Odds'].iloc[1]) == 4.4, '欠測だけ埋める'
+        assert float(df['Odds'].iloc[2]) == 12.0, '既知オッズを確定で上書きしない'
+        assert int(df['Popularity'].iloc[0]) == 1 and int(df['Popularity'].iloc[1]) == 2
+        assert int(df['Popularity'].iloc[2]) == 3
+    check("battle 365日 + Odds欠測のみ補完", t_battle_recency_and_odds_fill)
 
     def t_consensus_integrate():
         from core import consensus_view as cv
@@ -388,6 +607,26 @@ def main():
         _frag = te.recommend_trifecta(horses, axis_umaban=[1, 2], n_points=50, arare_prob=0.30, fragile_fav=True)
         assert _clean['meta']['band_name'] == 'tight' and _frag['meta']['band_name'] == 'mid', "脆い本命で帯が1段広がる"
         assert _frag['meta']['fragile_fav'] is True
+        # 堅帯③: 4〜5番人気を2着に残す。中庸は従来どおりスコア補充(ここでは変えない)
+        assert {4, 5} <= set(tight['meta']['second']), \
+            f"堅帯は4-5人気を2着に残す got {tight['meta']['second']}"
+        # 1軸=全点に含める(ユーザー指定。最人気の自動固定ではない)
+        r1ax = te.recommend_trifecta(
+            horses, axis_umaban=[8], n_points=30, require_axis_all=True, arare_prob=0.30)
+        assert r1ax['bets'] and all(8 in b['combo'] for b in r1ax['bets']), \
+            f"1軸8が全点に入らない {[b['combo'] for b in r1ax['bets'][:5]]}"
+        r1off = te.recommend_trifecta(
+            horses, axis_umaban=[8], n_points=30, require_axis_all=False, arare_prob=0.30)
+        assert r1off['bets'] and not all(8 in b['combo'] for b in r1off['bets']), \
+            "require_axis_all=Falseなのに全点が1軸付き"
+        # 順不同の3頭組は表示用。同じ3頭の着順違いは1行、買い目点数は変えない
+        _sets = te.unordered_horse_sets([
+            {'combo': (2, 14, 1), 'names': ('A', 'B', 'C'), 'score': 10},
+            {'combo': (2, 1, 14), 'names': ('A', 'C', 'B'), 'score': 9},
+            {'combo': (3, 4, 5), 'names': ('X', 'Y', 'Z'), 'score': 8},
+        ])
+        assert len(_sets) == 2 and _sets[0]['umabans'] == (1, 2, 14)
+        assert _sets[0]['n_orders'] == 2 and _sets[1]['n_orders'] == 1
     check("trio_engine.recommend_trifecta(帯別フォーメーション)", t_trifecta_band_formation)
 
     def t_formation_stake_advice():
@@ -691,6 +930,9 @@ def main():
 
     def t_danger_gate():
         from core import danger_gate as dg
+        def _has(vr, name):
+            return any(name in str(x) for x in (vr.get('reasons') or []))
+
         # 人気薄は対象外
         assert dg.danger_veto(ninki=8, surface='芝', baba='重')['severity'] == 0, "人気薄は危険対象外"
         # 重×1番人気 + 牝×冬春fade = 2件→veto
@@ -717,43 +959,64 @@ def main():
         assert dg.danger_veto(ninki=1, layoff_days=200)['severity'] == 0, "休み明け単独は危険にしない"
         # 他の硬い理由と重なった時のみ算入
         _rs = dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)
-        assert _rs['severity'] == 2 and '半年休み明け' in _rs['reasons'], f"休明+硬でstack, got {_rs}"
+        assert _rs['severity'] == 2 and _has(_rs, '半年休み明け'), f"休明+硬でstack, got {_rs}"
         # 中9週+ローテ(63-179日)ソフト理由(実測 複勝残差-1.6pp z-5.6・ROIフラット=軸信頼度のみ)
         assert dg.danger_veto(ninki=1, layoff_days=70)['severity'] == 0, "中9週+単独は非表示(ソフト)"
         _r9w = dg.danger_veto(ninki=1, layoff_days=70, top_jockey_swap=True)
-        assert '中9週+ローテ' in _r9w['reasons'] and _r9w['severity'] == 2, f"中9週+硬い危険で算入, got {_r9w}"
-        assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True)['reasons'], \
+        assert _has(_r9w, '中9週+ローテ') and _r9w['severity'] == 2, f"中9週+硬い危険で算入, got {_r9w}"
+        assert not _has(dg.danger_veto(ninki=1, layoff_days=200, top_jockey_swap=True), '中9週+ローテ'), \
             "180日+は半年休み明け側(排他)"
         # 美浦→関西遠征×1-3人気(verified_ensei_east_to_west)
         # 複勝残差 train-5.00pp(z-6.05)/2024以降-4.55pp(z-3.37)。単独では自動除外しない材料。
         for _jy in ('07', '08', '09', '10'):        # 中京/京都/阪神/小倉
             _re = dg.danger_veto(ninki=1, tozai='east', jyo=_jy)
-            assert '美浦→関西遠征' in _re['reasons'], f"美浦→西場{_jy}で発火すべき, got {_re}"
+            assert _has(_re, '美浦→関西遠征'), f"美浦→西場{_jy}で発火すべき, got {_re}"
             assert _re['severity'] == 1 and _re['veto'] is False, \
                 f"遠征単独はseverity1かつveto不可, got {_re}"
         assert dg.danger_veto(ninki=1, tozai='1', jyo='08')['reasons'], "DB形式tozai='1'も認識"
         assert dg.danger_veto(ninki=1, tozai='east', jyo='8')['reasons'], "jyoゼロ埋め無しも認識"
         for _nk in (4, 6, 7, 12):                   # 4人気以降は不安定/効果ゼロ帯なので適用外
-            assert '美浦→関西遠征' not in dg.danger_veto(
-                ninki=_nk, tozai='east', jyo='08')['reasons'], f"{_nk}人気には適用しない"
+            assert not _has(dg.danger_veto(
+                ninki=_nk, tozai='east', jyo='08'), '美浦→関西遠征'), f"{_nk}人気には適用しない"
         for _jy in ('01', '02', '05', '06'):        # 地元・北海道は対象外
-            assert '美浦→関西遠征' not in dg.danger_veto(
-                ninki=1, tozai='east', jyo=_jy)['reasons'], f"東場/中立{_jy}では発火しない"
-        assert '美浦→関西遠征' not in dg.danger_veto(
-            ninki=1, tozai='west', jyo='05')['reasons'], "西→東(関西馬の東征)には適用しない"
-        assert '美浦→関西遠征' not in dg.danger_veto(
-            ninki=1, tozai=None, jyo='08')['reasons'], "所属不明では発火しない"
+            assert not _has(dg.danger_veto(
+                ninki=1, tozai='east', jyo=_jy), '美浦→関西遠征'), f"東場/中立{_jy}では発火しない"
+        assert not _has(dg.danger_veto(
+            ninki=1, tozai='west', jyo='05'), '美浦→関西遠征'), "西→東(関西馬の東征)には適用しない"
+        assert not _has(dg.danger_veto(
+            ninki=1, tozai=None, jyo='08'), '美浦→関西遠征'), "所属不明では発火しない"
         # 他の危険材料と重なるとseverityが積み上がる(=単独では消さないが合わせ技で警戒)
         _ren = dg.danger_veto(ninki=1, tozai='east', jyo='08', fillies_race=True)
-        assert _ren['severity'] == 2 and '美浦→関西遠征' in _ren['reasons'], \
+        assert _ren['severity'] == 2 and _has(_ren, '美浦→関西遠征'), \
             f"遠征+他材料でseverity2, got {_ren}"
         # スクレイパ側: 実HTMLの『栗東・宮本』形式(括弧なし)を認識できること
         from core.scraper import extract_tozai as _etz
         assert _etz('栗東・宮本') == 'west' and _etz('美浦・田中') == 'east', "中黒形式の所属抽出"
         assert _etz('西園正都') is None and _etz('東田') is None, "調教師名の東西を誤認しない"
 
-        assert '中9週+ローテ' not in dg.danger_veto(ninki=1, layoff_days=40, top_jockey_swap=True)['reasons'], \
+        assert not _has(dg.danger_veto(ninki=1, layoff_days=40, top_jockey_swap=True), '中9週+ローテ'), \
             "63日未満は非該当"
+        # 短距離休み明け(1300m以下×中9週+): ソフト理由。1-3人気は中距離休み明けより
+        # 見る-4.06/確認-4.43ppだが絶対複勝45%なので単独では出さない。
+        assert dg.danger_veto(ninki=1, layoff_days=70, dist=1200)['severity'] == 0, \
+            "短距離休み明け単独は非表示(ソフト)"
+        _rsp = dg.danger_veto(ninki=1, layoff_days=70, dist=1200, top_jockey_swap=True)
+        assert _has(_rsp, '短距離休み明け') and _has(_rsp, '中9週+ローテ') \
+            and _rsp['severity'] == 3, f"短距離は中9週+に重ねる, got {_rsp}"
+        assert all(str(x).startswith('➖減点 ') for x in _rsp['reasons']), \
+            f"危険理由は減点と一目で分かる表示にする, got {_rsp['reasons']}"
+        assert not _has(dg.danger_veto(
+            ninki=1, layoff_days=70, dist=1600, top_jockey_swap=True), '短距離休み明け'), \
+            "1400m以上では短距離休み明けを出さない"
+        _r180s = dg.danger_veto(ninki=1, layoff_days=200, dist=1200, top_jockey_swap=True)
+        assert _has(_r180s, '半年休み明け') and _has(_r180s, '短距離休み明け') \
+            and not _has(_r180s, '中9週+ローテ'), f"180日+は半年側に短距離を重ねる, got {_r180s}"
+        assert not _has(dg.danger_veto(
+            ninki=1, layoff_days=70, top_jockey_swap=True), '短距離休み明け'), \
+            "距離不明では短距離休み明けを出さない"
+        assert not _has(dg.danger_veto(
+            ninki=1, layoff_days=40, dist=1200, top_jockey_swap=True), '短距離休み明け'), \
+            "63日未満の短距離は非該当"
         # ガラス人気馬(単複逆転FADE・検証z-8.5): 上位人気×単勝短い×複勝が帯中央比1.2倍↑=硬い危険
         from core import value_scanner as _vsg
         _g_hit, _g_r = _vsg.glass_favorite_fade(3.0, 1.8, ninki=2)  # 2.5-3帯の複勝中央1.2→1.8=x1.5
@@ -916,6 +1179,21 @@ def main():
         assert osch.due_slots(plan3, now=_dts(2026, 7, 12, 22, 5)) == [], "前日夜の記録済はdue外"
         stt3 = osch.plan_status(plan3, now=_dts(2026, 7, 12, 22, 5))
         assert stt3['total'] == 2 and stt3['done'] == 1, f"前日夜込みの進捗, got {stt3}"
+        # 本線スロット: 朝一8:40 + 発走15分前 + 発走10分前
+        rec_names = [x[0] for x in osch.RECOMMENDED]
+        assert '08:40' in rec_names and '発走15分前' in rec_names and '発走10分前' in rec_names
+        assert osch.DEFAULT_CLOCK_TIMES == ['08:40']
+        assert osch.prepost_hhmm('15:40') == ['15:25', '15:30']
+        plan4 = {'date': '20260712', 'times': ['08:40'],
+                 'races': [{'race_id': '202605050311', 'label': '東京11R'}], 'records': {}}
+        plan4, npp = osch.attach_prepost_times(
+            plan4, {'202605050311': '15:40'},
+            labels_by_rid={'202605050311': '東京11R'})
+        assert npp == 2, f"15分前+10分前で2枠, got {npp}"
+        rt4 = osch.race_times(plan4, '202605050311')
+        assert '15:25' in rt4 and '15:30' in rt4 and '08:40' in rt4, f"本線3点, got {rt4}"
+        plan4, npp2 = osch.attach_prepost_times(plan4, {'202605050311': '15:40'})
+        assert npp2 == 0, "二重予約しない"
         # ハートビート: touch直後はalive・古い/無しはFalse
         _hb = osch.HEARTBEAT_PATH + '.smoketest'
         osch.touch_heartbeat(path=_hb)
@@ -1194,10 +1472,42 @@ def main():
         kinds = {i['kind']: i['umaban'] for i in r['insights']}
         assert kinds.get('fav_fake') == 5, f"直前浮上5番=見せかけ1番人気, got {kinds}"
         assert kinds.get('hidden_ana') == 3, f"朝一1番人気→直前降下3番=隠れ本命, got {kinds}"
+        labs = omv.chart_observe_labels(h)
+        assert labs.get(5) == '後から押された1番', f"観察ラベル 後から押された1番, got {labs}"
+        assert labs.get(3) == '朝は売れて沈んだ', f"観察ラベル 朝は売れて沈んだ, got {labs}"
+        # 朝から軸: 最初も最後も3番が1番人気
+        rows_s = []
+        for ts, snap in [('2026-07-12 08:40:00', {3: 2.0, 7: 3.0, 5: 9.0}),
+                         ('2026-07-12 15:20:00', {3: 2.1, 7: 3.2, 5: 8.0})]:
+            for u, o in snap.items():
+                rows_s.append({'timestamp': ts, 'umaban': u, 'odds_type': 'win', 'odds_value': o})
+        labs_s = omv.chart_observe_labels(_pdm.DataFrame(rows_s))
+        assert labs_s.get(3) == '朝から軸', f"観察ラベル 朝から軸, got {labs_s}"
+        # VH短縮観察(24→15)。買い目繰り上げには使わない関数の契約。
+        rows_v = []
+        for ts, snap in [('2026-07-12 08:40:00', {7: 24.0, 3: 2.0}),
+                         ('2026-07-12 15:30:00', {7: 15.0, 3: 2.2})]:
+            for u, o in snap.items():
+                rows_v.append({'timestamp': ts, 'umaban': u, 'odds_type': 'win', 'odds_value': o})
+        vobs = omv.vh_shorten_observe(_pdm.DataFrame(rows_v), umabans=[7])
+        assert vobs and vobs[0]['kind'] == 'vh_shorten' and vobs[0]['label'] == '短縮中'
         # 1スナップのみは不足メッセージ
         h1 = h[h['timestamp'] == '2026-07-12 08:40:00']
         assert not omv.analyze_odds_movement(h1)['ok'], "1スナップは分析不可"
     check("odds_move.analyze(朝一↔直前)", t_odds_move)
+
+    def t_quinella_div():
+        from core import quinella_div as qd
+        assert qd.pair_umabans('0105') == (1, 5)
+        mass = qd.support_mass({(1, 2): 2.0, (1, 3): 4.0, (2, 3): 10.0})
+        # 1: 0.5+0.25=0.75 / 2: 0.5+0.1=0.6 / 3: 0.25+0.1=0.35
+        rk = qd.support_rank(mass)
+        assert rk[1] == 1 and rk[2] == 2 and rk[3] == 3, f"支持順位, got {rk}"
+        div = qd.ninki_minus_qrank({1: 3, 2: 1, 3: 2}, rk)
+        assert div[1] == 2, f"馬連の方が支持 +2, got {div}"
+        assert qd.fade_umabans({1: 1, 2: 2, 3: 3}, {1: 3, 2: 2, 3: 1}) == [1], \
+            "1番人気なのに馬連3位=馬連ではいまいち"
+    check("quinella_div.support_rank", t_quinella_div)
 
     def t_newspaper():
         # 📰 新聞発行: viewスナップショット往復→HTML組版→CSV(PDF化はPlaywright依存なので対象外)
@@ -1419,6 +1729,170 @@ def main():
                     os.remove(p)
     check("newspaper._bets_html(券種別ON/OFF)", t_bets_html_bet_types)
 
+    def t_playbook_persist_newspaper():
+        import pandas as _pdp
+        from core import newspaper as np_pp
+        from core import playbook_tickets as pb_pp
+        rid = 'smoketestplaybook99'
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr = {i: float(i) for i in range(1, 9)}
+        df = _pdp.DataFrame({
+            'Rank': list(range(1, 9)), 'Umaban': list(range(1, 9)),
+            'Name': [f'H{i}' for i in range(1, 9)],
+            'Odds': [2.0 + i for i in range(8)], 'Popularity': list(range(1, 9)),
+            'RaceName': ['persistR'] * 8, 'Venue': ['東京'] * 8,
+            'RaceDate': ['2026/08/17'] * 8,
+        })
+        try:
+            np_pp.write_view_snapshot(rid, df, {}, ['Umaban', 'Name', 'Odds'],
+                                      meta={'condition': '良'})
+            np_pp.write_bets_snapshot(rid, 'trio', {
+                'bets': [{'combo': (9, 8, 7), 'odds': 99.0}]})
+            d0 = np_pp.load_bets(rid)
+            old_trio = (d0.get('trio') or {}).get('result')
+            # D
+            rec_d = pb_pp.build_tickets(rid, 30, hs, {1: '◎', 3: '〇'}, ltr)
+            np_pp.persist_playbook(rid, rec_d)
+            bets = np_pp.load_bets(rid)
+            view = np_pp.load_view(rid)
+            assert bets.get('trio', {}).get('result') == old_trio, '既存trioを壊した'
+            assert bets.get('playbook'), 'bets.json に playbook が無い'
+            assert view.get('playbook'), 'view.json に playbook が無い'
+            d_combos = {tuple(b['combo'])
+                        for b in bets['playbook']['result']['bets']['trio']}
+            assert d_combos == {(1, 2, 3), (1, 2, 4)}
+            html_d = np_pp._bets_html(rid)
+            assert '推奨買い方' in html_d and 'D鉄板｜人気型｜3連複2点' in html_d
+            assert '1-2-3' in html_d and '1-2-4' in html_d
+            assert '手動・参考' in html_d and '9-8-7' in html_d
+            # C
+            rec_c = pb_pp.build_tickets(rid, 55, hs, {1: '◎', 2: '〇'}, ltr)
+            np_pp.persist_playbook(rid, rec_c)
+            bets_c = np_pp.load_bets(rid)
+            view_c = np_pp.load_view(rid)
+            assert bets_c.get('trio', {}).get('result') == old_trio
+            tri_n = len(bets_c['playbook']['result']['bets']['trifecta'])
+            assert tri_n == 30 and not bets_c['playbook']['result']['bets']['trio']
+            assert view_c['playbook']['result']['meta']['n_points'] == 30
+            html_c = np_pp._bets_html(rid)
+            assert 'C中庸｜Rank型｜検証済みフォーメーション' in html_c
+            assert '3連単' in html_c and '30点' in html_c
+            # BA skip: 推奨は見送り。旧trioは手動・参考として残る
+            rec_ba = pb_pp.build_tickets(rid, 80, hs, {1: '◎', 2: '〇'}, ltr)
+            np_pp.persist_playbook(rid, rec_ba)
+            html_ba = np_pp._bets_html(rid)
+            ba_bets = np_pp.load_bets(rid)
+            assert ba_bets['playbook']['result']['meta']['skip'] is True
+            assert ba_bets['playbook']['extra']['n_points'] == 0
+            assert '見送り' in html_ba and '荒れゾーン｜見送り' in html_ba
+            assert '9-8-7' in html_ba and '手動・参考' in html_ba
+            # 推奨ブロックが旧9-8-7をデフォルト扱いにしない: 先頭の推奨に見送りがある
+            assert html_ba.index('推奨買い方') < html_ba.index('手動・参考')
+            # view 上書き後も playbook が残る
+            np_pp.write_view_snapshot(rid, df, {}, ['Umaban', 'Name'],
+                                      meta={'condition': '良'})
+            view_after = np_pp.load_view(rid)
+            assert view_after.get('playbook', {}).get('result', {}).get('meta', {}).get('skip') is True
+        finally:
+            for pth_fn in (np_pp._bets_path, np_pp._view_path):
+                p = pth_fn(rid)
+                if os.path.exists(p):
+                    os.remove(p)
+    check("newspaper.persist_playbook(D/C/BA・view残存・trio非破壊)", t_playbook_persist_newspaper)
+
+    def t_playbook_ledger():
+        from inspect import getsource
+        import pandas as _pdl
+        from core import newspaper as np_lg
+        from core import playbook_tickets as pb_lg
+        from core import playbook_ledger as lg
+        # 生成側は確定結果を見ない
+        rec_src = getsource(lg.generation_fields) + getsource(lg.tickets_from_rec)
+        rec_src += getsource(np_lg.persist_playbook)
+        for tok in ('fetch_race_payouts', 'fetch_comprehensive_result',
+                    'chakujun', 'result.html'):
+            assert tok not in rec_src, f'生成経路に未来情報 {tok}'
+        assert 'settle(' not in getsource(np_lg.persist_playbook)
+        rid = 'smoketestpblog01'
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr = {i: float(i) for i in range(1, 9)}
+        df = _pdl.DataFrame({
+            'Rank': list(range(1, 9)), 'Umaban': list(range(1, 9)),
+            'Name': [f'H{i}' for i in range(1, 9)],
+            'Odds': [2.0 + i for i in range(8)], 'Popularity': list(range(1, 9)),
+            'RaceName': ['logR'] * 8, 'Venue': ['東京'] * 8,
+            'RaceDate': ['20260817'] * 8,
+        })
+        try:
+            np_lg.write_view_snapshot(rid, df, {}, ['Umaban', 'Name'],
+                                      meta={'date': '2026/08/17'})
+            rec_d = pb_lg.build_tickets(rid, 30, hs, None, ltr)
+            np_lg.persist_playbook(rid, rec_d)
+            bets = np_lg.load_bets(rid)
+            extra = bets['playbook']['extra']
+            assert extra['ticket_type'] == '3連複' and extra['ticket_count'] == 2
+            assert extra['investment'] == 200
+            assert 'outcome' not in bets['playbook']
+            assert extra.get('hit') is None and extra.get('payout') is None
+            row = lg.entry_from_blob(rid, bets, {'date': '20260817'})
+            assert row['tickets'] == [[1, 2, 3], [1, 2, 4]] or set(map(tuple, row['tickets'])) == {(1, 2, 3), (1, 2, 4)}
+            assert row['settled'] is False and row['hit'] is None
+            oc = lg.settle(rid, official={'winners': [
+                {'combo': (1, 2, 3), 'payout': 1530}]})
+            assert oc['hit'] is True and oc['hit_count'] == 1
+            assert oc['payout'] == 1530 and oc['investment'] == 200
+            assert oc['roi'] == 765.0
+            np_lg.persist_playbook(rid, rec_d)
+            assert np_lg.load_bets(rid)['playbook']['outcome']['payout'] == 1530
+            oc_miss = lg.settle(rid, official={'winners': [
+                {'combo': (5, 6, 7), 'payout': 9999}]})
+            assert oc_miss['hit'] is False and oc_miss['payout'] == 0
+            assert oc_miss['roi'] == 0.0
+            oc_zero = lg.settle(rid, official={'winners': [
+                {'combo': (1, 2, 3), 'payout': 0}]})
+            assert oc_zero['hit'] is True and oc_zero['payout'] == 0
+            rec_c = pb_lg.build_tickets(rid, 55, hs, None, ltr)
+            np_lg.persist_playbook(rid, rec_c)
+            bets_c = np_lg.load_bets(rid)
+            assert 'outcome' not in bets_c['playbook']
+            assert bets_c['playbook']['extra']['ticket_type'] == '3連単'
+            assert bets_c['playbook']['extra']['ticket_count'] == 30
+            assert bets_c['playbook']['extra']['investment'] == 3000
+            win_c = tuple(bets_c['playbook']['result']['bets']['trifecta'][0]['combo'])
+            oc_c = lg.settle(rid, official={'winners': [
+                {'combo': win_c, 'payout': 42000}]})
+            assert oc_c['hit'] is True and oc_c['payout'] == 42000
+            assert oc_c['investment'] == 3000
+            oc_c_miss = lg.settle(rid, official={'winners': [
+                {'combo': (1, 2, 3), 'payout': 10000}]})
+            assert oc_c_miss['hit'] is False and oc_c_miss['payout'] == 0
+            rec_ba = pb_lg.build_tickets(rid, 80, hs, None, ltr)
+            np_lg.persist_playbook(rid, rec_ba)
+            oc_ba = lg.settle(rid)
+            assert oc_ba['ticket_count'] == 0 and oc_ba['investment'] == 0
+            assert oc_ba['payout'] == 0 and oc_ba['roi'] is None
+            e_d = {'zone': 'D', 'ticket_count': 2, 'investment': 200,
+                    'settled': True, 'hit': True, 'payout': 1530}
+            e_c = {'zone': 'C', 'ticket_count': 30, 'investment': 3000,
+                    'settled': True, 'hit': False, 'payout': 0}
+            e_ba = {'zone': 'BA', 'ticket_count': 0, 'investment': 0,
+                     'settled': True, 'hit': False, 'payout': 0, 'skip': True}
+            sm = lg.summarize([e_d, e_c, e_ba])
+            assert sm['D']['n_races'] == 1 and sm['D']['hit_rate'] == 100.0
+            assert sm['D']['roi'] == 765.0
+            assert sm['C']['n_races'] == 1 and sm['C']['hit_rate'] == 0.0
+            assert sm['C']['roi'] == 0.0
+            assert sm['BA']['n_tickets'] == 0
+            assert sm['ALL']['n_races'] == 2
+            assert sm['ALL']['investment'] == 3200
+            assert sm['ALL']['payout'] == 1530
+        finally:
+            for pth_fn in (np_lg._bets_path, np_lg._view_path):
+                p = pth_fn(rid)
+                if os.path.exists(p):
+                    os.remove(p)
+    check("playbook_ledger 生成時リーク無し/D2/C30/BA0/的中外れ払戻0", t_playbook_ledger)
+
     def t_elim_verdict_html():
         # 🧹消去フィルター: 強適消去エンジンの判定から✅残し/🛟ボーダー残し以外(🧹消し)の馬名を表示
         from core import newspaper as np_ev
@@ -1556,8 +2030,31 @@ def main():
             "崩落した種牡馬(キズナ等)はフラグを出さない"
         assert tb_cl.sire_cushion_level_flag('ダイワメジャー', None) is None, "欠損はNone"
         assert tb_cl.sire_cushion_level_flag('ダイワメジャー', 0.0) is None, "未入力0はNone"
+        assert set(tb_cl.cushion_level_sire_names()) == set(tb_cl._SIRE_CUSHION_LEVEL)
     check("track_bias.sire_cushion_level_flag(クッション水準×種牡馬・検証済4頭)",
           t_sire_cushion_level)
+
+    def t_moisture_vs_venue():
+        # 場ごとの『良』上限と比べる見る用一言。東京12%は乾、小倉12%は湿。
+        from core import track_bias as tb_mv
+        r = tb_mv.moisture_vs_venue('東京', '芝', 12.0)
+        assert r and r['band'] == 'dry', f"東京12%は乾いている, got {r}"
+        assert '東京' in r['line'] and '乾' in r['line']
+        assert '点数には足しません' in r['line']
+        r = tb_mv.moisture_vs_venue('小倉', '芝', 12.0)
+        assert r and r['band'] == 'wet', f"小倉12%は湿っている, got {r}"
+        assert '小倉' in r['line'] and '湿' in r['line']
+        r = tb_mv.moisture_vs_venue('05', '芝', 12.0)
+        assert r and r['band'] == 'dry', "場コード05=東京でも同じ"
+        r = tb_mv.moisture_vs_venue('東京', '芝', 18.0)
+        assert r and r['band'] == 'ok', "東京18%は良の範囲内"
+        r = tb_mv.moisture_vs_venue('東京', 'ダート', 12.0)
+        assert r and r['band'] == 'wet', "ダート12%は湿(良は9%以下)"
+        assert tb_mv.moisture_vs_venue('東京', '芝', None) is None
+        assert tb_mv.moisture_vs_venue('東京', '芝', 0) is None
+        assert tb_mv.moisture_vs_venue('大井', '芝', 12.0) is None, "地方芝は上限不明なので出さない"
+    check("track_bias.moisture_vs_venue(場ごとの乾き具合・見る用)",
+          t_moisture_vs_venue)
 
     def t_venue_race_label():
         # 🏆Race Analysis Summary の「東京11R」表示(旧 (Score: x.x) の置換先)
@@ -1647,6 +2144,8 @@ def main():
         assert bands[1] == '前' and bands[3] == '後', f"帯分類誤り {bands}"
         icons = ait.agreement_icons({1: '前', 2: '中', 3: '後'}, {1: '前', 2: '後', 3: '後'})
         assert icons[1] == '🏆' and icons[3] == '💀' and icons[2] == '', f"合意アイコン誤り {icons}"
+        ranks = ait.ranks_from_left({1: 10.0, 9: 0.0, 10: 90.0})
+        assert ranks[9] == 1 and ranks[1] == 2 and ranks[10] == 3, f"3角番手変換誤り {ranks}"
     check("netkeiba AI展開照合(帯/合意)", t_ai_tenkai)
 
     def t_botcross():
@@ -1679,6 +2178,15 @@ def main():
             assert k in ec.UNVERIFIED and k in ec.CAUTION_KEYS and k in ec.FLAG_LABEL
         # 展開2(netkeiba照合💀・青ヘッダ)＋ディスク橋渡し
         assert 'tenkai2' in ec.UNVERIFIED and 'tenkai2' in ec.BLUE_KEYS and 'tenkai2' in ec.FLAG_LABEL
+        # 騎手弱材料: 数字なし＝しきい値以下。ヘッダは紫。
+        assert 'jweak' in ec.UNVERIFIED and 'jweak' in ec.PURPLE_KEYS
+        assert 'jweak' not in ec.CAUTION_KEYS
+        assert ec.is_jweak(None) is False
+        assert ec.is_jweak({'mult': 1.0, 'note': '馬連携80・場連対10・黄金10'}) is True
+        assert ec.is_jweak({'mult': 1.0, 'note': ''}) is True, "内訳なしは以下扱い"
+        assert ec.is_jweak({'mult': 1.0, 'note': '馬連携80'}) is True, "場連対・黄金なしは以下扱い"
+        assert ec.is_jweak({'mult': 1.05, 'note': ''}) is False, "係数が高いと点灯しない"
+        assert ec.is_jweak({'mult': 0.98, 'note': '馬連携120・場連対10・黄金10'}) is False
         from core import score_cache as _sc
         _rid = '__smoke_t2__'
         _sc.write_tenkai_danger(_rid, {3, 7})
@@ -1690,6 +2198,8 @@ def main():
         from core import blood_course as bc
         assert bc.sire_line('シニスターミニスター') == 'APインディ系', "手動辞書が壊れた"
         assert bc.sire_line(None) == 'その他'
+        assert bc.line_bg('サンデー系').startswith('#'), "系統色は薄色コード"
+        assert bc.line_bg('その他') == ''
         # 検証済みの場×人気: 東京芝1-3人気=+/小倉芝=-のみ。人気薄はNone
         v = bc.venue_fav_note('05', '芝', 1)
         assert v and v['shift'] > 0, f"東京芝fav欠落 {v}"
@@ -1704,7 +2214,211 @@ def main():
         from core import bloodline as _bll
         assert _bll.blood_score('存在しない父', '存在しない母父', '芝', 1600) == 25.0, "血統スコア母集団既定値"
         assert isinstance(_bll.blood_score('ディープインパクト', 'Mineshaft', '芝', 1600), float)
+        from core import blood_ev as _bev
+        dummy_bands = {i: {'win': 0.08, 'top3': 0.22} for i in range(8)}
+        dummy_bands[1] = {'win': 0.33, 'top3': 0.70}
+        hs = [
+            {'sire': '存在しない父', 'bms': '存在しない母父', 'odds': 2.0, 'ninki': 1,
+             'umaban': 1, 'name': 'A'},
+            {'sire': '存在しない父', 'bms': '存在しない母父', 'odds': 8.0, 'ninki': 5,
+             'umaban': 2, 'name': 'B'},
+            {'sire': '存在しない父', 'bms': '存在しない母父', 'odds': 80.0, 'ninki': 14,
+             'umaban': 3, 'name': 'C'},
+        ]
+        marked = _bev.annotate_race(hs, '芝', 1600, dummy_bands)
+        assert len(marked) == 3
+        assert marked[2]['skip_e'] is True, "50倍超・12人気以下は大穴除外"
+        assert 'win_label' in marked[0] and 'blood_label' in marked[0]
+        assert marked[0]['win_ev'] is not None
+        empty = _bev.overlap_news_line([], '芝', 1600, dummy_bands)
+        assert empty == ''
+        line = _bev.overlap_news_line(hs, '芝', 1600, dummy_bands)
+        assert isinstance(line, str)
+        skip_line = _bev.overlap_skip_news_line(hs, '芝', 1600, dummy_bands)
+        assert '3番' in skip_line and '1番' not in skip_line, skip_line
     check("血統×コース(blood_course)の契約", t_blood_course)
+
+    def t_hunter_wet_fav_notes():
+        # 穴馬ハンター: 道悪×血統は1-3人気の表示だけ。穴馬・良馬場は出さない。点数非配線。
+        from pages.anabaka_hunter import wet_fav_notes
+        from core import track_bias as tb
+        hs = [
+            {'umaban': 1, 'name': '穴馬', 'ninki': 8, 'sire': 'ヘニーヒューズ'},
+            {'umaban': 2, 'name': '軸馬', 'ninki': 1, 'sire': 'ヘニーヒューズ'},
+            {'umaban': 3, 'name': '芝人気', 'ninki': 2, 'sire': 'ディープインパクト'},
+        ]
+        assert wet_fav_notes(hs, 'ダート', '良', tb) == []
+        dirt = wet_fav_notes(hs, 'ダート', '重', tb)
+        assert len(dirt) == 1 and '2番' in dirt[0] and '軸馬' in dirt[0] and '🟢' in dirt[0], dirt
+        assert '穴馬' not in ''.join(dirt)
+        turf = wet_fav_notes(hs, '芝', '不良', tb)
+        assert len(turf) == 1 and '芝人気' in turf[0] and '⚠' in turf[0], turf
+        assert wet_fav_notes(hs, 'ダート', '重', None) == []
+        from pages.anabaka_hunter import _html_oneline
+        flat = _html_oneline('<div>\n            8番 テスト\n            </div>')
+        assert '\n' not in flat and '8番 テスト' in flat and flat.endswith('</div>')
+        from pages.anabaka_hunter import (
+            attention_marks_html, attention_marks_md, combo_n_of)
+        assert attention_marks_html(0, False) == ''
+        both = attention_marks_html(2, True)
+        assert '濃い穴' in both and '血統注目' in both
+        assert '最注目' not in both
+        only_c = attention_marks_html(2, False)
+        assert '濃い穴' in only_c and '血統注目' not in only_c
+        only_b = attention_marks_html(1, True)
+        assert '濃い穴' not in only_b and '血統注目' in only_b
+        md = attention_marks_md(2, True)
+        assert '濃い穴' in md and '血統注目' in md
+        assert combo_n_of(7, {7: 3}) == 3
+        assert combo_n_of('7', {7: 2}) == 2
+        assert combo_n_of(9, {}) == 0
+    check("穴馬ハンター道悪血統は人気上位の表示のみ", t_hunter_wet_fav_notes)
+
+    def t_folklore_lib():
+        # 俗説ハンターは予想スコアに混ぜない。該当数の集計と否決ラベルだけ。
+        from core import folklore_lib as folk
+        ids = [r['id'] for r in folk.CATALOG]
+        assert len(ids) >= 40, f"俗説が少なすぎ {len(ids)}"
+        assert len(ids) == len(set(ids)), "俗説idが重複"
+        assert folk.fire_marks(14) == '🔥🔥🔥'
+        assert folk.fire_marks(9) == '🔥🔥'
+        assert folk.fire_marks(5) == '🔥'
+        assert folk.fire_marks(2) == ''
+        import pandas as pd
+        df = pd.DataFrame([{
+            'Umaban': 2, 'Name': 'テスト馬', 'Popularity': 3, 'Odds': 8.5,
+            'Waku': 2, 'Jockey': '武豊', 'Trainer': '美浦・田中', 'Tozai': 'east',
+            'SexAge': '牡5', 'Blinker': 0, 'Weight': '490(+12)',
+            'WeightCarried': '57.0', 'sire': 'ディープインパクト',
+            'broodmareSire': '', 'CurrentDistance': 1600, 'CurrentSurface': '芝',
+            'PastRuns': [{
+                'Rank': 8, 'Popularity': 1, 'Distance': 1800, 'Surface': '芝',
+                'Agari': 33.5, 'Passing': '1-1-1-1', 'Margin': 0.7,
+                'Date': '2026.07.01', 'PrevJockey': '武豊', 'Grade': '1勝',
+                'FieldSize': 16, 'RaceId': '202605021211', 'RaceName': '1勝',
+                'Baba': '良',
+            }],
+        }])
+        meta = {'date_val': '20260801', 'is_fillies': False, 'is_handicap': False}
+        res = folk.evaluate_race(df, race_id='202608020211', meta=meta, enrich=False)
+        assert len(res) == 1
+        hit_ids = {h['id'] for h in res[0]['hits']}
+        assert 'prev_fav1_flop' in hit_ids, hit_ids
+        assert 'weight_plus10' in hit_ids, hit_ids
+        assert 'dist_short' in hit_ids, hit_ids
+        assert 'prev_lead_lose' in hit_ids, hit_ids
+        assert res[0]['n_rejected'] >= 4
+        assert res[0]['n_total'] == len(res[0]['hits'])
+        assert res[0]['n_pos'] + res[0]['n_neg'] == res[0]['n_total']
+        assert res[0]['score'] == res[0]['n_pos'] - res[0]['n_neg']
+        assert all(r.get('sign') in (folk.SIGN_POS, folk.SIGN_NEG) for r in folk.CATALOG)
+        assert all(r.get('weight') == 1.0 for r in folk.CATALOG)
+        assert folk._NEG_IDS <= {r['id'] for r in folk.CATALOG}
+        assert 'dirt_front' in ids and 'maiden_fav1' in ids
+        assert 'skip_dam_age' in ids and 'skip_sibling' in ids
+        by_id = {r['id']: r for r in folk.CATALOG}
+        assert by_id['skip_dam_age']['verdict'] == folk.VERDICT_REJECTED
+        assert by_id['dirt_small']['sign'] == folk.SIGN_NEG
+        assert by_id['weight_minus20']['sign'] == folk.SIGN_NEG
+        assert folk.match_one(by_id['dirt_small'], {'is_dirt': True, 'body_kg': 430})
+        assert not folk.match_one(by_id['dirt_small'], {'is_dirt': False, 'body_kg': 430})
+        assert folk.match_one(by_id['maiden_fav1'], {'is_maiden': True, 'ninki': 1})
+        dtags = folk.race_tags({'condition': '稍重'}, 12, 'ダート')
+        assert any('ダート' in t and '時計が速くなる' in t for t in dtags)
+        ttags = folk.race_tags(
+            {'condition': '不良', 'date_val': '20260801', 'RaceName': '新馬'}, 16, '芝')
+        assert any('芝' in t and '前残り' in t for t in ttags)
+        assert any('新馬' in t for t in ttags)
+        assert by_id['prev_fav1_flop']['sign'] == folk.SIGN_POS
+        assert by_id['weight_plus10']['sign'] == folk.SIGN_POS
+        h = res[0]
+        assert folk.fmt_signed(h['score']) in h['balance']
+        assert len(folk.top_score(res, 5)) == 1
+        wet_pos = folk.match_one(by_id['wet_blood'], {
+            'baba': '稍重', 'sire': 'テスト', 'wet_blood': {'mod': 'exempt'},
+        })
+        wet_neg = folk.match_one(by_id['wet_blood'], {
+            'baba': '稍重', 'sire': 'テスト', 'wet_blood': {'mod': 'intensify'},
+        })
+        assert wet_pos and wet_pos['sign'] == folk.SIGN_POS
+        assert wet_neg and wet_neg['sign'] == folk.SIGN_NEG
+        assert 'skips' in res[0]
+        assert 'prev_fluke' in {r['id'] for r in folk.CATALOG}
+        assert 'pad_sweat_foam' in {r['id'] for r in folk.CATALOG}
+        assert len({r['id'] for r in folk.CATALOG}) == len(folk.CATALOG)
+        empty = pd.DataFrame([{
+            'Umaban': 1, 'Name': '新馬', 'Popularity': 1, 'Odds': 2.0,
+            'Waku': 1, 'Jockey': 'a', 'Trainer': '', 'Tozai': None,
+            'SexAge': '牡2', 'Blinker': 0, 'Weight': '発走前のため未公開',
+            'WeightCarried': '55.0', 'sire': '', 'broodmareSire': '',
+            'CurrentDistance': 1200, 'CurrentSurface': '芝', 'PastRuns': [],
+        }])
+        res2 = folk.evaluate_race(empty, race_id='202605050801', meta={'date_val': '20260505'},
+                                  enrich=False)
+        assert res2[0]['n_total'] >= 0
+        def _sig(um, ninki, score, n_pos, n_neg):
+            return {'umaban': um, 'ninki': ninki, 'score': score,
+                    'n_pos': n_pos, 'n_neg': n_neg, 'name': str(um)}
+        sigs = folk.folklore_signals([
+            _sig(10, 7, 7, 8, 1),
+            _sig(4, 8, 8, 9, 1),
+            _sig(16, 5, 6, 7, 1),
+            _sig(9, 8, 6, 8, 2),
+            _sig(5, 11, 8, 11, 3),
+            _sig(12, 10, 4, 5, 1),
+            _sig(3, 6, 6, 8, 2),
+        ], captured={4, 13, 6, 12})
+        assert [s['umaban'] for s in sigs] == [5, 10, 3], [s['umaban'] for s in sigs]
+        assert folk.captured_umabans({4: '🎯精鋭', 12: '🕸️広域網', 1: ''}) == {4, 12}
+        assert folk.market_lens_verdict(-0.23) == '市場以上の優位性なし'
+        assert folk.market_lens_verdict(-1.68) == '人気のわりに来ていない（売れすぎ）'
+        assert folk.market_lens_verdict(1.2) == '市場が付けた人気より、よく来ている'
+        assert len(folk.MARKET_LENS) == 10
+        senko = folk.market_lens_for_catalog('front_habit')
+        assert senko and senko['id'] == 'style_senko'
+        assert '市場以上の優位性なし' in folk.market_lens_short(senko)
+        assert folk.market_lens_for_catalog('no_such_folk') is None
+    check("俗説ハンターはエンジン非配線・該当と否決を数える", t_folklore_lib)
+
+    def t_gyaku_kami():
+        # 逆神ページはリンク集だけ。API/スクレイピング/スコアは持たない。
+        from core import gyaku_kami as gk
+        rows = gk.load_accounts(use_cache=False)
+        ids = [r['id'] for r in rows]
+        assert ids, '逆神カタログが空'
+        assert len(ids) == len(set(ids)), '逆神idが重複'
+        assert all(r['platform'] in gk.PLATFORMS for r in rows)
+        x_names = [r['name'] for r in gk.accounts_for(gk.PLAT_X)]
+        yt_names = [r['name'] for r in gk.accounts_for(gk.PLAT_YOUTUBE)]
+        for n in (
+            '粗品', '競馬ゆっくり', 'ぷに@競馬', '稲花リノ', '競馬僧侶【逆神】',
+            'なお@逆神競馬予想家', 'たろうまる競馬【逆神】', 'キャプテン渡辺',
+            '逆神のホワケ', '逆神ch @競馬予想', 'ゴリラおじさん@競馬逆神',
+            'アドマイヤ競馬(逆神)', '逆神競馬',
+            '芸能人競馬予想と逆説の競馬予想【公式Ｘ】',
+        ):
+            assert n in x_names, n
+        for n in (
+            '粗品 Official Channel', '競馬ゆっくり', 'ぷに競馬',
+            '逆神レイのゆっくり競馬ちゃんねる', '逆神注意報',
+            'たろうまる競馬【逆神】', 'なお@逆神競馬予想家',
+            '水上学のKEIBA大学',
+        ):
+            assert n in yt_names, n
+        for r in rows:
+            u = r['url']
+            if u is None:
+                continue
+            assert u.startswith(('https://x.com/', 'https://www.youtube.com/')), u
+        souryo = next(r for r in rows if r['id'] == 'x_keiba_souryo')
+        assert souryo['url'] is None, '未確認アカウントにURLを推測で付けない'
+        soshina = next(r for r in rows if r['id'] == 'x_soshina')
+        assert soshina['url'] == 'https://x.com/maiokux'
+        assert not hasattr(gk, 'fetch_posts')
+        assert not hasattr(gk, 'gyaku_score')
+        from pages.gyaku_kami import render as _gk_render
+        assert callable(_gk_render)
+    check("逆神はリンク集のみ・未確認URLは空", t_gyaku_kami)
 
     def t_jockey_power():
         # 騎手力(JPower): 『騎手のみの力』偏差値の契約(検証=scripts/jockey_power_backtest.py)
@@ -1756,6 +2470,111 @@ def main():
                    'fit_match', 'fit_distance', 'horse_lap33_value'):
             assert hasattr(l3, fn), f"lap33.{fn} 欠落"
     check("33ラップ理論(lap33)の契約", t_lap33)
+
+    def t_prev_race_close_sec():
+        # その他の穴馬候補: |差|<=0.5秒なら秒数を赤字。スコアには使わない表示専用。
+        from core import prev_race as prv
+        assert prv.CLOSE_SEC == 0.5
+        close = {'margin_3rd': 0.4, 'rank': 4}
+        far = {'margin_3rd': 0.7, 'rank': 5}
+        miss = {'margin_3rd': None, 'margin_win': None, 'rank': 8}
+        winfb = {'margin_3rd': None, 'margin_win': -0.2, 'rank': 2}
+        assert prv.is_close_margin(close) and not prv.is_close_margin(far)
+        assert not prv.is_close_margin(miss), "欠損は赤字にしない"
+        assert prv.is_close_margin(winfb), "3着差なしなら1着差で判定"
+        html_c = prv.margin_line_html(close)
+        html_f = prv.margin_line_html(far)
+        assert '+0.4秒' in html_c and 'font-weight:bold' in html_c
+        assert '+0.7秒' in html_f and 'font-weight:bold' not in html_f
+        # 既存の関数は文字列のまま(シグネチャ不変)
+        assert prv.margin_line(close) == '3着馬との差 +0.4秒'
+        badge_ok = {'is_stakes': True, 'margin_3rd': 0.3, 'rank': 5}
+        badge_no = {'is_stakes': True, 'margin_3rd': 0.5, 'rank': 5}
+        assert prv.badge(badge_ok) == '⭐ 重賞で3着馬と接戦'
+        assert prv.badge(badge_no) == '', "0.5秒赤字は⭐バッジを広げない"
+    check("前走差の赤字表示(prev_race・表示専用)", t_prev_race_close_sec)
+
+    def t_gyaku_shocker_reach():
+        # 穴馬ハンター表示専用。今回3角は関数に渡さない(リーク防止)。
+        from core import gyaku_shocker as gs
+        import inspect
+        assert 'current_c3' not in inspect.signature(gs.reach).parameters
+        assert 'corner3' not in inspect.signature(gs.reach).parameters
+        assert gs.reach(2000, 1600, '12-10-9-8'), "後方+短縮=候補"
+        assert gs.reach(1400, 1200, '12-11'), "短距離通過2個でも3角=12"
+        assert gs.reach(2000, 1600, '2-2-2-1') is False, "前走先行は候補にしない"
+        assert gs.reach(1600, 1800, '12-10-9-8') is False, "距離延長は候補にしない"
+        assert gs.reach(1600, 1600, '12-10-9-8') is False, "同距離は候補にしない"
+        assert gs.reach(None, 1600, '12-10-9-8') is None, "距離欠損は判定しない"
+        html = gs.label_html(gs.reach(2000, 1600, '10-10-8-7'))
+        assert '逆ショッカー候補' in html and 'font-weight:bold' in html
+        assert '適合' not in html, "完成条件を示唆しない"
+        assert gs.label_html(False) == '' and gs.label_html(None) == ''
+        assert gs.table_cell(gs.reach(2000, 1600, '10-10-8-7')) == gs.TABLE_HIT
+        assert gs.TABLE_HIT == '〇'
+        assert gs.pred_c3_memo(7) == '予測3角：7番手（netkeiba AI・本番の3角ではない）'
+        assert gs.pred_c3_memo(None) == ''
+        assert '予測3角：7番手' in gs.table_cell_pred(gs.reach(2000, 1600, '10-10-8-7'), 7)
+        assert '候補(予測3角' not in gs.table_cell_pred(gs.reach(2000, 1600, '10-10-8-7'), 7)
+        assert gs.PAIR_MARK == '🟣⏱️'
+        hit = gs.reach(2000, 1600, '10-10-8-7')
+        paired = gs.with_pair(hit, 6, 0.2)
+        assert paired['pair_mark'] == '🟣⏱️'
+        assert gs.pair_prefix(paired) == '🟣⏱️ '
+        assert '🟣⏱️' in gs.label_html(paired)
+        assert gs.with_pair(hit, 2, 0.1).get('pair_mark') is None, "3着以内は⏱️しない"
+        assert gs.with_pair(hit, 6, 0.8).get('pair_mark') is None, "0.3秒超は僅差ではない"
+        assert gs.with_pair(False, 6, 0.2) is False
+        assert gs.pair_prefix(hit) == ''
+        assert gs.table_cell_pred(gs.reach(2000, 1600, '10-10-8-7'), None) == gs.TABLE_HIT
+        assert gs.table_cell_pred(False, 7) == gs.TABLE_MISS
+        assert gs.table_cell(False) == gs.TABLE_MISS
+        assert gs.table_cell(None) == gs.TABLE_MISS
+        assert gs.table_cell(gs.reach(1600, 1800, '12-10-9-8')) == gs.TABLE_MISS
+        runs = [{'Distance': 1400, 'Date': '2026.01.01', 'Surface': 'ダート'},
+                {'Distance': 1200, 'Date': '2025.10.01', 'Surface': '芝'}]
+        mem = gs.memo_lines(past_runs=runs, current_distance=1200,
+                            current_surface='芝',
+                            body_weight=482, race_date='20260301',
+                            prev_date='2026.01.01')
+        assert mem[0] == '↔ バウンド：1200→1400→1200'
+        assert mem[1] == '↔ 芝⇔ダ：芝→ダ→芝'
+        assert mem[2] == '体重：482kg　間隔：中8週'
+        assert all('○' not in x for x in mem)
+        plain = gs.memo_lines(
+            past_runs=[{'Distance': 1800, 'Surface': '芝'},
+                       {'Distance': 2000, 'Surface': '芝'}],
+            current_distance=1600, current_surface='芝')
+        assert not any('バウンド' in x or '芝⇔ダ' in x for x in plain)
+        blk = gs.block_html(gs.with_memo(
+            gs.reach(1400, 1200, '10-10-8-7'),
+            past_runs=runs, current_distance=1200, current_surface='芝',
+            body_weight=482, race_date='20260301', prev_date='2026.01.01'))
+        assert '↔ バウンド：1200→1400→1200' in blk
+        assert '↔ 芝⇔ダ：芝→ダ→芝' in blk
+        assert '○' not in blk
+    check("逆ショッカー候補(表示専用・リーク無し)", t_gyaku_shocker_reach)
+
+    def t_gyaku_newspaper_off():
+        from core import newspaper as np
+        view = {
+            'columns': ['Umaban', 'Lap33', 'GyakuShocker', 'Projected Score'],
+            'order': ['Umaban', 'Lap33', 'GyakuShocker', 'Projected Score'],
+        }
+        cols = np._pick_columns(view, {'col_mode': 'app', 'exclude_cols': []})
+        assert 'GyakuShocker' not in cols
+        assert 'Lap33' in cols
+        cols2 = np._pick_columns(view, {
+            'col_mode': 'custom',
+            'custom_cols': ['GyakuShocker', 'Umaban'],
+            'exclude_cols': [],
+        })
+        assert 'GyakuShocker' not in cols2
+        assert 'Umaban' in cols2
+        cols3 = np._pick_columns(view, {'col_mode': 'all', 'exclude_cols': []})
+        assert 'GyakuShocker' not in cols3
+        assert 'GyakuShocker' in np.HIDE_ON_PAPER
+    check("逆シは新聞紙面に出ない", t_gyaku_newspaper_off)
 
     def t_longshot_threshold():
         # 穴馬しきい値は**常に6**(検証: 4に下げるとVHが人気順に負ける)。

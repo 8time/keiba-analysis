@@ -44,6 +44,16 @@ def zone_of(vscore):
     return ZONE_BOUNDS[-1][0]
 
 
+def zone_code(vscore):
+    """妙味度→短いゾーン記号。D=0-49 / C=50-69 / BA=70-。bounds は zone_of と同一。"""
+    z = zone_of(vscore)
+    if z.startswith('D'):
+        return 'D'
+    if z.startswith('C'):
+        return 'C'
+    return 'BA'
+
+
 def get(vscore, kind):
     """kind: 'trio'(3連複) / 'trifecta'(3連単)。引けなければ None。"""
     d = _load()

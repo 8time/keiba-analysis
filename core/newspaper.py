@@ -140,17 +140,29 @@ def write_view_snapshot(race_id, view_df, labels=None, order=None, meta=None, so
                                  ('CurrentSurface', 'surface')]:
                     if not m.get(dst) and r0.get(src) not in (None, ''):
                         m[dst] = r0.get(src)
+        # テーブル上書きでも検証済み買い方(playbook)は残す
+        keep_pb = None
+        vp = _view_path(race_id)
+        if os.path.exists(vp):
+            try:
+                with open(vp, 'r', encoding='utf-8') as f:
+                    keep_pb = (json.load(f) or {}).get('playbook')
+            except Exception:
+                keep_pb = None
+        payload = {
+            'race_id': str(race_id), 'ts': time.time(),
+            'meta': m,
+            'sort_label': str(sort_label or ''),
+            'labels': {c: str((labels or {}).get(c, c)) for c in cols},
+            'order': [c for c in (order or []) if c in cols],
+            'columns': cols,
+            'records': records,
+        }
+        if keep_pb is not None:
+            payload['playbook'] = keep_pb
         os.makedirs(NP_DIR, exist_ok=True)
-        with open(_view_path(race_id), 'w', encoding='utf-8') as f:
-            json.dump({
-                'race_id': str(race_id), 'ts': time.time(),
-                'meta': m,
-                'sort_label': str(sort_label or ''),
-                'labels': {c: str((labels or {}).get(c, c)) for c in cols},
-                'order': [c for c in (order or []) if c in cols],
-                'columns': cols,
-                'records': records,
-            }, f, ensure_ascii=False, default=str)
+        with open(vp, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, default=str)
     except Exception:
         pass
 
@@ -309,7 +321,8 @@ def _bets_path(race_id):
 
 
 def write_bets_snapshot(race_id, kind, result, extra=None):
-    """おすすめ買い目エンジンの結果を券種別にマージ保存(kind=trio/trifecta/qe/wide)。"""
+    """おすすめ買い目を券種別にマージ保存(kind=playbook/trio/trifecta/qe/wide)。
+    playbook を足しても既存の trio/trifecta キーは消さない。"""
     if not race_id or not kind or not result:
         return
     try:
@@ -328,6 +341,83 @@ def write_bets_snapshot(race_id, kind, result, extra=None):
                            'result': _jsonable(keep)}
         data['race_id'] = str(race_id)
         os.makedirs(NP_DIR, exist_ok=True)
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+
+def persist_playbook(race_id, rec):
+    """検証済み買い方を bets.json と view.json の両方へ同じ形で残す。
+
+    rec: playbook_tickets.build_tickets の戻り値。券の組み方は変えない。
+    view.json がまだ無いときは bets だけ書き、後から view 保存時に再呼ぶ。
+    """
+    if not race_id or not isinstance(rec, dict):
+        return
+    try:
+        from core import playbook_tickets as _pb
+        payload = _pb.snapshot_payload(rec)
+    except Exception:
+        payload = {
+            'bets': {'trio': rec.get('trio') or [],
+                     'trifecta': rec.get('trifecta') or []},
+            'axis': rec.get('axis') or [],
+            'meta': {
+                'zone': rec.get('zone'),
+                'strategy': rec.get('strategy'),
+                'rank_logic': rec.get('rank_logic'),
+                'n_points': rec.get('n_points'),
+                'ui_line': rec.get('ui_line'),
+                'skip': rec.get('skip'),
+                'warning': rec.get('warning'),
+            },
+            'warning': rec.get('warning'),
+        }
+    extra = {
+        'zone': rec.get('zone'),
+        'strategy': rec.get('strategy'),
+        'rank_logic': rec.get('rank_logic'),
+        'axis': rec.get('axis'),
+        'n_points': rec.get('n_points'),
+        'ui_line': rec.get('ui_line'),
+        'skip': rec.get('skip'),
+    }
+    try:
+        from core import playbook_ledger as _plg
+        extra.update(_plg.generation_fields(rec))
+    except Exception:
+        pass
+    prev = None
+    try:
+        prev = load_bets(race_id)
+    except Exception:
+        prev = None
+    write_bets_snapshot(race_id, 'playbook', payload, extra=extra)
+    _merge_playbook_into_view(race_id, payload, extra)
+    try:
+        from core import playbook_ledger as _plg2
+        _plg2.preserve_outcome_if_same(race_id, rec, prev)
+    except Exception:
+        pass
+
+
+def _merge_playbook_into_view(race_id, payload, extra=None):
+    """既存 view.json に playbook だけ足す。records / columns は触らない。"""
+    p = _view_path(race_id)
+    if not os.path.exists(p):
+        return
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f) or {}
+        keep = {k: payload.get(k) for k in
+                ('bets', 'axis', 'meta', 'warning')
+                if payload.get(k) is not None}
+        data['playbook'] = {
+            'ts': time.time(),
+            'extra': _jsonable(extra or {}),
+            'result': _jsonable(keep),
+        }
         with open(p, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, default=str)
     except Exception:
@@ -1265,6 +1355,9 @@ def _pop_int(v):
     return int(m.group()) if m else 999
 
 
+# 強適テーブル専用で紙面に出さない列。発行の列チェックはOFFのまま。
+HIDE_ON_PAPER = frozenset({'GyakuShocker'})
+
 DEFAULT_OPTS = {
     'title': '強適競馬新聞',
     'subtitle': '',
@@ -1273,7 +1366,7 @@ DEFAULT_OPTS = {
     'font_pt': 6.8,
     'row_order': 'app',           # app / umaban / pop
     'col_mode': 'app',            # app(アプリ表示列) / all(全列) / lite(軽量)
-    'exclude_cols': [],
+    'exclude_cols': ['GyakuShocker'],
     'cell_max': 46,
     'page_per_race': True,
     'keep_table': True,
@@ -1324,6 +1417,8 @@ def _pick_columns(view, opts):
     else:
         cols = list(cols_all)
     excl = set(opts.get('exclude_cols') or [])
+    # 逆シ(GyakuShocker)は強適テーブル専用。紙面には出さない（チェックOFF固定）。
+    excl.update(HIDE_ON_PAPER)
     cols = [c for c in cols if c not in excl]
     # レース列(全行同値)は紙面ヘッダーに出すので表からは省く
     for c in ('RaceID', 'RaceName', 'RaceDate', 'Venue', 'CurrentDistance', 'CurrentSurface'):
@@ -1618,28 +1713,69 @@ def _fmt_bet_list(bets, arrow=False, cap=36):
 
 
 def _bets_html(race_id, bet_types=None):
-    """SRAで生成した5券種おすすめ買い目(スナップショット)を紙面化。
-    bet_types={'trio','trifecta','quinella','exacta','wide'}のON/OFFで
-    どの券種を紙面に載せるか選べる(未指定=全券種ON・従来動作を維持)。"""
-    data = load_bets(race_id)
+    """SRAで生成した買い目スナップショットを紙面化。
+    先頭は検証済み『推奨買い方』(playbook)。旧エンジンは手動・参考として続ける。
+    """
+    data = load_bets(race_id) or {}
+    if not data.get('playbook'):
+        v = None
+        try:
+            v = load_view(race_id)
+        except Exception:
+            v = None
+        if v and v.get('playbook'):
+            data = dict(data)
+            data['playbook'] = v['playbook']
     if not data:
         return ''
     bt = dict(DEFAULT_OPTS['bet_types'])
     bt.update(bet_types or {})
     boxes = []
+    pb = data.get('playbook') or {}
+    pb_res = pb.get('result') or {}
+    pb_meta = (pb_res.get('meta') or {})
+    if not pb_meta:
+        pb_meta = pb.get('extra') or {}
+    pb_bets = pb_res.get('bets')
+    if pb_meta.get('ui_line') or pb_meta.get('skip') or pb_bets is not None:
+        line = pb_meta.get('ui_line') or '推奨買い方'
+        if pb_meta.get('skip') or str(pb_meta.get('zone') or '') == 'BA':
+            boxes.append(_exbox(
+                f"推奨買い方 {line}",
+                'デフォルト買い目なし（見送り）。下の🎯は手動・参考です。'))
+        elif isinstance(pb_bets, dict):
+            parts = []
+            t = _fmt_bet_list(pb_bets.get('trio'))
+            f = _fmt_bet_list(pb_bets.get('trifecta'), arrow=True)
+            if t:
+                parts.append('3連複: ' + t)
+            if f:
+                parts.append('3連単: ' + f)
+            n = pb_meta.get('n_points', 0)
+            if parts:
+                boxes.append(_exbox(
+                    f"推奨買い方 {line}（{n}点）",
+                    '<br>'.join(parts)))
+            elif n == 0:
+                boxes.append(_exbox(
+                    f"推奨買い方 {line}",
+                    'デフォルト買い目なし（見送り）。下の🎯は手動・参考です。'))
     if bt.get('trio'):
         d = (data.get('trio') or {})
         bets = (d.get('result') or {}).get('bets')
         if bets:
             pat = (d.get('extra') or {}).get('pattern') or ''
-            boxes.append(_exbox(f"🎯 3連複おすすめ（{pat}・{len(bets)}点）", _fmt_bet_list(bets)))
+            boxes.append(_exbox(
+                f"🎯 3連複おすすめ（手動・参考{'・'+pat if pat else ''}・{len(bets)}点）",
+                _fmt_bet_list(bets)))
     if bt.get('trifecta'):
         d = (data.get('trifecta') or {})
         bets = (d.get('result') or {}).get('bets')
         if bets:
             band = ((d.get('result') or {}).get('meta') or {}).get('band_name') or ''
             band_j = {'tight': '堅', 'mid': '中波乱', 'arare': '荒れ'}.get(band, band)
-            ttl = f"🎯 3連単おすすめ（{len(bets)}点" + (f"・{band_j}帯" if band_j else '') + "）"
+            ttl = (f"🎯 3連単おすすめ（手動・参考・{len(bets)}点"
+                   + (f"・{band_j}帯" if band_j else '') + "）")
             boxes.append(_exbox(ttl, _fmt_bet_list(bets, arrow=True)))
     if bt.get('quinella') or bt.get('exacta'):
         d = (data.get('qe') or {})
@@ -3583,6 +3719,9 @@ _BEGINNER_PLAIN = {
     'blood_power': '血統が合う',
     'glass_fav': '人気ほど堅くない',
     'rotation_long': '休み明け',
+    '短距離休み明け': '短距離の休み明けは人気の割に来にくい',
+    '中9週+ローテ': '間隔が空きすぎて人気の割に来にくい',
+    '半年休み明け': '長い休み明けは人気の割に来にくい',
     'prev_win_demerit': '前走勝ちの反動',
     'front_overbet': '逃げ馬で人気先行',
     'danger_popular_inner': '枠順が不利',

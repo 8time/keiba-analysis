@@ -145,6 +145,15 @@ def get_course_layout(venue, surface, distance):
             notes.append(f"直線約{straight}m＝短い。3角からのロングスパート戦になりやすく内・先行有利。追込は届きにくい")
         elif straight >= 450:
             notes.append(f"直線約{straight}m＝長い。直線の瞬発力勝負になりやすく差し・追込の不利が小さい")
+    # 洋芝2場は直線が同じくらい短いが、起伏とコーナーで読みが分かれる（地図用・点数には使わない）
+    if venue == '札幌' and surf == '芝':
+        notes.append(
+            "札幌芝は起伏ほぼ無し・コーナーが緩い。同じ洋芝の函館と違い、"
+            "差し・捲りが決まりやすい読みがある（見る用・買い材料ではない）")
+    elif venue == '函館' and surf == '芝':
+        notes.append(
+            "函館芝は3〜4角が坂の頂点でコーナーがきつい。"
+            "外回しは苦しく、内の先行が残りやすい読みがある（見る用・買い材料ではない）")
     return {'first_corner': fc, 'straight': straight,
             'straight_course': False, 'notes': notes}
 

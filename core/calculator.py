@@ -25,6 +25,39 @@ STANDARD_TIMES = {
 DEFAULT_STD = STANDARD_TIMES['芝']
 
 
+def _parse_keiba_date(s):
+    """PastRuns の 'YYYY.MM.DD' と RaceDate の 'YYYY/MM/DD' を datetime にする。"""
+    if s is None:
+        return None
+    raw = str(s).strip()
+    if not raw:
+        return None
+    for fmt, n in (('%Y.%m.%d', 10), ('%Y/%m/%d', 10), ('%Y-%m-%d', 10), ('%Y%m%d', 8)):
+        try:
+            return datetime.strptime(raw[:n], fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _is_within_days(date_str, ref, days=365):
+    d = _parse_keiba_date(date_str)
+    if d is None or ref is None:
+        return False
+    return 0 <= (ref - d).days <= int(days)
+
+
+def _battle_ref_date(df):
+    """戦闘力の直近判定はレース当日基準。無いときだけtoday（ライブ当日カード用）。"""
+    if df is None or getattr(df, 'empty', True):
+        return datetime.now()
+    if 'RaceDate' in df.columns:
+        d = _parse_keiba_date(df['RaceDate'].iloc[0])
+        if d is not None:
+            return d
+    return datetime.now()
+
+
 def _get_std_time(surf, dist):
     """Return standard time for given surface+distance, interpolating if exact key missing."""
     std_times = STANDARD_TIMES.get(surf, STANDARD_TIMES['芝'])
@@ -1270,24 +1303,16 @@ def calculate_battle_score(df):
         agari_vals = []
         pos_vals = []
         
-        # Filter Runs: Distance (+/- 200m) AND Date (1 Year) [Keep this logic as it's good practice]
-        now = datetime.now() # Use actual time or fixed ref?
-        # Fixed ref for consistency if needed, but 'now' is fine.
+        # Filter Runs: Distance (+/- 200m) AND Date (1 Year from race day)
+        ref_day = _battle_ref_date(df)
         
         valid_runs = []
         for run in past:
             # Basic validation
             if run.get('Time', 0) == 0: continue
             
-            # Date filter (1 year)
-            r_date_str = run.get('Date', '2000.01.01')
-            is_recent = False
-            try:
-                # Approximate check
-                if '202' in r_date_str: # Simple check for recent years
-                   is_recent = True
-            except:
-                pass
+            # Date filter (1 year from this race, not a '202x' substring)
+            is_recent = _is_within_days(run.get('Date', ''), ref_day, 365)
                 
             # Surface filter
             run_surf = str(run.get('Surface', ''))
@@ -1312,11 +1337,8 @@ def calculate_battle_score(df):
         if not valid_runs:
             for run in past:
                 if run.get('Time', 0) == 0: continue
-                r_date_str = run.get('Date', '2000.01.01')
-                try:
-                    if '202' in r_date_str:
-                        valid_runs.append(run)
-                except: pass
+                if _is_within_days(run.get('Date', ''), ref_day, 365):
+                    valid_runs.append(run)
                 
         # Fallback 3: Take all valid runs
         if not valid_runs:

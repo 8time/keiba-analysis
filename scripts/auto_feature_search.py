@@ -230,6 +230,33 @@ def build_candidates(df, candset):
         df.drop(columns=['_dbk6', '_bms_surf', '_bms_dist', '_nick', '_nick_surf'], inplace=True)
         cands += ['cand_bms_surf_t3', 'cand_bms_dist_t3', 'cand_nick_t3', 'cand_nick_surf_t3']
 
+    if candset in ('cond8', 'all'):
+        # 未投入ファミリー(ループ記録の「次」): 乗替・距離増減・間隔・体重トレンド・芝ダ替わり。
+        # 今回の zogen/bataiju そのものは第1回で不採用。トレンド=過去3走の増減平均。
+        s8 = df[['ketto_num', 'day', 'race_num', 'jockey_code', 'kyori',
+                 'surface', 'zogen']].sort_values(['ketto_num', 'day', 'race_num'])
+        kt8 = s8['ketto_num']
+        prev_jk = s8['jockey_code'].groupby(kt8, sort=False).shift(1)
+        df['cand_jockey_switch'] = pd.Series(
+            np.where(prev_jk.isna(), np.nan,
+                     (s8['jockey_code'] != prev_jk).astype(float)),
+            index=s8.index).reindex(df.index)
+        ky8 = pd.to_numeric(s8['kyori'], errors='coerce')
+        df['cand_dist_change'] = (ky8 - ky8.groupby(kt8, sort=False).shift(1)).reindex(df.index)
+        dt8 = pd.to_datetime(s8['day'].astype(str), format='%Y%m%d', errors='coerce')
+        df['cand_days_since'] = (dt8 - dt8.groupby(kt8, sort=False).shift(1)).dt.days.reindex(df.index)
+        zg8 = pd.to_numeric(s8['zogen'], errors='coerce')
+        df['cand_zogen_roll3'] = (zg8.groupby(kt8, sort=False)
+                                  .transform(lambda x: x.shift(1).rolling(3, min_periods=2).mean())
+                                  .reindex(df.index))
+        prev_sf = s8['surface'].groupby(kt8, sort=False).shift(1)
+        df['cand_surface_switch'] = pd.Series(
+            np.where(prev_sf.isna(), np.nan,
+                     (s8['surface'] != prev_sf).astype(float)),
+            index=s8.index).reindex(df.index)
+        cands += ['cand_jockey_switch', 'cand_dist_change', 'cand_days_since',
+                  'cand_zogen_roll3', 'cand_surface_switch']
+
     if candset in ('cond5', 'all'):
         # USM(馬力絞り出しメーター): オッズ帯の人口平均成績に対する、その騎手の過去実績比。
         # leak防止=shift(1)で過去のみ。期待値=オッズ帯別の人口勝率/連対率/複勝率(集合知)。
@@ -352,13 +379,16 @@ def main():
     ap.add_argument('--ablation', action='store_true', help='drop-one も試す')
     ap.add_argument('--quick', action='store_true', help='2019+のみ・軽量(動作確認)')
     ap.add_argument('--include-simple', action='store_true', help='第1回の簡易候補も含める')
-    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4', 'cond5', 'cond6', 'cond7', 'all'], default='cond',
+    ap.add_argument('--candset', choices=['strong', 'cond', 'cond2', 'cond3', 'cond4',
+                                          'cond5', 'cond6', 'cond7', 'cond8', 'all'], default='cond',
                     help='strong=前走着差+全体成績 / cond=当馬場当コース / '
                          'cond2=血統×馬場・枠×コース・騎手当コース / '
                          'cond3=騎手厩舎×距離帯・昇級代理 / '
                          'cond4=厩舎×騎手相性・騎手×馬場×距離・枠×距離 / '
                          'cond5=USM(単/連/複) / '
-                         'cond6=母父×馬場距離・ニックス(父×母父) / all')
+                         'cond6=母父×馬場距離・ニックス(父×母父) / '
+                         'cond7=減点方式(斤量差・使い詰め) / '
+                         'cond8=乗替・距離増減・間隔・体重トレンド・芝ダ替わり / all')
     ap.add_argument('--margin', type=float, default=0.0015,
                     help='採用候補とみなす test win_recall@7 の改善マージン(既定+0.15pp)')
     args = ap.parse_args()

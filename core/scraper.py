@@ -1774,6 +1774,76 @@ def _parse_grade_token(race_name):
     return None
 
 
+def fill_missing_odds_pop(df, res_odds, res_pop):
+    """result.html のオッズ/人気で、欠測している馬だけを埋める。
+
+    既存の確定済み値が1頭でもあるときに列全体を上書きしない。
+    Odds==0 または Popularity==99 の行のみ、マップに値があるとき置換する。
+    """
+    if df is None or getattr(df, 'empty', True):
+        return df
+    um_i = pd.to_numeric(df['Umaban'], errors='coerce') if 'Umaban' in df.columns else None
+    if um_i is None:
+        return df
+
+    def _as_map(src):
+        if utils_type.is_non_empty_pandas(src):
+            return dict(src)
+        if utils_type.is_non_empty_collection(src) and isinstance(src, dict):
+            return src
+        return None
+
+    def _lookup(m, u):
+        if m is None or pd.isna(u):
+            return None
+        try:
+            iu = int(u)
+        except (TypeError, ValueError):
+            return None
+        if iu in m:
+            return m[iu]
+        if str(iu) in m:
+            return m[str(iu)]
+        return None
+
+    ro = _as_map(res_odds)
+    if ro is not None and 'Odds' in df.columns:
+        new_odds = []
+        for u, o in zip(um_i, df['Odds']):
+            try:
+                missing = float(o or 0) == 0.0
+            except (TypeError, ValueError):
+                missing = True
+            fill = _lookup(ro, u) if missing else None
+            if fill is None:
+                new_odds.append(o)
+            else:
+                try:
+                    new_odds.append(float(fill))
+                except (TypeError, ValueError):
+                    new_odds.append(o)
+        df['Odds'] = new_odds
+
+    rp = _as_map(res_pop)
+    if rp is not None and 'Popularity' in df.columns:
+        new_pop = []
+        for u, p in zip(um_i, df['Popularity']):
+            try:
+                missing = int(p or 99) == 99
+            except (TypeError, ValueError):
+                missing = True
+            fill = _lookup(rp, u) if missing else None
+            if fill is None:
+                new_pop.append(p)
+            else:
+                try:
+                    new_pop.append(int(fill))
+                except (TypeError, ValueError):
+                    new_pop.append(p)
+        df['Popularity'] = new_pop
+    return df
+
+
 def get_race_data(race_id, use_storage=True):
     """Main function to scrape race card data with ROBUST EXTRACTION.
 
@@ -2335,6 +2405,7 @@ def get_race_data(race_id, use_storage=True):
                 logger.info(f"Successfully merged realtime odds/popularity from API using sync_odds_to_df")
         
         # 2. Try result.html fallback (Best for past races)
+        #    欠測馬だけ埋める。列全体を確定オッズで置き換えない。
         if missing_odds:
             logger.info("Using result.html fallback for Odds and Popularity")
             res_odds, res_pop = fetch_result_odds_pop(race_id)
@@ -2344,16 +2415,7 @@ def get_race_data(race_id, use_storage=True):
             try: logger.info(f"res_odds repr prefix: {repr(res_odds)[:50]}")
             except: pass
             
-            # --- [Phase B/D: Safe checking] ---
-            # If it is a dictionary containing mapping from umaban to odds, checking len is safe
-            if utils_type.is_non_empty_collection(res_odds) or utils_type.is_non_empty_pandas(res_odds):
-                # If it's somehow a Series, converting to dict ensures .get() works
-                _ro = dict(res_odds) if utils_type.is_non_empty_pandas(res_odds) else res_odds
-                df['Odds'] = df['Umaban'].map(lambda u: _ro.get(u, 0.0) if pd.notna(u) else 0.0)
-                
-            if utils_type.is_non_empty_collection(res_pop) or utils_type.is_non_empty_pandas(res_pop):
-                _rp = dict(res_pop) if utils_type.is_non_empty_pandas(res_pop) else res_pop
-                df['Popularity'] = df['Umaban'].map(lambda u: _rp.get(u, 99) if pd.notna(u) else 99)
+            fill_missing_odds_pop(df, res_odds, res_pop)
 
         # 3. 発走前(投票締切前)の最終手段: 出馬表の『予想オッズ』
         #    確定オッズAPIもresult.htmlも空になる時間帯で、ここが唯一の供給源。

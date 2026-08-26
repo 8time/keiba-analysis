@@ -9,6 +9,35 @@ oikiri.html?race_id=...&type=1 の表から、各馬の追い切り(日付/コ�
 """
 import re
 
+# 短評の言葉の印象。買い材料ではない（scripts/oikiri_critic_backtest.py）。
+_CRITIC_NEG = (
+    '平凡', '平行線', '目立たず', 'いま一息', '一息', '劣る', '薄い',
+    '手前', '力み', '変わらず', '遅れ', 'いまいち', 'イマイチ', '重苦し',
+)
+_CRITIC_NEU = ('まずまず', '前走並み', '多少良化', 'やや良化', '実戦向き', '仕上るも')
+_CRITIC_POS = (
+    '上々', '十分', '良好', '好調', '抜群', '絶好', '万全', '文句なし',
+    'キビキビ', '力強い', '元気', '好気配', '好調子', '好気合', '出来は良',
+    '出来安定', '気配上昇', '仕上', '態勢', '迫力', '素軽い', '軽快',
+    '伸び', '末脚', '乗込十分', '追毎良化', '一歩前進', '本調子',
+    '前走以上', '好時計', '鋭く', '気配上々', '動き上々', '気合乗る',
+    '脚力', '上積',
+)
+
+
+def critic_tone(txt):
+    """短評の言葉の印象。＋褒め / ・普通 / －控えめ。空は空文字。"""
+    t = (txt or '').strip()
+    if not t:
+        return ''
+    if any(k in t for k in _CRITIC_NEG):
+        return '－控えめ'
+    if any(k in t for k in _CRITIC_NEU):
+        return '・普通'
+    if any(k in t for k in _CRITIC_POS):
+        return '＋褒め'
+    return '・普通'
+
 
 def _floats(txt):
     return [float(x) for x in re.findall(r'\d+\.\d+', txt or '')]

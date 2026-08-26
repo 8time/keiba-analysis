@@ -18,6 +18,7 @@
 ※調教評価(C以下)は jravan.db に過去データが無く検証不可。ユーザー実観測が強いため
   『検証不可だが採用』フラグとして任意で1つ加算できる(train)。
 """
+import re
 
 # フラグ定義: key -> (表示ラベル, 説明)。検証はすべて単体では priced-in。
 FLAG_DEFS = [
@@ -56,7 +57,7 @@ FLAG_DEFS = [
                                'これも人気に相関する実務軸で独立エッジは弱い'),
     ('jweak',    '騎手弱材料',  '🏇騎手係数込みスコアの4要素がすべて低水準: '
                                '騎手係数≤1.0／馬連携≤99／場連対≤15%／黄金≤20%。'
-                               '内訳に表示が無い項目は非該当扱い(検証不可・人気内包)'),
+                               '内訳に数字が出ていない項目はしきい値以下として扱う(検証不可・人気内包)'),
     ('tenkai2',  '展開2',       'netkeiba AI展開予測との照合で💀(危険位置一致)=netkeibaの4コーナー隊列と'
                                'アプリの到達位置が"ともに後方帯"で合意した馬。展開後方と意味は重なるが'
                                '2つのAIの合意点。🏠SRAの🤝照合を実行すると点灯(展開恩恵はpriced-in・表示補助)'),
@@ -79,9 +80,11 @@ FLAG_HELP = {k: hlp for k, _, hlp in FLAG_DEFS}
 UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'agari3f', 'stress2',
               'botcross', 'multiweak', 'poplow', 'jlow', 'jweak', 'tenkai2', 'rklow_vh', 'ltr_low'}
 # 『過信しない列』= 重複には数えるが独立エッジでない(表示で明るい赤背景×黄文字にする)。
-CAUTION_KEYS = {'battle', 'proj', 'pmback', 'agari3f', 'poplow', 'jlow', 'jweak', 'rklow_vh', 'ltr_low'}
+CAUTION_KEYS = {'battle', 'proj', 'pmback', 'agari3f', 'poplow', 'jlow', 'rklow_vh', 'ltr_low'}
 # 『展開2』(netkeiba AI照合の💀)= ヘッダを青背景×黄文字にする列。
 BLUE_KEYS = {'tenkai2'}
+# 『騎手弱材料』= ヘッダを紫背景×黄文字にする列(過信しない列と同じ扱い・色だけ別)。
+PURPLE_KEYS = {'jweak'}
 # 『強い消去理由』= 人気統制後も独立して来にくさが強い/絶対複勝率が極端に低い検証済みフラグ
 # (点灯したら単体でも消去寄りに読める)。表示で濃い赤背景×白文字にする。CAUTION(明るい赤=弱い列)と別軸。
 #  botcross=両列最下位(複勝2-5%)/multiweak=多列弱点(6.7%)/lhandi=軽ハンデ(残差-2.3pp z-4.9)/
@@ -131,6 +134,37 @@ def _daygap(prev_date, race_date):
         return (b - a).days
     except Exception:
         return None
+
+
+def is_jweak(j5v):
+    """騎手弱材料。J5が無いときは点灯しない。
+    数字が出ていない項目(係数・馬連携・場連対・黄金)はしきい値以下として扱う。
+    j5v: {mult, note}。"""
+    if not j5v:
+        return False
+    try:
+        mult = j5v.get('mult')
+        coef_low = True if mult is None else float(mult) <= 1.0
+    except (TypeError, ValueError):
+        coef_low = True
+    note = str(j5v.get('note') or '')
+
+    def _num(pat):
+        m = re.search(pat, note)
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except (TypeError, ValueError):
+            return None
+
+    usm = _num(r'馬連携(\d+)')
+    ven = _num(r'場連対(\d+)')
+    gld = _num(r'黄金(\d+)')
+    return (coef_low
+            and (usm is None or usm <= 99)
+            and (ven is None or ven <= 15)
+            and (gld is None or gld <= 20))
 
 
 def compute_flags(*, last5_top3=None, spurt_index=None, spurt_runs=0,

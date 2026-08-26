@@ -120,7 +120,11 @@
 - [東→西遠征×1-6人気は過剰人気](verified_ensei_east_to_west.md) — 複勝-4pp(z-3.1〜-5.3)。関西馬の東征はpriced-in
 - [調教時計と人気薄×父は両方ゼロ](verified_training_and_sire_popbucket.md) — 全区分|z|<1.7
 - [JRDB: パドック/基準オッズ/KYI/C分類/CYB全ゼロ](verified_jrdb_paddock_codes.md) — 新エッジ無し確定
+- [馬体重動画（増減だけで消すな／+20kg妙味）](verified_weight_video_claims.md) — 生数字は一致。残差では買い妙味なし。実装しない
 - [r40複勝EVは時点リーク](verified_r40_place_ev.md) — 確定オッズ118%→直前86%。締切前で追試必須
+- [俗説有効度は作らない](verified_folklore_effectiveness.md) — 生率は市場と混ざる。残差で読む。少頭数×先行も打ち切り
+- [俗説総合TOP5×1-3人気は軸にしない](verified_folklore_top5_axis.md) — holdout残差+2.21ppでバー未達。複数時は人気順の方が良い
+- [俗説TOP5×ハンター重複](verified_folklore_top5_hunter_overlap.md) — 2026年 3着内16.7%。精鋭/広域網そのもの(16.0%)とほぼ同じ。実装しない
 
 ## クロス・フォーメーション構造検証
 - [クロステーブル構造](verified_cross_table_structure.md) — VH×人気ρ=0.94二重計上/top-5内ρ=0.16独立。4軸<3軸。R×V列実装済

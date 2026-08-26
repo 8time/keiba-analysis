@@ -170,6 +170,77 @@ _SIRE_CUSHION_LEVEL = {
 }
 
 
+# JRA公式の芝「良」含水上限。場ごとに路盤が違うので、生の%は場をまたいで比べない。
+# 出典: JRA馬場情報の場別基準（小倉10 / 中山・京都13 / 中京・阪神14 / 北海道・福島・新潟15 / 東京19）。
+_TURF_MOIST_GOOD_MAX = {
+    '01': 15.0, '02': 15.0, '03': 15.0, '04': 15.0,
+    '05': 19.0, '06': 13.0, '07': 14.0,
+    '08': 13.0, '09': 14.0, '10': 10.0,
+}
+_VENUE_TO_JYO = {
+    '札幌': '01', '函館': '02', '福島': '03', '新潟': '04', '東京': '05',
+    '中山': '06', '中京': '07', '京都': '08', '阪神': '09', '小倉': '10',
+}
+_JYO_TO_VENUE = {v: k for k, v in _VENUE_TO_JYO.items()}
+_DIRT_MOIST_GOOD_MAX = 9.0  # ダートは全国ほぼ同じ（9%以下が良）
+
+
+def _jyo_code_of(venue_or_jyo):
+    s = str(venue_or_jyo or '').strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return s.zfill(2)
+    return _VENUE_TO_JYO.get(s)
+
+
+def moisture_vs_venue(venue_or_jyo, surface, moisture):
+    """場ごとの『良』上限と比べて、乾いている/普通/湿っているを平易な一言で返す。
+    予測加点・買い印には使わない。見る用。
+    戻り値: {'line': str, 'band': 'dry'|'ok'|'wet', 'limit': float} or None"""
+    if moisture is None:
+        return None
+    try:
+        m = float(moisture)
+    except (TypeError, ValueError):
+        return None
+    if m <= 0:
+        return None
+    surf = str(surface or '')
+    is_dirt = 'ダ' in surf
+    if is_dirt:
+        limit = _DIRT_MOIST_GOOD_MAX
+        place = 'ダート'
+        if m > limit:
+            band, how = 'wet', '湿っている'
+        elif m <= 4.0:
+            band, how = 'dry', '乾いている'
+        else:
+            band, how = 'ok', '普通の良'
+        line = (f"この場の{place}としては{how}"
+                f"（ダートの良は全国だいたい{limit:.0f}%以下）。見る用で、点数には足しません。")
+        return {'line': line, 'band': band, 'limit': limit}
+    jyo = _jyo_code_of(venue_or_jyo)
+    limit = _TURF_MOIST_GOOD_MAX.get(jyo) if jyo else None
+    if not limit:
+        return None
+    vname = _JYO_TO_VENUE.get(jyo, 'この場')
+    if m > limit:
+        band, how = 'wet', '湿っている'
+    elif m <= limit * 0.70:
+        band, how = 'dry', '乾いている'
+    else:
+        band, how = 'ok', '普通の良'
+    line = (f"{vname}の芝としては{how}"
+            f"（この場の良はだいたい{limit:.0f}%まで）。見る用で、点数には足しません。")
+    return {'line': line, 'band': band, 'limit': limit}
+
+
+def cushion_level_sire_names():
+    """ク値適性の対象父（検証済み4頭）。UI説明用。"""
+    return tuple(_SIRE_CUSHION_LEVEL.keys())
+
+
 def sire_cushion_level_flag(sire_name, cushion):
     """当日のクッション値の絶対水準(9.5閾値)×種牡馬の検証済み適性フラグ。
     シフト版(sire_cushion_flag=前日比)とは独立の水準ベース判定。
@@ -222,7 +293,10 @@ def dirt_moisture_bloodtype(sire_name, moisture):
     戻り値: {'flag': '🟢'|'🔴'|None, 'detail': str} or None"""
     if moisture is None:
         return None
-    mv = float(moisture)
+    try:
+        mv = float(moisture)
+    except (TypeError, ValueError):
+        return None
     is_wet = mv >= 8.0
     is_dry = mv <= 3.5
     if not is_wet and not is_dry:

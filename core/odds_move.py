@@ -104,3 +104,71 @@ def analyze_odds_movement(history_df, ana_pop=4):
             'n_snap': len(ts_list), 'insights': insights,
             'note': '朝一↔直前の人気順位変化ベース。書籍(蘆口真史)準拠・このアプリでは未検証'
                     '(凍結DBにオッズ時系列が無いため)。参考として表示。'}
+
+
+# 折れ線右端の観察ラベル。期待値(118%等)は出さない。
+CHART_LABEL = {
+    'fav_solid': '朝から軸',
+    'fav_fake': '後から押された1番',
+    'hidden_ana': '朝は売れて沈んだ',
+}
+_CHART_KIND_ORDER = ('fav_solid', 'fav_fake', 'hidden_ana')
+
+
+def chart_observe_labels(history_df):
+    """折れ線右端用の短い観察ラベル。{馬番: '朝から軸'}。期待値は出さない。"""
+    mv = analyze_odds_movement(history_df)
+    out = {}
+    if not mv.get('ok'):
+        return out
+    by_u = {}
+    for ins in mv.get('insights') or []:
+        k = ins.get('kind')
+        if k not in CHART_LABEL:
+            continue
+        by_u.setdefault(ins.get('umaban'), []).append(k)
+    for u, kinds in by_u.items():
+        labs = [CHART_LABEL[k] for k in _CHART_KIND_ORDER if k in kinds]
+        if labs:
+            out[u] = '・'.join(labs)
+    return out
+
+
+def vh_shorten_observe(history_df, umabans=None,
+                       first_lo=20.0, first_hi=40.0, last_hi=18.0, drop_pct=0.25,
+                       drift_lo=15.0, drift_hi=25.0, drift_up=1.25, drift_last_lo=22.0):
+    """観察専用。穴馬が朝の長めから直前で短縮した/伸びた。
+
+    例: 24倍→15倍 = vh_shorten / 18倍→29倍 = vh_drift。
+    **10点への繰り上げには使わない。** 発走10分前の記録が貯まってから holdout。
+    論文の最終5分急落(経路依存)とも別物。混ぜない。
+    """
+    if history_df is None or len(history_df) == 0 or 'odds_type' not in history_df.columns:
+        return []
+    win = history_df[history_df['odds_type'] == 'win']
+    ts_list = sorted(win['timestamp'].dropna().unique())
+    if len(ts_list) < 2:
+        return []
+    first = _snap_at(history_df, ts_list[0])
+    last = _snap_at(history_df, ts_list[-1])
+    if umabans is None:
+        want = set(first.keys())
+    else:
+        want = set()
+        for u in umabans:
+            try:
+                want.add(int(u))
+            except (TypeError, ValueError):
+                pass
+    out = []
+    for u in want:
+        f, l = first.get(u), last.get(u)
+        if not f or not l or f <= 0:
+            continue
+        if first_lo <= f <= first_hi and l <= last_hi and ((f - l) / f) >= drop_pct:
+            out.append({'umaban': u, 'kind': 'vh_shorten', 'first': float(f),
+                        'last': float(l), 'label': '短縮中'})
+        elif drift_lo <= f <= drift_hi and l >= drift_last_lo and (l / f) >= drift_up:
+            out.append({'umaban': u, 'kind': 'vh_drift', 'first': float(f),
+                        'last': float(l), 'label': '伸びた'})
+    return out

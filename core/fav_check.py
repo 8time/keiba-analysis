@@ -35,7 +35,7 @@ def check(fav, horses=None, race=None):
     """1頭（通常は1番人気）を判定する。
 
     fav: {'umaban','name','ninki','win_odds','place_mid','surface','baba',
-          'sire','sex_age','umaban','tosu','layoff_days','prev_chaku',
+          'sire','sex_age','umaban','tosu','layoff_days','dist','prev_chaku',
           'prev_kyaku','pos_ratio','prev_win_margin','stress_flags',
           'jockey','trainer','month','emp_bias','top_jockey_swap',
           'fillies_race'}
@@ -63,7 +63,7 @@ def check(fav, horses=None, race=None):
                emp_bias=fav.get('emp_bias'), umaban=fav.get('umaban'),
                tosu=fav.get('tosu'),
                top_jockey_swap=bool(fav.get('top_jockey_swap')),
-               layoff_days=fav.get('layoff_days'),
+               layoff_days=fav.get('layoff_days'), dist=fav.get('dist'),
                prev_kyaku=fav.get('prev_kyaku'),
                prev_chaku=fav.get('prev_chaku'),
                stress_flags=fav.get('stress_flags'),
@@ -82,7 +82,7 @@ def check(fav, horses=None, race=None):
         items.append({'ok': False, 'w': 2 if n_danger >= 2 else 1,
                       'label': f'危険材料 {n_danger}個',
                       'detail': '／'.join(_reasons)
-                                + f'（材料{min(n_danger,2)}個の複勝率は実測{exp_fuku}%。'
+                                + f'（どれも減点材料。材料{min(n_danger,2)}個の複勝率は実測{exp_fuku}%。'
                                   f'材料なしの{DANGER_FUKU[0]}%より低いだけで、'
                                   f'半分近くは3着以内に来ます）'})
 

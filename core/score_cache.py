@@ -459,6 +459,65 @@ def read_kelly_bridge():
         return None
 
 
+def build_kelly_feed(race_id, df, alpha=0.5):
+    """出馬表df（Projected ScoreとOdds）からBetSync用の見積を作る。失敗時None。"""
+    if not race_id or df is None or getattr(df, 'empty', True):
+        return None
+    try:
+        import pandas as pd
+        from core import bet_optimizer as _bo
+        pcol = 'Projected Score' if 'Projected Score' in df.columns else None
+        if not pcol or 'Odds' not in df.columns:
+            return None
+        score_by_um, odds_by_um, name_map = {}, {}, {}
+        for _, r in df.iterrows():
+            try:
+                um = int(pd.to_numeric(r.get('Umaban'), errors='coerce'))
+            except Exception:
+                continue
+            proj = pd.to_numeric(r.get(pcol), errors='coerce')
+            od = pd.to_numeric(r.get('Odds'), errors='coerce')
+            if proj == proj and proj is not None:
+                score_by_um[um] = float(proj)
+            if od == od and od is not None and 1.0 < float(od) < 999.0:
+                odds_by_um[um] = float(od)
+            name_map[um] = str(r.get('Name', '') or '')
+        if not score_by_um or not odds_by_um:
+            return None
+        wp = _bo.blended_win_probs(score_by_um, odds_by_um, alpha=alpha)
+        rows = []
+        for u in sorted(wp, key=lambda x: -wp[x]):
+            o = odds_by_um.get(u)
+            if o and 1.0 < float(o) < 999.0:
+                rows.append({
+                    'umaban': int(u),
+                    'bamei': name_map.get(int(u), ''),
+                    'p': float(wp[u]),
+                    'odds': float(o),
+                })
+        if not rows:
+            return None
+        return {
+            'race_id': str(race_id),
+            'rows': rows,
+            'alpha': alpha,
+            'ts': time.strftime('%m/%d %H:%M'),
+        }
+    except Exception:
+        return None
+
+
+def kelly_feed_from_last_sra():
+    """最後に🏠で解析したレースから見積を組む（別タブのBetSync用）。"""
+    df, _meta, rid = read_magi_bridge()
+    if not rid or df is None or getattr(df, 'empty', True):
+        return None
+    feed = build_kelly_feed(rid, df)
+    if feed:
+        write_kelly_bridge(feed)
+    return feed
+
+
 def _full_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(_DIR, f"{rid}.full.json")

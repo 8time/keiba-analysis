@@ -105,7 +105,7 @@ def build_edge_sets(df, meta, race_id):
             if (not sire or sire == '-') and kt:
                 sire = tb.sire_of_ketto(kt)
             _prev_chaku = None                       # 前走着順(危険人気馬の前走5着以下ソフト理由用)
-            _lay_days = None                         # 休養日数(半年休み明け/中9週+ローテのソフト理由用)
+            _lay_days = None                         # 休養日数(半年休み明け/中9週+/短距離休み明けのソフト理由用)
             _pr = r.get('PastRuns')
             if isinstance(_pr, list) and _pr:
                 try:
@@ -126,7 +126,7 @@ def build_edge_sets(df, meta, race_id):
             vr = dg.danger_veto(
                 ninki=(int(pop) if pd.notnull(pop) else None),
                 surface=surf, baba=baba, sire=sire, prev_chaku=_prev_chaku,
-                layoff_days=_lay_days,
+                layoff_days=_lay_days, dist=dist,
                 win_odds=(float(_od) if pd.notnull(_od) and _od > 0 else None),
                 place_mid=place_mid_map.get(u),
                 sex_age=str(r.get('SexAge', '') or ''), month=month,

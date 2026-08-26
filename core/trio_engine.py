@@ -60,6 +60,165 @@ def trifecta_band_from_trio(band):
     return (band[0] * 5.0, band[1] * 6.0)
 
 
+def default_trio_band(pattern='本線'):
+    """パターン既定の3連複狙い目帯。recommend_trio に band= で渡す用。"""
+    return _TARGET_BAND.get(pattern, (10.0, 300.0))
+
+
+# 場ごとの勝ち配当スケール。2016-2026 JRA平地8頭以上・34,237R。
+# 全体中央比を場×妙味度ラベル(S〜D)で測り、n/(n+80)で全体へ縮めた値。
+# 全体比だけだと東京が安いのは「鉄板レースが多い」だけなので、同じ妙味度の中で寄せる。
+# 予測スコア・推奨買い方の軸選定には使わない。狙い目オッズ帯の伸縮のみ。
+_JYO_TO_VENUE = {
+    '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
+    '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉',
+}
+_VENUE_SCALE_TRIO = {
+    '札幌': 0.974, '函館': 0.947, '福島': 1.289, '新潟': 1.180, '東京': 0.869,
+    '中山': 0.985, '中京': 1.032, '京都': 0.936, '阪神': 0.883, '小倉': 1.276,
+}
+_VENUE_SCALE_TRIFECTA = {
+    '札幌': 0.963, '函館': 0.974, '福島': 1.361, '新潟': 1.178, '東京': 0.857,
+    '中山': 0.974, '中京': 1.053, '京都': 0.934, '阪神': 0.885, '小倉': 1.327,
+}
+_VENUE_LABEL_SCALE_TRIO = {
+    '札幌': {'S': 0.988, 'A': 1.043, 'B': 1.000, 'C': 1.180, 'D': 1.105},
+    '函館': {'S': 1.035, 'A': 1.040, 'B': 1.003, 'C': 1.059, 'D': 1.000},
+    '福島': {'S': 1.001, 'A': 0.901, 'B': 1.064, 'C': 1.061, 'D': 1.022},
+    '新潟': {'S': 0.953, 'A': 0.951, 'B': 0.962, 'C': 0.991, 'D': 1.043},
+    '東京': {'S': 0.977, 'A': 0.973, 'B': 0.905, 'C': 0.878, 'D': 0.929},
+    '中山': {'S': 0.941, 'A': 1.008, 'B': 0.989, 'C': 0.948, 'D': 0.973},
+    '中京': {'S': 1.020, 'A': 1.033, 'B': 1.010, 'C': 1.000, 'D': 1.071},
+    '京都': {'S': 1.047, 'A': 1.057, 'B': 1.061, 'C': 1.022, 'D': 0.967},
+    '阪神': {'S': 0.917, 'A': 1.016, 'B': 1.016, 'C': 1.015, 'D': 1.000},
+    '小倉': {'S': 1.102, 'A': 1.034, 'B': 1.130, 'C': 0.995, 'D': 1.024},
+}
+_VENUE_LABEL_SCALE_TRIFECTA = {
+    '札幌': {'S': 1.060, 'A': 1.073, 'B': 0.942, 'C': 1.294, 'D': 1.051},
+    '函館': {'S': 1.067, 'A': 1.017, 'B': 1.019, 'C': 1.142, 'D': 1.071},
+    '福島': {'S': 1.039, 'A': 0.944, 'B': 1.160, 'C': 0.943, 'D': 1.041},
+    '新潟': {'S': 0.917, 'A': 0.974, 'B': 0.946, 'C': 0.970, 'D': 1.048},
+    '東京': {'S': 0.954, 'A': 0.951, 'B': 0.907, 'C': 0.936, 'D': 0.825},
+    '中山': {'S': 0.983, 'A': 1.018, 'B': 0.950, 'C': 0.918, 'D': 0.933},
+    '中京': {'S': 0.978, 'A': 1.044, 'B': 1.057, 'C': 0.986, 'D': 1.083},
+    '京都': {'S': 1.087, 'A': 1.050, 'B': 1.033, 'C': 1.031, 'D': 1.032},
+    '阪神': {'S': 0.976, 'A': 0.995, 'B': 1.035, 'C': 1.061, 'D': 1.032},
+    '小倉': {'S': 1.064, 'A': 1.048, 'B': 1.126, 'C': 0.982, 'D': 1.000},
+}
+_VENUE_SCALE_MIN, _VENUE_SCALE_MAX = 0.78, 1.40
+
+# 頭数スケール。勝ち配当中央 / 全体中央（2016-2026 JRA平地）。
+# 組合せ数が頭数で決まるので場より効く。場の倍率は平均頭数込みなので、
+# 実際の頭数はその場の平均頭数との比だけ掛ける（二重に安く/高くしない）。
+_N_SCALE_TRIO = {
+    8: 0.251, 9: 0.340, 10: 0.447, 11: 0.585, 12: 0.759,
+    13: 0.921, 14: 1.098, 15: 1.272, 16: 1.382, 17: 1.568, 18: 1.831,
+}
+_N_SCALE_TRIFECTA = {
+    8: 0.241, 9: 0.316, 10: 0.458, 11: 0.612, 12: 0.772,
+    13: 0.902, 14: 1.112, 15: 1.258, 16: 1.395, 17: 1.574, 18: 1.889,
+}
+_VENUE_TYPICAL_N = {
+    '札幌': 13, '函館': 12, '福島': 15, '新潟': 15, '東京': 16,
+    '中山': 16, '中京': 15, '京都': 14, '阪神': 14, '小倉': 15,
+}
+_N_REF_DEFAULT = 14
+_FIELD_SCALE_MIN, _FIELD_SCALE_MAX = 0.30, 1.85
+_COMBINED_SCALE_MIN, _COMBINED_SCALE_MAX = 0.25, 2.20
+
+
+def typical_field_size(venue):
+    """その場の平均的な出走頭数。不明なら None。"""
+    name = normalize_venue(venue)
+    if not name:
+        return None
+    return _VENUE_TYPICAL_N.get(name)
+
+
+def normalize_venue(venue):
+    """場名・場コード・レースID → '札幌' 等。JRA以外は空文字。"""
+    s = str(venue or '').strip()
+    if not s or s in ('Unknown', '?', 'nan', 'None'):
+        return ''
+    if s in _JYO_TO_VENUE:
+        return _JYO_TO_VENUE[s]
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 12:
+        return _JYO_TO_VENUE.get(digits[4:6], '')
+    if len(s) == 2 and s.isdigit():
+        return _JYO_TO_VENUE.get(s, '')
+    for name in _VENUE_SCALE_TRIO:
+        if name in s:
+            return name
+    return ''
+
+
+def venue_band_scale(venue, kind='trio', label=None):
+    """場の倍率。1.0=全国と同じ。未知の場は1.0。頭数は入れない。"""
+    name = normalize_venue(venue)
+    if not name:
+        return 1.0
+    ov = _VENUE_SCALE_TRIFECTA if kind == 'trifecta' else _VENUE_SCALE_TRIO
+    labmap = _VENUE_LABEL_SCALE_TRIFECTA if kind == 'trifecta' else _VENUE_LABEL_SCALE_TRIO
+    lab = str(label or '').strip()[:1].upper()
+    sc = None
+    if lab in 'SABCD':
+        sc = (labmap.get(name) or {}).get(lab)
+    if sc is None:
+        sc = ov.get(name, 1.0)
+    return max(_VENUE_SCALE_MIN, min(_VENUE_SCALE_MAX, float(sc)))
+
+
+def field_band_scale(n_horses, kind='trio', venue=None):
+    """頭数の倍率。場が分かるときはその場の平均頭数との比。不明なら14頭基準。"""
+    try:
+        n = int(n_horses)
+    except (TypeError, ValueError):
+        return 1.0
+    if n < 8:
+        return 1.0
+    table = _N_SCALE_TRIFECTA if kind == 'trifecta' else _N_SCALE_TRIO
+    n = max(8, min(18, n))
+    g = float(table.get(n) or 1.0)
+    name = normalize_venue(venue)
+    ref_n = _VENUE_TYPICAL_N.get(name, _N_REF_DEFAULT)
+    ref_n = max(8, min(18, int(ref_n)))
+    gref = float(table.get(ref_n) or 1.0) or 1.0
+    return max(_FIELD_SCALE_MIN, min(_FIELD_SCALE_MAX, g / gref))
+
+
+def combined_band_scale(venue, kind='trio', label=None, n_horses=None):
+    """場×妙味度×頭数の最終倍率。狙い目帯専用。"""
+    sc = venue_band_scale(venue, kind, label) * field_band_scale(n_horses, kind, venue)
+    return max(_COMBINED_SCALE_MIN, min(_COMBINED_SCALE_MAX, sc))
+
+
+def _round_odds_band(lo, hi):
+    def _r(x):
+        x = float(x)
+        if x < 20:
+            return max(1.0, round(x))
+        if x < 80:
+            return float(max(2, int(round(x / 2.0) * 2)))
+        if x < 400:
+            return float(max(5, int(round(x / 5.0) * 5)))
+        return float(max(10, int(round(x / 10.0) * 10)))
+    a, b = _r(lo), _r(hi)
+    if b <= a:
+        b = a + 1.0
+    return (a, b)
+
+
+def scale_band_for_venue(band, venue, kind='trio', label=None, n_horses=None):
+    """狙い目(lo,hi)を場と頭数の実測で伸縮。bandがNoneならNone。スコアには使わない。"""
+    if not band:
+        return None
+    sc = combined_band_scale(venue, kind, label, n_horses)
+    if abs(sc - 1.0) < 0.02:
+        return (float(band[0]), float(band[1]))
+    return _round_odds_band(band[0] * sc, band[1] * sc)
+
+
 def _classify(trio, pop_set, ana_set):
     """trio(umaban tuple) の人気構成 → (人気数, 穴数)。"""
     n_pop = sum(1 for u in trio if u in pop_set)
@@ -121,7 +280,7 @@ def allocate_budget(bets, budget, mode='均等買い', unit=100):
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                    pattern='①', n_points=10, pop_th=4, ana_lo=6, ana_hi=12,
                    pool_cap=12, deploy_map=None, combo_flow=0, keep_partners=None,
-                   band=None):
+                   band=None, fixed_pool=False):
     """
     horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
     odds_map: {frozenset({u1,u2,u3}): float} ライブ3連複オッズ（任意）
@@ -137,6 +296,9 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     band: 狙い目価格帯(lo,hi)の外部指定(任意)。妙味度連動の可変帯を渡す用途。未指定は_TARGET_BAND。
     n_points>=56(56/84=8/9頭BOX級)は網羅モード: autoプールを全馬スコア上位8/9頭に拡張し
     パターンのハード除外をしない(通常プールは人気1-4∪6-12のため5番人気/13+が漏れる対策)。
+    fixed_pool: Trueなら auto の人気1-4∪穴6-12 で再除外しない。使う馬として渡された頭を
+        そのまま候補プールにし、その中から順位付けする（5番人気の常時追加ではない。
+        渡されていない馬は足さない）。既定 False＝従来動作。
     戻り値: {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
@@ -144,6 +306,7 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     axis_umaban = [u for u in (axis_umaban or []) if u in by]
     lo, hi = band if band else _TARGET_BAND.get(pattern, (10.0, 300.0))
     keep_partners = set(keep_partners or ())
+    fixed_pool = bool(fixed_pool)
 
     def _combo_lvl(u):
         m = _COMBO_RE.search(str(by.get(u, {}).get('alert', '') or ''))
@@ -151,6 +314,9 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
 
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
     ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
+    # 相手候補(少頭数×堅いの4-5番人気)。穴(6+)とは混ぜない。
+    # autoプール「人気1-4 ∪ 穴6-12」から5番人気が欠ける隙間を、穴馬ハンターと同じ別枠で埋める。
+    companion_set = {h['umaban'] for h in horses if h.get('companion')}
 
     # 軸を明示指定(1軸/2軸)した場合は「軸流し」の意思を最優先する。
     # この時パターン(本線/②妙味)はハード除外でなく『堅め/荒れ』のソフト加点に格下げし、
@@ -159,8 +325,10 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     _axis_active = ((axis_mode == '2軸' and len(axis_umaban) >= 2) or
                     (axis_mode == '1軸' and len(axis_umaban) >= 1))
 
-    # 人気/穴の分類は auto(パターンハード適用)モードでのみ必須。軸流し/combo馬流し時は人気未取得でも流す。
-    if not _axis_active and combo_flow <= 0 and (len(pop_set) < 1 or len(ana_set) < 1):
+    # 人気/穴の分類は auto(パターンハード適用)モードでのみ必須。軸流し/combo馬流し/
+    # 使う馬プール固定時は人気未取得でも流す。
+    if (not _axis_active and combo_flow <= 0 and not fixed_pool
+            and (len(pop_set) < 1 or len(ana_set) < 1)):
         return {'bets': [], 'meta': {}, 'warning': '人気/穴の頭数が不足（人気・オッズ未取得の可能性）'}
 
     # ── 候補トリオ生成 ──
@@ -179,10 +347,14 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         for x, y in combinations(others, 2):
             cand.add(frozenset((a, x, y)))
     else:
-        # auto: プール=人気pool∪穴pool(combo_flow時はcombo馬)をスコア上位pool_capで総当り
-        _pool_src = (pop_set | ana_set)
+        # auto: 既定プール=人気pool∪穴pool∪相手候補(combo_flow時はcombo馬)をスコア上位pool_capで総当り
+        _pool_src = (pop_set | ana_set | companion_set)
         if combo_flow > 0:
-            _pool_src = {u for u in by if _combo_lvl(u) >= combo_flow}
+            _pool_src = {u for u in by if _combo_lvl(u) >= combo_flow} | companion_set | companion_set
+        elif fixed_pool:
+            # 使う馬として渡された頭を再フィルターしない。足りない人気帯の馬は足さない。
+            _pool_src = set(by)
+            pool_cap = len(_pool_src)
         elif n_points >= 56:
             # 大点数の網羅モード(56/84=8/9頭BOX級): プールを全馬スコア上位に拡張。
             # 通常プールは人気1-4∪6-12番人気のため5番人気/13+番人気が原理的に漏れる
@@ -200,15 +372,16 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         if len(trio) != 3:
             continue
         n_pop, n_ana = _classify(trio, pop_set, ana_set)
-        # combo馬流し時・大点数網羅モード(56+)時はパターンのハード除外をしない
-        if (not _axis_active and combo_flow <= 0 and n_points < 56
+        # combo馬流し時・大点数網羅モード(56+)時・使う馬プール固定時はパターンのハード除外をしない
+        if (not _axis_active and combo_flow <= 0 and n_points < 56 and not fixed_pool
                 and not _match_pattern(n_pop, n_ana, pattern)):
             continue
         base = sum(by[u].get('score', 0) for u in trio)
         # 展開/穴ボーナス: 穴馬に🔥🎯🚀(妙味・上がり)＋展開マップの好位妙味で加点
         bonus = 0.0
-        # 軸流し時はパターンを除外でなくソフト加点に: 本線=堅め(人気の3頭目)寄り / ②妙味=荒れ(穴の3頭目)寄り
-        if _axis_active:
+        # 軸流し／使う馬固定時はパターンを除外でなくソフト加点に:
+        # 本線=堅め(人気の3頭目)寄り / ②妙味=荒れ(穴の3頭目)寄り
+        if _axis_active or fixed_pool:
             if pattern == '本線':
                 bonus += 6.0 * n_pop
             elif pattern == '②妙味':
@@ -264,7 +437,8 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     return {'bets': bets,
             'meta': {'pattern': pattern, 'axis_mode': axis_mode, 'n_points': len(bets),
                      'target_band': (lo, hi), 'synthetic_odds': syn,
-                     'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set)},
+                     'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
+                     'fixed_pool': fixed_pool, 'pool_n': len(by)},
             'warning': None}
 
 
@@ -450,12 +624,18 @@ def build_trifecta_odds_map(odds_list):
 _TRIFECTA_BAND = (50.0, 3000.0)
 
 
+def default_trifecta_band():
+    """3連単の既定狙い目帯。recommend_trifecta に band= で渡す用。"""
+    return _TRIFECTA_BAND
+
+
 # 帯別フォーメーション(検証済 verified_formation_roi・scripts/formation_pointopt.py):
 #   荒れ確率で買い方を可変。堅=少点book的(点数絞りが効く帯)/中=wide最良/荒れ=広角・穴頭込み
 #   (荒れで絞る/穴頭カットは逆効果=実配当で確認)。※どの帯も利益(100%)には届かない=損失縮小策。
 #   値: (n_first, n_second, n_third, 推奨点数, 穴頭を1着に入れるか)
 _BAND_FORMATION = {
     'tight': (2, 4, 6, 30, False),   # 堅(ap<42%): 人気集中・少点(book)・穴頭切る
+                                     # 2着は recommend_trifecta 内で人気1-5を確保(4〜5番人気を落とさない)
     'mid':   (3, 5, 7, 36, False),   # 中(42-60%): wide寄り(最も損益分岐に近い帯)
     'arare': (3, 5, 9, 50, True),    # 荒れ(≥62%): 広角・穴頭も入れる(切ると逆効果)
 }
@@ -476,7 +656,8 @@ def formation_for_arare(arare_prob):
 def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                        pop_th=4, ana_lo=6, ana_hi=12,
                        n_first=3, n_second=5, n_third=9, band=None, arare_prob=None,
-                       fragile_fav=False, combo_flow=0, keep_partners=None):
+                       fragile_fav=False, combo_flow=0, keep_partners=None,
+                       must_include=None, require_axis_all=False):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
 
@@ -488,6 +669,9 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     band: 狙い目価格帯(lo,hi)の外部指定(妙味度連動の可変帯)。未指定は_TRIFECTA_BAND。
     combo_flow/keep_partners: recommend_trioと同じ『🧩combo馬流し』。2着/3着ヒモを
     🧩N重複以上のシグナル馬(＋keep_partners=軸候補◎〇▲)に限定する。1着候補は絞らない。
+    must_include: 各買い目が少なくとも1頭含む馬番(フォーメーションB群=穴)。未指定は絞らない。
+    require_axis_all: Trueなら軸馬を全点に含める(1軸=その1頭 / 2軸=2頭。3連複の軸流しと同じ)。
+    最人気の自動固定はしない。呼び出し側がユーザー指定の軸だけを渡す。
     戻り値: recommend_trio と同形 {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
@@ -499,7 +683,10 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     ranked = sorted(by.values(), key=lambda h: -(h.get('score') or 0))
     pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= pop_th}
     ana_set = {h['umaban'] for h in horses if h.get('pop') and ana_lo <= h['pop'] <= ana_hi}
+    companion_h = [h for h in ranked if h.get('companion')]
     axis = [u for u in (axis_umaban or []) if u in by]
+    must = [u for u in (must_include or []) if u in by]
+    must_set = set(must)
 
     # 帯別フォーメーション: 荒れ確率が渡されたらプール幅と推奨点数を可変(検証済)。
     band_name = None
@@ -552,23 +739,43 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                 first.append(u)
     # 🧩combo馬流し(recommend_trioと同思想): 2着/3着ヒモを『🧩N重複以上のシグナル馬
     # ∪keep_partners(軸候補◎〇▲=独立の検証エッジ)∪1着候補』に限定。1着候補は絞らない。
-    keep_partners = set(keep_partners or ())
+    keep_partners = set(keep_partners or ()) | {h['umaban'] for h in companion_h}
     _himo_ok = None
     if combo_flow and combo_flow > 0:
         _himo_ok = ({u for u in by if _combo_lvl(u) >= int(combo_flow)}
-                    | keep_partners | set(first))
+                | keep_partners | set(first))
     _ranked_himo = ranked if _himo_ok is None else [h for h in ranked if h['umaban'] in _himo_ok]
     # 2着候補: 1着候補+スコア順(取りこぼし=◎〇の2着付けをカバー)
     second = _fill(list(first), _ranked_himo, n_second)
-    # 3着(ヒモ): 🧩シグナル重複穴>妙味シグナル穴>スコア順。荒れ時の3着穴が3連単配当の源泉
-    # (combo2+ holdout z+9.2 は単独シグナルより強い=ヒモ選別の第一基準)。
+    if band_name == 'tight':
+        # 堅帯のみ: 4〜5番人気を2着から落とさない(Hit3 holdout 堅帯43.5%→60.8%)。
+        # 中庸・荒れは現行の穴・Rank側を維持。1着枠は広げない(②は未採用)。
+        _p15 = [h for h in ranked if h.get('pop') and h['pop'] <= 5]
+        second = _fill(list(first), _p15 + list(_ranked_himo), max(n_second, 5))
+    # 3着(ヒモ): 相手候補(4-5人気)を先に入れる。そのあと
+    # 🧩シグナル重複穴>妙味シグナル穴>スコア順。穴の定義(6+)は動かさない。
     himo_ranked = sorted(by.values(),
                          key=lambda h: (-(_combo_lvl(h['umaban']) if h['umaban'] in ana_set else 0),
                                         -(1 if (h['umaban'] in ana_set and _has_sig(h['umaban'])) else 0),
                                         -(h.get('score') or 0)))
     if _himo_ok is not None:
         himo_ranked = [h for h in himo_ranked if h['umaban'] in _himo_ok]
-    third = _fill(list(second), himo_ranked, n_third)
+    third = _fill(list(second), companion_h + himo_ranked, n_third)
+    # フォーメーション穴(B群)はスコア順でヒモから落ちやすい。指定があるなら列に残す。
+    for u in must:
+        if u not in third:
+            third.append(u)
+        if u not in second:
+            second.append(u)
+    # 1軸/2軸の全点含有: 指定馬が1着枠外でも2着・3着に残す(UI「軸=全点に入れる」)。
+    if require_axis_all and axis:
+        for u in axis:
+            if u not in first:
+                first.append(u)
+            if u not in second:
+                second.append(u)
+            if u not in third:
+                third.append(u)
 
     scored = []
     for a in first:
@@ -621,6 +828,17 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
         return {'bets': [], 'meta': {'first': first, 'second': second, 'third': third},
                 'warning': '3連単の組合せを生成できませんでした（候補頭数を確認してください）'}
     scored.sort(key=lambda x: -x['score'])
+    if must_set:
+        scored = [x for x in scored if must_set & set(x['combo'])]
+        if axis:
+            scored = [x for x in scored if set(axis) & set(x['combo'])]
+    if require_axis_all and axis:
+        _ax = set(axis)
+        scored = [x for x in scored if _ax <= set(x['combo'])]
+    if not scored:
+        return {'bets': [], 'meta': {'first': first, 'second': second, 'third': third,
+                                     'must_include': must, 'require_axis_all': require_axis_all},
+                'warning': '指定の軸／穴を含む3連単が作れませんでした（候補頭数を確認してください）'}
     bets = scored[:n_points]
     syn = None
     if all(b['odds'] for b in bets):
@@ -630,13 +848,45 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
             'meta': {'n_points': len(bets), 'target_band': (lo, hi), 'synthetic_odds': syn,
                      'first': first, 'second': second, 'third': third,
                      'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
-                     'band_name': band_name, 'arare_prob': arare_prob, 'fragile_fav': fragile_fav},
+                     'band_name': band_name, 'arare_prob': arare_prob, 'fragile_fav': fragile_fav,
+                     'must_include': must, 'require_axis_all': require_axis_all},
             'warning': None}
+
+
+def unordered_horse_sets(bets):
+    """3連単の買い目から、順番を無視した3頭組を返す(表示用。点数・集合は変えない)。
+
+    同じ3頭の着順違いは1行。代表スコアが高い組が先。
+    [{'umabans': (1,2,14), 'names': (...), 'n_orders': 2, 'score': 12.3}, ...]
+    """
+    groups = {}
+    for b in bets or []:
+        combo = tuple(b.get('combo') or ())
+        if len(combo) != 3:
+            continue
+        fs = frozenset(int(x) for x in combo)
+        names = b.get('names') or ('', '', '')
+        name_of = {int(u): n for u, n in zip(combo, names)}
+        rec = groups.get(fs)
+        sc = float(b.get('score') or 0)
+        if rec is None:
+            uma = tuple(sorted(fs))
+            groups[fs] = {
+                'umabans': uma,
+                'names': tuple(name_of.get(u, '') for u in uma),
+                'n_orders': 1,
+                'score': sc,
+            }
+        else:
+            rec['n_orders'] += 1
+            if sc > rec['score']:
+                rec['score'] = sc
+    return sorted(groups.values(), key=lambda r: (-r['score'], r['umabans']))
 
 
 # ──────────────────────────────────────────────
 # 馬連 / 馬単 おすすめ（3連複の代替・高配当検知）
-#   人気馬が3頭目に絡むと3連複は配当が伸びない。そんな時は2頭勝負の
+#   近年は人気馬が3頭目に絡むと3連複が伸びず、2頭勝負の
 #   馬連/馬単のほうが高配当になりやすい。それを検知して提案する。
 # ──────────────────────────────────────────────
 def purchase_summary(combos, ordered=False):

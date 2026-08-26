@@ -23,6 +23,12 @@ AIスコア(vh2_score/妙味/ランキング/材料数)には一切影響させ�
   (推測で補完しない)。
 """
 import re
+import html as _html
+
+# 📋その他の穴馬候補などで秒数を赤字にする表示用しきい値。
+# |差|<=0.5秒＝前後0.5秒以内。スコア・ソート・バッジ条件(重賞×0.3秒)には使わない。
+CLOSE_SEC = 0.5
+_CLOSE_COLOR = '#c62828'
 
 # 重賞/L 判定に使うレース名末尾トークン。netkeibaはローマ数字表記(GI/GII/GIII)。
 # ⚠ 'GI' は 'GII'/'GIII' の部分文字列なので、部分一致(`'GI' in name`)で判定してはいけない。
@@ -280,6 +286,57 @@ def margin_line(pv):
         lbl = '2着馬との差' if pv.get('rank') == 1 else '1着馬との差'
         return f"{lbl} {mw:+.1f}秒"
     return ''
+
+
+def shown_margin(pv):
+    """margin_line が出している秒数。3着差があればそれ、無ければ1着差。欠損は None。"""
+    if not pv:
+        return None
+    m3 = pv.get('margin_3rd')
+    if m3 is not None:
+        try:
+            return float(m3)
+        except (TypeError, ValueError):
+            return None
+    mw = pv.get('margin_win')
+    if mw is not None:
+        try:
+            return float(mw)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def is_close_margin(pv, thresh=CLOSE_SEC):
+    """表示中の差の絶対値が thresh 秒以内か。欠損は False（推測で赤くしない）。"""
+    m = shown_margin(pv)
+    if m is None:
+        return False
+    return abs(m) <= float(thresh)
+
+
+def emphasize_close_seconds(text, pv, thresh=CLOSE_SEC):
+    """テキスト中の『+0.4秒』だけ、閾値以内なら赤字のHTMLにする。エスケープ済み。"""
+    s = _html.escape(str(text or ''))
+    if not s or not is_close_margin(pv, thresh=thresh):
+        return s
+    return re.sub(
+        r'([±+\-]?\d+\.\d+秒)',
+        rf'<span style="color:{_CLOSE_COLOR};font-weight:bold;">\1</span>',
+        s,
+        count=1,
+    )
+
+
+def margin_line_html(pv, thresh=CLOSE_SEC):
+    """margin_line のHTML版。僅差なら秒数だけ赤字、それ以外は灰色。"""
+    line = margin_line(pv)
+    if not line:
+        return ''
+    painted = emphasize_close_seconds(line, pv, thresh=thresh)
+    if is_close_margin(pv, thresh=thresh):
+        return painted
+    return f'<span style="color:#555">{painted}</span>'
 
 
 def detail_header(pv):

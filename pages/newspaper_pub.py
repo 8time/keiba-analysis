@@ -633,16 +633,22 @@ def render():
 
                 def _app_display_cols():
                     v0 = np_mod.load_view(sel_rids[0]) if sel_rids else None
-                    return [c for c in ((v0 or {}).get('order') or []) if c in _colpairs]
+                    return [c for c in ((v0 or {}).get('order') or [])
+                            if c in _colpairs and c not in np_mod.HIDE_ON_PAPER]
 
                 if _ordkey not in st.session_state:
-                    _init = [c for c in custom_cols if c in _colpairs] or _app_display_cols()
+                    _init = [c for c in custom_cols if c in _colpairs
+                             and c not in np_mod.HIDE_ON_PAPER] or _app_display_cols()
                     st.session_state[_ordkey] = _init
                     for c in _colpairs:
-                        st.session_state[_ck(c)] = (c in _init)
+                        st.session_state[_ck(c)] = (
+                            c in _init and c not in np_mod.HIDE_ON_PAPER)
                 else:
                     for c in _colpairs:
                         if _ck(c) not in st.session_state:
+                            st.session_state[_ck(c)] = False
+                    for c in np_mod.HIDE_ON_PAPER:
+                        if c in _colpairs:
                             st.session_state[_ck(c)] = False
 
                 _bc = st.columns(3)
@@ -653,23 +659,33 @@ def render():
                     st.session_state[_ordkey] = _init
                 if _bc[1].button("✅ 全選択", key="np_ck_all"):
                     for c in _colpairs:
-                        st.session_state[_ck(c)] = True
-                    st.session_state[_ordkey] = list(_colpairs.keys())
+                        st.session_state[_ck(c)] = c not in np_mod.HIDE_ON_PAPER
+                    st.session_state[_ordkey] = [
+                        c for c in _colpairs if c not in np_mod.HIDE_ON_PAPER]
                 if _bc[2].button("🗑 全解除", key="np_ck_none"):
                     for c in _colpairs:
                         st.session_state[_ck(c)] = False
                     st.session_state[_ordkey] = []
 
                 _grid = st.columns(3)
-                for _i, (c, lb) in enumerate(_colpairs.items()):
-                    with _grid[_i % 3]:
+                _vis_i = 0
+                for c, lb in _colpairs.items():
+                    if c in np_mod.HIDE_ON_PAPER:
+                        continue
+                    with _grid[_vis_i % 3]:
                         st.checkbox(lb, key=_ck(c))
+                    _vis_i += 1
+                if any(c in _colpairs for c in np_mod.HIDE_ON_PAPER):
+                    st.caption("「逆シ」は強適テーブル専用です。新聞の列には出しません。")
 
                 # チェック順を再構成（既存チェック順を保ち、新規チェックは末尾へ）
                 _prev = st.session_state.get(_ordkey, [])
-                _sel_c = [c for c in _prev if c in _colpairs and st.session_state.get(_ck(c))]
+                _sel_c = [c for c in _prev if c in _colpairs
+                          and c not in np_mod.HIDE_ON_PAPER
+                          and st.session_state.get(_ck(c))]
                 for c in _colpairs:
-                    if st.session_state.get(_ck(c)) and c not in _sel_c:
+                    if (c not in np_mod.HIDE_ON_PAPER
+                            and st.session_state.get(_ck(c)) and c not in _sel_c):
                         _sel_c.append(c)
                 st.session_state[_ordkey] = _sel_c
                 custom_cols = _sel_c
@@ -682,9 +698,19 @@ def render():
                     st.caption("⚠ 0列＝発行時はアプリ表示列にフォールバックします。")
 
         _excl_saved = [c for c in (prefs.get('exclude_cols') or []) if c in _colpairs]
+        for _off in np_mod.HIDE_ON_PAPER:
+            if _off in _colpairs and _off not in _excl_saved:
+                _excl_saved.append(_off)
+        if 'np_excl' in st.session_state:
+            _ex_now = list(st.session_state.get('np_excl') or [])
+            for _off in np_mod.HIDE_ON_PAPER:
+                if _off in _colpairs and _off not in _ex_now:
+                    _ex_now.append(_off)
+            st.session_state['np_excl'] = _ex_now
         exclude_cols = st.multiselect(
             "除外する列（紙面に載せない列）", options=list(_colpairs.keys()),
             default=_excl_saved, format_func=lambda c: _colpairs.get(c, c), key="np_excl")
+        st.caption("「逆シ」は強適テーブル専用です。列セットの選び方に関係なく新聞には載せません。")
 
         _has_nar = any(str(r).startswith('NAR') or
                        (len(str(r)) >= 6 and str(r)[4:6] > '10')

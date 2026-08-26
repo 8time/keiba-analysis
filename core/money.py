@@ -258,6 +258,243 @@ def session_guard(start_balance, current_balance, stop_loss_pct=25.0, take_profi
             'to_stop': current_balance - stop_line, 'to_tp': tp_line - current_balance}
 
 
+def clip_yen(amount, unit=100):
+    """馬券単位で切り下げ。0未満は0。"""
+    try:
+        n = float(amount)
+    except (TypeError, ValueError):
+        return 0
+    if n <= 0:
+        return 0
+    return int(n // unit) * unit
+
+
+def apply_stake_caps(kelly_yen, balance, race_cap_pct=5.0, ticket_cap_pct=3.0,
+                     daily_spent=0, daily_cap_pct=15.0, race_spent=0, unit=100):
+    """理論ケリー額に1点・1レース・1日の上限をかけて実投資額を返す。
+
+    kelly_multi は変えない。こちらは『出た金額を実際に賭けてよいか』の柵。
+    """
+    race_cap = bankroll_cap(balance, pct=race_cap_pct, unit=unit)['cap']
+    ticket_cap = bankroll_cap(balance, pct=ticket_cap_pct, unit=unit)['cap']
+    daily_cap = bankroll_cap(balance, pct=daily_cap_pct, unit=unit)['cap']
+    daily_left = max(0, daily_cap - int(daily_spent or 0))
+    race_left = max(0, race_cap - int(race_spent or 0))
+    theoretical = clip_yen(kelly_yen, unit)
+    stake = min(theoretical, ticket_cap, race_left, daily_left)
+    reasons = []
+    if theoretical > ticket_cap:
+        reasons.append('1点上限')
+    if theoretical > race_left:
+        reasons.append('1レース上限')
+    if theoretical > daily_left:
+        reasons.append('今日の投資上限')
+    return {
+        'theoretical': theoretical,
+        'ticket_cap': ticket_cap,
+        'race_cap': race_cap,
+        'daily_cap': daily_cap,
+        'daily_left': daily_left,
+        'race_left': race_left,
+        'stake': max(0, stake),
+        'capped': stake < theoretical,
+        'reasons': reasons,
+    }
+
+
+def ops_light(start_balance, current_balance, daily_spent=0, daily_cap=0,
+              stop_loss_pct=25.0, take_profit_pct=30.0):
+    """今日買ってよいかを3色で返す。session_guard の判定に『今日の使いすぎ』を足す。"""
+    g = session_guard(start_balance, current_balance,
+                      stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct)
+    daily_spent = int(daily_spent or 0)
+    daily_cap = int(daily_cap or 0)
+    if g['status'] == '撤退(損切り)':
+        return {'code': 'stop', 'emoji': '🔴', 'title': '本日は停止',
+                'detail': '開始資金からの下落が上限に達した。今日の新規購入を止める。',
+                'new_race_cap': 0, **g}
+    if daily_cap > 0 and daily_spent >= daily_cap:
+        return {'code': 'stop', 'emoji': '🔴', 'title': '本日は停止',
+                'detail': '今日の投資上限に達した。新規購入を止める。',
+                'new_race_cap': 0, **g}
+    if g['status'] == '利確':
+        return {'code': 'ok', 'emoji': '🟢', 'title': '利確ライン到達',
+                'detail': '目標まで来た。欲を出さず、ここで終えるのが安全。',
+                'new_race_cap': None, **g}
+    if daily_cap > 0 and daily_spent >= daily_cap * 0.8:
+        remain = max(0, daily_cap - daily_spent)
+        return {'code': 'caution', 'emoji': '🟡', 'title': '投資を抑える',
+                'detail': f'今日はすでに上限の{daily_spent / daily_cap * 100:.0f}%を使っている。'
+                          f'この先は1レース ¥{remain:,.0f} まで。',
+                'new_race_cap': remain, **g}
+    return {'code': 'ok', 'emoji': '🟢', 'title': '通常どおり',
+            'detail': f'残高 ¥{current_balance:,.0f} ／ 今日の投資 ¥{daily_spent:,.0f}'
+                      + (f'（上限 ¥{daily_cap:,.0f}）' if daily_cap else ''),
+            'new_race_cap': None, **g}
+
+
+def equity_stats(start_balance, balances):
+    """開始資金と各レース後残高から、最高残高と最大下落率を返す。"""
+    series = [float(start_balance)]
+    for b in (balances or []):
+        try:
+            series.append(float(b))
+        except (TypeError, ValueError):
+            continue
+    peak = max(series)
+    peak_so_far = series[0]
+    max_dd_pct = 0.0
+    for b in series:
+        peak_so_far = max(peak_so_far, b)
+        if peak_so_far > 0:
+            max_dd_pct = min(max_dd_pct, (b - peak_so_far) / peak_so_far * 100.0)
+    return {
+        'start': series[0],
+        'current': series[-1],
+        'peak': peak,
+        'max_dd_pct': max_dd_pct,
+    }
+
+
+def points_budget(n_points, cap, unit=100):
+    """SRAで決めた点数に、1レース上限を割り振る。的中率は使わない。
+
+    1点は unit 円（通常100円）。上限に入らなければ total=0, fits=False。
+    """
+    try:
+        n = max(0, int(n_points or 0))
+    except (TypeError, ValueError):
+        n = 0
+    try:
+        cap = max(0, int(cap or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    unit = max(0, int(unit or 0))
+    max_points = (cap // unit) if unit else 0
+    need = n * unit
+    if n <= 0 or cap <= 0 or unit <= 0:
+        return {'n': n, 'cap': cap, 'unit': 0, 'total': 0,
+                'max_points': max_points, 'fits': True, 'need': need,
+                'leftover': cap}
+    if need <= cap:
+        return {'n': n, 'cap': cap, 'unit': unit, 'total': need,
+                'max_points': max_points, 'fits': True, 'need': need,
+                'leftover': cap - need}
+    return {'n': n, 'cap': cap, 'unit': 0, 'total': 0,
+            'max_points': max_points, 'fits': False, 'need': need,
+            'leftover': 0}
+
+
+# 券種別の安全マージン目安（未検証。ONにしたときだけ表示オッズを割り引く）
+KIND_SLIP = {
+    '3連単': 0.30, '3連複': 0.25, '馬連': 0.20, '馬単': 0.20,
+    'ワイド': 0.20, '単勝': 0.10, '複勝': 0.10,
+}
+
+
+def slip_pct_for(kind, enabled=False):
+    if not enabled:
+        return 0.0
+    return float(KIND_SLIP.get(str(kind or '').strip(), 0.20))
+
+
+def haircut_odds(odds, slip_pct):
+    """表示オッズを安全マージンで割り引く。予測ではなく資金管理用。"""
+    try:
+        o = float(odds)
+    except (TypeError, ValueError):
+        return 0.0
+    try:
+        s = max(0.0, min(0.9, float(slip_pct or 0)))
+    except (TypeError, ValueError):
+        s = 0.0
+    if o <= 1.0:
+        return o
+    return max(1.01, o * (1.0 - s))
+
+
+def ticket_line(kind, odds, p=None, balance=0, kelly_frac=0.25,
+                race_cap=0, ticket_cap=0, race_spent=0,
+                min_ev_pct=5.0, min_p_pct=1.0, slip_on=False,
+                default_unit=100, unit=100):
+    """買い目1行の推奨額。的中率が空なら1点分（default_unit）を上限内で返す。"""
+    slip = slip_pct_for(kind, slip_on)
+    ev_odds = haircut_odds(odds, slip)
+    out = {
+        'kind': str(kind or ''),
+        'odds': float(odds or 0),
+        'eval_odds': round(ev_odds, 2) if ev_odds else 0.0,
+        'slip_pct': round(slip * 100, 1),
+        'p': None, 'ev_pct': None,
+        'full_pct': 0.0, 'rec_pct': 0.0,
+        'full_yen': 0, 'kelly_yen': 0, 'stake': 0,
+        'status': '見送り', 'reasons': [],
+    }
+    halt = int(race_cap or 0) <= 0
+    if halt:
+        out['reasons'] = ['今日は停止']
+        return out
+    p_val = None
+    try:
+        if p is not None and p != '' and float(p) > 0:
+            p_val = float(p)
+            if p_val > 1.0:
+                p_val = p_val / 100.0
+    except (TypeError, ValueError):
+        p_val = None
+    out['p'] = p_val
+    left = max(0, int(race_cap or 0) - int(race_spent or 0))
+    tcap = int(ticket_cap or 0) if ticket_cap else left
+
+    if p_val is None:
+        stake = min(int(default_unit or 100), tcap, left)
+        stake = clip_yen(stake, unit)
+        out['stake'] = stake
+        out['status'] = '枠で買う' if stake > 0 else '上限いっぱい'
+        out['reasons'] = ['的中率なし＝1点分']
+        return out
+
+    if p_val * 100.0 < float(min_p_pct or 0):
+        out['status'] = '見送り'
+        out['reasons'] = ['的中率が下限未満']
+        return out
+    if ev_odds <= 1.0:
+        out['status'] = '見送り'
+        out['reasons'] = ['オッズ不足']
+        return out
+    ev_mult = p_val * ev_odds
+    ev_pct = (ev_mult - 1.0) * 100.0
+    out['ev_pct'] = round(ev_pct, 1)
+    if ev_pct < float(min_ev_pct or 0):
+        out['status'] = '見送り'
+        out['reasons'] = ['期待値が下限未満']
+        return out
+    b = ev_odds - 1.0
+    full_f = max(0.0, (p_val * ev_odds - 1.0) / b) if b > 0 else 0.0
+    rec_f = full_f * float(kelly_frac or 0)
+    out['full_pct'] = round(full_f * 100.0, 2)
+    out['rec_pct'] = round(rec_f * 100.0, 2)
+    full_yen = clip_yen(float(balance or 0) * full_f, unit)
+    kelly_yen = clip_yen(float(balance or 0) * rec_f, unit)
+    out['full_yen'] = full_yen
+    out['kelly_yen'] = kelly_yen
+    stake = min(kelly_yen, tcap, left)
+    stake = clip_yen(stake, unit)
+    out['stake'] = stake
+    if kelly_yen > stake:
+        if kelly_yen > tcap:
+            out['reasons'].append('1点上限')
+        if kelly_yen > left:
+            out['reasons'].append('1レース上限')
+    if stake <= 0:
+        out['status'] = '見送り'
+    elif stake < 200:
+        out['status'] = '少額'
+    else:
+        out['status'] = '推奨'
+    return out
+
+
 # ──────────────────────────────────────────────
 # ⑤ 収支台帳（予測→結果→反省 / ROI・Brier）
 # ──────────────────────────────────────────────
@@ -337,6 +574,40 @@ class Ledger:
             payout = int(win_payout * b['stake'] / 100) if won else 0
             self.con.execute("UPDATE bets SET settled=1, won=?, payout=? WHERE bet_id=?",
                              (won, payout, b['bet_id']))
+        self.con.commit()
+
+    def settle_multi(self, race_id, results):
+        """券種別の結果を反映。
+        results: {'tan': [{'combo': [5], 'odds': 3.5}], 'trio': [{'combo': [3,5,8], 'odds': 12.0}], ...}
+        スクレイパーの fetch_race_payouts の戻り値をそのまま使う。
+        """
+        for b in self.con.execute("SELECT * FROM bets WHERE race_id=? AND settled=0", (race_id,)):
+            btype = b['bet_type'] or '単勝'
+            matched = None
+            # 券種に対応する結果キー
+            key_map = {'単勝': 'tan', '複勝': 'fuku', '馬連': 'umaren', '馬単': 'umatan',
+                       'ワイド': 'wide', '3連複': 'trio', '3連単': 'trifecta', '枠連': 'wakuren'}
+            rkey = key_map.get(btype)
+            if rkey and rkey in results:
+                for r in results[rkey]:
+                    combo = r.get('combo', [])
+                    if btype in ('単勝', '複勝'):
+                        if len(combo) == 1 and int(combo[0]) == b['umaban']:
+                            matched = r
+                            break
+                    else:
+                        # 買い目文字列（bameiに保存されている想定）と比較
+                        combo_str = '-'.join(str(c) for c in sorted(combo))
+                        if str(b.get('bamei', '')) == combo_str:
+                            matched = r
+                            break
+            if matched:
+                payout = int(matched.get('odds', 0) * 100 * b['stake'] / 100)
+                self.con.execute("UPDATE bets SET settled=1, won=1, payout=? WHERE bet_id=?",
+                                 (payout, b['bet_id']))
+            else:
+                self.con.execute("UPDATE bets SET settled=1, won=0, payout=0 WHERE bet_id=?",
+                                 (b['bet_id'],))
         self.con.commit()
 
     def settled_rows(self):
@@ -592,7 +863,8 @@ class Ledger:
             return None
         winner = payouts['tan'][0]['combo'][0]
         win_payout = int(payouts['tan'][0]['odds'] * 100)
-        self.settle(race_id, winner, win_payout)
+        # 単勝以外の券種もまとめて精算
+        self.settle_multi(race_id, payouts)
         return {'winner': winner, 'payout': win_payout, 'settled': unsettled}
 
     def close(self):
