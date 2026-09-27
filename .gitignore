@@ -9,6 +9,9 @@ data/
 race_history.csv
 labo_session.json
 
+# BetSync 実行時設定（残高・戦略・セッション履歴。端末ごとに異なる）
+betsync_data.json
+
 # 開発用の一時ファイル・ログ・スクラッチ（コミット不要）
 *.log
 scratch/

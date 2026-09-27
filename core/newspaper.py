@@ -241,6 +241,7 @@ def write_consensus_snapshot(race_id, regime, result, lean=None, aim=None, df=No
                 'lean': _jsonable(lean or {}),
                 'groups': _jsonable(result.get('groups', {})),
                 'horses': _jsonable(result.get('horses', [])),
+                'cross': _jsonable(result.get('cross') or {}),
                 'aim': aim_out,
                 'forecast': forecast,
             }, f, ensure_ascii=False, default=str)
@@ -382,6 +383,18 @@ def persist_playbook(race_id, rec):
         'n_points': rec.get('n_points'),
         'ui_line': rec.get('ui_line'),
         'skip': rec.get('skip'),
+        'cross_n': rec.get('cross_n'),
+        'selected_bet_type': rec.get('selected_bet_type'),
+        'selected_playbook': rec.get('selected_playbook'),
+        'selector_rule_version': rec.get('selector_rule_version'),
+        'selection_reason': rec.get('selection_reason'),
+        'skip_reason': rec.get('skip_reason'),
+        'skip_detail': rec.get('skip_detail'),
+        'cross_n_source': rec.get('cross_n_source'),
+        'degraded': rec.get('degraded'),
+        'diag_family': rec.get('diag_family'),
+        'diag_plain': rec.get('diag_plain'),
+        'diag_verdict': rec.get('diag_verdict'),
     }
     try:
         from core import playbook_ledger as _plg
@@ -398,6 +411,11 @@ def persist_playbook(race_id, rec):
     try:
         from core import playbook_ledger as _plg2
         _plg2.preserve_outcome_if_same(race_id, rec, prev)
+    except Exception:
+        pass
+    try:
+        from core import playbook_shadow as _psh
+        _psh.persist(race_id, rec)
     except Exception:
         pass
 
@@ -1564,6 +1582,55 @@ def _digest_html(cv, records, meta, mono=False):
         f"{pace_line}{arare_line}</div>")
 
 
+def _diag_family_code(race_id):
+    """紙面ヘッダ用の型コード(NNV/RRV/RRR)。買い目の形ではなく診断ラベル。無ければNone。"""
+    extra, meta = {}, {}
+    try:
+        data = load_bets(race_id) or {}
+        pb = data.get('playbook') or {}
+        extra = pb.get('extra') or {}
+        meta = (pb.get('result') or {}).get('meta') or {}
+    except Exception:
+        extra, meta = {}, {}
+    if not extra and not meta:
+        try:
+            v = load_view(race_id) or {}
+            pb = v.get('playbook') or {}
+            extra = pb.get('extra') or {}
+            meta = (pb.get('result') or {}).get('meta') or extra
+        except Exception:
+            extra, meta = {}, {}
+    code = extra.get('diag_family') or meta.get('diag_family')
+    if code:
+        return str(code)
+    zone = extra.get('zone') or meta.get('zone')
+    cross_n = extra.get('cross_n')
+    if cross_n is None:
+        cross_n = meta.get('cross_n')
+    if zone is None or cross_n is None:
+        try:
+            cv = load_consensus(race_id) or {}
+        except Exception:
+            cv = {}
+        if zone is None:
+            vs = (cv.get('forecast') or {}).get('value_score')
+            if vs is not None:
+                try:
+                    from core import formation_stats as _fs
+                    zone = _fs.zone_code(vs)
+                except Exception:
+                    zone = None
+        if cross_n is None:
+            cross_n = (cv.get('cross') or {}).get('n')
+    if not zone:
+        return None
+    try:
+        from core.bettype_selector import diag_family
+        return diag_family(zone, cross_n).get('code')
+    except Exception:
+        return None
+
+
 def _buymeta_html(race_id, show_gate=True, show_buy=True):
     try:
         from core import score_cache as sc
@@ -1571,12 +1638,24 @@ def _buymeta_html(race_id, show_gate=True, show_buy=True):
         return '', ''
     badge = ''
     if show_gate:
+        # 型(NNV/RRV/RRR)はスキャナGateと独立。SRAだけ済ませた紙面でも黒帯右に出す。
+        parts = []
         g = sc.read_gate(race_id)
         if g and g.get('status'):
             lbl = {'buy': '🟢 買い', 'axis_warn': '🟡 軸注意', 'skip': '⛔ 見送り'}.get(
                 g['status'], g['status'])
-            lean = f"｜{g['lean']}" if g.get('lean') else ''
-            badge = f"<span class='gate'>{_esc(lbl)}{_esc(lean)}</span>"
+            parts.append(lbl)
+            if g.get('lean'):
+                parts.append(str(g['lean']))
+        fam = _diag_family_code(race_id)
+        if fam:
+            parts.append(str(fam))
+        fam_plain = {'NNV': '人気＋穴', 'RRV': '能力＋穴', 'RRR': '能力のみ'}.get(fam or '', '')
+        title = (f"型{fam}＝{fam_plain}（どの判定パターンに入ったか。券の形そのものではない）"
+                 if fam else '')
+        if parts:
+            badge = (f"<span class='gate' title='{_esc(title)}'>"
+                     f"{_esc('｜'.join(parts))}</span>")
     meta_line = ''
     if show_buy:
         b = sc.read_buy(race_id)
@@ -1971,41 +2050,34 @@ def _pace_html(race_id, records):
 
 
 def _elim_html(cv, records, race_id):
-    """消去フィルター: 強適消去エンジンの消去馬名＋消去クロス重複数の高い馬＋残し馬。"""
-    aim = (cv or {}).get('aim') or {}
-    keep = None
-    try:
-        from core import score_cache as sc
-        keep = sc.read_keep(race_id)
-    except Exception:
-        pass
-    elim = {}
-    for k, v in (aim.get('elim') or {}).items():
-        try:
-            elim[int(k)] = int(v)
-        except Exception:
-            continue
+    """既存の消去欄を自動消去後の残馬一覧に置換する（手動選択とは分離）。"""
     verdict = load_elim_verdict(race_id)
-    cut_rows = [r for r in ((verdict or {}).get('rows') or [])
-                if str(r.get('判定') or '') == '🧹消し']
-    if not elim and not keep and not cut_rows:
-        return ''
     by_um = _names_by_um(records)
-    lines = []
-    if cut_rows:
-        cut_txt = '・'.join(
-            f"{_esc(str(r.get('馬番', '')))}{_esc(str(r.get('馬名', ''))[:7])}" for r in cut_rows)
-        lines.append(f"🎯強適消去エンジンで消去（残し/ボーダー残し以外・{len(cut_rows)}頭）: {cut_txt}")
-    bad = sorted(((u, c) for u, c in elim.items() if c >= 3), key=lambda x: -x[1])
-    if bad:
-        lines.append("✖消去クロス重複3+（強気に切る候補）: "
-                     + '　'.join(f"✖{c} <b>{u}</b>{_esc(by_um.get(u, '')[:7])}" for u, c in bad))
-    warn = sorted(u for u, c in elim.items() if c == 2)
-    if warn:
-        lines.append("△重複2（相手絞りの弱点フラグ）: " + '・'.join(str(u) for u in warn))
-    if keep:
-        lines.append("🧹消去エンジン残し馬: " + '・'.join(str(u) for u in sorted(keep)))
-    return _exbox("🧹 消去フィルター", '<br>'.join(lines))
+    keep_names = {}
+    rows = (verdict or {}).get('rows') or []
+    if rows:
+        for r in rows:
+            if r.get('判定') not in ('✅残し', '🛟ボーダー残し'):
+                continue
+            try:
+                u = int(r['馬番'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            keep_names[u] = str(r.get('馬名') or by_um.get(u, ''))
+    else:
+        # 旧保存形式も読めるが、手動の read_keep は自動残馬として使わない。
+        try:
+            from core import score_cache as sc
+            keep = sc.read_elim_keep(race_id)
+        except Exception:
+            keep = None
+        if keep is None:
+            return ''
+        keep_names = {u: by_um.get(u, '') for u in keep}
+    body = ' ・ '.join(
+        f"<span style='display:inline-block'><b>{u}</b> {_esc(name)}</span>"
+        for u, name in sorted(keep_names.items())) or '残馬なし'
+    return _exbox(f"🧹 消去フィルター残馬（{len(keep_names)}頭・ボーダー含む）", body)
 
 
 def _vh_html(cv, records):

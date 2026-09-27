@@ -1,0 +1,73 @@
+{
+  "stats": {
+    "Q1_全期間": {
+      "rank1_win_rate": 5.16,
+      "all_elite_win_rate": 4.55,
+      "rank1_vs_all_diff": 0.61
+    },
+    "Q1_2024年以降": {
+      "rank1_win_rate": 5.01,
+      "all_elite_win_rate": 4.59,
+      "rank1_vs_all_diff": 0.42
+    },
+    "Q2_全期間": {
+      "vh_gt_market_n": 4689,
+      "vh_gt_market_win_rate": 3.58,
+      "vh_gt_market_tansho_roi": 84.21,
+      "vh_lt_market_win_rate": 4.94,
+      "vh_lt_market_tansho_roi": 75.71
+    },
+    "Q2_2024年以降": {
+      "vh_gt_market_n": 1269,
+      "vh_gt_market_win_rate": 3.55,
+      "vh_gt_market_tansho_roi": 85.79,
+      "vh_lt_market_win_rate": 5.53,
+      "vh_lt_market_tansho_roi": 84.89
+    },
+    "Q3Q4_全期間": {
+      "vh_auc_win": 0.5765,
+      "market_auc_win": 0.6243,
+      "residual_auc_win": 0.4721,
+      "residual_adds_info": false
+    },
+    "Q3Q4_2024年以降": {
+      "vh_auc_win": 0.5742,
+      "market_auc_win": 0.6254,
+      "residual_auc_win": 0.462,
+      "residual_adds_info": false
+    },
+    "Q5": {
+      "全期間": {
+        "win_rate_diff_pt": 0.61,
+        "place_rate_diff_pt": 2.59,
+        "tansho_roi_diff_pt": -0.04,
+        "fukusho_roi_diff_pt": -1.7,
+        "win_A": false,
+        "place_B": true,
+        "tansho_C": false,
+        "fukusho_D": false,
+        "roi_ok": false
+      },
+      "2024年以降": {
+        "win_rate_diff_pt": 0.42,
+        "place_rate_diff_pt": 2.03,
+        "tansho_roi_diff_pt": -1.93,
+        "fukusho_roi_diff_pt": -2.97,
+        "win_A": false,
+        "place_B": true,
+        "tansho_C": false,
+        "fukusho_D": false,
+        "roi_ok": false
+      }
+    }
+  },
+  "judge": {
+    "verdict": "改善余地あり",
+    "summary": "レース内1位の的中率優位はholdoutでも再現。回収率改善は限定的。表示・情報設計の改善余地が主。",
+    "candidates": [
+      "レース内VH1位のみ表示/SRA筆頭強化（既存検証VH1位+4ppと整合）",
+      "VH>市場（rank_diff≥2）馬のハイライト表示（買い目ロジック変更なし）",
+      "レース内2位以下の精鋭をUI上で折りたたみ（情報量削減のみ）"
+    ]
+  }
+}

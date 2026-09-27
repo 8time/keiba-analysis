@@ -1,0 +1,4 @@
+﻿group,segment,n,win,win_rate_pct,place_rate_pct,tansho_roi_pct,fukusho_roi_pct,avg_odds,med_odds
+A_精鋭,all_kiui_period,67644,3081,4.55,18.56,83.3,80.91,22.05,19.7
+B_広域網,all_kiui_period,36276,876,2.41,11.55,79.18,76.99,39.28,35.8
+C_精鋭+広域網,all_kiui_period,103920,3957,3.81,16.12,81.86,79.54,28.06,24.1

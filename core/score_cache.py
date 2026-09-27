@@ -234,7 +234,7 @@ def write_keep(race_id, umaban_list):
 
 
 def read_keep(race_id):
-    """{馬番(int), ...} or None。"""
+    """{馬番(int), ...} or None。消去クロス最終候補・📤SRA送信用（推奨買い方の母集団には使わない）。"""
     if not race_id:
         return None
     p = _keep_path(race_id)
@@ -246,6 +246,72 @@ def read_keep(race_id):
         return set(int(u) for u in (data.get('keep') or []))
     except Exception:
         return None
+
+
+def _elim_keep_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.elim_keep.json")
+
+
+def write_elim_keep(race_id, umaban_list):
+    """🎯強適消去エンジンの残し(✅+🛟)のみ保存。消去クロスから上書きされない。"""
+    if not race_id:
+        return
+    try:
+        ums = sorted({int(u) for u in (umaban_list or []) if u is not None})
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_elim_keep_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'keep': ums},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_elim_keep(race_id):
+    """強適消去後の残馬 {馬番(int), ...} or None。推奨買い方・3連複デフォルト母集団用。"""
+    if not race_id:
+        return None
+    p = _elim_keep_path(race_id)
+    if os.path.exists(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            ums = {int(u) for u in (data.get('keep') or [])}
+            if ums:
+                return ums
+        except Exception:
+            pass
+    try:
+        from core import newspaper as _np
+        verdict = _np.load_elim_verdict(race_id)
+        if verdict:
+            ums = set()
+            for row in (verdict.get('rows') or []):
+                if str(row.get('判定') or '') == '🧹消し':
+                    continue
+                try:
+                    ums.add(int(row['馬番']))
+                except (TypeError, ValueError, KeyError):
+                    continue
+            return ums or None
+    except Exception:
+        pass
+    return None
+
+
+def filter_horses_by_elim_keep(race_id, horses, min_size=3):
+    """強適消去残馬で horses [{'umaban':...}, ...] を絞る。不足時は全頭のまま返す。
+
+    Returns: (filtered_horses, used_elim_keep: bool)
+    """
+    keep = read_elim_keep(race_id)
+    if not keep:
+        return list(horses or []), False
+    filtered = [h for h in (horses or [])
+                if h.get('umaban') is not None and int(h['umaban']) in keep]
+    if len(filtered) >= min_size:
+        return filtered, True
+    return list(horses or []), False
 
 
 def _stress_path(race_id):
@@ -289,6 +355,64 @@ def read_stress(race_id):
                 out[int(k)] = {
                     'coef': v.get('coef'),
                     'bottomk': bool(v.get('bottomk')),
+                }
+            except Exception:
+                continue
+        return out or None
+    except Exception:
+        return None
+
+
+def _oikiri_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(_DIR, f"{rid}.oikiri.json")
+
+
+def write_oikiri(race_id, reviews):
+    """🏠SRA「調教を取得」の評価を保存(🧹消去クロスから参照)。
+    reviews = {umaban(int): {'name': str, 'rank': str, 'critic': str}}"""
+    if not race_id or not reviews:
+        return
+    try:
+        rows = {}
+        for um, v in reviews.items():
+            try:
+                u = int(um)
+            except (TypeError, ValueError):
+                continue
+            vv = v or {}
+            rows[str(u)] = {
+                'name': str(vv.get('name') or ''),
+                'rank': str(vv.get('rank') or ''),
+                'critic': str(vv.get('critic') or ''),
+            }
+        if not rows:
+            return
+        os.makedirs(_DIR, exist_ok=True)
+        with open(_oikiri_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'ts': time.time(), 'oikiri': rows},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def read_oikiri(race_id):
+    """{umaban(int): {'name': str, 'rank': str, 'critic': str}} or None。"""
+    if not race_id:
+        return None
+    p = _oikiri_path(race_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        out = {}
+        for k, v in (data.get('oikiri') or {}).items():
+            try:
+                out[int(k)] = {
+                    'name': str((v or {}).get('name') or ''),
+                    'rank': str((v or {}).get('rank') or ''),
+                    'critic': str((v or {}).get('critic') or ''),
                 }
             except Exception:
                 continue

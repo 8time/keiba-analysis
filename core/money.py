@@ -18,6 +18,7 @@ Streamlit/予測モデルから `from core import money` で読む想定。
 - Smoczyński & Tomkins (2010) 競馬同時単勝ケリーの閉形式
 """
 import os
+import re
 import math
 import random
 import sqlite3
@@ -25,6 +26,291 @@ import datetime
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER_DB = os.path.join(_BASE, 'data', 'ledger.db')
+
+BET_TYPE_RESULT_KEY = {
+    '単勝': 'tan', '複勝': 'fuku', '馬連': 'umaren', '馬単': 'umatan',
+    'ワイド': 'wide', '3連複': 'trio', '3連単': 'trifecta', '枠連': 'wakuren',
+}
+ORDERED_BET_TYPES = frozenset({'馬単', '3連単'})
+
+# bets.bet_purpose — 実購入ROIと較正用予測を分離（legacy NULL は legacy_unknown）
+BET_PURPOSE_ACTUAL = 'actual_purchase'
+BET_PURPOSE_CALIBRATION = 'calibration'
+BET_PURPOSE_VIRTUAL = 'virtual_eval'
+BET_PURPOSE_LEGACY = 'legacy_unknown'
+
+
+def yen_payout_from_odds(odds, stake):
+    """100円あたり odds 形式の払戻を円整数で計算（浮動小数誤差を避ける）。"""
+    from decimal import Decimal, ROUND_HALF_UP
+    try:
+        o = Decimal(str(odds))
+        s = Decimal(int(stake or 0))
+    except Exception:
+        return 0
+    if o <= 0 or s <= 0:
+        return 0
+    return int((o * s).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+
+def bet_row_effective_purpose(row):
+    """推測で legacy を実購入認定しない。"""
+    row = bet_row_dict(row)
+    p = (row.get('bet_purpose') or '').strip()
+    if p in (BET_PURPOSE_ACTUAL, BET_PURPOSE_CALIBRATION, BET_PURPOSE_VIRTUAL):
+        return p
+    if p:
+        return p
+    return BET_PURPOSE_LEGACY
+
+
+def is_actual_purchase_bet(row):
+    return bet_row_effective_purpose(row) == BET_PURPOSE_ACTUAL
+
+
+# 実購入成績集計の唯一条件（SQL / Python 共通）
+ACTUAL_PURCHASE_SQL = 'bet_purpose = ?'
+
+
+def actual_purchase_sql_where(prefix=''):
+    """WHERE 断片: ``... AND bet_purpose = 'actual_purchase'``"""
+    p = f'{prefix}.' if prefix else ''
+    return f'{p}bet_purpose = ?'
+
+
+class LedgerSchemaError(RuntimeError):
+    """ledger.db スキーマ migration 失敗。"""
+
+
+def _migrate_add_column(con, table, col, typ):
+    try:
+        con.execute(f'ALTER TABLE {table} ADD COLUMN {col} {typ}')
+    except sqlite3.OperationalError as e:
+        msg = str(e).lower()
+        if 'duplicate column' in msg or 'already exists' in msg:
+            return
+        raise LedgerSchemaError(f'ALTER {table}.{col} failed: {e}') from e
+
+
+def classify_payout_entry(entry):
+    """払戻1行の種別。推測で hit/refund にしない。"""
+    if not entry or not isinstance(entry, dict):
+        return 'unknown'
+    if entry.get('refund') is True or entry.get('status') == 'refund':
+        return 'refund'
+    raw = str(entry.get('pay_raw') or '')
+    if '返還' in raw:
+        return 'refund'
+    try:
+        odds = float(entry.get('odds', 0) or 0)
+    except (TypeError, ValueError):
+        odds = 0.0
+    if odds > 0:
+        return 'hit'
+    if odds == 0 and entry.get('refund') is False:
+        return 'miss'
+    return 'unknown'
+
+
+def _entry_matches_bet(btype, bet, entry):
+    """ベットと払戻行の組合せが一致するか。"""
+    combo = entry.get('combo') or []
+    if btype in ('単勝', '複勝'):
+        try:
+            uma = int(bet.get('umaban') or 0)
+        except (TypeError, ValueError):
+            return False
+        return len(combo) == 1 and int(combo[0]) == uma
+    label_key = parse_bet_label(btype, bet.get('bamei'))
+    if not label_key:
+        return False
+    ck = _payout_combo_key(btype, combo)
+    return ck == label_key
+
+
+def _bet_touches_scratch(btype, bet, scratch_umaban):
+    """取消馬リストにベットが関与するか（组合券は確定返還行なしでは未精算用）。"""
+    if not scratch_umaban:
+        return False
+    scr = {int(x) for x in scratch_umaban}
+    if btype in ('単勝', '複勝'):
+        try:
+            return int(bet.get('umaban') or 0) in scr
+        except (TypeError, ValueError):
+            return False
+    label_key = parse_bet_label(btype, bet.get('bamei'))
+    if not label_key:
+        return False
+    return any(u in scr for u in label_key)
+
+
+def bet_row_dict(row):
+    """sqlite3.Row / dict を dict に統一（Row に .get は無い）。"""
+    if row is None:
+        return {}
+    if isinstance(row, dict):
+        return row
+    try:
+        return {k: row[k] for k in row.keys()}
+    except Exception:
+        return dict(row)
+
+
+def parse_bet_label(btype, label):
+    """買い目文字列を馬番タプルに。順序あり券種は左→右、順不同は sorted。"""
+    s = str(label or '').strip()
+    if not s:
+        return None
+    if '→' in s:
+        parts = [p.strip() for p in s.split('→')]
+    elif '-' in s:
+        parts = [p.strip() for p in s.split('-')]
+    else:
+        parts = re.findall(r'\d+', s)
+    nums = []
+    for p in parts:
+        if str(p).isdigit():
+            nums.append(int(p))
+    if not nums:
+        return None
+    btype = (btype or '単勝').strip()
+    if btype in ORDERED_BET_TYPES:
+        return tuple(nums)
+    if btype in ('馬連', '3連複', 'ワイド', '枠連'):
+        return tuple(sorted(nums))
+    return tuple(nums)
+
+
+def _payout_combo_key(btype, combo):
+    combo = [int(x) for x in (combo or [])]
+    if not combo:
+        return None
+    btype = (btype or '').strip()
+    if btype in ORDERED_BET_TYPES:
+        return tuple(combo)
+    if btype in ('馬連', '3連複', 'ワイド', '枠連'):
+        return tuple(sorted(combo))
+    return tuple(combo)
+
+
+def match_bet_to_payout(bet, results):
+    """1ベットと fetch_race_payouts 形式 results の照合。
+
+    戻り値:
+      None … 払戻データ不足・判定不能（未精算のまま）
+      {'won', 'payout', 'status', 'matched_count'?} … hit / miss / refund
+    """
+    bet = bet_row_dict(bet)
+    btype = (bet.get('bet_type') or '単勝').strip()
+    rkey = BET_TYPE_RESULT_KEY.get(btype)
+    if not results or rkey is None:
+        return None
+    if rkey not in results:
+        return None
+    entries = results[rkey]
+    if entries is None:
+        return None
+    if isinstance(entries, (list, tuple)) and len(entries) == 0:
+        return None
+    try:
+        stake = int(bet.get('stake') or 0)
+    except (TypeError, ValueError):
+        stake = 0
+
+    scratch = results.get('scratch_umaban') or results.get('refund_umaban')
+    if _bet_touches_scratch(btype, bet, scratch):
+        has_refund_row = any(
+            classify_payout_entry(r) == 'refund' and _entry_matches_bet(btype, bet, r)
+            for r in (entries or []))
+        if not has_refund_row:
+            return None
+
+    hit_rows = []
+    refund_rows = []
+    saw_unknown = False
+    for r in (entries or []):
+        cls = classify_payout_entry(r)
+        if cls == 'unknown':
+            if _entry_matches_bet(btype, bet, r):
+                saw_unknown = True
+            continue
+        if not _entry_matches_bet(btype, bet, r):
+            continue
+        if cls == 'refund':
+            refund_rows.append(r)
+        elif cls == 'hit':
+            hit_rows.append(r)
+
+    if saw_unknown and not hit_rows and not refund_rows:
+        return None
+    if refund_rows and hit_rows:
+        return None
+    if refund_rows:
+        return {
+            'won': 0,
+            'payout': stake,
+            'status': 'refund',
+            'matched_count': len(refund_rows),
+        }
+    if hit_rows:
+        total = 0
+        for r in hit_rows:
+            odds = float(r.get('odds', 0) or 0)
+            if odds <= 0:
+                return None
+            total += yen_payout_from_odds(odds, stake)
+        return {
+            'won': 1,
+            'payout': total,
+            'status': 'hit',
+            'matched_count': len(hit_rows),
+        }
+    if btype in ('単勝', '複勝'):
+        if _payout_pool_has_unknown(entries):
+            return None
+        winners = _definitive_hit_umabans(entries)
+        if winners is None:
+            return None
+        try:
+            uma = int(bet.get('umaban') or 0)
+        except (TypeError, ValueError):
+            return None
+        if uma in winners:
+            return None
+        if winners:
+            return {'won': 0, 'payout': 0, 'status': 'miss'}
+        return None
+    if _payout_pool_has_unknown(entries):
+        return None
+    if not _pool_has_definitive_hit(entries):
+        return None
+    return {'won': 0, 'payout': 0, 'status': 'miss'}
+
+
+def _pool_has_definitive_hit(entries):
+    """正常な確定払戻(hit)が1件以上あるときのみ combo の miss 確定可。"""
+    return any(classify_payout_entry(r) == 'hit' for r in (entries or []))
+
+
+def _payout_pool_has_unknown(entries):
+    """券種の払戻集合に unknown が1行でもあれば miss 確定不可。"""
+    return any(classify_payout_entry(r) == 'unknown' for r in (entries or []))
+
+
+def _definitive_hit_umabans(entries):
+    """単勝/複勝: 確定 hit の馬番集合（同着・複勝複数 winner 可）。"""
+    winners = set()
+    for r in (entries or []):
+        if classify_payout_entry(r) != 'hit':
+            continue
+        combo = r.get('combo') or []
+        if len(combo) != 1:
+            return None
+        try:
+            winners.add(int(combo[0]))
+        except (TypeError, ValueError):
+            return None
+    return winners
 
 
 # ──────────────────────────────────────────────
@@ -515,6 +801,17 @@ CREATE TABLE IF NOT EXISTS bets (
 --    台帳が「買ったもの」しか持たないと「見送って正解だったか」が永久に分からない。
 --    スキャナーの🔴見送り推奨や自分の判断で見送ったレースをここに残し、
 --    後から「見送りは正しかったか」を集計する。
+CREATE TABLE IF NOT EXISTS bet_settlement_log (
+  log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bet_id INTEGER NOT NULL,
+  race_id TEXT,
+  ts TEXT NOT NULL,
+  won INTEGER,
+  payout INTEGER,
+  source TEXT,
+  note TEXT
+);
+
 CREATE TABLE IF NOT EXISTS skips (
     skip_id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT, race_id TEXT, reason TEXT, vscore REAL,
@@ -533,6 +830,9 @@ class Ledger:
         self.con = sqlite3.connect(db)
         self.con.row_factory = sqlite3.Row
         self.con.executescript(_DDL)
+        from core import audit_store as _audit
+        _audit.ensure_schema(self.con)
+        _audit.verify_audit_schema(self.con)
         # #8 Gate結果列＋#1 買い目メタ列(設計ミス分類用)を後方互換で追加
         # ①感情 ②逸脱の記録も後方互換で追加。
         #   mood: 冷静/やや熱/熱くなっている（自己申告・検証済みシグナルではなく
@@ -543,91 +843,318 @@ class Ledger:
                            ('n_points', 'INTEGER'), ('synth_odds', 'REAL'),
                            ('has_danger', 'INTEGER'), ('has_value_ana', 'INTEGER'),
                            ('mood', 'TEXT'), ('deviation', 'TEXT')):
-            try:
-                self.con.execute(f"ALTER TABLE bets ADD COLUMN {_col} {_typ}")
-            except Exception:
-                pass  # 既に存在
+            _migrate_add_column(self.con, 'bets', _col, _typ)
+        _migrate_add_column(self.con, 'bet_settlement_log', 'action', 'TEXT')
+        for _col, _typ in (('purchase_batch_id', 'TEXT'), ('recommendation_id', 'TEXT'),
+                           ('analysis_run_id', 'TEXT'), ('audit_link', 'TEXT'),
+                           ('bet_purpose', 'TEXT')):
+            _migrate_add_column(self.con, 'bets', _col, _typ)
         self.con.commit()
+
+    @staticmethod
+    def parse_first_umaban(label):
+        """買い目文字列 '7-4-12' 等から先頭の馬番を返す（複式券は bamei に全文を残す）。"""
+        for n in re.findall(r'\d+', str(label or '')):
+            try:
+                u = int(n)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= u <= 18:
+                return u
+        return 0
 
     def record_prediction(self, race_id, umaban, bamei, pred_prob, odds, stake=100, bet_type='単勝',
                           gate_status=None, gate_lean=None, gate_severity=None,
                           n_points=None, synth_odds=None, has_danger=None, has_value_ana=None,
-                          mood=None, deviation=None):
+                          mood=None, deviation=None,
+                          purchase_batch_id=None, recommendation_id=None,
+                          analysis_run_id=None, audit_link=None,
+                          bet_purpose=BET_PURPOSE_CALIBRATION, _commit=True):
+        link = audit_link
+        if link is None and purchase_batch_id and bet_purpose == BET_PURPOSE_ACTUAL:
+            link = 'linked'
+        purpose = bet_purpose if bet_purpose is not None else BET_PURPOSE_CALIBRATION
         self.con.execute(
             """INSERT INTO bets(ts,race_id,umaban,bamei,pred_prob,odds,stake,bet_type,
                                 gate_status,gate_lean,gate_severity,
                                 n_points,synth_odds,has_danger,has_value_ana,
-                                mood,deviation)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                mood,deviation,
+                                purchase_batch_id,recommendation_id,analysis_run_id,audit_link,
+                                bet_purpose)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (datetime.datetime.now().isoformat(timespec='seconds'), race_id, umaban, bamei,
              pred_prob, odds, stake, bet_type, gate_status, gate_lean, gate_severity,
              n_points, synth_odds,
              None if has_danger is None else int(bool(has_danger)),
              None if has_value_ana is None else int(bool(has_value_ana)),
-             mood, deviation))
-        self.con.commit()
+             mood, deviation,
+             purchase_batch_id, recommendation_id, analysis_run_id, link, purpose))
+        if _commit:
+            self.con.commit()
+
+    def record_kelly_bets(self, race_id, lines, gate_status=None, gate_lean=None,
+                        gate_severity=None, n_points=None, synth_odds=None,
+                        has_danger=None, has_value_ana=None, mood=None, deviation=None,
+                        purchase_batch_id=None, recommendation_id=None,
+                        analysis_run_id=None, audit_link=None,
+                        bet_purpose=BET_PURPOSE_ACTUAL, _commit=True):
+        """BetSync ケリー買い目（ticket_line の list）を bets に1行ずつ記録。stake>0 のみ。
+        戻り値=記録件数。"""
+        rid = str(race_id or '').strip()
+        if not rid:
+            return 0
+        n = 0
+        for ln in (lines or []):
+            try:
+                stake = int(ln.get('stake') or 0)
+            except (TypeError, ValueError):
+                stake = 0
+            if stake <= 0:
+                continue
+            kind = str(ln.get('kind') or ln.get('bet_type') or ln.get('券種') or '単勝')
+            label = str(ln.get('label') or ln.get('bamei') or ln.get('買い目') or '')
+            try:
+                odds = float(ln.get('odds') or ln.get('eval_odds') or 0)
+            except (TypeError, ValueError):
+                odds = 0.0
+            p_val = ln.get('p')
+            try:
+                if p_val is not None and p_val != '':
+                    p_val = float(p_val)
+                    if p_val > 1.0:
+                        p_val = p_val / 100.0
+                else:
+                    p_val = None
+            except (TypeError, ValueError):
+                p_val = None
+            if ln.get('umaban') is not None:
+                try:
+                    umaban = int(ln.get('umaban'))
+                except (TypeError, ValueError):
+                    umaban = self.parse_first_umaban(label)
+            else:
+                umaban = self.parse_first_umaban(label)
+            self.record_prediction(
+                rid, umaban, label, p_val, odds,
+                stake=stake, bet_type=kind,
+                gate_status=gate_status, gate_lean=gate_lean, gate_severity=gate_severity,
+                n_points=n_points, synth_odds=synth_odds,
+                has_danger=has_danger, has_value_ana=has_value_ana,
+                mood=mood, deviation=deviation,
+                purchase_batch_id=purchase_batch_id, recommendation_id=recommendation_id,
+                analysis_run_id=analysis_run_id, audit_link=audit_link,
+                bet_purpose=bet_purpose, _commit=False)
+            n += 1
+        if _commit:
+            self.con.commit()
+        return n
 
     def settle(self, race_id, win_umaban, win_payout):
-        """race_id の結果を反映（単勝）。win_payout=100円あたり配当"""
-        for b in self.con.execute("SELECT * FROM bets WHERE race_id=? AND settled=0", (race_id,)):
-            won = 1 if b['umaban'] == win_umaban else 0
-            payout = int(win_payout * b['stake'] / 100) if won else 0
-            self.con.execute("UPDATE bets SET settled=1, won=?, payout=? WHERE bet_id=?",
-                             (won, payout, b['bet_id']))
-        self.con.commit()
+        """単勝・actual_purchase 専用手動精算。win_payout=100円あたり配当(円)。
 
-    def settle_multi(self, race_id, results):
+        他券種は更新しない。match_bet_to_payout + settlement log と整合。
+        """
+        try:
+            uma = int(win_umaban)
+        except (TypeError, ValueError):
+            return {'settled': 0, 'skipped': 0}
+        try:
+            pay_per_100 = float(win_payout or 0)
+        except (TypeError, ValueError):
+            pay_per_100 = 0.0
+        odds = pay_per_100 / 100.0 if pay_per_100 > 0 else 0.0
+        results = {'tan': [{'combo': [uma], 'odds': odds}]}
+        settled = skipped = 0
+        q = f"""SELECT * FROM bets WHERE race_id=? AND settled=0
+                AND bet_type='単勝' AND {ACTUAL_PURCHASE_SQL}"""
+        for b in self.con.execute(q, (race_id, BET_PURPOSE_ACTUAL)):
+            match = match_bet_to_payout(b, results)
+            if match is None:
+                skipped += 1
+                continue
+            self._apply_bet_settlement(
+                b['bet_id'], race_id, match,
+                source='manual_settle', note='Ledger.settle', action='settle')
+            settled += 1
+        self.con.commit()
+        return {'settled': settled, 'skipped': skipped}
+
+    def _log_settlement(self, bet_id, race_id, ts, won, payout, source='',
+                        note='', action='settle'):
+        try:
+            self.con.execute(
+                """INSERT INTO bet_settlement_log(
+                       bet_id,race_id,ts,won,payout,source,note,action)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (bet_id, race_id, ts, won, payout, source or '', note or '',
+                 action or 'settle'))
+        except Exception:
+            try:
+                self.con.execute(
+                    """INSERT INTO bet_settlement_log(
+                           bet_id,race_id,ts,won,payout,source,note)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (bet_id, race_id, ts, won, payout, source or '', note or ''))
+            except Exception:
+                pass
+
+    def _apply_bet_settlement(self, bet_id, race_id, match, source='settle_multi',
+                              note='', action='settle'):
+        ts = datetime.datetime.now().isoformat(timespec='seconds')
+        won = int(match['won'])
+        payout = int(match['payout'])
+        self.con.execute(
+            "UPDATE bets SET settled=1, won=?, payout=? WHERE bet_id=?",
+            (won, payout, bet_id))
+        self._log_settlement(
+            bet_id, race_id, ts, won, payout, source, note, action=action)
+        return {'won': won, 'payout': payout, 'status': match.get('status')}
+
+    def void_settlement(self, bet_id, note=''):
+        """精算済み1件を未精算に戻す（訂正の前半）。二重加算はしない。"""
+        row = bet_row_dict(self.con.execute(
+            "SELECT * FROM bets WHERE bet_id=?", (bet_id,)).fetchone())
+        if not row:
+            return {'ok': False, 'reason': 'not_found'}
+        if not int(row.get('settled') or 0):
+            return {'ok': False, 'reason': 'not_settled'}
+        ts = datetime.datetime.now().isoformat(timespec='seconds')
+        prev_won = row.get('won')
+        prev_payout = row.get('payout')
+        self._log_settlement(
+            bet_id, row.get('race_id'), ts, prev_won, prev_payout,
+            'void_settlement', note or f'void was won={prev_won} payout={prev_payout}',
+            action='reversal')
+        self.con.execute(
+            "UPDATE bets SET settled=0, won=NULL, payout=0 WHERE bet_id=?",
+            (bet_id,))
+        self.con.commit()
+        return {'ok': True, 'prev_won': prev_won, 'prev_payout': prev_payout}
+
+    def correct_settlement(self, bet_id, results, note=''):
+        """1ベットの精算を訂正。既精算は reversal ログ後に再適用。一括再精算はしない。"""
+        row = bet_row_dict(self.con.execute(
+            "SELECT * FROM bets WHERE bet_id=?", (bet_id,)).fetchone())
+        if not row:
+            return {'ok': False, 'reason': 'not_found'}
+        race_id = row.get('race_id')
+        prev = None
+        if int(row.get('settled') or 0):
+            prev = {'won': row.get('won'), 'payout': row.get('payout')}
+            ts = datetime.datetime.now().isoformat(timespec='seconds')
+            self._log_settlement(
+                bet_id, race_id, ts, prev['won'], prev['payout'],
+                'correct_settlement',
+                note or f"before correct won={prev['won']} payout={prev['payout']}",
+                action='reversal')
+        match = match_bet_to_payout(row, results)
+        if match is None:
+            if int(row.get('settled') or 0):
+                self.con.execute(
+                    "UPDATE bets SET settled=0, won=NULL, payout=0 WHERE bet_id=?",
+                    (bet_id,))
+                self.con.commit()
+            return {'ok': False, 'reason': 'insufficient_data', 'prev': prev, 'voided': bool(prev)}
+        new_val = self._apply_bet_settlement(
+            bet_id, race_id, match, source='correct_settlement',
+            note=note or '', action='correct')
+        self.con.commit()
+        return {'ok': True, 'prev': prev, 'new': new_val}
+
+    def settle_multi(self, race_id, results, source='settle_multi', note=''):
         """券種別の結果を反映。
         results: {'tan': [{'combo': [5], 'odds': 3.5}], 'trio': [{'combo': [3,5,8], 'odds': 12.0}], ...}
         スクレイパーの fetch_race_payouts の戻り値をそのまま使う。
+        払戻キーが無い券種は未精算のまま（外れ扱いにしない）。
+        戻り値: {'settled': n, 'pending': m}
         """
+        if not results:
+            pending = self.con.execute(
+                "SELECT COUNT(*) FROM bets WHERE race_id=? AND settled=0",
+                (race_id,)).fetchone()[0]
+            return {'settled': 0, 'pending': pending}
+        settled = pending = 0
         for b in self.con.execute("SELECT * FROM bets WHERE race_id=? AND settled=0", (race_id,)):
-            btype = b['bet_type'] or '単勝'
-            matched = None
-            # 券種に対応する結果キー
-            key_map = {'単勝': 'tan', '複勝': 'fuku', '馬連': 'umaren', '馬単': 'umatan',
-                       'ワイド': 'wide', '3連複': 'trio', '3連単': 'trifecta', '枠連': 'wakuren'}
-            rkey = key_map.get(btype)
-            if rkey and rkey in results:
-                for r in results[rkey]:
-                    combo = r.get('combo', [])
-                    if btype in ('単勝', '複勝'):
-                        if len(combo) == 1 and int(combo[0]) == b['umaban']:
-                            matched = r
-                            break
-                    else:
-                        # 買い目文字列（bameiに保存されている想定）と比較
-                        combo_str = '-'.join(str(c) for c in sorted(combo))
-                        if str(b.get('bamei', '')) == combo_str:
-                            matched = r
-                            break
-            if matched:
-                payout = int(matched.get('odds', 0) * 100 * b['stake'] / 100)
-                self.con.execute("UPDATE bets SET settled=1, won=1, payout=? WHERE bet_id=?",
-                                 (payout, b['bet_id']))
-            else:
-                self.con.execute("UPDATE bets SET settled=1, won=0, payout=0 WHERE bet_id=?",
-                                 (b['bet_id'],))
+            match = match_bet_to_payout(b, results)
+            if match is None:
+                pending += 1
+                continue
+            self._apply_bet_settlement(
+                b['bet_id'], race_id, match, source=source, note=note, action='settle')
+            settled += 1
         self.con.commit()
+        return {'settled': settled, 'pending': pending}
+
+    def verified_actual_bet_rows(self, settled_only=False):
+        """validate_committed_actual_purchase が committed_actual の batch に属する actual bets。
+
+        bet_purpose だけでは足りない。legacy_unverified や batch 無しは含めない。
+        """
+        from core import audit_purchase as apur
+        from core import audit_store
+        q = f"SELECT * FROM bets WHERE {ACTUAL_PURCHASE_SQL}"
+        params = [BET_PURPOSE_ACTUAL]
+        if settled_only:
+            q += " AND settled=1"
+        q += " ORDER BY bet_id"
+        raw = [bet_row_dict(r) for r in self.con.execute(q, params)]
+        if not raw:
+            return []
+        st = audit_store.AuditStore(con=self.con)
+        cache = {}
+        out = []
+        for row in raw:
+            bid = str(row.get('purchase_batch_id') or '').strip()
+            if not bid:
+                continue
+            if bid not in cache:
+                val = apur.validate_committed_actual_purchase(st, self, bid)
+                cache[bid] = bool(
+                    val.get('valid') and val.get('state') == 'committed_actual')
+            if cache[bid]:
+                out.append(row)
+        return out
+
+    def _actual_settled_rows_raw(self):
+        return self.verified_actual_bet_rows(settled_only=True)
 
     def settled_rows(self):
-        """精算済みベットを古い順に返す（ROI推移グラフ用）"""
-        return list(self.con.execute(
-            "SELECT bet_id,ts,race_id,pred_prob,odds,stake,won,payout,"
-            "gate_status,gate_lean,gate_severity FROM bets "
-            "WHERE settled=1 ORDER BY bet_id"))
+        """精算済みの検証済み実購入を古い順に返す（ROI推移グラフ用）"""
+        return self.verified_actual_bet_rows(settled_only=True)
+
+    def actual_purchase_totals(self, settled_only=True):
+        """検証済み実購入の stake / payout / pnl / roi(%)。"""
+        rows = self.verified_actual_bet_rows(settled_only=settled_only)
+        staked = sum(int(r.get('stake') or 0) for r in rows)
+        returned = sum(int(r.get('payout') or 0) for r in rows)
+        roi = (returned / staked * 100.0) if staked else 0.0
+        return {
+            'stake': staked,
+            'payout': returned,
+            'pnl': returned - staked,
+            'roi_pct': roi,
+            'count': len(rows),
+        }
 
     def roi_by_gate(self):
-        """Gate判定(gate_status)別の的中率/ROI/件数を返す(運用検証: buy/axis_warn/skip無視の比較)。"""
+        """Gate判定(gate_status)別の的中率/ROI/件数（検証済み実購入のみ）。"""
+        buckets = {}
+        for r in self.verified_actual_bet_rows(settled_only=True):
+            g = r.get('gate_status') or '(未タグ)'
+            d = buckets.setdefault(g, {'n': 0, 'w': 0, 'inv': 0, 'ret': 0})
+            d['n'] += 1
+            d['w'] += int(r.get('won') or 0)
+            d['inv'] += int(r.get('stake') or 0)
+            d['ret'] += int(r.get('payout') or 0)
         out = {}
-        for r in self.con.execute(
-                "SELECT gate_status AS g, COUNT(*) n, SUM(won) w, "
-                "SUM(stake) inv, SUM(payout) ret FROM bets WHERE settled=1 "
-                "GROUP BY gate_status"):
-            g = r['g'] or '(未タグ)'
-            inv = r['inv'] or 0
-            out[g] = {'n': r['n'], 'win_rate': (r['w'] or 0) / r['n'] if r['n'] else 0,
-                      'roi': (r['ret'] or 0) / inv if inv else 0}
+        for g, d in buckets.items():
+            n = d['n']
+            inv = d['inv']
+            out[g] = {
+                'n': n,
+                'win_rate': (d['w'] / n) if n else 0,
+                'roi': (d['ret'] / inv) if inv else 0,
+            }
         return out
 
     @staticmethod
@@ -666,9 +1193,7 @@ class Ledger:
     def loss_breakdown(self):
         """精算済みの負けを理由別に集計: {reason: {'n','loss'}}。"""
         out = {}
-        for r in self.con.execute(
-                "SELECT won,gate_status,gate_lean,pred_prob,stake,payout,"
-                "n_points,synth_odds,has_danger,has_value_ana FROM bets WHERE settled=1"):
+        for r in self.verified_actual_bet_rows(settled_only=True):
             if r['won']:
                 continue
             reason = self.classify_loss(
@@ -715,15 +1240,47 @@ class Ledger:
         return dd
 
     def report(self):
-        rows = list(self.con.execute("SELECT * FROM bets WHERE settled=1"))
-        if not rows:
+        """実購入ROIと較正(Brier)を分離。legacy NULL は実購入に含めない。"""
+        all_settled = [bet_row_dict(r) for r in self.con.execute(
+            "SELECT * FROM bets WHERE settled=1")]
+        if not all_settled:
             return {'note': '精算済みベットなし'}
-        n = len(rows); wins = sum(r['won'] for r in rows)
-        staked = sum(r['stake'] for r in rows); returned = sum(r['payout'] for r in rows)
-        brier = sum((r['pred_prob'] - r['won']) ** 2 for r in rows) / n
-        return {'bets': n, 'hit_rate': round(wins / n * 100, 1),
+        actual = [bet_row_dict(r) for r in self._actual_settled_rows_raw()]
+        calib = [r for r in all_settled if bet_row_effective_purpose(r) == BET_PURPOSE_CALIBRATION]
+        out = {'scope': 'split', 'legacy_settled': sum(
+            1 for r in all_settled if bet_row_effective_purpose(r) == BET_PURPOSE_LEGACY)}
+        if actual:
+            n = len(actual)
+            wins = sum(int(r.get('won') or 0) for r in actual)
+            staked = sum(int(r.get('stake') or 0) for r in actual)
+            returned = sum(int(r.get('payout') or 0) for r in actual)
+            out.update({
+                'bets': n,
+                'hit_rate': round(wins / n * 100, 1),
                 'roi': round(returned / staked * 100, 1) if staked else 0.0,
-                'profit': returned - staked, 'brier': round(brier, 4)}
+                'profit': returned - staked,
+                'actual_staked': staked,
+                'actual_returned': returned,
+                'roi_denominator': 'actual_purchase_settled_stake',
+            })
+        else:
+            out.update({'bets': 0, 'hit_rate': 0.0, 'roi': 0.0, 'profit': 0,
+                        'actual_staked': 0, 'actual_returned': 0,
+                        'roi_denominator': 'actual_purchase_settled_stake',
+                        'note_actual': '精算済み実購入なし'})
+        brier_rows = [r for r in (calib or all_settled)
+                      if r.get('pred_prob') is not None]
+        if brier_rows:
+            brier = sum(
+                (float(r['pred_prob']) - int(r.get('won') or 0)) ** 2
+                for r in brier_rows) / len(brier_rows)
+            out['brier'] = round(brier, 4)
+            out['brier_n'] = len(brier_rows)
+        else:
+            out['brier'] = None
+            out['brier_n'] = 0
+        out['calibration_settled'] = len(calib)
+        return out
 
     # ── ② 見送りレースの記録・集計 ─────────────────────
     def record_skip(self, race_id, reason='', vscore=None, zone=None,
@@ -778,52 +1335,67 @@ class Ledger:
         自己申告なので検証済みシグナルではない。「熱くなった時だけ負けている」
         かどうかを**自分のデータで**確かめるための実観測台帳。
         """
+        buckets = {}
+        for r in self.verified_actual_bet_rows(settled_only=True):
+            k = r.get('mood') or '(未記録)'
+            d = buckets.setdefault(k, {'n': 0, 'w': 0, 'p': 0, 's': 0})
+            d['n'] += 1
+            d['w'] += int(r.get('won') or 0)
+            d['p'] += int(r.get('payout') or 0)
+            d['s'] += int(r.get('stake') or 0)
         out = {}
-        for r in self.con.execute(
-                "SELECT mood, COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s "
-                "FROM bets WHERE settled=1 GROUP BY mood"):
-            k = r['mood'] or '(未記録)'
-            n = r['n'] or 0
+        for k, d in buckets.items():
+            n = d['n']
             if not n:
                 continue
-            out[k] = {'n': n, 'hit': (r['w'] or 0) / n * 100,
-                      'roi': (r['p'] or 0) / (r['s'] or 1) * 100,
-                      'stake_avg': (r['s'] or 0) / n}
+            out[k] = {
+                'n': n,
+                'hit': d['w'] / n * 100,
+                'roi': d['p'] / (d['s'] or 1) * 100,
+                'stake_avg': d['s'] / n,
+            }
         return out
 
     # ── ③ ルールからの逸脱 ───────────────────────────
     def deviation_report(self):
         """逸脱の種類別の件数・ROI。資料の核心「修正すべきはルールからの逸脱のみ」。"""
+        grouped = {}
+        plain = {'n': 0, 'w': 0, 'p': 0, 's': 0}
+        for r in self.verified_actual_bet_rows(settled_only=True):
+            dev = r.get('deviation')
+            if dev is not None and str(dev) != '':
+                d = grouped.setdefault(dev, {'n': 0, 'w': 0, 'p': 0, 's': 0})
+            else:
+                d = plain
+            d['n'] += 1
+            d['w'] += int(r.get('won') or 0)
+            d['p'] += int(r.get('payout') or 0)
+            d['s'] += int(r.get('stake') or 0)
         out = {}
-        for r in self.con.execute(
-                "SELECT deviation, COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s "
-                "FROM bets WHERE settled=1 AND deviation IS NOT NULL "
-                "AND deviation<>'' GROUP BY deviation"):
-            n = r['n'] or 0
+        for name, d in grouped.items():
+            n = d['n']
             if not n:
                 continue
-            out[r['deviation']] = {
-                'n': n, 'hit': (r['w'] or 0) / n * 100,
-                'roi': (r['p'] or 0) / (r['s'] or 1) * 100}
-        # 逸脱なしの対照群
-        r0 = self.con.execute(
-            "SELECT COUNT(*) n, SUM(won) w, SUM(payout) p, SUM(stake) s FROM bets "
-            "WHERE settled=1 AND (deviation IS NULL OR deviation='')").fetchone()
-        if r0 and r0['n']:
+            out[name] = {
+                'n': n, 'hit': d['w'] / n * 100,
+                'roi': d['p'] / (d['s'] or 1) * 100}
+        if plain['n']:
             out['（逸脱なし）'] = {
-                'n': r0['n'], 'hit': (r0['w'] or 0) / r0['n'] * 100,
-                'roi': (r0['p'] or 0) / (r0['s'] or 1) * 100}
+                'n': plain['n'],
+                'hit': plain['w'] / plain['n'] * 100,
+                'roi': plain['p'] / (plain['s'] or 1) * 100}
         return out
 
     def reflection(self):
         """予測勝率の帯ごとに『予測 vs 実際』を比較→較正のズレと次回ルールを生成"""
-        rows = list(self.con.execute(
-            "SELECT pred_prob,won,odds,payout,stake FROM bets WHERE settled=1"))
+        rows = [
+            r for r in self.verified_actual_bet_rows(settled_only=True)
+            if r.get('pred_prob') is not None]
         if len(rows) < 10:
             return ["（サンプル不足。10件以上の精算で反省が有効に）"]
         buckets = {}
         for r in rows:
-            b = min(4, int(r['pred_prob'] * 5))
+            b = min(4, int(float(r['pred_prob']) * 5))
             buckets.setdefault(b, []).append(r)
         rules = []
         for b in sorted(buckets):
@@ -859,13 +1431,24 @@ class Ledger:
             return None
         from core.scraper import fetch_race_payouts
         payouts = fetch_race_payouts(race_id)
-        if not payouts or 'tan' not in payouts or not payouts['tan']:
+        if not payouts:
             return None
-        winner = payouts['tan'][0]['combo'][0]
-        win_payout = int(payouts['tan'][0]['odds'] * 100)
-        # 単勝以外の券種もまとめて精算
-        self.settle_multi(race_id, payouts)
-        return {'winner': winner, 'payout': win_payout, 'settled': unsettled}
+        has_data = any(payouts.get(k) for k in payouts)
+        if not has_data:
+            return None
+        winner = win_payout = None
+        if payouts.get('tan'):
+            winner = payouts['tan'][0]['combo'][0]
+            win_payout = int(payouts['tan'][0]['odds'] * 100)
+        summary = self.settle_multi(race_id, payouts, source='auto_settle_race')
+        if summary.get('settled', 0) == 0 and summary.get('pending', 0) == unsettled:
+            return None
+        return {
+            'winner': winner,
+            'payout': win_payout,
+            'settled': summary.get('settled', 0),
+            'pending': summary.get('pending', 0),
+        }
 
     def close(self):
         try:

@@ -1,0 +1,28 @@
+{
+  "beta_params": {
+    "a": 2.4468081423180434,
+    "b": 7.21921019403842e-08,
+    "c": 3.7970246001951704
+  },
+  "va_cache": 1314,
+  "ece_raw_holdout": 0.008274551700586497,
+  "ece_va_holdout": 0.0014310502649693862,
+  "ece_beta_holdout": 0.003602412149498416,
+  "width_spearman": -0.21190836821568737,
+  "judge": {
+    "calibration_looks_better": true,
+    "calibration_helps_betting": false,
+    "conservative_helps_betting": false,
+    "width_tracks_error": false,
+    "width_spearman": -0.21190836821568737,
+    "adopt_calibration": false,
+    "adopt_conservative": false,
+    "adopt_width_filter": false,
+    "status": "verified_rejected_no_revisit",
+    "closed_on": "2026-09-04",
+    "notes": [
+      "較正指標は改善したが、通常EVのROI/見送りは上積み不足 → 見た目改善のみなら不採用",
+      "検証済み・不採用・再検討条件なし。確率を賢くする研究は凍結"
+    ]
+  }
+}

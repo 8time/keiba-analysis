@@ -2,12 +2,12 @@
   "steps": {
     "race_filter": {
       "enabled": true,
-      "mode": "標準",
+      "mode": "厳しめ",
       "params": {}
     },
     "elimination": {
       "enabled": true,
-      "mode": "標準",
+      "mode": "厳しめ",
       "params": {}
     },
     "danger_check": {

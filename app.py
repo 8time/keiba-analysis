@@ -1532,6 +1532,97 @@ if nav == "💰 BetSync（資金管理）":
             else:
                 st.info("→ まだ金額なし")
 
+            # ── 📒 台帳への自動記録（購入確定 / 見送り）──
+            _led_rid = str((_feed or {}).get('race_id', '')).strip()
+            _pc_buy, _pc_skip = st.columns(2)
+            with _pc_buy:
+                _bs_nonce_key = f'bs_kelly_purchase_nonce_{_led_rid or "x"}'
+                if _bs_nonce_key not in st.session_state:
+                    import uuid as _uuid_bs
+                    st.session_state[_bs_nonce_key] = _uuid_bs.uuid4().hex
+                _bs_intentional_add = st.checkbox(
+                    "同じ買い目・金額の追加購入として記録",
+                    value=False, key=f"bs_kelly_intentional_{_led_rid or 'x'}",
+                    help="直前と同内容でも、あえて追加購入する場合のみオン。"
+                         "通常の再クリック・再実行は二重登録を防ぎます。")
+                if st.button("✅ 購入確定（台帳に記録）", key="bs_kelly_confirm_buy",
+                             disabled=not (_led_rid and _lines and _nd_bet > 0 and not _halt)):
+                    try:
+                        from core import audit_pipeline as _ap_pbuy
+                        _lgc = money.Ledger()
+                        _agc = _bmc = None
+                        try:
+                            from core import score_cache as _sc_gc
+                            _agc = _sc_gc.read_gate(_led_rid)
+                            _bmc = _sc_gc.read_buy(_led_rid)
+                        except Exception:
+                            pass
+                        _bmc = _bmc or {}
+                        _po = _ap_pbuy.confirm_app_purchase_with_bets(
+                            _led_rid, _lines, _lgc,
+                            intentional_repurchase=_bs_intentional_add,
+                            submit_nonce=st.session_state.get(_bs_nonce_key),
+                            gate_status=(_agc or {}).get('status'),
+                            gate_lean=(_agc or {}).get('lean'),
+                            gate_severity=(_agc or {}).get('severity'),
+                            n_points=_bmc.get('n_points'),
+                            synth_odds=_bmc.get('synth_odds'),
+                            has_danger=_bmc.get('has_danger'),
+                            has_value_ana=_bmc.get('has_value_ana'))
+                        _lgc.close()
+                        if _po.duplicate:
+                            st.warning(
+                                "同一操作の再送と判断し、二重登録を防ぎました。"
+                                f"（理由: {_po.duplicate_reason or 'duplicate'}）"
+                                " 意図的な追加購入は上のチェックをオンにしてください。")
+                        elif not _po.ok:
+                            st.error(f"購入確定失敗: {_po.error} — batch/bets は未確定です。")
+                        else:
+                            import uuid as _uuid_bs2
+                            st.session_state[_bs_nonce_key] = _uuid_bs2.uuid4().hex
+                            _diff_msg = (_po.diff or {}).get('summary') or ''
+                            st.success(
+                                f"台帳 bets に {_po.bets_recorded} 件記録しました（{_led_rid}）"
+                                f"　監査 batch={_po.purchase_batch_id}"
+                                + (f"　{_diff_msg}" if _diff_msg else ""))
+                            st.caption(
+                                "※ アプリ内の購入確定は外部馬券の購入証明ではありません"
+                                "（external_confirm=app_declared）。")
+                            st.rerun()
+                    except Exception as _lce:
+                        st.error(f"台帳記録失敗: {_lce}")
+            with _pc_skip:
+                if st.button("⏸ 見送り（台帳に記録）", key="bs_kelly_confirm_skip",
+                             disabled=not _led_rid):
+                    try:
+                        _lgs = money.Ledger()
+                        _agc = None
+                        _vscore = None
+                        _zone = None
+                        try:
+                            from core import score_cache as _sc_gs
+                            from core import formation_stats as _fs_gs
+                            _agc = _sc_gs.read_gate(_led_rid)
+                            _rv = st.session_state.get(f'_race_value_{_led_rid}') or {}
+                            if _rv.get('score') is not None:
+                                _vscore = float(_rv['score'])
+                                _zone = _fs_gs.zone_of(_vscore)
+                        except Exception:
+                            pass
+                        _skip_rsn = ('🔴見送り推奨（Gate skip）' if (_agc or {}).get('status') == 'skip'
+                                     else ('今日は停止' if _halt else '見送り（BetSync）'))
+                        _lgs.record_skip(_led_rid, reason=_skip_rsn,
+                                         vscore=_vscore, zone=_zone)
+                        _lgs.close()
+                        st.success(f"台帳 skips に記録しました（{_led_rid}）")
+                        st.rerun()
+                    except Exception as _lse:
+                        st.error(f"見送り記録失敗: {_lse}")
+            if _led_rid:
+                st.caption(f"📒 台帳: race_id `{_led_rid}` ／ **購入確定**で bets・**見送り**で skips に記録。"
+                           "「次のレースを追加」だけでは台帳には書きません。"
+                           "🏁ダッシュボードの実運用サマリに反映されます。")
+
 
         else:
             st.divider()
@@ -1796,6 +1887,7 @@ if nav == "💰 BetSync（資金管理）":
                          'odds': ln['odds'], 'stake': ln['stake'], 'p': ln.get('p')}
                         for ln in _lines if ln.get('stake', 0) > 0
                     ]
+                    _row['race_id'] = str((_feed or {}).get('race_id', '')).strip()
                 _ss['bs_races'].append(_row)
                 save_betsync_data({'bankroll': _ss['bs_bankroll'], 'init_bet': _ss['bs_init_bet'], 'target': _ss['bs_target'], 'strategy': _ss['bs_strategy'], 'ticket': _ss['bs_ticket'], 'races': _ss['bs_races']})
                 st.rerun()
@@ -1894,7 +1986,8 @@ if nav == "💰 BetSync（資金管理）":
                            "一番効く判断（買わないこと）を評価できません。")
                 _sk1, _sk2 = st.columns([2, 1])
                 with _sk1:
-                    _sk_rid = st.text_input("レースID", key='bs_skip_rid',
+                    _sk_feed_rid = str((_ss.get('bs_ev_feed') or {}).get('race_id', '')).strip()
+                    _sk_rid = st.text_input("レースID", value=_sk_feed_rid, key='bs_skip_rid',
                                             placeholder="202608070511")
                 with _sk2:
                     _sk_vs = st.number_input("妙味度", 0, 200, 75, key='bs_skip_vs')
@@ -2058,8 +2151,10 @@ if nav == "💰 BetSync（資金管理）":
                     with lf2:
                         if st.button("📥 予測を一括記録", key="bs_led_ingest", disabled=bool(_exists)):
                             for _r in _lfeed['rows']:
-                                _lg.record_prediction(_lrid, int(_r['umaban']), str(_r.get('bamei', '')),
-                                                      float(_r['p']), float(_r['odds']), 100)
+                                _lg.record_prediction(
+                                    _lrid, int(_r['umaban']), str(_r.get('bamei', '')),
+                                    float(_r['p']), float(_r['odds']), 100,
+                                    bet_purpose=money.BET_PURPOSE_CALIBRATION)
                             st.success(f"{len(_lfeed['rows'])}頭を記録しました。")
                             st.rerun()
                     st.markdown("---")
@@ -2069,10 +2164,13 @@ if nav == "💰 BetSync（資金管理）":
                     st.info("精算済みベットがまだありません。下のフォームで予測→結果を記録してください。")
                 else:
                     lm1, lm2, lm3, lm4 = st.columns(4)
-                    lm1.metric("記録数", f"{_rep['bets']}件")
-                    lm2.metric("的中率", f"{_rep['hit_rate']}%")
-                    lm3.metric("回収率", f"{_rep['roi']}%", f"{_rep['profit']:+,}円")
-                    lm4.metric("Brier", f"{_rep['brier']}", help="0に近いほど予測確率が正確（≤0.25が目安）")
+                    lm1.metric("実購入(精算済)", f"{_rep.get('bets', 0)}件")
+                    lm2.metric("的中率(実購入)", f"{_rep.get('hit_rate', 0)}%")
+                    lm3.metric("回収率(実購入)", f"{_rep.get('roi', 0)}%",
+                               f"{_rep.get('profit', 0):+,}円")
+                    _brier_v = _rep.get('brier')
+                    lm4.metric("Brier(較正)", f"{_brier_v}" if _brier_v is not None else "—",
+                               help="較正用予測のみ。0に近いほど予測確率が正確（≤0.25が目安）")
                     _srows = _lg.settled_rows()
                     if _srows:
                         _lc = 0; _lb = 0; _lt = []
@@ -2580,6 +2678,19 @@ if nav == "🏠 Single Race Analysis":
 
     if analyze_btn:
         st.session_state['tab1_analyzed_id'] = race_id_input
+        try:
+            from core import audit_pipeline as _ap_sra0
+            if _ap_sra0.current_run_id(race_id_input):
+                _ap_sra0.begin_new_run(
+                    race_id_input, 'sra_reanalyze',
+                    settings={'trigger': 'analyze_btn'})
+            else:
+                _ap_sra0.ensure_run_id(race_id_input, 'sra_analyze')
+            st.session_state[f'_audit_sra_pending_{race_id_input}'] = True
+            st.session_state[f'_audit_playbook_rec_pending_{race_id_input}'] = True
+        except Exception as _ap_e0:
+            st.session_state.setdefault('audit_record_errors', []).append(
+                {'race_id': str(race_id_input), 'stage': 'sra_run_start', 'error': str(_ap_e0)})
 
     # --- 他タブで df が消されていた場合、tab1専用バックアップから自動復元 ---
     if (
@@ -2617,10 +2728,25 @@ if nav == "🏠 Single Race Analysis":
                             # 重複馬番を除去してから左結合（重複があると行が爆発する）
                             df_blood_dedup = df_blood[['number_int', 'sire', 'broodmareSire', 'bonus']].drop_duplicates(subset=['number_int'])
 
+                            # 出馬表側が空文字の sire 列を持っていると merge が
+                            # sire_x / sire_y に分裂し、表示側の row.get('sire') が空になる。
+                            _blood_keep = {}
+                            for _bc in ('sire', 'broodmareSire', 'bonus'):
+                                if _bc in df.columns:
+                                    _blood_keep[_bc] = df[_bc]
+                                    df = df.drop(columns=[_bc])
                             df = df.merge(
                                 df_blood_dedup,
                                 left_on='Umaban_int', right_on='number_int', how='left'
                             ).drop(columns=['number_int', 'Umaban_int'])
+                            _blood_empty = ('', '-', '不明', 'nan', 'None')
+                            for _bc, _old in _blood_keep.items():
+                                if _bc not in df.columns:
+                                    df[_bc] = _old
+                                    continue
+                                _new = df[_bc]
+                                _new_empty = _new.isna() | _new.astype(str).str.strip().isin(_blood_empty)
+                                df[_bc] = _new.where(~_new_empty, _old)
                             
                             # Restore metadata after merge
                             if not hasattr(df, 'attrs') or df.attrs is None:
@@ -2739,6 +2865,7 @@ if nav == "🏠 Single Race Analysis":
                             _is_nankan_sra = _main_nar_jyo2 in ('42', '43', '44', '45')
                             _nk_race_id = None
                             _nk_auto = False
+                            _nk_enriched = {}
                             if _is_nankan_sra and 'Name' in df.columns:
                                 import re as _nk_re
                                 from core import nankan_scraper as _nk
@@ -2769,6 +2896,15 @@ if nav == "🏠 Single Race Analysis":
                             elif _is_nankan_sra:
                                 st.caption("🐴 nankankeiba.com 自動導出に失敗（カレンダー未掲載/日付不明）。"
                                            "サイドバーに16桁レースIDを手入力すると過去走を補完します。")
+                            if _is_nankan_sra and 'Name' in df.columns:
+                                from core import nankan_scraper as _nk
+                                _nk_blood = _nk.fill_bloodline_from_nankan(
+                                    df, enriched=_nk_enriched,
+                                    netkeiba_race_id=str(race_id_input))
+                                if _nk_blood:
+                                    st.caption(
+                                        f"🐴 血統(父/母父) nankankeiba.com 馬情報: "
+                                        f"{_nk_blood}/{len(df)}頭")
                         except Exception as _nk_e:
                             st.warning(f"nankankeiba.com補完エラー: {_nk_e}")
 
@@ -3069,6 +3205,61 @@ if nav == "🏠 Single Race Analysis":
                                        "中穴が来やすい＝②穴妙味向き。予想時の『どこまで手を広げるか』の目安に。")
                             if _rv['breakdown']:
                                 st.caption("内訳: " + " / ".join(_rv['breakdown']))
+                    except Exception:
+                        pass
+
+                    # ── 🆕 新馬戦モード（Phase 1: 表示のみ・買い目非接続）──
+                    # 設計: repo/maiden_mode_design.md。過去走が無く強適/展開MAP/Vエリアが
+                    # 出せない新馬戦で、検証済みの「人の情報」と基礎傾向を並列表示する。
+                    # スコア合成・順位付け・買い目接続は行わない（Phase 2 以降の別ゲート）。
+                    try:
+                        from core import maiden_mode as _mmode
+                        if _mmode.is_maiden_race(meta):
+                            with st.expander('🆕 新馬戦モード（このレースは全馬デビュー戦です）',
+                                             expanded=True):
+                                st.caption('**新馬戦の基礎傾向（検証済みの事実）**')
+                                for _fact in _mmode.MAIDEN_FACTS:
+                                    st.caption('・' + _fact)
+                                # J5と同じ期待値テーブルを共有（USM較正用）
+                                if '_jj_expected' not in st.session_state:
+                                    from core import jockey_jv as _jvm
+                                    st.session_state['_jj_expected'] = \
+                                        _jvm.calibrate_odds_expectation()
+                                try:
+                                    _mm_min_year = str(int(str(race_id_input)[:4]) - 3)
+                                except Exception:
+                                    _mm_min_year = None
+                                _mm_rows = _mmode.collect_maiden_rows(
+                                    df, race_id=race_id_input, meta=meta,
+                                    expected=st.session_state['_jj_expected'],
+                                    min_year=_mm_min_year)
+                                if _mm_rows:
+                                    _mm_df = pd.DataFrame(_mm_rows)
+                                    st.dataframe(_mm_df, hide_index=True,
+                                                 use_container_width=True,
+                                                 column_config={
+                                        '騎手の評価': st.column_config.TextColumn(
+                                            '騎手の評価',
+                                            help='J5（検証済み騎手係数）を言葉にしたもの。'
+                                                 '上げる／やや上げる／ほぼ変えない／やや下げる／下げる。'),
+                                        '騎手の内訳': st.column_config.TextColumn(
+                                            '騎手の内訳',
+                                            help='馬連携=馬の力を引き出す度合い（100が平均）／'
+                                                 '場連対=この競馬場での連対率／黄金=騎手×厩舎の連対率。'),
+                                        '当コース勝率': st.column_config.TextColumn(
+                                            '当コース勝率',
+                                            help='この競馬場×馬場での厩舎勝率。'
+                                                 '出走数が少ない時は全体平均に寄せた控えめな値。'),
+                                        '黄金ライン': st.column_config.TextColumn(
+                                            '黄金ライン',
+                                            help='騎手×厩舎コンビの全レース成績（新馬限定ではありません）。'
+                                                 '🥇=連対35〜40%で狙い目／🥇🥇=40%以上の強コンビ。'),
+                                    })
+                                    st.caption('**黄金ラインは全レースの成績です**'
+                                               '（新馬限定版は標本不足で不採用・検証済）。')
+                                st.caption('**注意**')
+                                for _cau in _mmode.MAIDEN_CAUTIONS:
+                                    st.caption('・' + _cau)
                     except Exception:
                         pass
 
@@ -4122,6 +4313,11 @@ if nav == "🏠 Single Race Analysis":
                                         from core import oikiri as _oik
                                         st.session_state[_oik_key] = _oik.fetch_oikiri_reviews(race_id_input)
                                         st.session_state[_oik_key + '_det'] = _oik.fetch_oikiri_detail(race_id_input)
+                                        try:
+                                            from core import score_cache as _sc_oikw
+                                            _sc_oikw.write_oikiri(race_id_input, st.session_state[_oik_key])
+                                        except Exception:
+                                            pass
                                     except Exception as _e:
                                         st.session_state[_oik_key] = {}
                                         st.session_state[_oik_key + '_det'] = {}
@@ -4129,6 +4325,13 @@ if nav == "🏠 Single Race Analysis":
                                 st.rerun()
                         _rev_map = st.session_state.get(_oik_key, {}) or {}
                         _det_map = st.session_state.get(_oik_key + '_det', {}) or {}
+                        # 左メニュー新タブ化で🧹は別セッション。取得済み調教をディスクへ橋渡し。
+                        if _rev_map:
+                            try:
+                                from core import score_cache as _sc_oikw2
+                                _sc_oikw2.write_oikiri(race_id_input, _rev_map)
+                            except Exception:
+                                pass
                         try:
                             # 軸候補◎〇▲(検証済:オッズ別実複勝率・core/axis_selector.py)を軽量に併記。
                             # 強適Ranking Table本体の軸マーク計算(圧勝減点/危険人気veto/🏟️場ノート)は
@@ -4861,6 +5064,8 @@ if nav == "🏠 Single Race Analysis":
                                     _pm_horses, profiles=_pm_profiles,
                                     pace=_vm_pace, baba=_vm_baba,
                                     sashikiri=_sk_rows,
+                                    pos4=(_pm_ctx or {}).get('pos4'),
+                                    finish=_pm_finish,
                                 )
                                 if _vm_fig is not None:
                                     st.plotly_chart(_vm_fig, use_container_width=True, key="v_matrix_fig")
@@ -4871,20 +5076,47 @@ if nav == "🏠 Single Race Analysis":
                                         st.success(f"🏆 Vエリア該当馬: {_vm_names}")
                                     else:
                                         st.info("Vエリア（赤枠）にすっぽり収まる馬は不在。半端なポジションの馬が多く波乱の余地あり。")
+                                    # ── P1: 既存検証済み注記を馬番単位で統一表示（Vロジック非変更）──
+                                    try:
+                                        from core import vmatrix_annotations as _vma
+                                        from core import track_bias as _tb_vma
+                                        from core import blood_course as _bc_vma
+                                        _vm_df_rows = []
+                                        for _, _vr in df.iterrows():
+                                            _vm_df_rows.append({
+                                                'Umaban': _vr.get('Umaban'),
+                                                'Popularity': _vr.get('Popularity'),
+                                                'Waku': _vr.get('Waku') or _vr.get('waku'),
+                                                'Name': _vr.get('Name'),
+                                            })
+                                        _vm_ann = _vma.collect_horse_annotations(
+                                            _pm_horses, _pm_profiles, _vm_df_rows, race_id_input,
+                                            tb_emp=st.session_state.get('_tb_emp_bias'),
+                                            surface=_pm_surf, distance=_pm_dist,
+                                            pos4=(_pm_ctx or {}).get('pos4'),
+                                            finish=_pm_finish,
+                                            v_umaban_set={v['umaban'] for v in (_vm_list or [])},
+                                            track_bias_mod=_tb_vma,
+                                            blood_course_mod=_bc_vma,
+                                        )
+                                        _vm_ann_html = _vma.render_annotations_html(
+                                            _vm_ann,
+                                            [h['umaban'] for h in sorted(_pm_horses, key=lambda x: x['umaban'])],
+                                        )
+                                        if _vm_ann_html:
+                                            st.markdown(_vm_ann_html, unsafe_allow_html=True)
+                                        else:
+                                            st.caption("補助注記: 該当なし（末脚・危険・枠・場）")
+                                    except Exception as _vma_e:
+                                        st.caption(f"補助注記: {_vma_e}")
+
                                     st.caption(
-                                        "⚠ Vエリア＝展開で恵まれる『有利ポジション』の可視化（予想の地図）であって"
-                                        "『買い』シグナルではありません。検証(scripts/tenkai_bias_backtest.py / "
-                                        "tenkai_alert_backtest.py)で、展開恩恵・有利な枠/位置は人気にほぼ織込み済み"
-                                        "（合致馬を買っても複勝残差≈0・ROI控除割れ／Vエリア×人気薄もむしろ過剰人気）。"
-                                        "妙味は下の🔍末脚妙味アラート（人気薄×末脚＝検証済ROI約111%）と、"
-                                        "エビデンス表の⚠危険人気馬（外有利日×内枠人気馬の逆張り消去）で拾う。"
+                                        "⚠ Vエリア＝展開可視化の地図であり買いシグナルではありません。"
+                                        "展開恩恵は人気にほぼ織込み済み（検証済）。"
+                                        "🔥末脚・⚠危険・◆枠・◇場は上の馬別注記（既存判定の表示統一・加点なし）。"
                                     )
 
-                                    # ── 🔍 末脚妙味アラート（検証済みエッジに貼り替え）──
-                                    # 旧『展開妙味（展開向く×人気薄）』は検証(scripts/tenkai_alert_backtest.py)で否定。
-                                    # 展開恩恵は人気に織込み済みで、向く×人気薄はむしろ過剰人気(複勝率9〜13%/残差負)。
-                                    # 人気薄で実際に効くのは展開でなく"末脚"(verified_spurt_index: 人気薄6+×習性末脚上位=単ROI≈111%)。
-                                    # 選別基準を『人気薄(≥6番人気) × 習性上がり3F上位33%』に変更。
+                                    # 末脚妙味 → 新聞保存のみ（UIは統一注記。二重表示しない）
                                     try:
                                         _pop_map = {}
                                         for _, _pr in df.iterrows():
@@ -4897,12 +5129,11 @@ if nav == "🏠 Single Race Analysis":
                                             _u = _h.get('umaban')
                                             _nm = _h.get('name', '')
                                             _prof = (_pm_profiles or {}).get(_nm) or {}
-                                            _ag = _prof.get('agari')   # 習性上がり相対順位 0=最速(過去走・事前確定)
+                                            _ag = _prof.get('agari')
                                             _pop = _pop_map.get(_u)
                                             if (_ag is not None and _ag <= 0.33
                                                     and _pop is not None and _pop >= 6):
                                                 _spurt.append((_u, _nm, _h.get('style', ''), _ag, _pop))
-                                        # 📰 新聞発行: 末脚妙味アラート保存(空でも書く=クリア)
                                         try:
                                             from core import newspaper as _np_al2
                                             _np_al2.write_alert(
@@ -4916,41 +5147,12 @@ if nav == "🏠 Single Race Analysis":
                                                 'good')
                                         except Exception:
                                             pass
-                                        if _spurt:
-                                            _chips = ""
-                                            for _u, _nm, _sty, _ag, _pop in sorted(_spurt, key=lambda m: m[3]):
-                                                _agtxt = f"末脚 上位{int(round(_ag * 100))}%"
-                                                _chips += (
-                                                    f"<div style='display:flex;align-items:center;gap:10px;"
-                                                    f"background:rgba(0,0,0,0.22);border-radius:8px;"
-                                                    f"padding:8px 12px;margin:6px 0;'>"
-                                                    f"<span style='font-size:22px;font-weight:900;color:#fff;'>{_u}</span>"
-                                                    f"<span style='font-size:17px;font-weight:800;color:#fff;'>{_nm}</span>"
-                                                    f"<span style='font-size:13px;color:#ffe9a8;'>{_sty}</span>"
-                                                    f"<span style='margin-left:auto;font-size:13px;color:#cdebff;'>"
-                                                    f"{_agtxt} ｜ {int(_pop)}番人気</span></div>")
-                                            st.markdown(
-                                                "<div style='background:linear-gradient(135deg,#1d3557,#2a9d8f);"
-                                                "border:3px solid #ffd700;border-radius:14px;padding:16px 18px;"
-                                                "margin:14px 0;box-shadow:0 0 22px rgba(42,157,143,0.55);'>"
-                                                "<div style='font-size:22px;font-weight:900;color:#fff;"
-                                                "letter-spacing:1px;'>🔍 末脚妙味アラート</div>"
-                                                "<div style='font-size:13px;color:#ffe;margin:4px 0 10px;'>"
-                                                "<b>人気薄(6番人気以下)×習性の上がり3F上位</b>＝市場が過小評価しがちな差し脚。"
-                                                "複勝・ワイド・3連複の押さえ向き。</div>"
-                                                f"{_chips}"
-                                                "<div style='font-size:11px;color:#ffd;margin-top:8px;'>"
-                                                "※検証(2024-25)=人気薄6+×末脚上位33%で単回収率約111%(母集団71%超)。"
-                                                "旧『展開が向く×人気薄』は検証で否定(過剰人気)のため末脚基準に変更済み。</div></div>",
-                                                unsafe_allow_html=True,
-                                            )
-                                        else:
-                                            st.caption("🔍 末脚妙味アラート: 該当なし（人気薄かつ習性の上がり3F上位の馬は不在）。")
                                     except Exception as _my_e:
-                                        st.caption(f"末脚妙味判定: {_my_e}")
+                                        st.caption(f"末脚妙味（新聞保存）: {_my_e}")
                                     st.caption(
-                                        "縦=到達位置（テンの位置取り実データ＋差し切り射程で前方補正）、横=想定の通り（枠順＋脚質から推定）。"
-                                        "金縁の馬がVエリア該当。黄色≫=差し切り限界ラインで余裕+1.5秒以上（4角後方でも直線で前へ届く脚）→縦位置を前方補正。"
+                                        "縦=展開マップと同じ4角想定位置（pos4）。4角データが無い馬だけ過去走の位置取り。"
+                                        "横=想定の通り（枠順＋脚質から推定）。"
+                                        "金縁の馬がVエリア該当。黄色≫=4角より直線で前に出る想定（着順予想そのものではない）。"
                                         "スロー→前有利 / ハイ→後方有利、馬場が荒れるほど外有利。"
                                     )
                             else:
@@ -5086,8 +5288,8 @@ if nav == "🏠 Single Race Analysis":
 
                                 # ── ダーク折れ線(2スナップ以上) ──
                                 if _snap_count >= 2:
-                                    # 線の右端に出す短い印(精鋭1・2位 / 軸◎〇▲)。人気上位8に
-                                    # 入らない穴馬でも線が出るよう、印の付いた馬は表示対象に足す。
+                                    # 線の右端に出す短い印(精鋭1・2位 / 軸◎〇▲ / 直上馬)。
+                                    # 人気上位8に入らない穴馬でも線が出るよう、印の付いた馬は表示対象に足す。
                                     _otp_tags = {}
                                     try:
                                         from core import consensus_view as _cv_otp
@@ -5152,6 +5354,50 @@ if nav == "🏠 Single Race Analysis":
                                                 f"{_otp_tags[_uu]}・{_al}" if _uu in _otp_tags else _al)
                                     except Exception:
                                         pass
+                                    # テーブルの OddsGap と同じ「壁のすぐ上の馬」(🐎↑)。
+                                    # 断層Cの直上馬＝直上馬有利。買い目スコアには足さない（表示だけ）。
+                                    try:
+                                        _og_src = df if 'OddsGap' in getattr(df, 'columns', []) else None
+                                        if _og_src is not None and 'Popularity' in _og_src.columns:
+                                            _og_ben_lbl = {
+                                                '断層A': '1人気1強',
+                                                '断層B': '2人気巻返し',
+                                                '断層C': '直上馬有利',
+                                                '断層D1': '上位2頭強し',
+                                                '断層D2': '2-3人気本命',
+                                                '断層D': '壁上位有利',
+                                            }
+
+                                            def _og_pop_otp(_v):
+                                                _m = re.search(r'\d+', str(_v or ''))
+                                                return int(_m.group()) if _m else None
+
+                                            _og_p2u = {}
+                                            for _, _r in _og_src.iterrows():
+                                                _p = _og_pop_otp(_r.get('Popularity'))
+                                                _u = pd.to_numeric(_r.get('Umaban'), errors='coerce')
+                                                if _p is not None and pd.notnull(_u):
+                                                    _og_p2u[_p] = int(_u)
+                                            for _, _r in _og_src.iterrows():
+                                                _raw = str(_r.get('OddsGap', '') or '')
+                                                # テーブル追記後の「断層C 🐎↑直上馬有利」にも反応する
+                                                _code = next((k for k in _og_ben_lbl if k in _raw), None)
+                                                if _code is None and '直上馬有利' in _raw:
+                                                    _code = '断層C'
+                                                if _code is None:
+                                                    continue
+                                                _p_here = _og_pop_otp(_r.get('Popularity'))
+                                                if _p_here is None:
+                                                    continue
+                                                _ben_u = _og_p2u.get(_p_here - 1)
+                                                if _ben_u is None:
+                                                    continue
+                                                _bl = _og_ben_lbl[_code]
+                                                _otp_tags[_ben_u] = (
+                                                    f"{_otp_tags[_ben_u]}・{_bl}"
+                                                    if _ben_u in _otp_tags else _bl)
+                                    except Exception:
+                                        pass
                                     try:
                                         from core import odds_move as _omv_otp
                                         _obs = _omv_otp.chart_observe_labels(_history_df)
@@ -5195,6 +5441,12 @@ if nav == "🏠 Single Race Analysis":
                                     _FUKI_ICON = {
                                         '精鋭1位': '🎯', '精鋭2位': '🎯',
                                         '軸◎': '◎', '軸〇': '〇', '軸▲': '▲',
+                                        '直上馬有利': '🐎',
+                                        '1人気1強': '🐎',
+                                        '2人気巻返し': '🐎',
+                                        '上位2頭強し': '🐎',
+                                        '2-3人気本命': '🐎',
+                                        '壁上位有利': '🐎',
                                         '朝から軸': '📌',
                                         '後から押された1番': '⚠',
                                         '朝は売れて沈んだ': '↘',
@@ -5407,6 +5659,8 @@ if nav == "🏠 Single Race Analysis":
                                         "ふきだしは線のいちばん新しい点。"
                                         "穴馬ハンターの<strong>精鋭1・2位</strong>、"
                                         "テーブルの<strong>軸◎〇▲</strong>、"
+                                        "オッズの壁のすぐ上の馬（<strong>🐎 直上馬有利</strong>など。"
+                                        "出馬表のオッズ断層と同じ印。買い目の点数には入れていません）、"
                                         "<strong>朝から軸／後から押された1番／朝は売れて沈んだ</strong>"
                                         "（観察のメモ。数字の期待値は出しません）。"
                                         "右の馬名をクリックすると、その馬の線だけ残ります。"
@@ -5432,7 +5686,7 @@ if nav == "🏠 Single Race Analysis":
                                             f"<td>{_f:.1f}</td><td>{_l:.1f}</td>"
                                             f"<td class='{_dcell}'>{_darr(_d)} {_d:+.1f}%{_flag}</td></tr>")
                                     _hidden = len(_win_hist['umaban'].unique()) - len(_show_uma)
-                                    _note = (f"人気上位8頭＋急変馬＋精鋭/軸の印付き"
+                                    _note = (f"人気上位8頭＋急変馬＋精鋭/軸/直上馬の印付き"
                                              f"（他{_hidden}頭は非表示）"
                                              if _hidden > 0 else f"{_snap_count}スナップショット")
                                     st.markdown(
@@ -6330,6 +6584,7 @@ if nav == "🏠 Single Race Analysis":
                     # 新タブ化で別セッションになった🧹消去フィルター/🧠MAGIから採点を読めるようディスクにも保存
                     try:
                         from core import score_cache as _sc
+                        _elim_before_sra = _sc.read_elim_keep(race_id_input)
                         _sc.write_scores(race_id_input, df)
                         _sc.write_magi_bridge(race_id_input, df, st.session_state.get('race_metadata'))
                         _sc.write_race_full(race_id_input, df)  # MAGI回顧がレース別にシグナルを読む
@@ -6338,7 +6593,44 @@ if nav == "🏠 Single Race Analysis":
                             st.session_state['bs_ev_feed'] = _kfeed
                             _sc.write_kelly_bridge(_kfeed)
                     except Exception:
+                        _elim_before_sra = None
                         pass
+                    # 🎯 強適消去を自動実行 → 推奨買い方・3連複デフォルト母集団を残馬に固定
+                    try:
+                        from core import elim_engine as _ee_sra
+                        _ee_sra.run_and_persist(
+                            df, race_id_input,
+                            st.session_state.get('race_metadata') or {},
+                            border_cnt=None)
+                    except Exception:
+                        pass
+                    # Track A: 判断時点の観測のみ。買い目・閾値は変えない。失敗しても SRA は継続。
+                    try:
+                        from core import score_cache as _sc_fwd
+                        from research.forward.from_sra import capture_sra as _fwd_sra
+                        _fwd_sra(race_id_input, df, {
+                            'score_weights': st.session_state.get('score_weights_main'),
+                            'elim_keep': sorted(_sc_fwd.read_elim_keep(race_id_input) or []),
+                            'gate': _sc_fwd.read_gate(race_id_input),
+                            'ltr_scores': st.session_state.get(f'_ltr_raw_{race_id_input}') or {},
+                        })
+                    except Exception:
+                        pass
+                    if st.session_state.pop(f'_audit_sra_pending_{race_id_input}', False):
+                        try:
+                            from core import audit_pipeline as _ap_sra
+                            from core import score_cache as _sc_ap
+                            _elim_after_sra = _sc_ap.read_elim_keep(race_id_input)
+                            _sra_out = _ap_sra.record_event(
+                                race_id_input, 'sra',
+                                payload=_ap_sra.build_sra_payload(
+                                    df, race_id_input, _elim_before_sra, _elim_after_sra,
+                                    meta=st.session_state.get('race_metadata')),
+                                status='ok')
+                            if not _sra_out.ok:
+                                st.warning(f"監査記録(SRA)失敗: {_sra_out.error}")
+                        except Exception as _ap_sra_e:
+                            st.warning(f"監査記録(SRA)失敗: {_ap_sra_e}")
                     try:
                         df.to_csv(os.path.join(os.path.dirname(__file__), "debug_app_bonus.csv"), encoding="utf-8-sig", index=False)
                     except:
@@ -6481,13 +6773,17 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         pass
 
-                    # ── 🎯 軸の信頼度(補正Tトップ3 ∩ 人気トップ3 の一致頭数) ──
+                    # ── 🎯 軸の信頼度（レースの性質 ＋ 人気1・2番人気の個別判定を1画面に集約）──
                     # 検証: scripts/time_pop_overlap_backtest.py (31,613R)。一致頭数が増えるほど
                     # 1番人気の複勝率が 57→62→68→76% と単調に上がる(両窓一貫)。
                     # ⚠荒れ予報の計算には足さない: オッズロジットとの残差は|z|<2で非有意
                     #   ＝荒れ予測としてはpriced-in([[verified_time_pop_overlap]])。表示専用。
+                    # ⚠新しい主張は足していない。fav_check(検証済み部品の集約)を
+                    #   人気1・2番人気（D鉄板の軸=◎〇）にそのまま適用し、
+                    #   総合判定(combine_axis)で1行で答える。
                     try:
                         from core import axis_selector as _ax_rc
+                        from core import fav_check as _fk
                         # CTFig(生の補正T・負=速い)は上流で df の列として付与済み
                         _rc_horses = []
                         for _, _rcr in df.iterrows():
@@ -6502,32 +6798,17 @@ if nav == "🏠 Single Race Analysis":
                                 'ct_fig': None if pd.isna(_rcf) else float(_rcf),
                             })
                         _rc = _ax_rc.race_axis_confidence(_rc_horses)
-                        if _rc:
-                            _rc_msg = (f"🎯 **軸の信頼度: {_rc['label']}**"
-                                       f"（実力上位3頭と人気上位3頭が**{_rc['overlap']}頭一致**）"
-                                       f"　このタイプのレースでは1番人気が3着以内に入る率 **約{_rc['fav_top3']}%**")
-                            if _rc['overlap'] >= 3:
-                                st.success(_rc_msg + "　← 軸が最も信頼できるタイプ（全体の6%）")
-                            elif _rc['overlap'] == 0:
-                                st.caption(_rc_msg + "　← 軸を厚く買わない方が無難")
-                            else:
-                                st.caption(_rc_msg)
-                    except Exception:
-                        pass
 
-                    # ── 🏇 この1番人気は買えるか（検証済み材料を1画面に集約）──
-                    # 検証を重ねた結果、このアプリで効くのは「中心の並び順」ではなく
-                    # 「本命の信頼度を測ること」だった。部品は各所にあるが散らばって
-                    # 一目で答えが出ないので core/fav_check.py に集約して表示する。
-                    # ⚠新しい主張は足していない。各項目に実測値と出典を持たせている。
-                    try:
-                        from core import fav_check as _fk
-                        _fv_row = None
-                        for _, _r0 in df.iterrows():
-                            if pd.to_numeric(_r0.get('Popularity'), errors='coerce') == 1:
-                                _fv_row = _r0
-                                break
-                        if _fv_row is not None:
+                        # 人気1・2番人気をそれぞれ判定（playbook D鉄板の軸=◎〇に対応）
+                        _axis_res = []
+                        for _want_nk in (1, 2):
+                            _fv_row = None
+                            for _, _r0 in df.iterrows():
+                                if pd.to_numeric(_r0.get('Popularity'), errors='coerce') == _want_nk:
+                                    _fv_row = _r0
+                                    break
+                            if _fv_row is None:
+                                continue
                             _fv_um = int(pd.to_numeric(_fv_row.get('Umaban'), errors='coerce'))
                             _fv_pm = (st.session_state.get(f'_place_mid_{race_id_input}') or {}
                                       ).get(_fv_um)
@@ -6537,7 +6818,7 @@ if nav == "🏠 Single Race Analysis":
                                 _fv_dist = None
                             _fv = {
                                 'umaban': _fv_um, 'name': _fv_row.get('Name'),
-                                'ninki': 1,
+                                'ninki': _want_nk,
                                 'win_odds': pd.to_numeric(_fv_row.get('Odds'), errors='coerce'),
                                 'place_mid': _fv_pm,
                                 'surface': str(meta.get('surface', '') or ''),
@@ -6559,30 +6840,41 @@ if nav == "🏠 Single Race Analysis":
                             for _k in ('win_odds', 'prev_chaku', 'pos_ratio', 'app_rank'):
                                 if pd.isna(_fv.get(_k)):
                                     _fv[_k] = None
-                            _res = _fk.check(_fv, horses=_rc_horses,
-                                             race={'is_nar': bool(_is_nar_race)
-                                                   if '_is_nar_race' in dir() else False})
+                            _ck = _fk.check(_fv, horses=_rc_horses,
+                                            race={'is_nar': bool(_is_nar_race)
+                                                  if '_is_nar_race' in dir() else False})
+                            _axis_res.append((_want_nk, _fv_um,
+                                              str(_fv.get('name') or '')[:12], _ck))
+
+                        if _axis_res:
+                            _ov = _fk.combine_axis([_x[3] for _x in _axis_res], race_ctx=_rc)
                             with st.container(border=True):
-                                _c1, _c2 = st.columns([1, 3])
-                                with _c1:
-                                    st.markdown(f"### {_res['emoji']}")
-                                    st.markdown(f"**{_res['headline']}**")
-                                    if _res.get('fuku'):
-                                        st.caption(f"推定3着内率 {_res['fuku']:.0f}%")
-                                with _c2:
-                                    st.markdown(
-                                        f"**🏇 この1番人気（{_fv_um}番 "
-                                        f"{str(_fv.get('name') or '')[:12]}）は買えるか**")
-                                    for _it in _res['items']:
-                                        st.markdown(
-                                            f"{'✅' if _it['ok'] else '⚠️'} **{_it['label']}**　"
-                                            f"<span style='font-size:0.84em;opacity:.85'>"
-                                            f"{_it['detail']}</span>",
-                                            unsafe_allow_html=True)
-                                    if _res.get('race_ctx'):
-                                        st.caption(f"▸ レースの性質: {_res['race_ctx']['label']}"
-                                                   f"　{_res['race_ctx']['detail']}")
-                                st.caption(_res['note'])
+                                st.markdown(f"### {_ov['emoji']} 軸の信頼度：{_ov['headline']}")
+                                if _rc:
+                                    _rc_msg = (f"🎯 レースの性質: **{_rc['label']}**"
+                                               f"（実力上位3頭と人気上位3頭が**{_rc['overlap']}頭一致**）"
+                                               f"　このタイプでは1番人気が3着以内に入る率 **約{_rc['fav_top3']}%**")
+                                    if _rc['overlap'] >= 3:
+                                        _rc_msg += "　← 軸が最も信頼できるタイプ（全体の6%）"
+                                    elif _rc['overlap'] == 0:
+                                        _rc_msg += "　← 軸を厚く買わない方が無難"
+                                    st.markdown(_rc_msg)
+                                for _nk, _um, _nm, _ck in _axis_res:
+                                    _one = (f"{_ck['emoji']} **{_nk}番人気（{_um}番 {_nm}）："
+                                            f"{_ck['headline']}**")
+                                    if _ck.get('fuku'):
+                                        _one += f"　推定3着内率 {_ck['fuku']:.0f}%"
+                                    st.markdown(_one)
+                                with st.expander('材料ごとの内訳を見る（すべて検証済み）'):
+                                    for _nk, _um, _nm, _ck in _axis_res:
+                                        st.markdown(f"**{_nk}番人気（{_um}番 {_nm}）**")
+                                        for _it in _ck['items']:
+                                            st.markdown(
+                                                f"{'✅' if _it['ok'] else '⚠️'} **{_it['label']}**　"
+                                                f"<span style='font-size:0.84em;opacity:.85'>"
+                                                f"{_it['detail']}</span>",
+                                                unsafe_allow_html=True)
+                                    st.caption(_axis_res[0][3]['note'])
                     except Exception:
                         pass
 
@@ -6971,7 +7263,12 @@ if nav == "🏠 Single Race Analysis":
                             _mk = _info.get('mark', '')
                             if not _mk:
                                 continue
-                            _conf = _info.get('conf')
+                            # 表示%は「軸の信頼度」ブロックと同じ fuku_rate に統一(2026-09-08)。
+                            # 同じ馬に2種類の推定3着内率(階段+減点の62% / カーブの64%)が
+                            # 出ていたため。なお◎〇マークの判定自体は検証済みの
+                            # axis_confidence(減点込み)のまま据え置き(ここは表示のみ)。
+                            _conf = _axs.fuku_rate(_h.get('pop'), _h.get('odds'),
+                                                   is_nar=_ax_is_nar)
                             _txt = _mk + (f" {_conf:.0f}%" if _conf is not None else '')
                             if _info.get('atsu'):
                                 _txt += '🔨'  # 前走圧勝(着差≥1.0秒)＝過剰人気注意フラグ
@@ -7236,29 +7533,70 @@ if nav == "🏠 Single Race Analysis":
                                 'name': str(_pr.get('Name', '') or ''),
                                 'pop': (int(_pp) if pd.notnull(_pp) else None),
                             })
+                        try:
+                            from core import score_cache as _sc_pb_pool
+                            _pb_hs, _ = _sc_pb_pool.filter_horses_by_elim_keep(
+                                race_id_input, _pb_hs)
+                        except Exception:
+                            pass
                         _rv_pb = st.session_state.get(f'_race_value_{race_id_input}') or {}
                         _ltr_for_pb = st.session_state.get(f'_ltr_raw_{race_id_input}') or _ltr_raw
+                        _vh_for_pb = {}
+                        _proj_for_pb = {}
+                        try:
+                            _aim_pb = st.session_state.get(f'_aimsets2_{race_id_input}') or {}
+                            for _uk, _uv in (_aim_pb.get('vh') or {}).items():
+                                try:
+                                    _vh_for_pb[int(_uk)] = float(_uv)
+                                except (TypeError, ValueError):
+                                    pass
+                        except Exception:
+                            _vh_for_pb = {}
+                        for _, _pr in _pb_src.iterrows():
+                            _pu = pd.to_numeric(_pr.get('Umaban'), errors='coerce')
+                            if pd.isnull(_pu):
+                                continue
+                            _ps = pd.to_numeric(
+                                _pr.get('Projected Score', _pr.get('BattleScore', 0)),
+                                errors='coerce')
+                            if pd.notnull(_ps):
+                                _proj_for_pb[int(_pu)] = float(_ps)
                         _pb_rec = _pb_b.build_tickets(
                             race_id=str(race_id_input),
                             vscore=_rv_pb.get('score'),
                             horses=_pb_hs,
                             axis_marks=_ax_m_pb,
                             ltr_scores=_ltr_for_pb,
+                            vh_scores=_vh_for_pb or None,
+                            proj_scores=_proj_for_pb or None,
                         )
                         st.session_state[f'_playbook_{race_id_input}'] = _pb_rec
                         try:
-                            from core import newspaper as _np_pb
-                            _np_pb.persist_playbook(race_id_input, _pb_rec)
+                            from research.forward.shadow_baseline import observe_production
+                            from core import score_cache as _sc_obs
+                            observe_production(race_id_input, _pb_rec, {
+                                'zone': _pb_rec.get('zone'),
+                                'cross_n': _pb_rec.get('cross_n'),
+                                'bet_type': _pb_rec.get('selected_bet_type'),
+                                'playbook_id': _pb_rec.get('selected_playbook'),
+                                'tickets': {
+                                    'trio': _pb_rec.get('trio'),
+                                    'trifecta': _pb_rec.get('trifecta'),
+                                },
+                                'skip_reason': _pb_rec.get('skip_reason'),
+                                'gate': _sc_obs.read_gate(race_id_input),
+                                'purpose': 'shadow_observation',
+                                'horses': [{
+                                    'umaban': u,
+                                    'ltr_score': (_ltr_for_pb or {}).get(u),
+                                    'vh_score': (_vh_for_pb or {}).get(u),
+                                    'decision_time_odds': None,
+                                    'final_odds': None,
+                                } for u in (_ltr_for_pb or {})],
+                            })
                         except Exception:
                             pass
-                        try:
-                            from core import score_cache as _sc_pb
-                            _sc_pb.write_buy(
-                                race_id_input,
-                                n_points=(0 if _pb_rec.get('skip') else _pb_rec.get('n_points')),
-                            )
-                        except Exception:
-                            pass
+                        # persist / write_buy は統合ビュー確定後（cross_n 正本=integrate）
                     except Exception:
                         pass
 
@@ -7988,7 +8326,7 @@ if nav == "🏠 Single Race Analysis":
                         "AxisMark": st.column_config.TextColumn(
                             "🎯軸馬候補",
                             help="3着内に来やすい人気馬に◎〇（最大2頭。3番手▲は廃止）。"
-                                 "%＝推定複勝率（単勝オッズ別の実績）。"
+                                 "%＝推定複勝率（単勝オッズ別の実績。「軸の信頼度」ブロックと同じ値）。"
                                  "🔨＝前走を着差1秒以上で圧勝＝過剰人気の注意（加点ではない）。"
                                  "ダート限定: 🟢外枠×1-3番人気は軸向き。"
                                  "🔻内枠×4-5番人気は軸から外す。"),
@@ -8694,6 +9032,7 @@ if nav == "🏠 Single Race Analysis":
                             _mults = st.session_state[_j5_key]
 
                             _j5_rows = []
+                            from core import jockey_checklist as _j5_checklist
                             _base_rank = {}
                             _df_sorted = df.sort_values('Projected Score', ascending=False).reset_index(drop=True)
                             for _i, _rr in _df_sorted.iterrows():
@@ -8715,6 +9054,7 @@ if nav == "🏠 Single Race Analysis":
                                     '黄金ライン': _mi['gold'] or '-',
                                     '騎手込みスコア': round(_ps * _adj, 1),
                                     '内訳': _mi['note'],
+                                    '騎手チェック表（参考）': _j5_checklist.display_text(_rr.get('Jockey')),
                                     '_base': _base_rank.get(_u5, 99),
                                 })
                             _j5_df = pd.DataFrame(_j5_rows).sort_values('騎手込みスコア', ascending=False).reset_index(drop=True)
@@ -8760,6 +9100,10 @@ if nav == "🏠 Single Race Analysis":
                             _j5_styled = _j5_df.style.apply(_color_j5_rank_change, axis=1)
                             # 数値列にホバー説明を付ける(1.00/100が基準だと画面上で分からないため)
                             _j5_cfg = {
+                                '騎手チェック表（参考）': st.column_config.TextColumn(
+                                    '騎手チェック表（参考）', width='large',
+                                    help='提供画像の主張。印は作者の見解で、今回の推奨印ではありません。'
+                                         '条件未判定・J5係数と順位には反映しません。'),
                                 '騎手係数': st.column_config.NumberColumn(
                                     '騎手係数', format="%.3f",
                                     help="この騎手が乗ることで馬の評価を何倍にするか。"
@@ -8783,6 +9127,8 @@ if nav == "🏠 Single Race Analysis":
                             }
                             st.dataframe(_j5_styled, hide_index=True,
                                          use_container_width=True, column_config=_j5_cfg)
+                            from ui import jockey_checklist as _j5_checklist_view
+                            _j5_checklist_view.render(df)
                             # 新聞用スナップショット(📰新聞発行のオプションでこの表を紙面に載せられる)。
                             # J5は影響率スライダー依存なので『今表示している値』をそのまま保存する。
                             try:
@@ -9238,6 +9584,94 @@ if nav == "🏠 Single Race Analysis":
                             })
                         _cv_res = _cv.integrate(_cv_rows, _aim0, _cv_regime)
 
+                        # 統合ビューの cross_n で playbook を確定（券種セレクター v1）
+                        try:
+                            from core import playbook_tickets as _pb_cv
+                            _cx_n_final = int((_cv_res.get('cross') or {}).get('n') or 0)
+                            _pb_hs_cv = []
+                            for _, _pr in df.iterrows():
+                                _pu = pd.to_numeric(_pr.get('Umaban'), errors='coerce')
+                                if pd.isnull(_pu):
+                                    continue
+                                _pp = pd.to_numeric(_pr.get('Popularity'), errors='coerce')
+                                _pb_hs_cv.append({
+                                    'umaban': int(_pu),
+                                    'name': str(_pr.get('Name', '') or ''),
+                                    'pop': (int(_pp) if pd.notnull(_pp) else None),
+                                })
+                            try:
+                                from core import score_cache as _sc_pb_cv
+                                _pb_hs_cv, _ = _sc_pb_cv.filter_horses_by_elim_keep(
+                                    race_id_input, _pb_hs_cv)
+                            except Exception:
+                                pass
+                            _rv_cv_pb = st.session_state.get(f'_race_value_{race_id_input}') or {}
+                            _ltr_cv_pb = st.session_state.get(f'_ltr_raw_{race_id_input}') or {}
+                            _ax_cv_pb = {}
+                            for _, _pr in df.iterrows():
+                                _pu = pd.to_numeric(_pr.get('Umaban'), errors='coerce')
+                                if pd.isnull(_pu):
+                                    continue
+                                _mk = (_cv_axm.get(str(_pr.get('Name', '')), {}) or {}).get('mark', '')
+                                if _mk:
+                                    _ax_cv_pb[int(_pu)] = _mk
+                            _pb_rec_cv = _pb_cv.build_tickets(
+                                race_id=str(race_id_input),
+                                vscore=_rv_cv_pb.get('score'),
+                                horses=_pb_hs_cv,
+                                axis_marks=_ax_cv_pb,
+                                ltr_scores=_ltr_cv_pb,
+                                cross_n=_cx_n_final,
+                            )
+                            st.session_state[f'_playbook_{race_id_input}'] = _pb_rec_cv
+                            try:
+                                from core import newspaper as _np_pb_cv
+                                _np_pb_cv.persist_playbook(race_id_input, _pb_rec_cv)
+                            except Exception:
+                                pass
+                            try:
+                                from core import score_cache as _sc_pb_cv
+                                _sc_pb_cv.write_buy(
+                                    race_id_input,
+                                    n_points=(0 if _pb_rec_cv.get('skip')
+                                              else _pb_rec_cv.get('n_points')),
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                from core import audit_pipeline as _ap_pb
+                                _zone_pb = (_rv_cv_pb.get('label') or '')[:1] if _rv_cv_pb else None
+                                _gate_pb = None
+                                try:
+                                    _gate_pb = _sc_pb_cv.read_gate(race_id_input)
+                                except Exception:
+                                    _gate_pb = None
+                                if st.session_state.pop(
+                                        f'_audit_playbook_rec_pending_{race_id_input}', False):
+                                    _rec_out = _ap_pb.record_recommendation(
+                                        race_id_input, _pb_rec_cv, _pb_hs_cv, _cx_n_final,
+                                        (_rv_cv_pb or {}).get('score'), zone_hint=_zone_pb,
+                                        gate=_gate_pb)
+                                    if not _rec_out.ok:
+                                        st.warning(f"監査記録(推奨)失敗: {_rec_out.error}")
+                                _pb_out = _ap_pb.record_event_deduped(
+                                    race_id_input, 'buy_method',
+                                    signature=(
+                                        _pb_rec_cv.get('selected_playbook'),
+                                        _pb_rec_cv.get('n_points'),
+                                        tuple(h['umaban'] for h in _pb_hs_cv),
+                                    ),
+                                    payload=_ap_pb.build_playbook_payload(
+                                        _pb_rec_cv, _pb_hs_cv, _cx_n_final,
+                                        (_rv_cv_pb or {}).get('score'), zone_hint=_zone_pb),
+                                    status='ok')
+                                if not _pb_out.ok:
+                                    st.warning(f"監査記録(買い方)失敗: {_pb_out.error}")
+                            except Exception as _ap_pb_e:
+                                st.warning(f"監査記録(買い方)失敗: {_ap_pb_e}")
+                        except Exception:
+                            pass
+
                         # 📰 新聞発行: 合議結果(本命/相手/押さえ/穴/切る)＋検証エッジ全セット(_aim)
                         # ＋荒れ予報/妙味度を紙面用に保存(危険人気馬/消去クロス/穴馬ハンター欄の素)
                         try:
@@ -9384,6 +9818,7 @@ if nav == "🏠 Single Race Analysis":
                         else:
                             _cv_zone = '荒れ'
                         _pb_z = st.session_state.get(f'_playbook_{race_id_input}') or {}
+                        # 券種セレクター v1: D→3連複 / C+cross≥3→3連複 / C+cross<3→3連単RRR / 荒れ→見送り
                         if _pb_z.get('ui_line'):
                             _cx_rec = _pb_z['ui_line']
                         elif _cv_zone == 'D鉄板':
@@ -9394,33 +9829,30 @@ if nav == "🏠 Single Race Analysis":
                             _cx_rec = 'C中庸｜Rank型｜検証済みフォーメーション'
                         _cx_icon = {'🔥強クロス': '🔥', '○クロス成立': '🔵',
                                     '△弱クロス': '🟡', '●不一致': '⚫'}.get(_cx_lbl, '')
-                        # 型コードは品質目安（券の中身は下の『推奨買い方』）。
-                        # D=NNV固定 / Cはクロス3/4以上でRRV・2/4以下でRRR / 荒れ=型なし。
-                        if _cv_zone == 'D鉄板':
-                            _cx_shape = 'NNV'
-                            _cx_shape_plain = '人気＋穴'
-                        elif _cv_zone == '荒れ':
-                            _cx_shape = None
-                            _cx_shape_plain = '見送り'
-                        elif _cx_n >= 3:
-                            _cx_shape = 'RRV'
-                            _cx_shape_plain = '能力＋穴'
-                        else:
-                            _cx_shape = 'RRR'
-                            _cx_shape_plain = '能力のみ'
-                        _cx_shape_txt = (
-                            f"（{_cx_shape}＝{_cx_shape_plain}）"
-                            if _cx_shape else f"（{_cx_shape_plain}）")
+                        from core import bettype_selector as _bts_cx
+                        _diag = _bts_cx.diag_family(_cv_zone, _cx_n)
+                        _diag_code = _diag.get('code')
+                        _diag_plain = _diag.get('plain') or ''
+                        _diag_verdict = _diag.get('verdict') or ''
+                        _diag_txt = (
+                            f"{_diag_code}（{_diag_plain}）" if _diag_code
+                            else _diag_plain)
                         st.markdown(
                             f"**📊 R×Vクロス判定**: {_cx_icon} **{_cx_lbl}**"
-                            f"（{_cx_n}/{_cx_of}）{_cx_shape_txt}"
-                            f"　→　**{_cv_zone}** ＝ **{_cx_rec}**")
+                            f"（{_cx_n}/{_cx_of}）　**{_cv_zone}**")
+                        st.markdown(
+                            f"- R×Vクロス：**{_cx_n}頭**（Rank上位4とVH上位4の共通）\n"
+                            f"- 型：**{_diag_txt}**"
+                            "　※どの判定パターンに入ったか。買い目の形そのものではない\n"
+                            f"- 判定：{_diag_verdict}\n"
+                            f"- 買い目：**{_cx_rec}**")
                         st.caption(
-                            f"Rank上位4頭とVH上位4頭の共通馬数={_cx_n}頭。"
                             "◎=両方4位以内で差≤2(強い一致) ○=両方5位以内 △=片方5位以内。"
-                            "クロスは相手の品質目安。デフォルト買い目は『推奨買い方』"
-                            "（D=人気3連複2点 / C=能力順2-4-7 / 荒れ=見送り）。"
-                            "型のカッコは目安（D=NNV固定 / Cは3/4以上でRRV・2/4以下でRRR）。")
+                            "型(NNV/RRV/RRR)は診断ラベル。"
+                            "N=人気、R=能力順、V=穴馬。"
+                            "デフォルト買い目は『推奨買い方』"
+                            "（D=3連複2点 / C+cross≥3=3連複Rank2-3-6 / C+cross<3=3連単RRR / 荒れ=見送り）。"
+                            f"ルール: {_pb_z.get('selector_rule_version', 'bet_selector_v1')}。")
                         st.caption("『R』=能力順位(素点=LTR降順)。『V』=VH順位(穴馬ハンタースコア降順)。"
                                    "『役割』=フォーメーション決定用(◎本命は1着/2着軸・〇相手は連下・押さえは切らず残す中位(着内に来る)・"
                                    "🎯穴は3列目の妙味・切るはグレーで消し候補)。"
@@ -9464,151 +9896,305 @@ if nav == "🏠 Single Race Analysis":
                             except Exception:
                                 pass
 
-                            with st.expander("🧠 開発者の思考（この予想の考え方）", expanded=False):
-                                _ph_f = _ph_res['final']
-                                if _ph_f['skip']:
-                                    st.warning("⛔ **このレースは見送り推奨**"
-                                               + (f"　理由: {'・'.join(_ph_f['skip_reasons'])}"
-                                                  if _ph_f['skip_reasons'] else ""))
-                                else:
-                                    st.success(f"✅ **この思考で選んだ買い方: {_ph_f['plan']}**")
-                                _pn = lambda _l: '・'.join(str(x) for x in _l) if _l else 'なし'
-                                st.markdown(
-                                    f"**本命** {_pn(_ph_f['honmei'])}　｜　**相手** {_pn(_ph_f['aite'])}"
-                                    f"　｜　**穴** {_pn(_ph_f['ana'])}　｜　**消し** {_pn(_ph_f['keshi'])}")
-                                st.caption("※上の🧩統合ビューの合議と同じ結論です（別の予想を作っているわけでは"
-                                           "ありません）。ここはその結論に至った**考え方の順番**を見せています。")
-                                st.markdown("---")
-                                for _s in _ph_res['steps']:
-                                    if not _s['enabled']:
-                                        st.markdown(f"**{_s['no']} {_s['name']}** — "
-                                                    f"<span style='color:#999;'>スキップ（OFF）</span>",
-                                                    unsafe_allow_html=True)
-                                        continue
-                                    st.markdown(f"**{_s['no']} {_s['name']}**（{_s['desc']}）"
-                                                f"　→　**{_s['verdict']}**")
-                                    for _r in _s['reasons']:
-                                        st.markdown(f"<div style='margin:0 0 2px 18px;font-size:12.5px;"
-                                                    f"color:#666;'>・{_r}</div>", unsafe_allow_html=True)
-                                if _ph_f.get('my_warn'):
-                                    st.caption(f"⑧自分のルールで注意: {_pn(_ph_f['my_warn'])}番")
-                                st.markdown("---")
-                                st.markdown("##### ⚙️ 思考プロセスの設定")
-                                st.caption("各ステップのON/OFFと『どれくらい厳しく判断するか』を選べます。"
-                                           "変更するとこのレースの結論がその場で変わります（philosophy.jsonに保存）。")
-                                _ph_new = {'steps': {},
-                                           'custom_rules': list(_ph_cfg.get('custom_rules') or [])}
-                                _ph_changed = False
-                                for _k, _no, _nm, _ds in _ph.STEPS:
-                                    _cur = _ph_cfg['steps'][_k]
-                                    _c1, _c2 = st.columns([1.4, 1])
-                                    with _c1:
-                                        _en = st.checkbox(f"{_no} {_nm}", value=_cur['enabled'],
-                                                          key=f"phen_{_k}_{race_id_input}",
-                                                          help=_ds)
-                                    with _c2:
-                                        _md = st.selectbox(
-                                            "判断の厳しさ", _ph.MODES,
-                                            index=_ph.MODES.index(_cur['mode']),
-                                            key=f"phmd_{_k}_{race_id_input}",
-                                            label_visibility='collapsed', disabled=not _en,
-                                            help="厳しめ＝候補を絞る／ゆるめ＝手広く見る")
-                                    _ph_new['steps'][_k] = {'enabled': bool(_en), 'mode': str(_md),
-                                                            'params': dict(_cur.get('params') or {})}
-                                    if bool(_en) != _cur['enabled'] or str(_md) != _cur['mode']:
-                                        _ph_changed = True
+                            # SRA上では、抽象的な「思考設定」ではなくユーザーの実運用順を案内する。
+                            # 既存の philosophy 結果は新聞スナップショット用にだけ残し、
+                            # ここで予測ロジック・推奨買い方・3連複エンジンの設定は変更しない。
+                            with st.expander("🧠 今回の買い方ガイド（いつもの手順）",
+                                             expanded=False):
+                                from core import score_cache as _sc_guide
+                                from core import narrow_n as _nn_guide
 
-                                # ── 細かい数値の調整(すべて選択式・スライダーなし) ──
-                                with st.expander("🔧 細かい数値を調整する（上級者向け・変えなくてOK）"):
-                                    st.caption("『厳しめ/標準/ゆるめ』で足りないときだけ。"
-                                               "ここで変えられるのは**絞り込みの厳しさ**だけで、"
-                                               "検証で出た数値（複勝率やz値）そのものは変わりません。")
-                                    for _k, _no, _nm, _ds in _ph.STEPS:
-                                        _specs = _ph.PARAM_SPECS.get(_k) or {}
-                                        if not _specs:
+                                def _guide_ums(_values):
+                                    _out = set()
+                                    for _v in (_values or []):
+                                        try:
+                                            _out.add(int(_v))
+                                        except (TypeError, ValueError):
                                             continue
-                                        st.markdown(f"**{_no} {_nm}**")
-                                        for _pk, _sp in _specs.items():
-                                            _dflt = _ph.default_param(_k, _pk,
-                                                                      _ph_new['steps'][_k]['mode'])
-                                            _chs = list(_sp['choices'])
-                                            _lbls = [(f"{c:g}（この強度の既定）" if c == _dflt else f"{c:g}")
-                                                     for c in _chs]
-                                            _curv = _ph_cfg['steps'][_k].get('params', {}).get(_pk, _dflt)
-                                            _idx = _chs.index(_curv) if _curv in _chs else _chs.index(_dflt)
-                                            _sel = st.selectbox(
-                                                _sp['label'], _lbls, index=_idx,
-                                                key=f"phpr_{_k}_{_pk}_{race_id_input}",
-                                                help=_sp.get('help'))
-                                            _val = _chs[_lbls.index(_sel)]
-                                            if _val != _dflt:
-                                                _ph_new['steps'][_k]['params'][_pk] = _val
-                                            else:
-                                                _ph_new['steps'][_k]['params'].pop(_pk, None)
-                                        if (_ph_new['steps'][_k]['params']
-                                                != (_ph_cfg['steps'][_k].get('params') or {})):
-                                            _ph_changed = True
+                                    return _out
 
-                                # ── ⑧ 自分のルールを足す(検証外・個人ルール) ──
-                                with st.expander("➕ 自分のルールを足す（⑧・検証外の個人ルール）"):
-                                    st.caption("思いついた判断を後から足せます（例:「12番人気以下は買わない」）。"
-                                               "**検証していない個人ルール**なので、検証済みエッジ（①〜⑦）とは"
-                                               "分けて表示・保存されます。本命と穴は誤爆防止のため消されません。")
-                                    _rules = list(_ph_cfg.get('custom_rules') or [])
-                                    for _i, _r in enumerate(_rules):
-                                        _rc1, _rc2 = st.columns([5, 1])
-                                        with _rc1:
-                                            st.markdown(
-                                                f"- {_ph.RULE_FIELDS.get(_r['field'], _r['field'])} が "
-                                                f"**{_r['value']:g} {_ph.RULE_OPS.get(_r['op'])}** "
-                                                f"なら → **{_r['action']}**")
-                                        with _rc2:
-                                            if st.button("削除", key=f"phrd_{_i}_{race_id_input}"):
-                                                _rules.pop(_i)
-                                                _ph_new['custom_rules'] = _rules
-                                                st.session_state['_ph_cfg'] = {
-                                                    'steps': _ph_new['steps'], 'custom_rules': _rules}
-                                                _ph.save_config(st.session_state['_ph_cfg'])
-                                                st.rerun()
-                                    if not _rules:
-                                        st.caption("（まだルールはありません）")
-                                    _fk = list(_ph.RULE_FIELDS)
-                                    _ok = list(_ph.RULE_OPS)
-                                    _ak = list(_ph.RULE_ACTIONS)
-                                    _nc1, _nc2, _nc3, _nc4 = st.columns([2, 1, 1.2, 1])
-                                    with _nc1:
-                                        _nf = st.selectbox("項目", _fk,
-                                                           format_func=lambda x: _ph.RULE_FIELDS[x],
-                                                           key=f"phnf_{race_id_input}")
-                                    with _nc2:
-                                        _nv = st.number_input("値", value=12.0, step=1.0,
-                                                              key=f"phnv_{race_id_input}")
-                                    with _nc3:
-                                        _nop = st.selectbox("条件", _ok,
-                                                            format_func=lambda x: _ph.RULE_OPS[x],
-                                                            key=f"phno_{race_id_input}")
-                                    with _nc4:
-                                        _na = st.selectbox("どうする", _ak, key=f"phna_{race_id_input}")
-                                    st.caption(f"→ 「{_ph.RULE_FIELDS[_nf]} が {_nv:g} "
-                                               f"{_ph.RULE_OPS[_nop]} なら {_na}」")
-                                    if st.button("このルールを追加", key=f"phadd_{race_id_input}"):
-                                        _rules.append({'label': '', 'field': _nf, 'op': _nop,
-                                                       'value': float(_nv), 'action': _na})
-                                        st.session_state['_ph_cfg'] = {'steps': _ph_new['steps'],
-                                                                       'custom_rules': _rules}
-                                        _ph.save_config(st.session_state['_ph_cfg'])
-                                        st.rerun()
+                                _guide_names = {}
+                                for _, _gr in df.iterrows():
+                                    _gu = pd.to_numeric(_gr.get('Umaban'), errors='coerce')
+                                    if pd.notnull(_gu):
+                                        _guide_names[int(_gu)] = str(_gr.get('Name', '') or '')
 
-                                if _ph_changed:
-                                    st.session_state['_ph_cfg'] = _ph_new
-                                    _ph.save_config(_ph_new)
-                                    st.rerun()
-                                st.caption("考え方の正本は `docs/keiba_ai_philosophy.md`。"
-                                           "検証で否定された俗説（展開読み・脚質・PCI・EV100%超で買い等）は"
-                                           "意図的に使っていません。新しい判断軸を足したくなったら、まず"
-                                           "バックテストしてから①〜⑦に入れてください（⑧は検証外の置き場です）。")
+                                def _guide_horses(_values):
+                                    _nums = sorted(_guide_ums(_values))
+                                    return (" / ".join(
+                                        f"{_u}番 {_guide_names.get(_u, '')}".strip()
+                                        for _u in _nums) if _nums else "該当なし")
+
+                                # Race Scannerと同じ分類: C/D=堅い、B=中庸、A/S=今回の運用対象外。
+                                _guide_rv_label = str((_rv_cv or {}).get('label') or '')
+                                _guide_band = _guide_rv_label[:1]
+                                if _guide_band in ('C', 'D'):
+                                    _guide_kind = '堅い'
+                                elif _guide_band == 'B':
+                                    _guide_kind = '中庸'
+                                else:
+                                    _guide_kind = '対象外'
+                                try:
+                                    _guide_gate = _sc_guide.read_gate(race_id_input) or {}
+                                except Exception:
+                                    _guide_gate = {}
+                                _guide_gate_text = {
+                                    'buy': '買える', 'axis_warn': '軸に注意',
+                                    'watch': '様子見', 'skip': '見送り',
+                                }.get(_guide_gate.get('status'), '記録なし')
+
+                                st.markdown("##### ① レーススキャナーの確認")
+                                st.markdown(
+                                    f"**今回: {_guide_kind}**　｜　"
+                                    f"スキャナー表示: **{_guide_rv_label or '取得できず'}**　｜　"
+                                    f"購入判定: **{_guide_gate_text}**")
+                                if _guide_kind == '対象外':
+                                    st.warning("この手順は「堅い」または「中庸」のレース用です。"
+                                               "荒れ・大荒れは、いつもの運用では見送ります。")
+
+                                # 「調教を取得」「netkeiba AI展開を取得して照合」を実行済みか、
+                                # session_stateだけでなく別ページでも共有できるディスクキャッシュで確認。
+                                try:
+                                    _guide_oikiri = _sc_guide.read_oikiri(race_id_input)
+                                except Exception:
+                                    _guide_oikiri = None
+                                try:
+                                    _guide_tenkai = _sc_guide.read_tenkai_danger(race_id_input)
+                                except Exception:
+                                    _guide_tenkai = None
+                                try:
+                                    _guide_elim_keep = _sc_guide.read_elim_keep(race_id_input)
+                                except Exception:
+                                    _guide_elim_keep = None
+                                try:
+                                    _guide_cross_keep = _sc_guide.read_keep(race_id_input)
+                                except Exception:
+                                    _guide_cross_keep = None
+
+                                _guide_oik_done = _guide_oikiri is not None
+                                _guide_tenkai_done = _guide_tenkai is not None
+                                _guide_elim_done = _guide_elim_keep is not None
+                                _guide_cross_done = _guide_cross_keep is not None
+                                st.markdown("##### ② 事前準備")
+                                _gc1, _gc2 = st.columns(2)
+                                with _gc1:
+                                    st.markdown(
+                                        ("✅" if _guide_oik_done else "⬜")
+                                        + " **調教を取得**"
+                                        + (f"（{len(_guide_oikiri)}頭）"
+                                           if _guide_oik_done else "（上のコンディション診断で実行）"))
+                                    st.markdown(
+                                        ("✅" if _guide_tenkai_done else "⬜")
+                                        + " **展開を照合**"
+                                        + (f"（危険位置一致 {len(_guide_tenkai)}頭）"
+                                           if _guide_tenkai_done else "（上の展開マップで照合ボタンを押す）"))
+                                with _gc2:
+                                    st.markdown(
+                                        ("✅" if _guide_elim_done else "⬜")
+                                        + " **消去フィルター**"
+                                        + (f"（残り {len(_guide_elim_keep)}頭）"
+                                           if _guide_elim_done else "（先に実行）"))
+                                    st.markdown(
+                                        ("✅" if _guide_cross_done else "⬜")
+                                        + " **消去クロステーブル**"
+                                        + (f"（最終 {len(_guide_cross_keep)}頭）"
+                                           if _guide_cross_done else "（🔴重複を確認して作成）"))
+                                if not all((_guide_oik_done, _guide_tenkai_done,
+                                            _guide_elim_done, _guide_cross_done)):
+                                    st.info("⬜が残っている項目を先に済ませてから、買い目を作ります。")
+
+                                # 同じセッションなら手動で外した馬を正確に取得。
+                                # 別セッションでは「消去フィルター残し－クロス最終候補」で復元する。
+                                _guide_red_cut = set()
+                                for _gx in st.session_state.get(
+                                        f"kf_cross_excl_{race_id_input}", []) or []:
+                                    try:
+                                        _guide_red_cut.add(int(str(_gx).split()[0]))
+                                    except (TypeError, ValueError, IndexError):
+                                        continue
+                                if (not _guide_red_cut and _guide_elim_keep is not None
+                                        and _guide_cross_keep is not None):
+                                    _guide_red_cut = (
+                                        _guide_ums(_guide_elim_keep)
+                                        - _guide_ums(_guide_cross_keep))
+
+                                _guide_before_cross = (
+                                    _guide_ums(_guide_elim_keep)
+                                    if _guide_elim_keep is not None
+                                    else set(_guide_names))
+                                _guide_survivors = (
+                                    _guide_ums(_guide_cross_keep)
+                                    if _guide_cross_keep is not None else set())
+
+                                # 穴馬ハンターと同じVHスコア順で、精鋭1・2位／広域網1位を取る。
+                                # VHの段階は人気馬にも付く（2〜15倍はほぼ精鋭）ため、
+                                # ハンター画面と同じく穴馬しきい値以上の人気の馬だけから選ぶ。
+                                _guide_ana = _guide_ums((_aim0 or {}).get('ana'))
+                                _guide_vh = {}
+                                _guide_tier = {}
+                                for _gu, _gv in ((_aim0 or {}).get('vh') or {}).items():
+                                    try:
+                                        _guide_vh[int(_gu)] = float(_gv)
+                                    except (TypeError, ValueError):
+                                        continue
+                                for _gu, _gt in ((_aim0 or {}).get('vh_tier') or {}).items():
+                                    try:
+                                        _guide_tier[int(_gu)] = str(_gt or '')
+                                    except (TypeError, ValueError):
+                                        continue
+                                _guide_elite = sorted(
+                                    [u for u in _guide_before_cross
+                                     if u in _guide_ana
+                                     and _guide_tier.get(u) == '🎯精鋭'],
+                                    key=lambda u: -_guide_vh.get(u, -1))[:2]
+                                _guide_net = sorted(
+                                    [u for u in _guide_before_cross
+                                     if u in _guide_ana
+                                     and _guide_tier.get(u) == '🕸️広域網'],
+                                    key=lambda u: -_guide_vh.get(u, -1))[:1]
+                                _guide_hunter = list(dict.fromkeys(
+                                    _guide_elite + _guide_net))
+                                _guide_rescue = _guide_ums(_guide_hunter) & _guide_red_cut
+                                _guide_axis = list(_cv_g.get('honmei') or [])[:1]
+
+                                try:
+                                    _guide_narrow = _nn_guide.recommend(
+                                        _ph_arare, len(df))
+                                except Exception:
+                                    _guide_narrow = None
+                                _guide_target = (
+                                    int(_guide_narrow['n']) if _guide_narrow else None)
+
+                                st.markdown("##### ③ 消去結果")
+                                if _guide_cross_done:
+                                    st.markdown(
+                                        f"**残った馬:** {_guide_horses(_guide_survivors)}")
+                                    st.markdown(
+                                        f"**🔴重複で外した馬:** {_guide_horses(_guide_red_cut)}")
+                                else:
+                                    st.warning("消去クロステーブルの最終候補がまだありません。"
+                                               "先に赤い重複を確認して、残す馬を確定してください。")
+                                if _guide_target:
+                                    st.caption(f"目安は **{_guide_target}頭以内**。"
+                                               "無理に削るのではなく、穴馬候補を確認してから調整します。")
+
+                                # 10点は軸1頭×使う馬から、3連複オッズの安い順（来やすい順）。
+                                # 中庸でも穴馬は使う馬に入れるだけ。毎点に穴を必須にはしない
+                                # （2025-26の近似検証で的中率が一番高かった組み方）。
+                                # 下の3連複おすすめエンジンの設定・買い目は変えない。
+                                _guide_axis_set = _guide_ums(_guide_axis)
+                                _guide_b = _guide_ums(_guide_hunter) - _guide_axis_set
+                                if _guide_kind == '堅い':
+                                    _guide_pool = _guide_survivors | _guide_axis_set
+                                elif _guide_kind == '中庸':
+                                    _guide_pool = (
+                                        _guide_survivors | _guide_b | _guide_axis_set)
+                                else:
+                                    _guide_pool = set()
+
+                                st.markdown("##### ④ 使う馬")
+                                if _guide_kind == '堅い':
+                                    st.success("**堅いレース → 軸1頭 ＋ 残った馬 から、オッズの安い順に10点**")
+                                    st.markdown(
+                                        f"- 軸（1頭）: **{_guide_horses(_guide_axis)}**\n"
+                                        f"- 使う馬: **{_guide_horses(_guide_pool)}**")
+                                    if (_guide_target and _guide_survivors
+                                            and len(_guide_survivors) > _guide_target):
+                                        st.warning(
+                                            f"使う馬が{len(_guide_survivors)}頭で、目安の"
+                                            f"{_guide_target}頭を超えています。"
+                                            "🔴重複をもう一度確認してください。")
+                                elif _guide_kind == '中庸':
+                                    st.success(
+                                        "**中庸レース → 軸1頭 ＋ 残った馬と穴馬候補 から、"
+                                        "オッズの安い順に10点**")
+                                    st.markdown(
+                                        f"- 軸（1頭）: **{_guide_horses(_guide_axis)}**\n"
+                                        f"- 使う馬: **{_guide_horses(_guide_pool)}**\n"
+                                        f"- そのうち穴馬候補（6番人気以下の精鋭1・2位／広域網1位）: "
+                                        f"**{_guide_horses(_guide_b)}**")
+                                    st.caption(
+                                        "穴馬は使う馬に入れるだけです。10点のすべてに穴馬を"
+                                        "入れる必要はありません。オッズが安い組から順に取ります。")
+                                    if _guide_rescue:
+                                        st.warning(
+                                            "🔥 **赤い重複から使う馬へ戻す穴馬:** "
+                                            + _guide_horses(_guide_rescue)
+                                            + "（精鋭1・2位／広域網1位に該当）")
+                                    if not _guide_b:
+                                        st.info("穴馬候補はありません。残った馬だけで10点を作ります。")
+                                    if (_guide_target and _guide_pool
+                                            and len(_guide_pool) > _guide_target):
+                                        _guide_over = len(_guide_pool) - _guide_target
+                                        st.warning(
+                                            f"使う馬が{len(_guide_pool)}頭で、目安の"
+                                            f"{_guide_target}頭より{_guide_over}頭多いです。"
+                                            "穴馬候補は残し、それ以外を見直してください。")
+                                else:
+                                    st.info("荒れ・大荒れは、この「堅い／中庸」用の"
+                                            "3連複手順では買い目を作りません。")
+
+                                st.markdown("##### ⑤ この手順の10点")
+                                _guide_axis_u = (_guide_axis[0] if _guide_axis else None)
+                                _guide_odds_list = st.session_state.get(
+                                    f"sanrenpuku_odds_{race_id_input}")
+                                if _guide_kind == '対象外':
+                                    pass
+                                elif not _guide_cross_done:
+                                    st.caption("消去クロステーブルの最終候補が決まってから10点を出します。")
+                                elif _guide_axis_u is None:
+                                    st.warning("軸が決まっていません。統合ビューの本命が1頭出てから10点を出します。")
+                                elif len(_guide_pool - {_guide_axis_u}) < 2:
+                                    st.warning("軸以外の使う馬が2頭未満です。10点を作れません。")
+                                elif not _guide_odds_list:
+                                    st.info("3連複オッズがまだありません。下の3連複おすすめエンジンで"
+                                            "🚀一括実行を押すと、ここにオッズの安い順の10点が出ます。")
+                                else:
+                                    from itertools import combinations as _guide_comb
+                                    from core import trio_engine as _te_guide
+                                    _guide_omap = _te_guide.build_odds_map(_guide_odds_list)
+                                    _guide_rest = sorted(
+                                        u for u in _guide_pool if u != _guide_axis_u)
+                                    _guide_rows = []
+                                    for _gx, _gy in _guide_comb(_guide_rest, 2):
+                                        _gtrio = (_guide_axis_u, _gx, _gy)
+                                        _gods = _guide_omap.get(frozenset(_gtrio))
+                                        if _gods is not None:
+                                            _guide_rows.append((_gods, _gtrio))
+                                    _guide_rows.sort(key=lambda r: r[0])
+                                    _guide_rows = _guide_rows[:10]
+                                    if len(_guide_rows) < 10:
+                                        st.caption(f"オッズが取れた組は{len(_guide_rows)}点です。")
+                                    _guide_show = []
+                                    for _gi, (_gods, _gtrio) in enumerate(_guide_rows, 1):
+                                        _ghas_ana = bool(set(_gtrio) & _guide_b)
+                                        _guide_show.append({
+                                            '点': _gi,
+                                            '馬番': '-'.join(f'{u}' for u in sorted(_gtrio)),
+                                            '馬名': ' / '.join(
+                                                _guide_names.get(u, '') for u in sorted(_gtrio)),
+                                            'オッズ': f'{_gods:.1f}倍',
+                                            '100円あたりの払い戻し': f'{int(round(_gods * 100)):,}円',
+                                            'メモ': (
+                                                ('穴馬入り・' if _ghas_ana else '')
+                                                + ('10点買うと元が取れない'
+                                                   if _gods < 10 else '')
+                                            ).rstrip('・'),
+                                        })
+                                    if _guide_show:
+                                        st.dataframe(
+                                            _guide_show, hide_index=True, use_container_width=True)
+                                        st.caption(
+                                            "1点100円・10点で1,000円として見ています。"
+                                            "「10点買うと元が取れない」は、当たっても払い戻しが"
+                                            "1,000円未満の組です。"
+                                            "「穴馬入り」は、6番人気以下の穴馬候補が1頭入っている組です。"
+                                            "下の3連複おすすめエンジンの買い目は、この10点には自動で変わりません。")
+                                    else:
+                                        st.warning("使う馬の組み合わせに3連複オッズがありません。"
+                                                   "下の🚀一括実行で取り直してください。")
                         except Exception as _phe:
-                            st.caption(f"（開発者の思考をスキップ: {_phe}）")
+                            st.caption(f"（今回の買い方ガイドを表示できませんでした: {_phe}）")
                     except Exception as _cve:
                         st.caption(f"（統合ビューをスキップ: {_cve}）")
 
@@ -9899,7 +10485,31 @@ if nav == "🏠 Single Race Analysis":
                         _pb_tone = {'D': 'success', 'C': 'info', 'BA': 'warning'}.get(
                             _pb_live.get('zone'), 'info')
                         _pb_msg = f"**{_pb_live.get('ui_line', '')}**  \n{_pb_live.get('plain_caption', '')}"
-                        if _pb_live.get('warning'):
+                        _pb_c_dual = (
+                            _pb_live.get('zone') == 'C'
+                            and _pb_live.get('selected_playbook') == 'c_ltr_trio_236'
+                            and not _pb_live.get('skip')
+                            and bool(_pb_live.get('trio'))
+                        )
+                        if _pb_c_dual:
+                            _pb_msg = (
+                                "**Cゾーン — 3連複を2種類同時表示**  \n"
+                                "💰 **ROI重視** の 2-3-6 が本番買い目です。"
+                                "🎯 **的中率重視** の 2-4-8 は Shadow（比較・検証用）で、"
+                                "本番には混ぜません。"
+                            )
+                            if _pb_live.get('selection_reason'):
+                                _pb_msg += f"  \n（{_pb_live['selection_reason']}）"
+                            if _pb_live.get('warning'):
+                                _pb_msg += f"  \n{_pb_live['warning']}"
+                        elif _pb_live.get('selected_bet_type'):
+                            _pb_msg = (
+                                f"**推奨券種: {_pb_live.get('selected_bet_type')}**　"
+                                f"**買い方: {_pb_live.get('strategy', '')}**  \n"
+                                + _pb_msg)
+                        if _pb_live.get('selection_reason') and not _pb_c_dual:
+                            _pb_msg += f"  \n（{_pb_live['selection_reason']}）"
+                        if _pb_live.get('warning') and not _pb_c_dual:
                             _pb_msg += f"  \n{_pb_live['warning']}"
                         if _pb_tone == 'success':
                             st.success(_pb_msg)
@@ -9907,17 +10517,43 @@ if nav == "🏠 Single Race Analysis":
                             st.warning(_pb_msg)
                         else:
                             st.info(_pb_msg)
+                        # ── 判定の道筋（Rule B の可視化。表示のみ・計算は selector 既存）──
+                        # 「なぜこの券種か」を ゾーン→共通馬→Rule B の手順で示す。
+                        # 新しい計算・閾値は足さない（core/bettype_selector.decision_chain）。
+                        try:
+                            from core import bettype_selector as _bts_ui
+                            _chain = _bts_ui.decision_chain(
+                                _pb_live.get('zone'), _pb_live.get('cross_n'),
+                                cross_n_source=_pb_live.get('cross_n_source', 'given'))
+                            _chain_html = '<br>'.join(
+                                f'{_i + 1}. {_s}' for _i, _s in enumerate(_chain['steps']))
+                            st.markdown(
+                                "<div style='font-size:0.92em;opacity:.92;margin:2px 0 6px'>"
+                                "🧭 <b>判定の道筋（Rule B・検証済み）</b><br>"
+                                f"{_chain_html}</div>",
+                                unsafe_allow_html=True)
+                        except Exception:
+                            pass
                         _ax_show = _pb_live.get('axis') or []
                         _mk_show = _pb_live.get('axis_marks') or {}
                         if _ax_show:
                             _ax_txt = ' / '.join(
                                 f"{_mk_show.get(u, '')}{u}番".strip() for u in _ax_show)
+                            _rank_txt = (
+                                '人気順' if _pb_live.get('rank_logic') == 'popularity'
+                                else ('能力順（検証AI）' if _pb_live.get('rank_logic') == 'ltr'
+                                      else '見送り'))
+                            if _pb_c_dual:
+                                _meta_tail = f"本番点数: {_pb_live.get('n_points', 0)}"
+                            else:
+                                _meta_tail = (
+                                    f"戦略コード: `{_pb_live.get('strategy')}`　｜　"
+                                    f"点数: {_pb_live.get('n_points', 0)}")
                             st.markdown(
                                 "<style>.sra-pb-meta{color:#ffffff!important;font-size:15px;"
                                 "font-weight:700;margin:4px 0 10px;line-height:1.5;}</style>"
-                                f"<div class='sra-pb-meta'>軸: {_ax_txt}　｜　使う順位: "
-                                f"{'人気順' if _pb_live.get('rank_logic')=='popularity' else ('能力順（検証AI）' if _pb_live.get('rank_logic')=='ltr' else '見送り')}　｜　"
-                                f"戦略コード: `{_pb_live.get('strategy')}`　｜　点数: {_pb_live.get('n_points', 0)}</div>",
+                                f"<div class='sra-pb-meta'>軸: {_ax_txt}　｜　使う順位: {_rank_txt}　｜　"
+                                f"{_meta_tail}</div>",
                                 unsafe_allow_html=True)
                         if _pb_live.get('skip') or (_pb_live.get('zone') == 'BA'):
                             st.markdown(
@@ -9927,7 +10563,80 @@ if nav == "🏠 Single Race Analysis":
                         else:
                             _trio_rows = _pb_live.get('trio') or []
                             _tri_rows = _pb_live.get('trifecta') or []
-                            if _trio_rows:
+                            if _pb_c_dual:
+                                try:
+                                    from core import playbook_shadow as _psh_disp
+                                    _pb_sh = _psh_disp.build_shadow_rec(_pb_live)
+                                except Exception:
+                                    _pb_sh = None
+                                st.markdown(
+                                    "<style>"
+                                    ".sra-c-dual-h{font-size:20px;font-weight:800;margin:0 0 4px;"
+                                    "color:#424242!important;}"
+                                    ".sra-c-dual-shape{font-size:28px;font-weight:900;margin:0 0 6px;}"
+                                    ".sra-c-dual-prod .sra-c-dual-shape{color:#1b5e20!important;}"
+                                    ".sra-c-dual-shadow .sra-c-dual-shape{color:#4a148c!important;}"
+                                    ".sra-c-dual-badge{display:inline-block;font-size:14px;font-weight:800;"
+                                    "padding:3px 10px;border-radius:8px;margin:0 0 10px;}"
+                                    ".sra-c-dual-prod .sra-c-dual-badge{background:#1b5e20;color:#fff!important;}"
+                                    ".sra-c-dual-shadow .sra-c-dual-badge{background:#4a148c;color:#fff!important;}"
+                                    ".sra-c-dual-note{font-size:13px;color:#616161!important;margin:0 0 8px;"
+                                    "line-height:1.5;}"
+                                    "</style>",
+                                    unsafe_allow_html=True)
+                                _pb_tbl = lambda rows: [
+                                    {'買い目': r.get('label'),
+                                     '馬名': ' / '.join(x for x in (r.get('names') or ()) if x)}
+                                    for r in (rows or [])]
+                                _c_prod, _c_shadow = st.columns(2)
+                                with _c_prod:
+                                    st.markdown(
+                                        "<div class='sra-c-dual-prod'>"
+                                        "<div class='sra-c-dual-h'>💰 ROI重視</div>"
+                                        "<div class='sra-c-dual-shape'>2-3-6</div>"
+                                        "<span class='sra-c-dual-badge'>【本番】</span>"
+                                        "<div class='sra-c-dual-note'>"
+                                        "3連複 Rank2-3-6。保存・成績・新聞の本番買い目です。"
+                                        "</div></div>",
+                                        unsafe_allow_html=True)
+                                    st.dataframe(
+                                        _pb_tbl(_trio_rows),
+                                        hide_index=True, use_container_width=True)
+                                    _prod_inv = int(_pb_live.get('n_points') or 0) * 100
+                                    st.caption(
+                                        f"点数 {_pb_live.get('n_points', 0)}　"
+                                        f"投資 {_prod_inv:,}円（100円×点数）")
+                                with _c_shadow:
+                                    st.markdown(
+                                        "<div class='sra-c-dual-shadow'>"
+                                        "<div class='sra-c-dual-h'>🎯 的中率重視</div>"
+                                        "<div class='sra-c-dual-shape'>2-4-8</div>"
+                                        "<span class='sra-c-dual-badge'>【Shadow】</span>"
+                                        "<div class='sra-c-dual-note'>"
+                                        "3連複 Rank2-4-8。裏で記録する比較用。"
+                                        "本番買い目には混ぜません。"
+                                        "</div></div>",
+                                        unsafe_allow_html=True)
+                                    if _pb_sh and not _pb_sh.get('skip'):
+                                        st.dataframe(
+                                            _pb_tbl(_pb_sh.get('trio')),
+                                            hide_index=True, use_container_width=True)
+                                        _sh_pts = int(_pb_sh.get('n_points') or 0)
+                                        _sh_inv = _sh_pts * 100
+                                        st.caption(
+                                            f"点数 {_sh_pts}　"
+                                            f"投資 {_sh_inv:,}円（100円×点数）")
+                                        st.caption(
+                                            "Shadow成績の回収率は、検証用に"
+                                            "700円を点数で割った試算です。"
+                                            "実際の購入は1点100円からです。")
+                                    else:
+                                        _sh_warn = (
+                                            (_pb_sh or {}).get('warning')
+                                            or (_pb_sh or {}).get('skip_detail')
+                                            or 'Shadow を計算できませんでした')
+                                        st.caption(_sh_warn)
+                            elif _trio_rows:
                                 st.markdown("**3連複（デフォルト）**")
                                 st.dataframe(
                                     [{'買い目': r.get('label'),
@@ -10138,12 +10847,12 @@ if nav == "🏠 Single Race Analysis":
                     _kept_src = ''
                     try:
                         from core import score_cache as _sck_r
-                        _kept = _sck_r.read_keep(race_id_input)
+                        _kept = _sck_r.read_elim_keep(race_id_input)
                         if _kept:
                             _inter = [u for u in _all_te_um if u in _kept]
                             if len(_inter) >= 3:
                                 _keep_default = _inter
-                                _kept_src = f"（🧹消去で残した{len(_inter)}頭を自動取込）"
+                                _kept_src = f"（🎯強適消去で残した{len(_inter)}頭を自動取込）"
                     except Exception:
                         pass
                     _uck = lambda u: f"te_use_ck_{race_id_input}_{u}"
@@ -10350,7 +11059,7 @@ if nav == "🏠 Single Race Analysis":
                                     "🚀 一括実行（オッズ取得→3連複/3連単→🎯抽出）", type='primary',
                                     use_container_width=True)
                                 _btn_all_f = _fb2.form_submit_button("使う馬=全選択", use_container_width=True)
-                                _btn_reset_f = _fb3.form_submit_button("使う馬=消去残しに戻す", use_container_width=True)
+                                _btn_reset_f = _fb3.form_submit_button("使う馬=強適消去残しに戻す", use_container_width=True)
                         if _btn_all_f:
                             for u in _all_te_um:
                                 st.session_state[_uck(u)] = True
@@ -10557,12 +11266,19 @@ if nav == "🏠 Single Race Analysis":
                             _n_field_te = None
                     _vlab_te = (str(_rv_sum.get('label') or '')[:1]
                                 if (_rv_sum and _ab_on) else None)
+                    # 堅い(C/D)・中庸(B)の3連単は、勝ち払い戻しの真ん中に固定する。
+                    # 3連複帯の×5/×6は中庸の上限が約13.7万円まで開く。
+                    _tri_label_band = (_te.trifecta_band_for_label(_vlab_te)
+                                       if _adaptive_band else None)
                     if _adaptive_band:
                         _trio_band = _te.scale_band_for_venue(
                             _adaptive_band, _venue_te, 'trio', _vlab_te, _n_field_te)
-                        _tri_band = _te.scale_band_for_venue(
-                            _te.trifecta_band_from_trio(_adaptive_band),
-                            _venue_te, 'trifecta', _vlab_te, _n_field_te)
+                        if _tri_label_band:
+                            _tri_band = _tri_label_band
+                        else:
+                            _tri_band = _te.scale_band_for_venue(
+                                _te.trifecta_band_from_trio(_adaptive_band),
+                                _venue_te, 'trifecta', _vlab_te, _n_field_te)
                     else:
                         _trio_band = _te.scale_band_for_venue(
                             _te.default_trio_band(_pat_key), _venue_te, 'trio', None, _n_field_te)
@@ -10588,7 +11304,14 @@ if nav == "🏠 Single Race Analysis":
                             + ('少頭数ぶん下げ' if _sc_n < 1 else '多頭数ぶん上げ')
                         )
                     _why_txt = "。".join(_why) + "。" if _why else ""
-                    if _adaptive_band:
+                    if _adaptive_band and _tri_label_band:
+                        st.caption(
+                            f"3連単は{_rv_sum['label']}の勝ち払い戻しの真ん中だけ。"
+                            f"約{int(_tri_band[0]*100):,}〜{int(_tri_band[1]*100):,}円の組を、"
+                            "人気の高い順（オッズが安い順）に出します。"
+                            "これより高い組は出しません。"
+                        )
+                    elif _adaptive_band:
                         st.caption(
                             f"🌀可変帯ON: 妙味度{_rv_sum['label']}の全国帯に場と頭数の実測を重ねた狙い目。"
                             + _why_txt
@@ -10632,23 +11355,38 @@ if nav == "🏠 Single Race Analysis":
                                 _c_umaban.append(int(c[1:3]))
                             except Exception:
                                 pass
+                    # フォーメーションは A×B×C。点数が収まるならオッズで削らない。
+                    # 1軸は使う馬からオッズの安い順。🧩combo馬流しのときは従来の絞り込み。
                     if _mode_key == 'formation':
-                        if not _ana_umaban:
-                            _ana_umaban = sorted(_aim.get('ana') or set())[:2]
-                            if _ana_umaban:
-                                st.caption(f"B群(穴候補)未選択 → 穴馬候補(6番人気以下)から上位{len(_ana_umaban)}頭を自動設定: "
-                                           + ", ".join(f"{u}番{_te_name_m.get(u, '')}" for u in _ana_umaban))
-                        _te_res = _te.recommend_trio_formation(
+                        _te_res = _te.recommend_trio_abc(
                             _te_horses, axis_umaban=_axis_umaban, ana_umaban=_ana_umaban,
                             c_umaban=(_c_umaban if _c_umaban else None),
-                            odds_map=_odds_map, n_points=_n_points,
-                            band=_trio_band, band_hard=_band_hard_on)
+                            odds_map=_odds_map, n_points=_n_points, band=_trio_band)
                         _fm = _te_res.get('meta') or {}
-                        if _fm.get('a_group') or _fm.get('b_group'):
-                            st.caption(f"🔀 フォーメーション: A群(軸)={_fm.get('a_group', [])} × "
-                                       f"B群(穴候補)={_fm.get('b_group', [])} × "
-                                       f"C群(残り)={_fm.get('c_group', [])} → "
-                                       f"候補{_fm.get('total_candidates', '?')}通りから上位{_n_points}点")
+                        if _fm.get('kept_all'):
+                            st.caption(
+                                f"🔀 A×B×C で{_fm.get('generated', 0)}点。"
+                                "指定した点数に収まるので、オッズでは削っていません。"
+                                "B群の穴はすべての買い目に1頭入ります。")
+                        elif _fm.get('abc'):
+                            _q = _fm.get('b_quota') or {}
+                            _qtxt = "、".join(f"{u}番{_q[u]}点" for u in _q)
+                            st.caption(
+                                f"🔀 A×B×C は{_fm.get('generated', 0)}点あったので"
+                                f"{_n_points}点に絞りました。穴の評価で枠を配分"
+                                + (f"（{_qtxt}）" if _qtxt else "")
+                                + "。安い順だけでは削っていません。")
+                    elif _mode_key == '1軸' and not _combo_flow:
+                        _easy_axis = _axis_umaban[:1]
+                        _te_res = _te.recommend_trio(
+                            _te_horses, odds_map=_odds_map,
+                            axis_umaban=_easy_axis, axis_mode='1軸',
+                            pattern=_pat_key, n_points=_n_points,
+                            rank_by_odds=True)
+                        st.caption(
+                            f"軸{_easy_axis or '未選択'}と使う馬から、"
+                            f"3連複オッズの安い順に{_n_points}点。"
+                            "本線・狙い目価格帯では並べていません。")
                     else:
                         _te_res = _te.recommend_trio(_te_horses, odds_map=_odds_map,
                                                      axis_umaban=_axis_umaban, axis_mode=_mode_key,
@@ -10680,10 +11418,24 @@ if nav == "🏠 Single Race Analysis":
                                 danger_horses=_aim['danger'], ana_set=_aim['ana'],
                                 edge_reasons=_aim.get('edge_reasons'),
                                 danger_reasons=_aim.get('danger_reasons'))
-                            st.caption("🎯妙味度＝🎯(狙い目価格帯×穴脚の検証エッジが揃った本命級のみ)／🔵エッジ(検証エッジ脚)"
-                                       "／価格帯(帯のみ)／⚠(危険馬を含む)。根拠列に🔵補正T・🔥末脚・🏠厩舎当ｺｰｽ・"
-                                       "⭐黄金ライン・🟢道悪軸などの検証エッジを表示。価格帯は的中を予測しないため🎯は付けません。"
-                                       "削らず並べ替え＝根拠のある組を上に。")
+                            if (_te_res.get('meta') or {}).get('abc'):
+                                _te_res['bets'] = sorted(
+                                    _te_res['bets'], key=lambda b: -float(b.get('score') or 0))
+                                if (_te_res.get('meta') or {}).get('kept_all'):
+                                    st.caption("印と根拠は参考です。買い目はA×B×Cのままで、点数は削っていません。")
+                                else:
+                                    st.caption("印と根拠は参考です。並びはA×B×Cを絞った順のままです。")
+                            elif (_te_res.get('meta') or {}).get('rank_by_odds'):
+                                _te_res['bets'] = sorted(
+                                    _te_res['bets'],
+                                    key=lambda b: (b.get('odds') is None,
+                                                   b.get('odds') if b.get('odds') is not None else 0))
+                                st.caption("印と根拠は参考です。並びはオッズの安い順のままです。")
+                            else:
+                                st.caption("🎯妙味度＝🎯(狙い目価格帯×穴脚の検証エッジが揃った本命級のみ)／🔵エッジ(検証エッジ脚)"
+                                           "／価格帯(帯のみ)／⚠(危険馬を含む)。根拠列に🔵補正T・🔥末脚・🏠厩舎当ｺｰｽ・"
+                                           "⭐黄金ライン・🟢道悪軸などの検証エッジを表示。価格帯は的中を予測しないため🎯は付けません。"
+                                           "削らず並べ替え＝根拠のある組を上に。")
                         except Exception as _bfe:
                             st.caption(f"（馬券フィルター適用スキップ: {_bfe}）")
                         _sashi_map = st.session_state.get(f'_sashi_reach_{race_id_input}') or {}
@@ -10829,7 +11581,8 @@ if nav == "🏠 Single Race Analysis":
                                                       combo_flow=_combo_flow, keep_partners=_keep_cands,
                                                       band=_tri_band,
                                                       must_include=_tri_must,
-                                                      require_axis_all=_req_ax)
+                                                      require_axis_all=_req_ax,
+                                                      market_rank=bool(_tri_label_band))
                     if _mode_key == 'formation' and _tri_must:
                         st.caption("🔀 3連単もフォーメーションの穴(B群)を全点に含めます: "
                                    + "・".join(f"{u}番{_te_name_m.get(u, '')}" for u in _tri_must))
@@ -10933,6 +11686,12 @@ if nav == "🏠 Single Race Analysis":
                                 danger_reasons=_aim.get('danger_reasons'))
                         except Exception as _bfe3:
                             st.caption(f"（馬券フィルター適用スキップ: {_bfe3}）")
+                        if (_tri_res.get('meta') or {}).get('market_rank'):
+                            _tri_res['bets'] = sorted(
+                                _tri_res['bets'],
+                                key=lambda b: (b.get('odds') is None,
+                                               b.get('odds') if b.get('odds') is not None else 0))
+                            st.caption("並びは3連単の人気順（オッズが安い順）です。範囲の外は出していません。")
                         _sashi_map3 = st.session_state.get(f'_sashi_reach_{race_id_input}') or {}
                         if _sashi_on and _sashi_map3:
                             _tri_res['bets'] = sorted(
@@ -12162,6 +12921,8 @@ if nav == "🧹 消去フィルター":
 
         # ===== 🎯 強適消去エンジン（検証済み）=====
         st.markdown("### 🎯 強適消去エンジン（検証済み）")
+        st.caption("追加の危険材料：前走比＋20kg以上の馬体重大幅増。参考記事に基づく補助材料で、"
+                   "ROI改善は未検証です。単独で必ず消去する条件ではありません。")
         st.caption("市場順位±検証済みファクター（黄金ライン/厩舎当コース＝＋、牝冬春/大幅距離変更/初ダート/前走フロック＝−）"
                    "で強適消去スコアを算出→下位半分を消去。消した中から妙味の穴1頭を救出し、危険な人気馬も検知します。"
                    "※俗説条件(前走着順/年齢/ローテ/血統等)は検証で過剰人気=非採用。回顧時は下の📝消去理由で残し学習を蓄積できます。")
@@ -12173,253 +12934,9 @@ if nav == "🧹 消去フィルター":
         if _elim_clicked:
             with st.spinner("検証ファクターを照合中..."):
                 try:
-                    from core import jockey_jv as _jj
-                    from core import elim_reasons as _er
-                    from core import corrected_time as _ct
-                    from core import bet_optimizer as _bo
-                    from core import score_cache as _sc2
-                    # --- 確率列(単勝EV/複勝率/連対率)用: 🏠採点のProjected Scoreをディスクから取得 ---
-                    _scache = _sc2.read_scores(race_id_input)
-                    _score_by_um = {}
-                    _odds_by_um = {}
-                    if _scache:
-                        for _, _rp in df.iterrows():
-                            try:
-                                _u = int(pd.to_numeric(_rp.get('Umaban'), errors='coerce'))
-                            except Exception:
-                                continue
-                            _pj = (_scache.get(_u) or {}).get('proj')
-                            _od = pd.to_numeric(_rp.get('Odds'), errors='coerce')
-                            if _pj is not None:
-                                _score_by_um[_u] = float(_pj)
-                            if pd.notnull(_od) and _od > 0:
-                                _odds_by_um[_u] = float(_od)
-                    _winp = _bo.blended_win_probs(_score_by_um, _odds_by_um) if _score_by_um else {}
-                    _all_um = list(_winp.keys())
-                    # ②オッズ断層直下(市場が線を引いて見放した側=検証: 残差-5.1pp z-16.5)
-                    try:
-                        from core import value_scanner as _vs_gb
-                        _gap_below = _vs_gb.odds_gap_below(_odds_by_um)
-                    except Exception:
-                        _gap_below = set()
-
-                    def _top2_prob(wp, a, allu):
-                        s = wp.get(a, 0.0)
-                        for b in allu:
-                            if b != a:
-                                s += _bo._p2(wp, b, a)
-                        return s
-                    _jyo = str(race_id_input)[4:6]
-                    _surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
-                    # 馬場状態(重/不良)= 検証済み危険人気馬バイアス用(verified_heavy_track_bias)
-                    _baba = str(metadata.get('condition', '') or '')
-                    try:
-                        _dist = int(pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
-                    except Exception:
-                        _dist = None
-                    _dv = str(metadata.get('date_val', '') or '')
-                    _mo = int(_dv[4:6]) if len(_dv) >= 6 and _dv[4:6].isdigit() else 0
-                    _miny = str(int(_dv[:4]) - 3) if _dv[:4].isdigit() else None
-                    # 🔥末脚救出の検証定義(scripts/spurt_index_backtest.py): 末脚指数の
-                    # 『レース内top3(順位)』×人気≥6 → 複勝13.4%/ROI77.7%(ベース9.4%/66.4%)。
-                    # 旧版は絶対値0.8で実質発火せず(実測の末脚指数は概ね-0.7〜+0.6で0.8未到達)。
-                    # → 事前にフィールド内で末脚指数を順位付けし top3 の馬番集合を作る。
-                    _spurt_rank = []
-                    for _, _r0 in df.iterrows():
-                        _kt0, _ = _jj.resolve_horse(str(_r0.get('Name', '')))
-                        _c0 = _jj.horse_recent_context(_kt0) if _kt0 else None
-                        _si0 = (_c0 or {}).get('spurt_index')
-                        _sr0 = (_c0 or {}).get('spurt_runs', 0)
-                        if _si0 is None and str(_r0.get('Name', '')) in _nk_spurt_map:
-                            _si0, _sr0 = _nk_spurt_map[str(_r0.get('Name', ''))]
-                        if _si0 is not None and _sr0 >= 2:
-                            try:
-                                _spurt_rank.append((int(_r0.get('Umaban')), float(_si0)))
-                            except Exception:
-                                pass
-                    _spurt_top3 = {u for u, _ in sorted(_spurt_rank, key=lambda x: -x[1])[:3]}
-                    from core import track_bias as _tb  # 道悪×血統の精緻化に使用
-                    _erows = []
-                    for _, _r in df.iterrows():
-                        _nm = str(_r.get('Name', ''))
-                        try:
-                            _um = int(_r.get('Umaban'))
-                        except Exception:
-                            _um = 0
-                        _pop = pd.to_numeric(_r.get('Popularity'), errors='coerce')
-                        _odds = pd.to_numeric(_r.get('Odds'), errors='coerce')
-                        _jky = str(_r.get('Jockey', '') or '')
-                        _sa = str(_r.get('SexAge', '') or '')
-                        _kt, _tc = _jj.resolve_horse(_nm)
-                        _g = _jj.jockey_trainer_combo(_jky, _tc) if _tc else None
-                        _gold = _jj.is_golden_line(_g)
-                        _cs = _jj.trainer_course_winrate(_tc, _jyo, _surf, min_year=_miny) if _tc else None
-                        # 妙味ゲートは縮小推定した勝率で判定(少ない出走数の過信を防ぐ)
-                        _tcwr = (_cs.get('win_rate_shrunk') if _cs else None)
-                        if _tcwr is None and _cs:
-                            _tcwr = _cs.get('win_rate')
-                        _tcok = bool(_cs and _cs.get('runs', 0) >= 10
-                                     and (_tcwr or 0) >= _jj.TRAINER_COURSE_GATE)
-                        _ctx = _jj.horse_recent_context(_kt) if _kt else None
-                        _fade = ('牝' in _sa) and _mo in (12, 1, 2, 3, 4, 5)
-                        _distchg = bool(_ctx and _ctx.get('prev_dist') and _dist and abs(_dist - _ctx['prev_dist']) >= 400)
-                        _hatsud = ('ダ' in _surf) and bool(_ctx) and _ctx.get('dirt_runs', 0) == 0
-                        _fluke = bool(_ctx and _ctx.get('prev_ninki') and _ctx.get('prev_chaku')
-                                      and _ctx['prev_ninki'] >= 6 and _ctx['prev_chaku'] <= 3)
-                        # --- 追加検証済み危険シグナル(scripts/dangerfav_backtest.py) ---
-                        def _njk(s):
-                            return ''.join(str(s or '').split())
-
-                        def _same_jk(a, b):
-                            return bool(a and b and (a == b or (len(a) >= 2 and len(b) >= 2
-                                       and (a.startswith(b) or b.startswith(a)))))
-                        _curj = _njk(_r.get('Jockey', ''))
-                        _pvj = (_ctx or {}).get('prev_jockey')
-                        _topswap = bool(_ctx and _pvj and _jj.jockey_is_top(_pvj)
-                                        and not _same_jk(_curj, _njk(_pvj)))
-                        _kinratio = False
-                        try:
-                            _fk = float(_r.get('WeightCarried'))
-                            _bwm = re.match(r'(\d+)', str(_r.get('Weight', '')))
-                            if _bwm and int(_bwm.group(1)) > 0 and _fk / int(_bwm.group(1)) >= 0.126:
-                                _kinratio = True
-                        except Exception:
-                            pass
-                        _rest = False
-                        _gap_days = None
-                        try:
-                            _pdt = (_ctx or {}).get('prev_date')
-                            if _pdt and len(_dv) >= 8:
-                                _gap = (datetime.strptime(_dv[:8], '%Y%m%d')
-                                        - datetime.strptime(_pdt, '%Y%m%d')).days
-                                _gap_days = _gap
-                                if _gap >= 180:
-                                    _rest = True
-                        except Exception:
-                            pass
-                        # 馬体重増減(タグ用)
-                        _zg_e = None
-                        _mzg_e = re.search(r'\(([-+]?\d+)\)', str(_r.get('Weight', '') or ''))
-                        if _mzg_e:
-                            try:
-                                _zg_e = int(_mzg_e.group(1))
-                            except Exception:
-                                _zg_e = None
-                        _nige = bool(_ctx and _ctx.get('prev_kyaku') == '1')
-                        # 🔥末脚救出(独立): レース内 末脚指数top3 × 人気≥6 × 2走以上
-                        # (scripts/spurt_index_backtest.py 検証: 複勝13.4%/ROI77.7% ＞ ベース9.4%/66.4%)
-                        _si = (_ctx or {}).get('spurt_index')
-                        _sr = (_ctx or {}).get('spurt_runs', 0)
-                        if _si is None and _nm in _nk_spurt_map:
-                            _si, _sr = _nk_spurt_map[_nm]
-                        _spurt = bool(_um in _spurt_top3 and _sr >= 2
-                                      and pd.notnull(_pop) and _pop >= 6)
-                        # 🌧️ 重・不良馬場×1番人気=構造的に危険(verified_heavy_track_bias)
-                        # 芝重/芝不良で複勝-5.6〜-9.2pp, ダ不良で-3.7pp(オッズ未織込・z有意)
-                        _babafav = bool(
-                            pd.notnull(_pop) and _pop == 1 and (
-                                ('芝' in _surf and _baba in ('重', '不良')) or
-                                ('ダ' in _surf and _baba == '不良')))
-                        # 血統で精緻化(scripts/heavy_fav_blood_split.py): シニミニ系は道悪ダートで
-                        # むしろ好走→危険を免除(🟢軸補強)、瞬発/ステゴ系は芝道悪で危険を裏付け。
-                        _wetaxis = None
-                        _fadewet = False
-                        if pd.notnull(_pop) and _pop <= 3 and _baba in ('重', '不良'):
-                            # スクレイプ済み血統(netkeiba)優先→無ければjravan horses(JV血統マスタは2023-07凍結)
-                            _hsire = str(_r.get('sire') or '').strip()
-                            if not _hsire or _hsire == '-':
-                                _hsire = _tb.sire_of_ketto(_kt) if _kt else None
-                            _bmod = _tb.heavy_fav_blood_mod(_hsire, _surf, _baba) if _hsire else None
-                            if _bmod and _bmod['mod'] == 'exempt':
-                                _babafav = False          # 高含水○血統→危険免除
-                                _wetaxis = _bmod
-                            elif _bmod and _bmod['mod'] == 'intensify':
-                                _fadewet = True           # 瞬発/ステゴ系→危険を裏付け
-                        _posr = []
-                        if _gold:
-                            _posr.append(f"黄金ライン(連対{_g['top2']:.0%}/{_g['rides']})")
-                        if _tcok:
-                            _posr.append(f"厩舎当ｺｰｽ{_cs['win_rate']:.0%}")
-                        if _spurt:
-                            _posr.append(f"🔥末脚救出(指数{_si:.1f})")
-                        if _wetaxis:
-                            _posr.append(f"🟢道悪軸(高含水○血統・ダ{_baba})")
-                        _negr = []
-                        if _fade:
-                            _negr.append('牝' + ('冬' if _mo in (12, 1, 2) else '春') + 'ﾌｪｰﾄﾞ')
-                        if _distchg:
-                            _negr.append('大幅距離変更')
-                        if _hatsud:
-                            _negr.append('初ダート')
-                        if _fluke:
-                            _negr.append('前走フロック')
-                        if _topswap:
-                            _negr.append('トップ騎手乗替')
-                        if _kinratio:
-                            _negr.append('斤量比≥12.6%')
-                        if _rest:
-                            _negr.append('半年休み明け')
-                        if _babafav:
-                            _bf_txt = f'🌧️{_baba}馬場×1番人気(複勝-5〜9pp検証)'
-                            if _fadewet:
-                                _bf_txt += '⚠瞬発/ステゴ系で裏付け'
-                            _negr.append(_bf_txt)
-                        if _nige:
-                            _negr.append('前走逃げ')
-                        # 年齢7歳以上(検証: 人気馬複勝残差 train-5.0pp/holdout-12.1pp・ピーク過ぎ)
-                        try:
-                            _agv = int(''.join(c for c in str(_sa or '') if c.isdigit()) or 0)
-                            if _agv >= 7:
-                                _negr.append('高齢(7歳+)')
-                        except (TypeError, ValueError):
-                            pass
-                        # 前走5着以下(検証: 人気馬複勝残差 train-1.5pp/holdout-1.8pp・市場が過信)
-                        try:
-                            _prv = _r.get('PastRuns')
-                            if isinstance(_prv, list) and _prv:
-                                if int(_prv[0].get('Rank')) >= 5:
-                                    _negr.append('前走5着以下')
-                        except (TypeError, ValueError):
-                            pass
-                        # オッズ断層直下(検証: 残差-5.1pp z-16.5・市場が線を引いて見放した側=強い消し)
-                        if _um in _gap_below:
-                            _negr.append('🌊断層直下')
-                        _pos = bool(_posr)
-                        _neg = bool(_negr)
-                        _score = -(float(_pop) if pd.notnull(_pop) else 18) + (1.5 if _pos else 0) - (1.5 if _neg else 0)
-                        # 消去理由ラーニング用の構造タグ
-                        _tags = sorted(_er.compute_tags(
-                            ninki=(float(_pop) if pd.notnull(_pop) else None),
-                            prev_dist=(_ctx or {}).get('prev_dist'), cur_dist=_dist,
-                            layoff_days=_gap_days, spurt_index=_si, spurt_runs=_sr,
-                            zogen=_zg_e, sex_age=_sa, prev_kyaku=(_ctx or {}).get('prev_kyaku'),
-                            surface=_surf, dirt_runs=(_ctx or {}).get('dirt_runs'),
-                            topswap=_topswap))
-                        # 補正タイム(H7=直近7走×同一馬場の最高・負=速い／検証: 本命補強+穴の相手に有効)
-                        # 該当馬場のfigが無ければ利用可能なfigにフォールバック(強適表と同じ寛容さ)。
-                        # NAR(ダート専用)馬にsurface='芝'が渡ると fig_shiba=None で'-'になる不整合を修正。
-                        _figd = (_ct.get_figure(_kt, _surf) or _ct.get_figure(_kt, None)) if _kt else None
-                        _ctbest = (_figd or {}).get('fig')
-                        # 確率列(Projected Scoreがある時だけ) EV=p*odds / 複勝=P(3着内) / 連対=P(2着内)
-                        _p = _winp.get(_um)
-                        _ev = _bo.ev(_p, _odds) if (_p and pd.notnull(_odds)) else None
-                        _fuk = _bo.place_prob(_winp, _um, _all_um) if (_p and len(_all_um) >= 4) else None
-                        _ren = _top2_prob(_winp, _um, _all_um) if (_p and len(_all_um) >= 3) else None
-                        _erows.append({'馬番': _um, '馬名': _nm,
-                                       '人気': int(_pop) if pd.notnull(_pop) else None,
-                                       'オッズ': float(_odds) if pd.notnull(_odds) else None,
-                                       'score': _score, 'pos': _pos, 'neg': _neg,
-                                       '妙味材料': ' / '.join(_posr) or '-',
-                                       # 強い危険材料(検証で残差大)は🔴を付けて区別: 🌧️重不良×1番人気(-5〜9pp)/
-                                       # 半年休み明け(-6pp)/高齢7歳+(-6.5pp)/牝冬春フェード。弱い(priced-in)材料は無印。
-                                       '危険材料': (' / '.join(
-                                           ('🔴' + m if any(p in m for p in
-                                            ('🌧️', '半年休み明け', '高齢(7歳+)', '牝', '🌊断層')) else m)
-                                           for m in _negr) or '-'),
-                                       '_ctbest': _ctbest,
-                                       '_ev': _ev, '_fuk': _fuk, '_ren': _ren,
-                                       '_tags': _tags})
-                    st.session_state[_ekey] = _erows
+                    from core import elim_engine as _ee_kf
+                    st.session_state[_ekey] = _ee_kf.compute_elim_rows(
+                        df, race_id_input, metadata, nk_spurt_map=_nk_spurt_map)
                 except Exception as _e:
                     st.session_state[_ekey] = []
                     st.warning(f"エンジン実行エラー: {_e}")
@@ -12427,6 +12944,7 @@ if nav == "🧹 消去フィルター":
         if not _erows and _ekey not in st.session_state:
             st.info("👆「▶ 強適消去エンジンを実行」を押すと、検証ファクター照合と消去判定を行います。")
         if _erows:
+            from core import elim_engine as _ee_kf
             from core import elim_reasons as _er
             from core import corrected_time as _ct
             # ── 荒れ予報(trio_lean): テーブルtop7の信頼度を事前表示 ──
@@ -12456,21 +12974,8 @@ if nav == "🧹 消去フィルター":
                                f"　{'　/　'.join((_kf_lean_res['pos'] + _kf_lean_res['neg'])[:3])}")
             except Exception:
                 pass
-            _edf = pd.DataFrame(_erows).sort_values('score', ascending=False).reset_index(drop=True)
-            _n = len(_edf)
-            _keep = (_n + 1) // 2
-            # 🛟ボーダー残し(=半分カットのあとN頭だけ戻す): 消去ゾーン上位(score上位の消され馬)。
-            # 中央(JRA): scripts/keepmore_backtest.py 検証(2023-25,9519R) 各戻し馬の3着内人気補正残差:
-            #   +1頭目 +0.83pt(z=1.97) / +2頭目 +1.35pt(z=3.19・最強) / +3頭目 +0.78pt(z=1.84) /
-            #   +4頭目 -0.36pt(z=-0.85=人気どおり以下=損)。→ 戻す価値は+3頭目まで、+4で打ち止め。
-            #   累積3着内取りこぼし: 現行14.9% → +1:10.2% → +2:6.6% → +3:4.1%。
-            # ※どれも単勝ROI70%台=相手(複勝/3連複の押さえ)専用、単勝軸(✅残し上位)には入れない。
-            # 地方(NAR): scripts/nankan_keepmore_backtest.py 検証(大井5開催261R)で同じ検証をしたところ、
-            #   +1〜+4いずれも人気番号基準の残差がz≈0(+0.12/-0.15/+0.24/-0.27)で、中央のような
-            #   「過小評価(妙味)」は確認できなかった(負でもない=単純な取りこぼし防止の安全網として機能)。
-            #   → NARのボーダー残しは「妙味」ではなく「recall安全網」として扱う(頭数上限は中央と同じ式を流用)。
-            _cut_zone = _n - _keep   # 消去ゾーンの頭数
-            _border_max = max(0, min(3, _cut_zone - 1)) if _n >= 6 else 0  # 最低1頭は消しを残す
+            _n = len(_erows)
+            _border_max = _ee_kf.border_max(_n, race_id_input)
             _kf_jyo_sn = str(race_id_input)[4:6] if len(str(race_id_input)) >= 6 else ''
             try:
                 _kf_is_nar_sn = int(_kf_jyo_sn) > 10
@@ -12490,37 +12995,22 @@ if nav == "🧹 消去フィルター":
                     help=_border_help)
             else:
                 _border_cnt = 0
-
-            def _verdict(i):
-                if i < _keep:
-                    return '✅残し'
-                if _border_cnt and _keep <= i < _keep + _border_cnt:
-                    return '🛟ボーダー残し'
-                return '🧹消し'
-            _edf['判定'] = [_verdict(i) for i in range(_n)]
-            # --- 消去理由ラーニングの"分母"を記録: 今『🧹消し』にした馬のタグを台帳へ ---
-            # これが昇格判定の分母(=そのタグで何回切ったか)になる。race_id単位で冪等なので
-            # Streamlitが何度再描画しても二重計上されない。
+            _edf = _ee_kf.apply_verdict(_erows, race_id_input, border_cnt=_border_cnt)
             try:
-                _fired_now = {}
-                for _ix, _rr in _edf.iterrows():
-                    if _edf.at[_ix, '判定'] == '🧹消し':
-                        _fired_now[int(_rr['馬番'])] = list(_rr.get('_tags') or [])
-                if _fired_now:
-                    _er.record_fired(race_id_input, _fired_now)
-            except Exception:
-                pass
-            # --- 消去理由ラーニング: 学習済みタグに合致する消し馬を自動で残しに昇格 ---
-            _ledger = _er.load_ledger()
-            _learned = _er.learned_tags(_ledger)   # 生還率が基準超のタグ(分母なしは3回ルール)
-            _edf['学習残し'] = ''
-            if _learned:
-                for _ix, _rr in _edf.iterrows():
-                    if _edf.at[_ix, '判定'] == '🧹消し':
-                        _hit = sorted(set(_rr.get('_tags') or []) & _learned)
-                        if _hit:
-                            _edf.at[_ix, '判定'] = '✅残し'
-                            _edf.at[_ix, '学習残し'] = '♻️' + '/'.join(_er.TAG_LABEL.get(k, k) for k in _hit)
+                from core import audit_pipeline as _ap_elim
+                _ap_elim.ensure_run_id(race_id_input, 'elim_page')
+                _elim_sig = (_border_cnt, tuple(_ap_elim.build_elim_payload(
+                    _erows, _edf, _border_cnt, race_id_input).get('after_set') or []))
+                _el_out = _ap_elim.record_event_deduped(
+                    race_id_input, 'elim',
+                    signature=_elim_sig,
+                    payload=_ap_elim.build_elim_payload(
+                        _erows, _edf, _border_cnt, race_id_input),
+                    status='ok' if _erows else 'not_run')
+                if not _el_out.ok:
+                    st.warning(f"監査記録(消去)失敗: {_el_out.error}")
+            except Exception as _ap_el_e:
+                st.warning(f"監査記録(消去)失敗: {_ap_el_e}")
             _cut = _edf[_edf['判定'] == '🧹消し']
             _ana = _cut[(_cut['pos']) & (_cut['人気'].fillna(99) >= 8)].sort_values('オッズ', ascending=False)
             _anauma = _ana.iloc[0] if not _ana.empty else None
@@ -12580,11 +13070,11 @@ if nav == "🧹 消去フィルター":
             _border_n = int((_edf['判定'] == '🛟ボーダー残し').sum())
             _cut_n = int((_edf['判定'] == '🧹消し').sum())
             _learn_n = int((_edf['学習残し'].astype(str).str.len() > 0).sum())
-            # 🧹→🏠3連複エンジン連携: 残し(✅+🛟)をディスク保存(後でクロスの最終候補が上書き)
+            # 🎯→🏠推奨買い方/3連複デフォルト母集団: 強適消去残し(✅+🛟)のみ保存（クロスは上書きしない）
             try:
                 from core import score_cache as _sck_w
-                _sck_w.write_keep(race_id_input,
-                                  [int(x) for x in _edf[_edf['判定'] != '🧹消し']['馬番'].tolist()])
+                _sck_w.write_elim_keep(
+                    race_id_input, _ee_kf.keep_umaban_from_edf(_edf))
             except Exception:
                 pass
             # 📰新聞発行: 強適消去エンジンの判定(✅残し/🛟ボーダー残し/🧹消し)を紙面用に保存
@@ -12915,10 +13405,15 @@ if nav == "🧹 消去フィルター":
                         "（採点テーブルの馬番がこのレースと一致すると自動で取り込みます）。</div>",
                         unsafe_allow_html=True)
                 _all_names_ec = df['Name'].astype(str).tolist() if 'Name' in df.columns else []
-                # ⏱️調教分析でC以下(TrainingEval/Score/oikiri)の馬を自動選択(地方は調教データ無しで空)
+                # ⏱️調教C以下: SRA「調教を取得」は別タブのsession_stateにしか残らない。
+                # ディスク(score_cache)経由でC以下を自動取り込み、手動追加も可。
                 _tg_default = []
                 try:
+                    from core.oikiri import is_c_or_below as _is_tg_low
                     _oik_rev_ec = st.session_state.get(f"oikiri_rev_{race_id_input}", {}) or {}
+                    if not _oik_rev_ec:
+                        from core import score_cache as _sc_oik_ec
+                        _oik_rev_ec = _sc_oik_ec.read_oikiri(race_id_input) or {}
                     _gr_from_ec = {100.0: 'A', 70.0: 'B', 40.0: 'C', 10.0: 'D'}
                     for _, _tr in df.iterrows():
                         _tnm = str(_tr.get('Name', ''))
@@ -12931,14 +13426,22 @@ if nav == "🧹 消去フィルター":
                             _tu = pd.to_numeric(_tr.get('Umaban'), errors='coerce')
                             if pd.notnull(_tu):
                                 _tev = (_oik_rev_ec.get(int(_tu), {}) or {}).get('rank', '')
-                        if _tev and _tev.upper()[:1] in ('C', 'D', 'E', 'F') and _tnm in _all_names_ec:
+                        if _tev and _is_tg_low(_tev) and _tnm in _all_names_ec:
                             _tg_default.append(_tnm)
                 except Exception:
                     _tg_default = []
+                _tg_auto = set(_tg_default)
+                _tg_wkey = f"kf_excross_train_{race_id_input}"
+                if _tg_default:
+                    _tg_cur = list(st.session_state.get(_tg_wkey) or [])
+                    _tg_need = [n for n in _tg_default if n not in _tg_cur]
+                    if _tg_need:
+                        st.session_state[_tg_wkey] = _tg_cur + _tg_need
                 _tg_sel = st.multiselect(
-                    "調教C以下の馬（自動=⏱️調教のC以下・手動追加可）", _all_names_ec, default=_tg_default,
-                    key=f"kf_excross_train_{race_id_input}",
-                    help="調教評価はjravan.dbに過去データが無く検証不可。実観測フラグとして重複数に+1加算します。")
+                    "調教C以下の馬（自動=SRA調教取得のC以下・手動追加可）", _all_names_ec,
+                    key=_tg_wkey,
+                    help="🏠SRAの「調教を取得」でC以下だった馬を自動で入れます。"
+                         "調教評価はjravan.dbに過去データが無く検証不可。実観測フラグとして重複数に+1加算します。")
                 _ec_c1, _ec_c2 = st.columns([2, 3])
                 with _ec_c1:
                     _exc_clicked = st.button("▶ 消去クロステーブルを作成", key="kf_excross_run")
@@ -13087,7 +13590,7 @@ if nav == "🧹 消去フィルター":
                                 prev_dist=(_ctx or {}).get('prev_dist'),
                                 cur_dist=_cdist,
                                 zogen=_zg, age=_age,
-                                training_grade='C' if _nm in _tg_sel else None,
+                                training_grade='C' if (_nm in _tg_sel or _nm in _tg_auto) else None,
                                 battle_low=bool(_use_score and _battle_low.get(_um)),
                                 proj_low=bool(_use_score and _proj_low.get(_um)),
                                 pm_back=bool(_um in _pm_rear),
@@ -13263,8 +13766,7 @@ if nav == "🧹 消去フィルター":
                             f"（{_nn_rec['field_band']}／実測・holdout検証済）。"
                             "これより絞ると来る馬を切り始めます。買い目の点数はここから"
                             "EV・資金管理で別に決めてください。")
-                    # 🧹→🏠3連複エンジン連携: クロステーブルの最終候補を確定として保存(上書き)。
-                    # 📤ボタンで敗者復活馬を追加済みなら、毎リランの自動保存が復活馬を消さないようunion。
+                    # 消去クロス最終候補は 📤SRA送信用(keep.json)。推奨買い方/3連複デフォルト母集団(elim_keep)は上書きしない。
                     _sent_key = f"kf_sent_sra_{race_id_input}"
                     try:
                         from core import score_cache as _sck_w2
@@ -13273,7 +13775,7 @@ if nav == "🧹 消去フィルター":
                         if _sent_prev:
                             _auto_keep |= {int(_u) for _u, _, _ in _sent_prev.get('rev', [])}
                         _sck_w2.write_keep(race_id_input, sorted(_auto_keep))
-                        st.caption("→ この最終候補は🏠 Single Race Analysisの🎯3連複おすすめエンジンに自動取込されます(同レースID)。")
+                        st.caption("→ この最終候補は📤SRA送信用(手動取込)です。推奨買い方・3連複デフォルトは🎯強適消去の残馬を使います。")
                     except Exception:
                         pass
 
@@ -13408,7 +13910,7 @@ if nav == "🧹 消去フィルター":
                     # 展開2(netkeiba AI照合の💀)= 青背景×黄文字ヘッダ。
                     _blue_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'BLUE_KEYS', set())
                                     if k in _exc.FLAG_LABEL}
-                    # 騎手弱材料 = 紫背景×黄文字ヘッダ。
+                    # 騎手弱材料/調教C以下 = 紫背景×黄文字ヘッダ。
                     _purple_labels = {_exc.FLAG_LABEL[k] for k in getattr(_exc, 'PURPLE_KEYS', set())
                                       if k in _exc.FLAG_LABEL}
                     # 強い消去理由 = 濃い赤背景×白文字ヘッダ(点灯で単体でも消去寄り)。
@@ -13451,7 +13953,7 @@ if nav == "🧹 消去フィルター":
                             _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
                                                 'props': [('background-color', '#1565C0'), ('color', '#ffff00'),
                                                           ('font-weight', 'bold')]})
-                        # 騎手弱材料のヘッダ = 紫背景×黄文字
+                        # 騎手弱材料/調教C以下のヘッダ = 紫背景×黄文字
                         for _p in _purple_pos:
                             _tbl_styles.append({'selector': f'th.col_heading.col{_p}',
                                                 'props': [('background-color', '#6A1B9A'), ('color', '#ffff00'),
@@ -13476,7 +13978,8 @@ if nav == "🧹 消去フィルター":
                                "**過信しない列**＝重複には数えるが、これらが重複の主因なら消さない判断もできる。"
                                "不人気=出走頭数の下位34%(市場評価)/騎手実績下位=通算複勝率(直近成績・連敗は予測に効かない検証済)"
                                "/PCI乖離=人気織込み。いずれも実務の相手絞り軸だが独立エッジは弱い。"
-                               "🟪紫背景×黄文字の『騎手弱材料』＝騎手係数・馬連携・場連対・黄金がすべて低水準。"
+                               "🟪紫背景×黄文字の『騎手弱材料』『調教C以下』＝検証不可の実観測フラグ。"
+                               "騎手弱材料＝騎手係数・馬連携・場連対・黄金がすべて低水準。"
                                "数字が出ていない項目はしきい値以下として扱う。"
                                "🟦青背景×黄文字の『展開2』=netkeiba AI展開照合の💀(両AIが後方帯で合意)。"
                                "🏠SRAの🤝照合を実行すると点灯(未実行なら空)。")
@@ -13555,6 +14058,7 @@ if nav == "🧹 消去フィルター":
                         else:
                             st.toast("記録に失敗しました", icon="⚠️")
                 # 学習状況の表示（分母つき：何回切って、そのうち何回来たか）
+                _ledger = _er.load_ledger()
                 _tstats = _er.tag_stats(_ledger)
                 if _tstats:
                     st.markdown("**📚 タグ学習状況**（台帳 {} 件）".format(len(_ledger)))
@@ -14247,7 +14751,8 @@ if nav == "🧹 消去フィルター":
                                         _qlg.record_prediction(
                                             _qfeed['race_id'], int(_qr['umaban']),
                                             str(_qr.get('bamei', '')),
-                                            float(_qr['p']), float(_qr['odds']), 100)
+                                            float(_qr['p']), float(_qr['odds']), 100,
+                                            bet_purpose=money.BET_PURPOSE_CALIBRATION)
                                     st.success(f"{len(_qfeed['rows'])}頭を台帳に記録しました")
                                     st.rerun()
                             _qlg.close()
@@ -14746,8 +15251,8 @@ if nav == "🔍 Race Scanner (Batch)":
             "選んだ複数レースについて、指定した**時間帯**の単複人気オッズを自動で記録します。"
             "記録の実体は常駐ランナー（`START_odds_recorder.bat` をダブルクリック）が担うので、"
             "**PCが起動していればアプリを閉じても記録**されます（Streamlitはページを開いている間しか"
-            "動かないため）。記録は `data/odds_history_<レースID>.jsonl` に時系列で溜まり、"
-            "後日『ガラス人気馬』『朝一→直前の変化』などの分析に使えます。"
+            "動かないため）。記録は `data/odds_history.db` に時点ラベル（15分前/直前/最終 など）"
+            "付きで溜まり、後日『直前でオッズが急落した馬』『朝一→直前の変化』などの検証に使えます。"
         )
         # 常駐ランナーの稼働状態(ハートビート)を常時表示: 予約したのに記録されない事故の可視化
         if _osch.runner_alive():
@@ -14757,12 +15262,12 @@ if nav == "🔍 Race Scanner (Batch)":
                      "**START_odds_recorder.bat をダブルクリック**して常駐させてください"
                      "（黒いウィンドウが開いたままになればOK・アプリは閉じても記録されます）。")
         st.markdown(
-            "**推奨の記録タイミング**（同じレースでこの3点が揃うと、朝と直前を比べられます）\n"
-            "- **前日夜（22時ごろ）** … 夜→当日の人気の移り変わりの起点（任意）\n"
+            "**記録する時点**（同じレースでこの5点＋朝一が毎回揃うと、オッズの動きを後から検証できます）\n"
             "- **朝一（午前8時40分）** … 大衆票が入る前の基準値。下の共通時刻に入れます\n"
-            "- **発走15分前** … 投票が固まり始めたあと。レースごとの予約\n"
-            "- **発走10分前** … 締切間際。レースごとの予約\n"
-            "正午や発走30分前は任意。発走5分前は混雑しやすいので、記録が貯まってからで十分です。"
+            "- **発走15分前 / 10分前** … 投票が固まっていく過程\n"
+            "- **発走5分前 / 直前（1分前）** … 締切間際。『直前の急落』はここの比較で分かります\n"
+            "- **最終（発走の約3分後）** … 締切後の確定オッズ\n"
+            "前日夜（22時ごろ）や正午・30分前は任意です。"
         )
         _plan = _osch.load_plan()
         _pl_c1, _pl_c2 = st.columns([1, 1])
@@ -14816,11 +15321,12 @@ if nav == "🔍 Race Scanner (Batch)":
         _entered_night = [s.strip() for s in str(_night_txt or '').replace('、', ',').split(',')
                           if s.strip()]
         _attach_prepost = st.checkbox(
-            "各レースの発走15分前と10分前も予約する",
+            "各レースの発走前5点（15分前・10分前・5分前・直前・最終）も予約する",
             value=True, key="oschedule_prepost",
-            help="朝一8:40（上の共通時刻）に加えて、レースごとの発走15分前・10分前を予約します。"
+            help="朝一8:40（上の共通時刻）に加えて、レースごとの発走15分前・10分前・5分前・"
+                 "直前(1分前)・最終(発走約3分後の確定オッズ)を予約します。"
                  "発走時刻はスキャン結果から取ります。まだスキャンしていなければ、"
-                 "スキャン後に下の『全レースに発走15分前と10分前を予約』で足せます。")
+                 "スキャン後に下の『全レースに発走前5点を予約』で足せます。")
         # 対象レースID
         if _pl_race_src == "スキャン結果から":
             _scan_ids = st.session_state.get('scanner_auto_ids', []) or []
@@ -14879,20 +15385,22 @@ if nav == "🔍 Race Scanner (Batch)":
                 _saved = _osch.save_plan(_newplan)
                 _plan = _saved
                 _night_note = (f"＋前日夜{len(_saved['night_times'])}枠" if _saved['night_times'] else "")
-                _pp_note = (f"＋発走15/10分前{_npp}枠" if _npp else "")
+                _pp_note = (f"＋発走前5点{_npp}枠" if _npp else "")
                 st.success(f"保存しました：{len(_plan_races)}レース × {len(_saved['times'])}時間帯"
                            f"{_night_note}{_pp_note}。"
                            "`START_odds_recorder.bat` を起動すると予定時刻に自動記録します"
                            + ("（前日夜枠は前日の夜にランナーが起動している必要があります）" if _saved['night_times'] else "") + "。")
         with _pb2:
             if st.button("▶ 今すぐ全レース記録", key="oschedule_recnow",
-                         help="予約と別に、選択中の全レースのオッズを今この瞬間に1回記録します。"):
+                         help="予約と別に、選択中の全レースのオッズを今この瞬間に1回記録します。"
+                              "発走時刻が分かっていれば『15分前』『直前』などの時点ラベルが自動で付きます。"):
                 _okc = 0
                 with st.spinner("オッズ記録中..."):
                     for _r in _plan_races:
-                        if _osch.record_one(_r['race_id']) > 0:
+                        _ph = _osch.current_phase(_plan, _r['race_id'])
+                        if _osch.record_one(_r['race_id'], phase=_ph) > 0:
                             _okc += 1
-                st.success(f"{_okc}/{len(_plan_races)} レースを記録しました（data/odds_history_*.jsonl）。")
+                st.success(f"{_okc}/{len(_plan_races)} レースを記録しました（data/odds_history.db）。")
         with _pb3:
             if st.button("🗑 プランを消去", key="oschedule_clear"):
                 _osch.save_plan({'date': '', 'times': [], 'races': [], 'records': {}})
@@ -15154,8 +15662,21 @@ if nav == "🔍 Race Scanner (Batch)":
             status_text = st.empty()
             results = []   # list of dicts
 
+            _scan_audit_settings = {
+                'arare_zones': list(_zone_letters or []),
+                'hide_skip': bool(hide_skip),
+                'min_value_horses': min_value_horses,
+                'trio_filter': trio_filter,
+                'do_factor': bool(do_factor),
+                'do_place': bool(do_place),
+            }
             for i, rid in enumerate(race_ids):
                 status_text.text(f"スキャン中... {rid}  ({i+1}/{len(race_ids)})")
+                try:
+                    from core import audit_pipeline as _ap_scan
+                    _ap_scan.begin_new_run(rid, 'scanner', settings=_scan_audit_settings)
+                except Exception:
+                    pass
                 try:
                     df_r = scraper.get_race_data(rid)
                     if df_r is None or df_r.empty:
@@ -15329,7 +15850,7 @@ if nav == "🔍 Race Scanner (Batch)":
                         _rc_scan = None
 
                     # ランキング指標: 妙味馬数 と 妙味度
-                    results.append({
+                    _scan_row = {
                         "id": rid, "title": str(race_title), "error": None,
                         "axis_conf": _rc_scan,
                         "vscore": rv['score'], "vlabel": rv['label'], "breakdown": rv['breakdown'],
@@ -15347,12 +15868,46 @@ if nav == "🔍 Race Scanner (Batch)":
                         "pace_label": (_pint or {}).get('label'), "pace_z": _pace_z,
                         "lean": lean, "conds": _conds,
                         "post_time": str(meta.get('post_time', '') or ''), "date_val": dv,
-                    })
+                    }
+                    results.append(_scan_row)
+                    try:
+                        from core import audit_pipeline as _ap_scan2
+                        _sc_out = _ap_scan2.record_event(
+                            rid, 'scanner',
+                            payload={
+                                'race_id': rid,
+                                'title': _scan_row['title'],
+                                'vscore': _scan_row['vscore'],
+                                'vlabel': _scan_row['vlabel'],
+                                'skips': _scan_row.get('skips'),
+                                'lean': (_scan_row.get('lean') or {}).get('lean')
+                                if isinstance(_scan_row.get('lean'), dict) else _scan_row.get('lean'),
+                                'n_h': _scan_row.get('n_h'),
+                                'value_horse_count': len(_scan_row.get('value_horses') or []),
+                                'settings': _scan_audit_settings,
+                                'fetch_ok': True,
+                            },
+                            status='ok')
+                        if not _sc_out.ok:
+                            st.warning(f"監査記録(Scanner {rid})失敗: {_sc_out.error}")
+                    except Exception as _ap_sc_e:
+                        st.warning(f"監査記録(Scanner {rid})失敗: {_ap_sc_e}")
                 except Exception as e:
                     import traceback
                     err_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
                     logger.error(f"Scanner error for {rid}: {err_msg}")
                     results.append({"id": rid, "title": rid, "error": str(e), "traceback": err_msg})
+                    try:
+                        from core import audit_pipeline as _ap_scan_f
+                        _ap_scan_f.ensure_run_id(rid, 'scanner')
+                        _fout = _ap_scan_f.record_event(
+                            rid, 'scanner',
+                            payload={'race_id': rid, 'fetch_ok': False, 'error': str(e)},
+                            status='failed')
+                        if not _fout.ok:
+                            st.warning(f"監査記録(Scanner失敗 {rid}): {_fout.error}")
+                    except Exception:
+                        pass
 
                 progress_bar.progress((i + 1) / len(race_ids))
 
@@ -15383,6 +15938,46 @@ if nav == "🔍 Race Scanner (Batch)":
             # 特別条件絞り込み(選択した全条件を含むレースのみ＝AND)
             if cond_filter:
                 valid = [r for r in valid if all(c in (r.get('conds') or []) for c in cond_filter)]
+
+            _valid_ids = {r['id'] for r in valid}
+            try:
+                from core import audit_pipeline as _ap_sdisp
+                for _sr in results:
+                    if _sr.get('error'):
+                        continue
+                    _srid = _sr['id']
+                    _disp = _srid in _valid_ids
+                    _excl = []
+                    if not _disp:
+                        if _zone_letters and _zone_letters != _all_zone_letters:
+                            _lab = str(_sr.get('vlabel') or '')[:1]
+                            if _lab and _lab not in _zone_letters:
+                                _excl.append('arare_zone_filter')
+                        if hide_skip and _sr.get('skips'):
+                            _excl.append('hide_skip')
+                        if min_value_horses and len(_sr.get('value_horses') or []) < min_value_horses:
+                            _excl.append('min_value_horses')
+                        _lean_v = (_sr.get('lean') or {}).get('lean') if isinstance(_sr.get('lean'), dict) else None
+                        if trio_filter.startswith('本線') and _lean_v != '本線向き':
+                            _excl.append('trio_filter_honzen')
+                        elif trio_filter.startswith('②') and _lean_v != '②穴妙味向き':
+                            _excl.append('trio_filter_ana')
+                        if cond_filter and not all(c in (_sr.get('conds') or []) for c in cond_filter):
+                            _excl.append('cond_filter')
+                    _sd_out = _ap_sdisp.record_event(
+                        _srid, 'scanner_display',
+                        payload={
+                            'race_id': _srid,
+                            'displayed': _disp,
+                            'exclude_reasons': _excl,
+                            'vlabel': _sr.get('vlabel'),
+                            'skips': _sr.get('skips'),
+                        },
+                        status='ok' if _disp else 'skipped')
+                    if not _sd_out.ok:
+                        st.warning(f"監査記録(Scanner表示 {_srid})失敗: {_sd_out.error}")
+            except Exception as _ap_sd_e:
+                st.warning(f"監査記録(Scanner表示)失敗: {_ap_sd_e}")
 
             # 「買える順」③Gate: 階層タプルソート。見送り→軸フロア→危険なし→相手質→trio_lean明確。
             valid.sort(key=vs.scanner_priority, reverse=True)
@@ -15418,9 +16013,10 @@ if nav == "🔍 Race Scanner (Batch)":
                    "妙味度＝頭数/1番人気オッズ/上位拮抗/構造条件の集約。妙味馬＝単複乖離 or 黄金ライン/厩舎当コース🔴の過小評価馬。")
         _n_post = sum(1 for r in valid if r.get('post_time'))
         if _n_post:
-            if st.button("⏰ 全レースに発走15分前と10分前を予約", key="osr_bulk_prepost",
+            if st.button("⏰ 全レースに発走前5点（15/10/5分前・直前・最終）を予約", key="osr_bulk_prepost",
                          help="朝一8:40は上の『オッズの自動記録』の共通時刻。"
-                              "こちらは各レースの発走時刻から15分前と10分前を足します。"):
+                              "こちらは各レースの発走時刻から 15分前・10分前・5分前・直前(1分前)・"
+                              "最終(発走約3分後の確定オッズ) をまとめて足します。"):
                 _bp = _osch2.load_plan()
                 if not _bp.get('date'):
                     _bp['date'] = datetime.now().strftime('%Y%m%d')
@@ -15436,7 +16032,7 @@ if nav == "🔍 Race Scanner (Batch)":
                             f"{_venue_label(_pid)} {_sr.get('title', '')}".strip())
                 _bp, _nadd = _osch2.attach_prepost_times(_bp, _pmap, labels_by_rid=_lmap)
                 _osch2.save_plan(_bp)
-                st.toast(f"⏰ 発走15/10分前を {_nadd} 枠予約しました")
+                st.toast(f"⏰ 発走前5点（15/10/5分前・直前・最終）を {_nadd} 枠予約しました")
                 st.rerun()
 
         # 📰 スキャン新聞: この結果をA4縦2列カードのPDFに(荒れだけ/荒れ回避の絞り込み対応)
@@ -15608,14 +16204,14 @@ if nav == "🔍 Race Scanner (Batch)":
                 _osr_booked = _osch2.race_times(_osr_plan, _osr_rid)
                 _osr_c = st.columns([2, 2, 3, 3])
                 with _osr_c[0]:
-                    _osr_t15 = _osch2.minus_minutes(_osr_post, 15) if _osr_post else ''
-                    _osr_t10 = _osch2.minus_minutes(_osr_post, 10) if _osr_post else ''
-                    _osr_def = _osr_t15 or ''
+                    _osr_slots = _osch2.prepost_hhmm(_osr_post) if _osr_post else []
+                    _osr_def = _osr_slots[0] if _osr_slots else ''
                     _osr_tv = st.text_input("記録時刻", value=_osr_def, key=f"osr_t_{_osr_rid}",
                                             label_visibility="collapsed", placeholder="例 15:20")
                 with _osr_c[1]:
-                    if st.button("⏰ 15分前と10分前", key=f"osr_book_{_osr_rid}",
-                                 help="このレースの発走15分前と10分前の単複オッズを常駐ランナーが自動記録。"
+                    if st.button("⏰ 発走前5点を予約", key=f"osr_book_{_osr_rid}",
+                                 help="このレースの発走15分前・10分前・5分前・直前(1分前)・最終(発走約3分後)"
+                                      "の単複オッズを常駐ランナーが自動記録。"
                                       "朝一8:40は上の『オッズの自動記録』の共通時刻。"):
                         _osr_d = _osch2.load_plan()
                         if not _osr_d.get('date'):
@@ -15642,8 +16238,8 @@ if nav == "🔍 Race Scanner (Batch)":
                         else:
                             st.warning("時刻は HH:MM 形式で入力してください（例 15:20）")
                 with _osr_c[2]:
-                    if _osr_post:
-                        st.caption(f"発走 {_osr_post}（15分前{_osr_t15} / 10分前{_osr_t10}）")
+                    if _osr_post and _osr_slots:
+                        st.caption(f"発走 {_osr_post}（{' / '.join(_osr_slots)}＝15・10・5分前/直前/最終）")
                     else:
                         st.caption("発走時刻は未取得")
                 with _osr_c[3]:
@@ -17263,6 +17859,35 @@ if nav == "🧠 MAGI回顧":
     section[data-testid="stSidebar"] label,
     section[data-testid="stSidebar"] p,
     section[data-testid="stSidebar"] span{color:#ffa066 !important;}
+    label[data-testid="stWidgetLabel"],
+    label[data-testid="stWidgetLabel"] p,
+    label[data-testid="stWidgetLabel"] span,
+    .stTextInput label, .stTextArea label, .stSelectbox label,
+    .stNumberInput label, .stRadio label, .stCheckbox label,
+    .stMultiSelect label, .stDateInput label{
+      color:var(--magi-org) !important;
+    }
+    .stTextInput [data-testid="stMarkdownContainer"] p,
+    .stSelectbox [data-testid="stMarkdownContainer"] p{color:var(--magi-org) !important;}
+    div[data-testid="stRadio"] label,
+    div[data-testid="stRadio"] label span,
+    div[data-testid="stRadio"] label p,
+    div[data-testid="stRadio"] label div,
+    div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p,
+    div[data-testid="stRadio"] div[role="radiogroup"] label,
+    div[data-testid="stRadio"] div[role="radiogroup"] span,
+    div[data-testid="stRadio"] [data-baseweb="radio"] label{
+      color:var(--magi-org) !important;
+    }
+    div[data-testid="stCheckbox"] label,
+    div[data-testid="stCheckbox"] label span,
+    div[data-testid="stCheckbox"] label p,
+    div[data-testid="stCheckbox"] label div,
+    div[data-testid="stCheckbox"] [data-testid="stMarkdownContainer"] p,
+    div[data-testid="stCheckbox"] [data-baseweb="checkbox"] label,
+    div[data-testid="stCheckbox"] [data-baseweb="checkbox"] span{
+      color:var(--magi-org) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -17376,6 +18001,75 @@ if nav == "🧠 MAGI回顧":
     def _logid():
         return ''.join(_rand.choices('0123456789abcdefghijklmnopqrstuvwxyz', k=5))
 
+    def _parse_osh_race_id(raw):
+        """12桁ID・netkeiba URL・db.netkeiba パスからレースIDを取る。"""
+        s = str(raw or '').strip()
+        if not s:
+            return '', False
+        m = re.search(r'race_id=(\d{12,16})', s, re.I)
+        if m:
+            rid = m.group(1)[:12]
+            return rid, rid != s
+        m = re.search(r'db\.netkeiba\.com/race/(\d{12})', s, re.I)
+        if m:
+            return m.group(1), True
+        m = re.search(r'(\d{12})', s)
+        if m:
+            rid = m.group(1)
+            return rid, rid != s
+        return '', False
+
+    def _save_magi_retrospective(_osh):
+        """会話内容を retro_ledger / 履歴へ保存。手動終了・AI締め後どちらでも同じ処理。"""
+        with st.spinner("回顧を保存中..."):
+            _lg = mc.extract_learning(_osh['ctx'], _osh['chat'], GEMINI_API_KEY)
+            _audit_meta = None
+            try:
+                from core import audit_review as _ar_save
+                _rb = _osh.get('review_bundle')
+                _ev, _rev_ts = _ar_save.save_magi_review_record(
+                    _osh['race_id'], _rb,
+                    used_pre_race_snapshot=bool((_osh.get('ctx') or {}).get('used_pre_race_snapshot')),
+                    used_post_race_recalc=bool((_osh.get('ctx') or {}).get('used_post_race_recalculation')),
+                    result_fetched_ts=_osh.get('result_fetched_at'),
+                )
+                _ids = ((_rb or {}).get('ids') or {})
+                _audit_meta = {
+                    'analysis_run_id': _ids.get('analysis_run_id'),
+                    'recommendation_id': _ids.get('recommendation_id'),
+                    'purchase_batch_id': _ids.get('purchase_batch_id'),
+                    'used_pre_race_snapshot': (_osh.get('ctx') or {}).get('used_pre_race_snapshot'),
+                    'used_post_race_recalculation': (_osh.get('ctx') or {}).get('used_post_race_recalculation'),
+                    'result_fetched_ts': _osh.get('result_fetched_at'),
+                    'review_created_ts': _rev_ts,
+                    'audit_event_id': getattr(_ev, 'event_id', None),
+                }
+            except Exception:
+                _audit_meta = None
+            _rec, _ts = mc.save_record(
+                _osh['race_id'], {}, _osh['ctx'], _osh['chat'], _lg,
+                scanner_review=_osh.get('scanner_review'),
+                scanner_pred=_osh.get('scanner_pred'),
+                audit_review_meta=_audit_meta,
+            )
+            _reg_msg = ''
+            try:
+                from core import history_manager as _hm_osh
+                _reg_logs = _hm_osh.register_past_races([_osh['race_id']])
+                _reg_msg = (_reg_logs[0] if _reg_logs else '')
+            except Exception as _re:
+                _reg_msg = f'履歴登録スキップ: {_re}'
+        _osh['saved'] = True
+        _osh['done'] = True
+        _osh['learning'] = _lg
+        _osh['tagsum'] = _ts
+        _osh['reg_msg'] = _reg_msg
+        return _osh
+
+    def _osh_can_save(_osh):
+        return bool(_osh.get('scanner_review')) and any(
+            m.get('role') == 'user' for m in (_osh.get('chat') or []))
+
     st.markdown("<div class='magi-bar'>🗣️ MAGI SYSTEM — レース回顧おしゃべり</div>", unsafe_allow_html=True)
 
     _left, _right = st.columns([1, 1.5], gap="medium")
@@ -17396,47 +18090,88 @@ if nav == "🧠 MAGI回顧":
                     + sum(x['count'] for x in _cal['undated'])
                 if _bd or _cal['undated']:
                     with st.expander(f"📅 回顧カレンダー（重複防止・{_n_total}件）"):
+                        from datetime import date as _date_cls
                         _months = sorted({d[:7] for d in _bd}, reverse=True)
-                        if _months:
-                            _sel_m = st.selectbox("月", _months, key="magi_cal_month")
-                            _yy, _mm = int(_sel_m[:4]), int(_sel_m[5:7])
-                            st.caption("📝=回顧あり。日をクリックで内訳（同じ日でも違うレースは別々に表示）")
-                            _hd = st.columns(7)
-                            for _i, _w in enumerate(['月', '火', '水', '木', '金', '土', '日']):
-                                _hd[_i].markdown(
-                                    f"<div style='text-align:center;color:#888;font-size:.8em'>{_w}</div>",
-                                    unsafe_allow_html=True)
-                            for _week in _calmod.Calendar(firstweekday=0).monthdayscalendar(_yy, _mm):
-                                _cols = st.columns(7)
-                                for _i, _day in enumerate(_week):
-                                    if _day == 0:
-                                        _cols[_i].write("")
-                                        continue
-                                    _dk = f"{_yy:04d}-{_mm:02d}-{_day:02d}"
-                                    _rc = _bd.get(_dk)
-                                    if _rc:
-                                        if _cols[_i].button(f"{_day} 📝{len(_rc)}", key=f"mcal_{_dk}"):
-                                            st.session_state['magi_cal_sel'] = _dk
-                                    else:
-                                        _cols[_i].markdown(
-                                            f"<div style='text-align:center;color:#ccc'>{_day}</div>",
-                                            unsafe_allow_html=True)
-                            _seld = st.session_state.get('magi_cal_sel')
-                            if _seld and _seld in _bd:
-                                st.markdown(f"**🗓 {_seld} の回顧**")
-                                for _x in _bd[_seld]:
-                                    _c = f"×{_x['count']}" if _x['count'] > 1 else ''
-                                    st.caption(f"`{_x['race_id']}` {_x['place']} {_x['name']} {_c}")
+                        if 'magi_cal_yy' not in st.session_state:
+                            if _months:
+                                st.session_state['magi_cal_yy'] = int(_months[0][:4])
+                                st.session_state['magi_cal_mm'] = int(_months[0][5:7])
+                            else:
+                                _td = _date_cls.today()
+                                st.session_state['magi_cal_yy'] = _td.year
+                                st.session_state['magi_cal_mm'] = _td.month
+                        _nav_p, _nav_t, _nav_n = st.columns([1, 2, 1])
+                        with _nav_p:
+                            if st.button("◀ 前の月", key="magi_cal_prev", use_container_width=True):
+                                _mm = st.session_state['magi_cal_mm'] - 1
+                                _yy = st.session_state['magi_cal_yy']
+                                if _mm < 1:
+                                    _mm, _yy = 12, _yy - 1
+                                st.session_state['magi_cal_mm'] = _mm
+                                st.session_state['magi_cal_yy'] = _yy
+                        with _nav_t:
+                            _yy = st.session_state['magi_cal_yy']
+                            _mm = st.session_state['magi_cal_mm']
+                            st.markdown(
+                                f"<div style='text-align:center;color:#ff9933;font-weight:700'>"
+                                f"{_yy}年 {_mm}月</div>",
+                                unsafe_allow_html=True)
+                        with _nav_n:
+                            if st.button("次の月 ▶", key="magi_cal_next", use_container_width=True):
+                                _mm = st.session_state['magi_cal_mm'] + 1
+                                _yy = st.session_state['magi_cal_yy']
+                                if _mm > 12:
+                                    _mm, _yy = 1, _yy + 1
+                                st.session_state['magi_cal_mm'] = _mm
+                                st.session_state['magi_cal_yy'] = _yy
+                        _yy = st.session_state['magi_cal_yy']
+                        _mm = st.session_state['magi_cal_mm']
+                        st.caption("📝=回顧あり。日をクリックで内訳（同じ日でも違うレースは別々に表示）")
+                        _hd = st.columns(7)
+                        for _i, _w in enumerate(['月', '火', '水', '木', '金', '土', '日']):
+                            _hd[_i].markdown(
+                                f"<div style='text-align:center;color:#ff9933;font-size:.8em'>{_w}</div>",
+                                unsafe_allow_html=True)
+                        for _week in _calmod.Calendar(firstweekday=0).monthdayscalendar(_yy, _mm):
+                            _cols = st.columns(7)
+                            for _i, _day in enumerate(_week):
+                                if _day == 0:
+                                    _cols[_i].write("")
+                                    continue
+                                _dk = f"{_yy:04d}-{_mm:02d}-{_day:02d}"
+                                _rc = _bd.get(_dk)
+                                if _rc:
+                                    if _cols[_i].button(f"{_day} 📝{len(_rc)}", key=f"mcal_{_dk}"):
+                                        st.session_state['magi_cal_sel'] = _dk
+                                else:
+                                    _cols[_i].markdown(
+                                        f"<div style='text-align:center;color:#996644'>{_day}</div>",
+                                        unsafe_allow_html=True)
+                        _seld = st.session_state.get('magi_cal_sel')
+                        if _seld and _seld in _bd:
+                            st.markdown(f"**🗓 {_seld} の回顧**")
+                            for _x in _bd[_seld]:
+                                _c = f"×{_x['count']}" if _x['count'] > 1 else ''
+                                st.caption(f"`{_x['race_id']}` {_x['place']} {_x['name']} {_c}")
                         if _cal['undated']:
                             st.caption("📌 日付不明: " + " / ".join(
                                 f"{u['place']}{u['name']}(`{u['race_id']}`)" for u in _cal['undated'][:10]))
             except Exception:
                 pass
             with st.form("osh_start_form", clear_on_submit=False):
-                _rid_in = st.text_input("レースID", placeholder="例: 202406050811", label_visibility="collapsed")
+                _rid_in = st.text_input(
+                    "レースID",
+                    placeholder="12桁ID または netkeiba の出馬表/結果 URL",
+                    label_visibility="collapsed",
+                )
                 _go = st.form_submit_button("▶ 審議開始", type="primary", use_container_width=True)
             if _go and _rid_in and _rid_in.strip():
-                _rid = _rid_in.strip()
+                _rid, _rid_from_url = _parse_osh_race_id(_rid_in)
+                if not _rid:
+                    st.error("レースIDを読み取れませんでした。12桁IDか、URLの race_id=... を確認してね。")
+                elif _rid_from_url:
+                    st.success(f"🔗 URLからレースIDを抽出しました: `{_rid}`")
+            if _go and _rid_in and _rid_in.strip() and _rid:
                 # ⚠ 既に回顧済みなら警告(二度手間防止・続行は可)
                 _prev = mc.races_done(_rid)
                 if _prev:
@@ -17475,7 +18210,27 @@ if nav == "🧠 MAGI回顧":
                 if not _ar or not _ar.get('horses'):
                     st.error("結果を取得できませんでした。確定済みのレースIDか確認してね。")
                 else:
-                    _ctx = mc.build_context(_df_o, _mp, _ar)
+                    _review_bundle = None
+                    try:
+                        from core import audit_review as _ar_rev
+                        from core import audit_store as _ast_osh
+                        _review_bundle = _ar_rev.assemble_magi_review_bundle(
+                            _rid, purchase_batch_id='__all__',
+                            post_df=_df_o, post_magi_pred=_mp, actual_result=_ar)
+                    except Exception:
+                        _review_bundle = None
+                    _meta_osh = {}
+                    try:
+                        _meta_osh = dict((getattr(_df_o, 'attrs', {}) or {}).get('metadata') or {})
+                    except Exception:
+                        _meta_osh = {}
+                    _ri = (_ar or {}).get('race_info') or {}
+                    if _ri.get('race_name') and not _meta_osh.get('RaceName'):
+                        _meta_osh['RaceName'] = _ri.get('race_name')
+                    if _ri.get('distance') and not _meta_osh.get('distance'):
+                        _meta_osh['distance'] = _ri.get('distance')
+                    _ctx = mc.build_context(
+                        _df_o, _mp, _ar, meta=_meta_osh, review_bundle=_review_bundle)
                     _uname = (st.session_state.get('magi_user_name') or '').strip() or 'あなた'
                     # Scannerの事前予測(決着タイプ)を記録用に保持。会話開始前に必ず答え合わせする。
                     _scanner_pred = None
@@ -17501,9 +18256,13 @@ if nav == "🧠 MAGI回顧":
                         'chat': [], 'done': False, 'saved': False, 'rounds': 0,
                         'user_name': _uname, 'cap': 20,
                         'scanner_review': None, 'scanner_pred': _scanner_pred,
+                        'review_bundle': _review_bundle,
+                        'result_fetched_at': (
+                            (_review_bundle or {}).get('settled_result') or {}).get('result_fetched_at'),
                     }
                     st.rerun()
-            st.caption("👶 終わったレースのIDを入れて審議開始。3人格が話し合いながら回顧します。")
+            st.caption("👶 終わったレースのIDを入れて審議開始。3人格が話し合いながら回顧します。"
+                       "先に馬場・流れ・メンバーを確認します（次走の買い目はここでは作りません）。")
         else:
             if not osh.get('scanner_review'):
                 # ── 必須の答え合わせ: 会話開始前にScannerの荒れ予測が実際どうだったかを記録 ──
@@ -17571,6 +18330,15 @@ if nav == "🧠 MAGI回顧":
                         _ans = st.text_area("答え", placeholder="普通の言葉でOK（わからなければ「わからない」）",
                                             label_visibility="collapsed", height=90)
                         _send = st.form_submit_button("▶ 送信", type="primary", use_container_width=True)
+                    if not osh.get('saved') and osh.get('scanner_review'):
+                        st.caption("十分話したら、AIの締めを待たずに保存できます。")
+                        if st.button("💾 回顧を保存", use_container_width=True, key="osh_save_manual"):
+                            if not _osh_can_save(osh):
+                                st.warning("返答が1件もないため保存できません。もう一度送信してから保存してください。")
+                            else:
+                                osh = _save_magi_retrospective(osh)
+                                st.session_state.oshaberi = osh
+                                st.rerun()
                     if _send and _ans and _ans.strip():
                         osh['chat'].append({'role': 'user', 'message': _ans.strip(), 'id': _logid()})
                         osh['rounds'] = osh.get('rounds', 1) + 1
@@ -17598,24 +18366,8 @@ if nav == "🧠 MAGI回顧":
                         st.session_state.oshaberi = osh
                         st.rerun()
                     if not osh.get('saved'):
-                        if st.button("📒 審議を記録する", type="primary", use_container_width=True, key="osh_save"):
-                            with st.spinner("学びをメモ中..."):
-                                _lg = mc.extract_learning(osh['ctx'], osh['chat'], GEMINI_API_KEY)
-                                _rec, _ts = mc.save_record(osh['race_id'], {}, osh['ctx'], osh['chat'], _lg,
-                                                           scanner_review=osh.get('scanner_review'),
-                                                           scanner_pred=osh.get('scanner_pred'))
-                            # 会話データをシステムに活かす: 回顧したレースを race_history.csv にも自動登録
-                            _reg_msg = ''
-                            try:
-                                from core import history_manager as _hm_osh
-                                _reg_logs = _hm_osh.register_past_races([osh['race_id']])
-                                _reg_msg = (_reg_logs[0] if _reg_logs else '')
-                            except Exception as _re:
-                                _reg_msg = f'履歴登録スキップ: {_re}'
-                            osh['saved'] = True
-                            osh['learning'] = _lg
-                            osh['tagsum'] = _ts
-                            osh['reg_msg'] = _reg_msg
+                        if st.button("💾 回顧を保存", type="primary", use_container_width=True, key="osh_save"):
+                            osh = _save_magi_retrospective(osh)
                             st.session_state.oshaberi = osh
                             st.rerun()
                     else:
@@ -17642,6 +18394,14 @@ if nav == "🧠 MAGI回顧":
                 "🔊 音声で話す（3人別の女性声・出るたび自動再生）", key='magi_voice_on',
                 help="ブラウザ内蔵の読み上げ(VOICEVOX不要)。新しい発言が出るたび順に自動で話します。"
                      "ブラウザの自動再生制限で最初の1回だけ無音のことがあり、その時は『🔊全部読む』を1度押すと解除されます。")
+            if not osh.get('saved') and osh.get('scanner_review'):
+                if st.button("💾 回顧を保存", use_container_width=True, key="osh_save_right"):
+                    if not _osh_can_save(osh):
+                        st.warning("返答が1件もないため保存できません。")
+                    else:
+                        osh = _save_magi_retrospective(osh)
+                        st.session_state.oshaberi = osh
+                        st.rerun()
 
             # 吹き出しチャット(デュラララ風)＋発言ごとの自動音声を1つのiframeに同梱
             _pitch_map = {'melchior': 1.05, 'balthasar': 1.2, 'casper': 1.35}
@@ -18461,8 +19221,9 @@ if nav == "🎯 穴馬ハンター":
 # 🧪 競馬俗説ハンター（pages/folklore_hunter.py・予想エンジンとは切り離す）
 # ──────────────────────────────────────────────
 if nav == "🧪 競馬俗説ハンター":
-    from pages.folklore_hunter import render as _render_folk
-    _render_folk()
+    from pages import folklore_hunter as _folk_mod
+    importlib.reload(_folk_mod)
+    _folk_mod.render()
 
 # ──────────────────────────────────────────────
 # 🚨 逆神（pages/gyaku_kami.py・リンク集のみ。予想エンジンとは切り離す）

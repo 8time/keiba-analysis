@@ -921,21 +921,55 @@ def fetch_race_payouts(race_id):
                 tds = tr.find_all('td')
                 if len(tds) < 2:
                     continue
-                nums = re.findall(r'\d+', tds[0].get_text('-', strip=True))
-                pays = re.findall(r'[\d,]+', tds[1].get_text('\n', strip=True))
+                combo_text = tds[0].get_text('\n', strip=True)
+                pay_text = tds[1].get_text('\n', strip=True)
+                nums = re.findall(r'\d+', combo_text.replace('-', ' '))
+                pay_lines = [ln.strip() for ln in re.split(r'[\r\n]+', pay_text) if ln.strip()]
                 pops = re.findall(r'\d+', tds[2].get_text('\n', strip=True)) if len(tds) >= 3 else []
-                pay_vals = [float(p.replace(',', '')) / 100.0 for p in pays if p.replace(',', '').isdigit()]
-                n = len(pay_vals)
-                if n == 0 or not nums:
-                    continue
                 rows = []
-                for i in range(n):
-                    combo = nums[i * size:(i + 1) * size]
-                    if len(combo) != size:
-                        break
-                    pop = int(pops[i]) if i < len(pops) and pops[i].isdigit() else None
-                    rows.append({'combo': [int(x) for x in combo],
-                                 'odds': round(pay_vals[i], 1), 'pop': pop})
+                if pay_lines and all('返還' in ln for ln in pay_lines):
+                    if size == 1:
+                        for i, uma in enumerate(nums):
+                            pop = int(pops[i]) if i < len(pops) and pops[i].isdigit() else None
+                            rows.append({
+                                'combo': [int(uma)], 'refund': True, 'odds': 0,
+                                'pop': pop, 'pay_raw': pay_lines[min(i, len(pay_lines) - 1)],
+                            })
+                    else:
+                        for i in range(0, len(nums), size):
+                            combo = nums[i:i + size]
+                            if len(combo) != size:
+                                break
+                            li = i // size
+                            rows.append({
+                                'combo': [int(x) for x in combo], 'refund': True, 'odds': 0,
+                                'pop': int(pops[li]) if li < len(pops) and pops[li].isdigit() else None,
+                                'pay_raw': pay_lines[min(li, len(pay_lines) - 1)],
+                            })
+                else:
+                    pays = re.findall(r'[\d,]+', pay_text)
+                    pay_vals = [
+                        float(p.replace(',', '')) / 100.0
+                        for p in pays if p.replace(',', '').isdigit()]
+                    n = len(pay_vals)
+                    if n == 0 or not nums:
+                        continue
+                    for i in range(n):
+                        combo = nums[i * size:(i + 1) * size]
+                        if len(combo) != size:
+                            break
+                        raw_ln = pay_lines[i] if i < len(pay_lines) else ''
+                        if '返還' in raw_ln:
+                            pop = int(pops[i]) if i < len(pops) and pops[i].isdigit() else None
+                            rows.append({
+                                'combo': [int(x) for x in combo], 'refund': True, 'odds': 0,
+                                'pop': pop, 'pay_raw': raw_ln,
+                            })
+                            continue
+                        pop = int(pops[i]) if i < len(pops) and pops[i].isdigit() else None
+                        rows.append({'combo': [int(x) for x in combo],
+                                     'odds': round(pay_vals[i], 1), 'pop': pop,
+                                     'pay_raw': raw_ln})
                 if rows:
                     out.setdefault(key, []).extend(rows)
     except Exception as e:
@@ -1677,6 +1711,27 @@ def extract_trainer(row):
         logger.warning(f"[Trainer] Extraction failed for row block.")
     return trainer
 
+
+def extract_trainer_id(row):
+    """出走表の1行から調教師コード(netkeiba /trainer/XXXXX/ のID)を抽出。
+
+    netkeibaの調教師IDはJRA調教師コードと同一
+    (例: /trainer/01105/ = 須貝尚介 = jravan trainer_code '01105'。
+     2026-09-07 実ページ照合済)。
+    新馬戦など馬に過去走が無く resolve_horse で厩舎コードを引けない場合の
+    黄金ライン・厩舎成績照会に使う(core/maiden_mode.py)。
+    """
+    import re
+    try:
+        a = row.find('a', href=re.compile(r'/trainer/'))
+        if a:
+            m = re.search(r'/trainer/(\w+)/', a.get('href', ''))
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return None
+
 def extract_race_metadata(soup, race_date_val=""):
     """Extracts metadata like weather, condition, and holding days from the page."""
     metadata = {
@@ -2101,6 +2156,8 @@ def get_race_data(race_id, use_storage=True):
         name_tag = h_info.find('a', href=re.compile(r'/horse/'))
         if not name_tag: continue
         h_data['Name'] = name_tag.text.strip()
+        _hid = re.search(r'/horse/(\d+)', str(name_tag.get('href') or ''))
+        h_data['HorseId'] = _hid.group(1) if _hid else ''
 
         # Blinker (馬具B印): Horse_Info 内の <span class="Mark">B</span>
         try:
@@ -2132,6 +2189,8 @@ def get_race_data(race_id, use_storage=True):
         # Trainer (厩舎)
         # modified to return None instead of '-' on fail
         h_data['Trainer'] = extract_trainer(row)
+        # 調教師コード(新馬戦モード用。netkeiba ID=JRAコード。未取得時はNone)
+        h_data['TrainerID'] = extract_trainer_id(row)
         h_data['Tozai'] = extract_tozai_from_row(row)
 
         # sex-age and weight
@@ -2176,9 +2235,10 @@ def get_race_data(race_id, use_storage=True):
             h_data['Weight'] = "発走前のため未公開"
 
         # ── 血統(父/母/母父)を出馬表から直接取得 ──
-        # shutuba_past.html の Horse_Info は
-        #   div.Horse01=父 / div.Horse02=馬名 / div.Horse03=母 / div.Horse04=(母父)
-        # という構造(実データで確認済)。
+        # shutuba_past.html の Horse_Info:
+        #   JRA:  div.Horse01=父 / div.Horse02=馬名 / div.Horse03=母 / div.Horse04=(母父)
+        #   NAR:  dt.Horse01=父 / dt.Horse02=馬名 / dt.Horse03=母 / dt.Horse04=(母父)
+        #         (202644083101 大井で実査。div だけ探すと地方は全部空になる)
         # ⚠ 以前は Bloodline='-' のプレースホルダのみで、血統は jravan.db(horses)への
         #   フォールバックに100%依存していた。しかし jravan.db の血統は契約停止で
         #   2023年から劣化し2024年デビュー馬の母名取得率は8.5%まで落ちている
@@ -2188,9 +2248,9 @@ def get_race_data(race_id, use_storage=True):
         h_data['broodmareSire'] = ''
         try:
             if h_info:
-                _d1 = h_info.find('div', class_=re.compile(r'\bHorse01\b'))
-                _d3 = h_info.find('div', class_=re.compile(r'\bHorse03\b'))
-                _d4 = h_info.find('div', class_=re.compile(r'\bHorse04\b'))
+                _d1 = h_info.find(['div', 'dt'], class_=re.compile(r'\bHorse01\b'))
+                _d3 = h_info.find(['div', 'dt'], class_=re.compile(r'\bHorse03\b'))
+                _d4 = h_info.find(['div', 'dt'], class_=re.compile(r'\bHorse04\b'))
                 if _d1:
                     h_data['sire'] = _d1.get_text(' ', strip=True)
                 if _d3:
@@ -2658,6 +2718,7 @@ def fetch_shutuba_data(race_id):
                 'Weight': weight,
                 'Jockey': jockey,
                 'Trainer': trainer,
+                'TrainerID': extract_trainer_id(row),
                 'Bloodline': "-"
             }
         except Exception as e:

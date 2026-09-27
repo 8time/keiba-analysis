@@ -261,6 +261,32 @@ def _count_sig6(labels):
     return sum(1 for p in _SIG6 if any(str(x).startswith(p) for x in (labels or [])))
 
 
+def compute_cross_n(rows, vh_map):
+    """Rank×VH クロス数（integrate() と同一定義）。
+
+    rows: [{'umaban', 'proj'}, ...]  proj=素点(Projected Score)。高いほど Rank 上位。
+    vh_map: {umaban: vh_score} build_edge_sets['vh']。
+    """
+    rows = rows or []
+    vh_map = vh_map or {}
+    _proj_sorted = sorted(
+        [(r.get('umaban'), float(r.get('proj') or 0)) for r in rows
+         if r.get('umaban') is not None],
+        key=lambda x: -x[1])
+    _rank_pos = {u: i + 1 for i, (u, _) in enumerate(_proj_sorted)}
+    _vh_sorted = sorted(vh_map.items(), key=lambda x: -x[1])
+    _vh_pos = {u: i + 1 for i, (u, _) in enumerate(_vh_sorted)}
+    _vn = len(_vh_sorted) + 1
+    for r in rows:
+        _u = r.get('umaban')
+        if _u is not None and _u not in _vh_pos:
+            _vh_pos[_u] = _vn
+            _vn += 1
+    _top4_r = {u for u, _ in sorted(_rank_pos.items(), key=lambda x: x[1])[:4]}
+    _top4_v = {u for u, _ in sorted(_vh_pos.items(), key=lambda x: x[1])[:4]}
+    return len(_top4_r & _top4_v)
+
+
 def integrate(rows, aim, regime):
     """検証済みエッジをレジーム別に合議し、本命/相手/穴/消しへ再グルーピングする。
 
@@ -432,7 +458,7 @@ def integrate(rows, aim, regime):
     # ── R×Vクロス判定(レースレベル: Rank上位4頭とVH上位4頭の重複数) ──
     _top4_r = {h['umaban'] for h in sorted(out, key=lambda x: x.get('rank_pos', 99))[:4]}
     _top4_v = {h['umaban'] for h in sorted(out, key=lambda x: x.get('vh_pos', 99))[:4]}
-    _cross_n = len(_top4_r & _top4_v)
+    _cross_n = compute_cross_n(rows, vh_map)
     if _cross_n >= 4:
         _cross_lbl = '🔥強クロス'
     elif _cross_n >= 3:

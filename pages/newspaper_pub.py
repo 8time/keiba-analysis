@@ -462,7 +462,7 @@ def _render_batch_analyze():
 
     # ── オプション ──
     _o1, _o2 = st.columns(2)
-    do_elim = _o1.checkbox("消去フィルターも実行（✅残し/🧹消しを紙面に載せる）",
+    do_elim = _o1.checkbox("消去フィルターも実行（自動消去後の残馬を紙面に載せる）",
                            value=True, key="np_batch_elim",
                            help="OFFにすると速くなりますが、紙面の✅🛟🧹バッジが付きません")
     do_publish = _o1.checkbox("解析が終わったら新聞も自動発行する",
@@ -764,7 +764,7 @@ def render():
             bt_exacta = bool(prefs.get('bt_exacta', True))
             bt_wide = bool(prefs.get('bt_wide', True))
         _s3 = st.columns(4)
-        sec_elim = _s3[0].checkbox("消去フィルター(強適消去エンジンの消去馬+消去クロス+残し馬)",
+        sec_elim = _s3[0].checkbox("消去フィルター残馬（ボーダー残しを含む）",
                                    value=bool(prefs.get('sec_elim', True)), key="np_s_elim",
                                    help="🎯強適消去エンジンを実行したレースは、残し/ボーダー残し"
                                         "以外(消去された馬)の馬名も紙面に載ります。")

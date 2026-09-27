@@ -83,6 +83,7 @@
 - 買い方でROIは控除を抜けない（追い上げ/穴厚/エッジ流し全て✗）= 馬選別でなく見送り/点数/券種で守る([[verified_tansho_roi_efficient]])。
 
 ## 検証済み却下（再提案・再実装しない・恒久決着）
+- **不確実性レイヤー（較正/保守EV/予測幅）は完全終了**（2026-09-04・scripts/uncertainty_layer_verify.py）: Rank softmax後段のVenn-Abers/BetaはECE改善だがROI悪化。保守EVは点数微減のみで見送り・大負け・ROI改善なし。VA幅は67,885頭中67,843頭が0〜5%でフィルター不能。市場Brier 0.0565 / Logloss 0.2009を超えず。**再検討条件なし**。確率を賢くする研究は凍結。残すのはVH1強調など選択・情報設計側([[verified_uncertainty_layer_rejected]])。
 - **PCIは完全終了**（2026-07-02・scripts/pci_course_shape_backtest.py）: 単体PCI乖離=priced-in([[verified_pci_pricedin]])、巻き返し穴=誤り([[verified_comeback_overbet]])に続き、動画の「PCI傾向×コース形状(O字/U字)」交互作用も holdout2025で C=+0.30pp/z=+0.20（train z0.65・2026 z1.65）とゲートz2.0未達。PCI由来のエッジは軸・相手・消去いずれも無し。
 - **当日バイアス逆張り(危険人気)のrealtime強化**は却下（2026-07-02・カード2・scripts/intraday_bias_backtest.py）: pooled z-3.8は楽観的でholdout2025 z-1.77/2026崩落。既存danger_popular_innerは弱fadeとして残すが強化しない([[verified_emp_bias_danger]])。
 - **ボーダー3のフラグ消去による代替**は却下（2026-07-02・カード3・scripts/elim_frontier_backtest.py）: フラグは人気に織込み済みでW>0はこぼし悪化。ボーダーは代替不能・撤去しない([[verified_keepone_border]])。

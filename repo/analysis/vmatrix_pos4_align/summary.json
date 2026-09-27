@@ -1,0 +1,13 @@
+{
+  "races": 2756,
+  "holdout_from": "20240101",
+  "band_match_ten": 0.7610517135425358,
+  "band_match_pos4": 1.0,
+  "v_jaccard_mean": 0.5885824866956942,
+  "v_count_ten_mean": 1.452467343976778,
+  "v_count_pos4_mean": 2.0185050798258346,
+  "place_rate_ten": 0.21908568573569823,
+  "place_rate_pos4": 0.21283480136616933,
+  "win_roi_ten": -0.3383387459405446,
+  "win_roi_pos4": -0.2800593205105159
+}

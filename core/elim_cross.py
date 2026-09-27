@@ -83,8 +83,8 @@ UNVERIFIED = {'train', 'battle', 'proj', 'pmback', 'agari3f', 'stress2',
 CAUTION_KEYS = {'battle', 'proj', 'pmback', 'agari3f', 'poplow', 'jlow', 'rklow_vh', 'ltr_low'}
 # 『展開2』(netkeiba AI照合の💀)= ヘッダを青背景×黄文字にする列。
 BLUE_KEYS = {'tenkai2'}
-# 『騎手弱材料』= ヘッダを紫背景×黄文字にする列(過信しない列と同じ扱い・色だけ別)。
-PURPLE_KEYS = {'jweak'}
+# 『騎手弱材料』『調教C以下』= ヘッダを紫背景×黄文字にする列(過信しない列と同じ扱い・色だけ別)。
+PURPLE_KEYS = {'jweak', 'train'}
 # 『強い消去理由』= 人気統制後も独立して来にくさが強い/絶対複勝率が極端に低い検証済みフラグ
 # (点灯したら単体でも消去寄りに読める)。表示で濃い赤背景×白文字にする。CAUTION(明るい赤=弱い列)と別軸。
 #  botcross=両列最下位(複勝2-5%)/multiweak=多列弱点(6.7%)/lhandi=軽ハンデ(残差-2.3pp z-4.9)/

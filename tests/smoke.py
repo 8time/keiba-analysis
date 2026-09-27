@@ -439,7 +439,8 @@ def main():
         from core import trio_engine as te
         from inspect import signature, getsource
         params = list(signature(pb.build_tickets).parameters)
-        assert params == ['race_id', 'vscore', 'horses', 'axis_marks', 'ltr_scores']
+        assert params == ['race_id', 'vscore', 'horses', 'axis_marks', 'ltr_scores',
+                          'cross_n', 'vh_scores', 'proj_scores']
         src = getsource(pb.build_tickets)
         assert '_calc_pro_scores' not in src
         assert 'popularity_weight' not in src
@@ -490,7 +491,139 @@ def main():
         ba = pb.build_tickets('R', 70.0, hs, {1: '◎', 2: '〇'}, ltr_c)
         assert ba['zone'] == 'BA' and ba['skip'] and ba['n_points'] == 0
         assert ba['trio'] == [] and ba['trifecta'] == []
+        assert ba['selected_playbook'] == 'ba_skip'
+
+        # C + cross_n>=3 → 3連複 Rank2-3-6
+        c236 = pb.build_tickets('R', 55, hs, {1: '◎', 2: '〇'}, ltr_c, cross_n=3)
+        assert c236['selected_playbook'] == 'c_ltr_trio_236'
+        assert c236['trio'] and not c236['trifecta']
     check("playbook_tickets D/C/B-A 分離", t_playbook_tickets)
+
+    def t_bettype_selector():
+        from core import bettype_selector as bts
+        assert bts.select_bet_type('C', 2) == bts.BET_TRIFECTA
+        assert bts.select_bet_type('C', 3) == bts.BET_TRIO
+        assert bts.select_playbook(bts.BET_TRIO, 'C', 3) == bts.PLAYBOOK_C_TRIO_236
+        assert bts.SELECTOR_RULE_VERSION == 'bet_selector_v1'
+        assert bts.diag_family('C中庸', 3)['code'] == 'RRV'
+        assert bts.diag_family('C', 2)['code'] == 'RRR'
+        assert bts.diag_family('D鉄板', 1)['code'] == 'NNV'
+        assert bts.select('C', 3)['diag_family'] == 'RRV'
+    check("bettype_selector v1 境界", t_bettype_selector)
+
+    def t_elim_keep_pool():
+        import os
+        from core import score_cache as sc
+        from core import playbook_tickets as pb
+        rid = 'smoketestelimkeep1'
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr = {i: float(i) for i in range(1, 9)}
+        try:
+            sc.write_elim_keep(rid, [1, 2, 3, 4, 5])
+            sc.write_keep(rid, [6, 7, 8])  # クロス候補（母集団に使わない）
+            filtered, used = sc.filter_horses_by_elim_keep(rid, hs)
+            assert used and {h['umaban'] for h in filtered} == {1, 2, 3, 4, 5}
+            assert sc.read_elim_keep(rid) == {1, 2, 3, 4, 5}
+            rec_all = pb.build_tickets(rid, 30, hs, {1: '◎', 2: '〇'}, ltr)
+            rec_filt = pb.build_tickets(rid, 30, filtered, {1: '◎', 2: '〇'}, ltr)
+            assert rec_all['n_points'] == 2
+            assert rec_filt['n_points'] == 2
+            assert {tuple(r['combo']) for r in rec_filt['trio']} == {(1, 2, 3), (1, 2, 4)}
+        finally:
+            for fn in (sc._elim_keep_path, sc._keep_path):
+                p = fn(rid)
+                if os.path.exists(p):
+                    os.remove(p)
+    check("score_cache.elim_keep 母集団フィルタ", t_elim_keep_pool)
+
+    def t_skip_reason_n5():
+        from core import playbook_tickets as pb
+        from core import newspaper as np_mod
+        import os
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr = {i: float(i) for i in range(1, 9)}
+        ba = pb.build_tickets('R', 80, hs, None, ltr)
+        assert ba['skip_reason'] == 'zone_ba'
+        hs_dup = [
+            {'umaban': 1, 'name': 'A', 'pop': 1},
+            {'umaban': 2, 'name': 'B', 'pop': 2},
+            {'umaban': 3, 'name': 'C', 'pop': 3},
+            {'umaban': 4, 'name': 'D', 'pop': 3},
+            {'umaban': 5, 'name': 'E', 'pop': 5},
+            {'umaban': 6, 'name': 'F', 'pop': 6},
+            {'umaban': 7, 'name': 'G', 'pop': 7},
+            {'umaban': 8, 'name': 'H', 'pop': 8},
+        ]
+        d_bad = pb.build_tickets('R', 30, hs_dup, None, ltr)
+        assert d_bad['skip'] and d_bad['skip_reason'] == 'ninki_missing'
+        assert d_bad['skip_detail'] and '4' in d_bad['skip_detail']
+        c_deg = pb.build_tickets('R', 55, hs, None, ltr)
+        assert c_deg['n_points'] == 30
+        assert c_deg['cross_n_source'] == 'unavailable'
+        assert c_deg['degraded'] is True
+        c_ok = pb.build_tickets('R', 55, hs, None, ltr, cross_n=2)
+        assert c_ok['cross_n_source'] == 'given'
+        assert c_ok['degraded'] is False
+        rid = 'smoketestskipreason1'
+        try:
+            np_mod.persist_playbook(rid, d_bad)
+            extra = np_mod.load_bets(rid)['playbook']['extra']
+            assert extra.get('skip_reason') == 'ninki_missing'
+        finally:
+            for p in (np_mod._bets_path(rid), np_mod._view_path(rid)):
+                if os.path.exists(p):
+                    os.remove(p)
+    check("N5 skip_reason / degraded / persist", t_skip_reason_n5)
+
+    def t_hitrate_stats_n4():
+        from core.bayes_stats import wilson_interval
+        from core import playbook_ledger as lg
+        lo, hi = wilson_interval(7, 30)
+        assert lo is not None and 0.10 <= lo <= 0.13
+        assert hi is not None and 0.40 <= hi <= 0.43
+        assert wilson_interval(0, 0) == (None, None)
+        rows = [
+            {'race_date': '2024-01-01', 'race_id': '1', 'settled': True, 'hit': True,
+             'investment': 200, 'payout': 100, 'ticket_count': 2, 'zone': 'D'},
+            {'race_date': '2024-01-02', 'race_id': '2', 'settled': True, 'hit': False,
+             'investment': 200, 'payout': 0, 'ticket_count': 2, 'zone': 'D'},
+            {'race_date': '2024-01-03', 'race_id': '3', 'settled': True, 'hit': False,
+             'investment': 200, 'payout': 0, 'ticket_count': 2, 'zone': 'D'},
+            {'race_date': '2024-01-04', 'race_id': '4', 'settled': True, 'hit': False,
+             'investment': 200, 'payout': 0, 'ticket_count': 2, 'zone': 'D'},
+            {'race_date': '2024-01-05', 'race_id': '5', 'settled': True, 'hit': True,
+             'investment': 200, 'payout': 500, 'ticket_count': 2, 'zone': 'D'},
+            {'race_date': '2024-01-06', 'race_id': '6', 'settled': True, 'hit': False,
+             'investment': 200, 'payout': 0, 'ticket_count': 2, 'zone': 'D'},
+        ]
+        st = lg._zone_stats(rows)
+        assert st['max_losing_streak'] == 3
+        assert 'loss_per_100' in st and 'cost_per_hit' in st
+        summ = lg.summarize([
+            {'zone': 'D', 'skip': False, 'settled': False},
+            {'zone': 'BA', 'skip': True, 'skip_reason': 'zone_ba'},
+        ])
+        assert 'purchase_rate' in summ
+        assert 'skips_by_reason' in summ
+        assert summ['skips_by_reason'].get('zone_ba') == 1
+        empty = lg._zone_stats([])
+        assert empty['n_settled'] == 0 and empty['loss_per_100'] is None
+    check("N4 wilson_interval / ledger stats", t_hitrate_stats_n4)
+
+    def t_hitrate_common_unit():
+        from core.trio_engine import build_formation
+        from scripts import hitrate_common as hc
+        r = list(range(1, 9))
+        assert len(build_formation(r[:2], r[:4], r[:7])) == 19
+        m = hc.mcnemar([1, 1, 0, 0, 0], [1, 0, 1, 1, 0])
+        assert m['b'] == 1 and m['c'] == 2 and m['z'] > 0
+        # eval_subset n=10 s=30 → 3 races
+        import pandas as pd
+        import math
+        df = pd.DataFrame({'cost': [100] * 10, 'ret': [0] * 10, 'hit': [0] * 10})
+        k = max(1, int(math.ceil(10 * 30 / 100.0)))
+        assert k == 3
+    check("hitrate_common mcnemar / 点数 / eval_subset", t_hitrate_common_unit)
 
     def t_battle_recency_and_odds_fill():
         from datetime import datetime
@@ -688,6 +821,34 @@ def main():
             pass
     check("money.Ledger gate_status/roi_by_gate", t_ledger_gate)
 
+    def t_ledger_kelly_write():
+        import tempfile
+        from core import money
+        _tmp = os.path.join(tempfile.gettempdir(), 'smoke_ledger_kelly.db')
+        if os.path.exists(_tmp):
+            os.remove(_tmp)
+        lg = money.Ledger(db=_tmp)
+        lines = [
+            {'kind': '3連複', 'label': '7-4-12', 'odds': 45.0, 'stake': 500, 'p': 0.03},
+            {'kind': 'ワイド', 'label': '7-4', 'odds': 8.5, 'stake': 0, 'p': 0.15},
+        ]
+        n = lg.record_kelly_bets('209901019999', lines, gate_status='buy', gate_lean='本線向き')
+        assert n == 1, f"stake>0のみ記録 expected 1 got {n}"
+        row = lg.con.execute(
+            "SELECT race_id,umaban,bamei,bet_type,stake,gate_status FROM bets").fetchone()
+        assert row['race_id'] == '209901019999' and row['umaban'] == 7
+        assert row['bamei'] == '7-4-12' and row['bet_type'] == '3連複' and row['stake'] == 500
+        lg.record_skip('209901019998', reason='見送りテスト', vscore=72.0, zone='C')
+        sk = lg.con.execute("SELECT COUNT(*) FROM skips").fetchone()[0]
+        assert sk == 1, f"skips expected 1 got {sk}"
+        assert money.Ledger.parse_first_umaban('3-8-11') == 3
+        lg.close()
+        try:
+            os.remove(_tmp)
+        except Exception:
+            pass
+    check("money.Ledger record_kelly_bets/skip write", t_ledger_kelly_write)
+
     def t_gate_cache():
         from core import score_cache as sc
         rid = '209901019999'
@@ -699,6 +860,23 @@ def main():
         except Exception:
             pass
     check("score_cache.write_gate/read_gate", t_gate_cache)
+
+    def t_oikiri_cache():
+        from core import score_cache as sc
+        from core.oikiri import is_c_or_below, normalize_train_rank
+        assert normalize_train_rank('ｃ') == 'C' and normalize_train_rank('Ｄ') == 'D'
+        assert is_c_or_below('C') and is_c_or_below('D') and is_c_or_below('Ｅ')
+        assert not is_c_or_below('A') and not is_c_or_below('B') and not is_c_or_below('')
+        rid = '209901019997'
+        sc.write_oikiri(rid, {3: {'name': 'テスト', 'rank': 'C', 'critic': '平凡'},
+                              7: {'name': '本命', 'rank': 'A', 'critic': '上々'}})
+        got = sc.read_oikiri(rid)
+        assert got and got[3]['rank'] == 'C' and got[7]['rank'] == 'A', f"got {got}"
+        try:
+            os.remove(sc._oikiri_path(rid))
+        except Exception:
+            pass
+    check("score_cache.write_oikiri/read_oikiri", t_oikiri_cache)
 
     def t_agent_roster():
         from core import agent_forum as af
@@ -1179,21 +1357,36 @@ def main():
         assert osch.due_slots(plan3, now=_dts(2026, 7, 12, 22, 5)) == [], "前日夜の記録済はdue外"
         stt3 = osch.plan_status(plan3, now=_dts(2026, 7, 12, 22, 5))
         assert stt3['total'] == 2 and stt3['done'] == 1, f"前日夜込みの進捗, got {stt3}"
-        # 本線スロット: 朝一8:40 + 発走15分前 + 発走10分前
+        # 本線スロット: 朝一8:40 + 発走前5点(15/10/5分前・直前・最終)
         rec_names = [x[0] for x in osch.RECOMMENDED]
-        assert '08:40' in rec_names and '発走15分前' in rec_names and '発走10分前' in rec_names
+        for _nm in ('08:40', '発走15分前', '発走10分前', '発走5分前', '発走1分前', '発走3分後'):
+            assert _nm in rec_names, f"RECOMMENDEDに{_nm}が無い"
         assert osch.DEFAULT_CLOCK_TIMES == ['08:40']
-        assert osch.prepost_hhmm('15:40') == ['15:25', '15:30']
+        assert osch.prepost_hhmm('15:40') == ['15:25', '15:30', '15:35', '15:39', '15:43']
         plan4 = {'date': '20260712', 'times': ['08:40'],
                  'races': [{'race_id': '202605050311', 'label': '東京11R'}], 'records': {}}
         plan4, npp = osch.attach_prepost_times(
             plan4, {'202605050311': '15:40'},
             labels_by_rid={'202605050311': '東京11R'})
-        assert npp == 2, f"15分前+10分前で2枠, got {npp}"
+        assert npp == 5, f"発走前5点で5枠, got {npp}"
         rt4 = osch.race_times(plan4, '202605050311')
-        assert '15:25' in rt4 and '15:30' in rt4 and '08:40' in rt4, f"本線3点, got {rt4}"
+        for _t in ('15:25', '15:30', '15:35', '15:39', '15:43', '08:40'):
+            assert _t in rt4, f"本線枠{_t}が無い, got {rt4}"
         plan4, npp2 = osch.attach_prepost_times(plan4, {'202605050311': '15:40'})
         assert npp2 == 0, "二重予約しない"
+        # フェーズ(時点ラベル): 発走時刻がエントリに保持され、スロットから復元できる
+        assert plan4['races'][0].get('post') == '15:40', "発走時刻をエントリに保持"
+        assert osch.slot_phase(plan4, '202605050311', '15:25') == '15分前'
+        assert osch.slot_phase(plan4, '202605050311', '15:30') == '10分前'
+        assert osch.slot_phase(plan4, '202605050311', '15:35') == '5分前'
+        assert osch.slot_phase(plan4, '202605050311', '15:39') == '直前'
+        assert osch.slot_phase(plan4, '202605050311', '15:43') == '最終'
+        assert osch.slot_phase(plan4, '202605050311', '08:40') == '朝一'
+        assert osch.slot_phase(plan4, '202605050311', '前日22:00') == '前日夜'
+        assert osch.classify_phase(-3) == '最終' and osch.classify_phase(1) == '直前'
+        assert osch.classify_phase(30) == '30分前' and osch.classify_phase(None, '12:00') == '中間'
+        # 手動記録の時点推定: 発走8分前の『今』は10分前
+        assert osch.current_phase(plan4, '202605050311', now=_dts(2026, 7, 12, 15, 32)) == '10分前'
         # ハートビート: touch直後はalive・古い/無しはFalse
         _hb = osch.HEARTBEAT_PATH + '.smoketest'
         osch.touch_heartbeat(path=_hb)
@@ -1554,6 +1747,25 @@ def main():
         assert '《4角想定》' in html, "finish未保存の旧スナップショットは4角想定にフォールバック"
         assert '3-7-2(58倍)' in html, "買い目コンボが紙面化"
         assert iss[0]['n_cols'] == 4, f"アプリ表示列の列数維持, got {iss[0]['n_cols']}"
+        from core import score_cache as _sc_np
+        _gp = _sc_np._gate_path(rid)
+        if os.path.exists(_gp):
+            os.remove(_gp)
+        npm.write_bets_snapshot(
+            rid, 'playbook',
+            {'bets': {}, 'meta': {'zone': 'C', 'ui_line': 'C中庸'}},
+            extra={'zone': 'C', 'cross_n': 3})
+        _badge0, _ = npm._buymeta_html(rid)
+        assert 'RRV' in _badge0 and '見送り' not in _badge0, \
+            f"Gate無しでも型RRV, got {_badge0}"
+        html0, _ = npm.build_newspaper_html([rid], {'col_mode': 'app'})
+        assert 'RRV' in html0, "Gate無しでもレース見出しに型が出る"
+        _sc_np.write_gate(rid, 'skip', '中立')
+        _badge, _ = npm._buymeta_html(rid)
+        assert '⛔ 見送り' in _badge and '中立' in _badge and 'RRV' in _badge, \
+            f"紙面ヘッダに型RRV, got {_badge}"
+        html_g, _ = npm.build_newspaper_html([rid], {'col_mode': 'app'})
+        assert '｜RRV' in html_g, "レース見出しの見送り横に型が出る"
         # カスタム(チェック式)列: チェック順=紙面順
         html_c, iss_c = npm.build_newspaper_html(
             [rid], {'col_mode': 'custom', 'custom_cols': ['Name', 'Umaban']})
@@ -1561,10 +1773,40 @@ def main():
         csvb, nr, nc = npm.build_csv_bytes(rid)
         assert csvb and nr == 2 and nc >= 4, f"CSVエクスポート, got {nr}x{nc}"
         for pth in (npm._view_path(rid), npm._cv_path(rid),
-                    npm._bets_path(rid), npm._pace_path(rid)):
+                    npm._bets_path(rid), npm._pace_path(rid),
+                    _sc_np._gate_path(rid)):
             if os.path.exists(pth):
                 os.remove(pth)
     check("newspaper.スナップショット往復/組版/CSV", t_newspaper)
+
+    def t_umai_baken_shape():
+        from core import umai_baken as ub
+        html = ('<table><tr><th>券種・買い目</th><th>組み合わせ・点数</th></tr>'
+                '<tr><td>3連複(通常)</td><td>1 - 2 - 3 1,000円</td></tr>'
+                '<tr><td>合計</td><td>1,000円</td></tr></table>')
+        p = ub.parse_detail_tickets(html)
+        assert p['tickets'][0]['kind'] == '3連複' and p['total_stake'] == 1000
+        rec = ub.shape_record('1', '2', p)
+        assert '3連複' in rec['app_near']
+        assert ub.extract_yoso_ids('id=6051613&pid=yoso_detail') == ['6051613']
+    check("umai_baken.買い目形パース", t_umai_baken_shape)
+
+    def t_vmatrix_pos4_resolve():
+        from core.pace_map import resolve_v_pos
+        pos, src = resolve_v_pos(1, 'A', 0.5, profiles={'A': {'ten': 0.2}}, pos4={1: 0.1})
+        assert src == 'pos4' and abs(pos - 0.1) < 1e-9
+        pos2, src2 = resolve_v_pos(2, 'B', 0.5, profiles={'B': {'ten': 0.2}}, pos4=None)
+        assert src2 == 'ten' and abs(pos2 - 0.2) < 1e-9
+    check("vmatrix_pos4.resolve_v_pos優先順位", t_vmatrix_pos4_resolve)
+
+    def t_vmatrix_annotations_contract():
+        from core import vmatrix_annotations as vma
+        ann = vma.collect_horse_annotations(
+            [{'umaban': 1, 'name': 'A', 'score': 0.5}],
+            {'A': {'agari': 0.2}}, [{'Umaban': 1, 'Popularity': 7}],
+            '202606040101')
+        assert vma.TAG_SPURT in ann[1]['tags']
+    check("vmatrix_annotations.末脚タグ契約", t_vmatrix_annotations_contract)
 
     def t_pace_diagram_svg():
         from core import newspaper as np_pd
@@ -1893,8 +2135,65 @@ def main():
                     os.remove(p)
     check("playbook_ledger 生成時リーク無し/D2/C30/BA0/的中外れ払戻0", t_playbook_ledger)
 
+    def t_c248_shadow():
+        from core import playbook_tickets as pb
+        from core import playbook_shadow as psh
+        from core import playbook_ledger as lg
+        from core import newspaper as np_mod
+        import copy
+        hs = [{'umaban': i, 'name': f'H{i}', 'pop': i} for i in range(1, 9)]
+        ltr = {i: float(i) for i in range(1, 9)}  # 8が最強
+        prod = pb.build_tickets('R', 55, hs, {1: '◎', 2: '〇'}, ltr, cross_n=3)
+        assert prod['selected_playbook'] == 'c_ltr_trio_236'
+        assert prod['trio'] and not prod['trifecta']
+        prod_copy = copy.deepcopy(prod)
+        assert psh.applicable(prod)
+        sh = psh.build_shadow_rec(prod)
+        assert sh['skip'] is False
+        assert sh['formation'] == '2-4-8'
+        assert sh['n_points'] > 0
+        assert sh['budget_yen'] == psh.SHADOW_BUDGET_YEN
+        assert prod == prod_copy, '本番 rec は Shadow 計算で変わらない'
+
+        c_tri = pb.build_tickets('R', 55, hs, {1: '◎', 2: '〇'}, ltr, cross_n=2)
+        assert not psh.applicable(c_tri)
+
+        scored = lg.score_shadow_tickets(
+            [tuple(r['combo']) for r in sh['trio']],
+            [{'combo': sh['trio'][0]['combo'], 'payout': 5000}],
+            psh.SHADOW_BUDGET_YEN,
+        )
+        assert scored['hit'] is True
+        assert scored['investment'] == 700
+
+        rid = 'smoketestshadow248'
+        try:
+            np_mod.persist_playbook(rid, prod)
+            bets = np_mod.load_bets(rid)
+            assert 'playbook' in bets
+            assert psh.SHADOW_BETS_KEY in bets
+            sh_blob = bets[psh.SHADOW_BETS_KEY]
+            assert sh_blob['extra']['formation'] == '2-4-8'
+            assert sh_blob['extra']['skip'] is False
+            pb_trio = {tuple(r['combo']) for r in bets['playbook']['result']['bets']['trio']}
+            sh_trio = {tuple(r['combo']) for r in sh_blob['result']['bets']['trio']}
+            assert pb_trio != sh_trio
+            lg.settle(rid, official={'winners': [
+                {'combo': list(prod['trio'][0]['combo']), 'payout': 1000},
+            ]})
+            bets2 = np_mod.load_bets(rid)
+            assert 'outcome' in bets2['playbook']
+            assert 'outcome' in bets2[psh.SHADOW_BETS_KEY]
+            cmp = lg.summarize_shadow_vs_production()
+            assert cmp['min_races'] == psh.SHADOW_MIN_RACES
+        finally:
+            for p in (np_mod._bets_path(rid), np_mod._view_path(rid)):
+                if os.path.exists(p):
+                    os.remove(p)
+    check("C248 Shadow 2-4-8 本番非影響・persist・settle", t_c248_shadow)
+
     def t_elim_verdict_html():
-        # 🧹消去フィルター: 強適消去エンジンの判定から✅残し/🛟ボーダー残し以外(🧹消し)の馬名を表示
+        # 🧹消去フィルター残馬: 自動判定の✅残し/🛟ボーダー残しを表示
         from core import newspaper as np_ev
         rid = 'smoketest_elimverdict'
         rows = [
@@ -1908,14 +2207,13 @@ def main():
             d = np_ev.load_elim_verdict(rid)
             assert d and len(d['rows']) == 4, "判定スナップショットが往復保存される"
             html = np_ev._elim_html({}, [], rid)
-            assert 'ケシC' in html and 'ケシD' in html, "消去された馬名が表示される"
-            assert 'ノコシA' not in html and 'ボーダーB' not in html, \
-                "残し/ボーダー残しの馬名は消去リストに出さない"
-            assert '消去フィルター' in html and '強適消去エンジンで消去' in html
+            assert 'ノコシA' in html and 'ボーダーB' in html, "残し/ボーダー残しの馬名が表示される"
+            assert 'ケシC' not in html and 'ケシD' not in html, "消去馬を残馬一覧に出さない"
+            assert '消去フィルター残馬' in html
         finally:
             if os.path.exists(np_ev._elim_verdict_path(rid)):
                 os.remove(np_ev._elim_verdict_path(rid))
-    check("newspaper._elim_html(強適消去エンジンの消去馬名)", t_elim_verdict_html)
+    check("newspaper._elim_html(強適消去エンジンの残馬名)", t_elim_verdict_html)
 
     def t_scan_digest():
         # 📰 スキャン新聞: 保存(lean dict→str)→フィルタ(②のみ/本線のみ/見送り除外)→組版
@@ -1969,7 +2267,8 @@ def main():
         # 🏁ダッシュボード/⑥回顧が依存する関数の存在保証(リネーム破壊を即検出)
         from core import money, score_cache as sc
         for m in ('roi_by_gate', 'max_drawdown', 'loss_breakdown',
-                  'improvement_rules', 'classify_loss', 'record_prediction'):
+                  'improvement_rules', 'classify_loss', 'record_prediction',
+                  'record_kelly_bets', 'record_skip'):
             assert hasattr(money.Ledger, m), f"money.Ledger.{m} 欠落(ダッシュボード破壊)"
         for fn in ('recent_gates', 'read_gate', 'write_gate', 'read_buy', 'write_buy'):
             assert hasattr(sc, fn), f"score_cache.{fn} 欠落"
@@ -2105,7 +2404,8 @@ def main():
         from core import nankan_scraper as nk
         for fn in ('derive_nankan_race_id', 'fetch_month_programs',
                    'fetch_program_races', 'fetch_entries', 'fetch_horse_history',
-                   'runs_to_pastruns', 'enrich_with_nankan'):
+                   'runs_to_pastruns', 'enrich_with_nankan',
+                   'fill_bloodline_from_nankan'):
             assert hasattr(nk, fn), f"nankan_scraper.{fn} 欠落(NAR過去走補完破壊)"
         # netkeiba地方場コード→nankan内部場コード(実査確定値)
         assert nk.NETKEIBA_TO_NANKAN_VENUE == {'42': '18', '43': '19', '44': '20', '45': '21'}, \
@@ -2178,9 +2478,10 @@ def main():
             assert k in ec.UNVERIFIED and k in ec.CAUTION_KEYS and k in ec.FLAG_LABEL
         # 展開2(netkeiba照合💀・青ヘッダ)＋ディスク橋渡し
         assert 'tenkai2' in ec.UNVERIFIED and 'tenkai2' in ec.BLUE_KEYS and 'tenkai2' in ec.FLAG_LABEL
-        # 騎手弱材料: 数字なし＝しきい値以下。ヘッダは紫。
+        # 騎手弱材料: 数字なし＝しきい値以下。ヘッダは紫(調教C以下も同色)。
         assert 'jweak' in ec.UNVERIFIED and 'jweak' in ec.PURPLE_KEYS
-        assert 'jweak' not in ec.CAUTION_KEYS
+        assert 'train' in ec.UNVERIFIED and 'train' in ec.PURPLE_KEYS
+        assert 'jweak' not in ec.CAUTION_KEYS and 'train' not in ec.CAUTION_KEYS
         assert ec.is_jweak(None) is False
         assert ec.is_jweak({'mult': 1.0, 'note': '馬連携80・場連対10・黄金10'}) is True
         assert ec.is_jweak({'mult': 1.0, 'note': ''}) is True, "内訳なしは以下扱い"
@@ -2272,6 +2573,11 @@ def main():
         assert combo_n_of(7, {7: 3}) == 3
         assert combo_n_of('7', {7: 2}) == 2
         assert combo_n_of(9, {}) == 0
+        from pages.anabaka_hunter import golden_line_visible_labels
+        assert golden_line_visible_labels(
+            ['⭐黄金ライン42%', '🏠厩舎当ｺｰｽ20%']) == ['⭐黄金ライン42%']
+        assert golden_line_visible_labels(['🔥末脚top']) == []
+        assert golden_line_visible_labels(None) == []
     check("穴馬ハンター道悪血統は人気上位の表示のみ", t_hunter_wet_fav_notes)
 
     def t_folklore_lib():
@@ -2376,8 +2682,56 @@ def main():
         assert len(folk.MARKET_LENS) == 10
         senko = folk.market_lens_for_catalog('front_habit')
         assert senko and senko['id'] == 'style_senko'
-        assert '市場以上の優位性なし' in folk.market_lens_short(senko)
         assert folk.market_lens_for_catalog('no_such_folk') is None
+        from pages import folklore_hunter as fh
+        eff_test = fh._filter_effective_results([
+            {'umaban': 1, 'name': 'T1', 'hits': [
+                {'id': 'a', 'sign': folk.SIGN_POS, 'verdict': folk.VERDICT_EFFECTIVE},
+                {'id': 'b', 'sign': folk.SIGN_NEG, 'verdict': folk.VERDICT_REJECTED},
+            ]},
+            {'umaban': 2, 'name': 'T2', 'hits': [
+                {'id': 'c', 'sign': folk.SIGN_NEG, 'verdict': folk.VERDICT_EFFECTIVE},
+            ]}
+        ])
+        assert len(eff_test) == 2
+        assert eff_test[0]['n_pos'] == 1 and eff_test[0]['n_neg'] == 0 and eff_test[0]['score'] == 1
+        assert eff_test[1]['n_pos'] == 0 and eff_test[1]['n_neg'] == 1 and eff_test[1]['score'] == -1
+        assert fh._filter_effective_results([]) == folk.filter_effective_results([])
+
+        myth_sets = {
+            'positive': {1, 2},
+            'composite': {1, 3},
+            'practical_positive': {2, 4},
+            'practical_composite': {1, 4},
+        }
+        assert folk.myth_info_for_umaban(1, myth_sets)['count'] == 3
+        assert folk.myth_info_for_umaban(2, myth_sets)['count'] == 2
+        assert folk.myth_info_for_umaban(99, myth_sets)['count'] == 0
+
+        def _hit(sign, verdict=folk.VERDICT_EFFECTIVE):
+            return {'id': 'x', 'sign': sign, 'verdict': verdict, 'category': 'T'}
+
+        myth_rows = [
+            {'umaban': 1, 'name': 'A', 'n_pos': 5, 'n_neg': 0, 'score': 5,
+             'hits': [_hit(folk.SIGN_POS)] * 5},
+            {'umaban': 2, 'name': 'B', 'n_pos': 4, 'n_neg': 0, 'score': 4,
+             'hits': [_hit(folk.SIGN_POS)] * 4},
+            {'umaban': 3, 'name': 'C', 'n_pos': 3, 'n_neg': 0, 'score': 3,
+             'hits': [_hit(folk.SIGN_POS)] * 3},
+            {'umaban': 4, 'name': 'D', 'n_pos': 2, 'n_neg': 0, 'score': 2,
+             'hits': [_hit(folk.SIGN_POS)] * 2},
+            {'umaban': 5, 'name': 'E', 'n_pos': 1, 'n_neg': 0, 'score': 1,
+             'hits': [_hit(folk.SIGN_POS)] * 1},
+            {'umaban': 6, 'name': 'F', 'n_pos': 0, 'n_neg': 5, 'score': -5,
+             'hits': [_hit(folk.SIGN_NEG)] * 5},
+            {'umaban': 7, 'name': 'G', 'n_pos': 0, 'n_neg': 0, 'score': 0, 'hits': []},
+        ]
+        myth_map = folk.build_myth_count_map(myth_rows)
+        assert myth_map[1]['count'] == 4
+        assert myth_map[6]['count'] == 0
+        assert myth_map[7]['count'] == 0
+        assert folk.build_myth_count_map(None) is None
+        assert folk.build_myth_count_map([]) is None
     check("俗説ハンターはエンジン非配線・該当と否決を数える", t_folklore_lib)
 
     def t_gyaku_kami():
@@ -2554,6 +2908,26 @@ def main():
         assert '↔ 芝⇔ダ：芝→ダ→芝' in blk
         assert '○' not in blk
     check("逆ショッカー候補(表示専用・リーク無し)", t_gyaku_shocker_reach)
+
+    def t_jump_return_display():
+        from core import jump_return as jr
+        hit = jr.reach('障2900', '芝', 2900, 1600)
+        assert hit and hit['prev_distance'] == 2900
+        assert jr.reach('障害', 'ダート')
+        assert jr.reach('芝', 'ダート') is False
+        assert jr.reach('障', '障害') is False
+        assert jr.reach('', '芝') is None
+        assert jr.reach('障', '') is None
+        html = jr.label_html(jr.reach('障', '芝1600', 3000, 1600))
+        assert '障害帰り' in html
+        assert 'font-weight:bold' in html
+        assert '#2e7d32' in html
+        assert jr.label_html(False) == '' and jr.label_html(None) == ''
+        blk = jr.block_html(jr.reach('障', '芝'))
+        assert '障害帰り' in blk and '点数' in blk
+        from pages.anabaka_hunter import _html_oneline
+        assert '障害帰り' in _html_oneline(blk)
+    check("障害帰り(表示専用・緑字)", t_jump_return_display)
 
     def t_gyaku_newspaper_off():
         from core import newspaper as np

@@ -91,3 +91,28 @@ def wilson_lower(k, n, z=1.96):
     margin = z * math.sqrt(max(0.0, (p * (1.0 - p) / n) + (z2 / (4.0 * n * n))))
     lo = (center - margin) / denom
     return max(0.0, min(1.0, lo))
+
+
+def wilson_interval(k, n, z=1.96):
+    """Wilsonスコア区間 (lower, upper)。n=0 は (None, None)。標準mathのみ。"""
+    try:
+        k = float(k)
+        n = float(n)
+        z = float(z)
+    except (TypeError, ValueError):
+        raise ValueError('wilson_interval: 数値に変換できない引数があります')
+    if k < 0 or n < 0:
+        raise ValueError(f'wilson_interval: k/n は非負が必要 (k={k}, n={n})')
+    if k > n:
+        raise ValueError(f'wilson_interval: k は n 以下が必要 (k={k}, n={n})')
+    if n == 0:
+        return None, None
+
+    p = k / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = p + z2 / (2.0 * n)
+    margin = z * math.sqrt(max(0.0, (p * (1.0 - p) / n) + (z2 / (4.0 * n * n))))
+    lo = (center - margin) / denom
+    hi = (center + margin) / denom
+    return max(0.0, min(1.0, lo)), max(0.0, min(1.0, hi))

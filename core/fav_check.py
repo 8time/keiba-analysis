@@ -11,7 +11,7 @@
   danger_gate.danger_veto      危険材料。10.8万頭で再監査し効果ゼロの2項目は削除済
   value_scanner.glass_favorite_fade  ガラス人気馬。複勝率残差 z-8.5（3窓一貫）
   axis_selector.axis_confidence  前走1着-2pp / 位置比率<0.28の先行-1.6〜1.9pp を織込んだ信頼度
-  axis_selector.fuku_rate        オッズから引く素の複勝率
+  axis_selector.fuku_rate        オッズから引く素の複勝率（🎯軸馬候補列と共通の表示ソースに統一 2026-09-08）
   axis_selector.race_axis_confidence  補正T×人気の重複（1番人気複勝率 55%→74%）
   jockey_jv.is_golden_line       騎手×厩舎連対率35-40%（+2.44/+2.48pp・77.5万騎乗）
 
@@ -207,3 +207,37 @@ def check(fav, horses=None, race=None):
             'fuku': fuku, 'items': items, 'note': note,
             'race_ctx': race_ctx,
             'n_danger': n_danger, 'danger_fuku': exp_fuku}
+
+
+def combine_axis(results, race_ctx=None):
+    """人気1・2番人気の check() 結果とレースの性質を1つの総合判定にまとめる。
+
+    表示の集約のみ（新しい主張なし）:
+      - どちらかが 🔴 → 全体も 🔴
+      - どちらかが 🟡 → 全体は 🟡 まで
+      - レースの重複が0頭（軸が立ちにくいタイプ）のとき両方🟢でも 🟡 止まり
+
+    results: [check() の戻り値, ...]（1件でも可）
+    race_ctx: check() が返す race_ctx（補正T×人気の重複）または race_axis_confidence の戻り値
+    戻り値: {'verdict','emoji','headline','capped_by_race'}
+    """
+    _ord = {'buy': 0, 'caution': 1, 'avoid': 2}
+    worst = max([_ord.get((r or {}).get('verdict'), 1) for r in results] or [1])
+    capped = bool(race_ctx and race_ctx.get('overlap') == 0 and worst == 0)
+    if capped:
+        worst = 1
+    two = len(results) >= 2
+    if worst >= 2:
+        emoji = '🔴'
+        head = '軸のどちらかを外す検討を勧めます' if two else '軸から外すことを勧めます'
+    elif worst == 1:
+        emoji = '🟡'
+        if capped:
+            head = 'レースとして軸が立ちにくい組み合わせです'
+        else:
+            head = '軸は使えますが割引材料があります' if two else '軸にはできますが割引が要ります'
+    else:
+        emoji = '🟢'
+        head = '軸2頭とも信頼できます' if two else '軸にできます'
+    return {'verdict': ('buy', 'caution', 'avoid')[min(worst, 2)],
+            'emoji': emoji, 'headline': head, 'capped_by_race': capped}

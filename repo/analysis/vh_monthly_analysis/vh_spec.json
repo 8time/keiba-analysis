@@ -1,0 +1,15 @@
+{
+  "production_module": "core/value_hunter.py",
+  "params": "data/value_hunter_light.json",
+  "pop_min": 6,
+  "tier_elite_threshold": 0.12429164366498326,
+  "tier_net_threshold": 0.08270253144179275,
+  "pick_definition": "6番人気以下 × (🎯精鋭 or 🕸️広域網)",
+  "data_from": 20160105,
+  "data_to": 20260621,
+  "kiui_from": 20180301,
+  "kiui_to": 20260630,
+  "kiui_period_note": "データ上限20260621のため2026年6月後半は未包含",
+  "odds_note": "CSV win_odds=JV事前確定オッズ。きうい=前日夜オッズ5倍+。条件差あり。",
+  "pop_note": "VH=6番人気以下。きうい=オッズ5倍+（人気条件なし）。"
+}

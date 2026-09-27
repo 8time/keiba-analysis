@@ -162,10 +162,166 @@ def _horse_table(df, actual_result):
     return "\n".join(out)
 
 
-def build_context(df=None, magi_pred=None, actual_result=None, meta=None):
-    """会話セッション全体で使う、短いレースコンテキスト文字列を作る。"""
+def _c4_pos(passing):
+    """通過順の最後の数字＝4角付近の位置。取れなければ None。"""
+    parts = re.findall(r'\d+', str(passing or ''))
+    return int(parts[-1]) if parts else None
+
+
+def _parse_body_weight(raw):
+    """'480(+8)' → (480, +8)。取れなければ None。"""
+    m = re.search(r'(\d{3})\s*[\(（]\s*([+-]?\d+)\s*[\)）]', str(raw or ''))
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def _review_class_notes(meta, df=None, actual_result=None):
+    """クラスごとの注意（買い指示ではない。次走の相手が変わりやすい、という確認用）。"""
+    meta = meta or {}
+    info = (actual_result or {}).get('race_info') or {}
+    blob = ' '.join(str(x or '') for x in (
+        meta.get('RaceName'), meta.get('race_name'), meta.get('class'),
+        info.get('race_name'),
+    ))
+    surf = str(meta.get('surface') or meta.get('CurrentSurface') or '')
+    if df is not None and hasattr(df, 'columns') and 'CurrentSurface' in df.columns and not df.empty:
+        surf = surf or str(df['CurrentSurface'].iloc[0] or '')
+    notes = []
+    is_new = ('新馬' in blob)
+    is_maid = ('未勝利' in blob) or is_new
+    is_2yo = bool(re.search(r'2歳|２歳', blob))
+    is_dirt = ('ダ' in surf) or ('dirt' in surf.lower())
+    if is_new and is_dirt:
+        notes.append('ダート新馬：芝を使いにくい馬が集まりやすく、メンバーの厚みが読みにくい')
+    elif is_maid or is_2yo:
+        notes.append('2歳・新馬・未勝利：次走で相手が一気に強くなることがある（今回の着順だけで次を決めない）')
+    if re.search(r'G1|G2|G3|GI|GII|GIII|重賞|オープン|リステッド', blob):
+        notes.append('オープン・重賞：次走のクラスがバラバラになりやすい（相手関係を改めて見る）')
+    if meta.get('is_fillies') or ('牝' in blob and '限定' in blob):
+        notes.append('牝馬戦：混合戦と牝馬限定では力関係が違うことがある')
+    return notes
+
+
+def _review_checklist(df=None, actual_result=None, meta=None):
+    """回顧の下準備（事実の確認リスト）。次走の買い目は作らない。
+
+    映像・裁決はデータに無いので「ユーザーに聞いてよい」と明記する。
+    展開逆行の次走狙い・距離短縮一変・着外狙い は入れない。
+    """
+    meta = meta or {}
+    info = (actual_result or {}).get('race_info') or {}
+    lines = ['【回顧の確認リスト】（事実の整理。次走の買い指示ではない）']
+
+    cond = str(meta.get('condition') or '')
+    surf = str(meta.get('surface') or meta.get('CurrentSurface') or '')
+    if df is not None and hasattr(df, 'columns') and not getattr(df, 'empty', True):
+        if not surf and 'CurrentSurface' in df.columns:
+            surf = str(df['CurrentSurface'].iloc[0] or '')
+    if surf or cond:
+        lines.append(f"・馬場: {surf or '—'} {cond or ''}".rstrip())
+    else:
+        lines.append('・馬場: データなし → 内伸び／外伸び、前残りか差しが届いたかをユーザーに聞いてよい')
+
+    dist = info.get('distance') or meta.get('distance')
+    if dist is None and df is not None and hasattr(df, 'columns') and not getattr(df, 'empty', True):
+        if 'CurrentDistance' in df.columns:
+            try:
+                import pandas as _pd
+                dist = int(_pd.to_numeric(df['CurrentDistance'].iloc[0], errors='coerce'))
+            except Exception:
+                dist = None
+    splits = info.get('pace_splits') or {}
+    if splits:
+        lines.append(f"・ハロン（通過タイム）: {splits}")
+    elif dist:
+        band = '前半600mあたり' if int(dist) <= 1600 else '前半1000mあたり'
+        lines.append(f"・流れ: 距離{int(dist)}m。{band}が速かったか遅かったかをユーザーに聞いてよい")
+
+    horses = (actual_result or {}).get('horses') or {}
+    placed = []
+    for ub, h in horses.items():
+        try:
+            rk = int(h.get('Rank', 99))
+        except (TypeError, ValueError):
+            continue
+        if rk <= 3:
+            placed.append((rk, ub, h))
+    placed.sort()
+    if placed:
+        n_field = int(info.get('field_size') or len(horses) or 0) or None
+        front = rear = 0
+        bits = []
+        for rk, ub, h in placed:
+            c4 = _c4_pos(h.get('Passing'))
+            where = ''
+            if c4 is not None and n_field:
+                if c4 <= 3 or (c4 / n_field) <= 0.28:
+                    where = '前め'
+                    front += 1
+                elif (c4 / n_field) >= 0.65:
+                    where = '後ろめ'
+                    rear += 1
+                else:
+                    where = '中団'
+            bits.append(
+                f"{rk}着 {h.get('Name', f'馬番{ub}')} 通過{h.get('Passing') or '—'}{('=' + where) if where else ''}")
+        lines.append('・上位の位置取り: ' + ' / '.join(bits))
+        if front >= 2:
+            lines.append('・印象: 上位は前めが多め（前が残った感じ）')
+        elif rear >= 2:
+            lines.append('・印象: 上位は後ろめが多め（後ろから来た感じ）')
+    else:
+        lines.append('・上位の位置取り: 結果の通過順がまだ無い')
+
+    notes = _review_class_notes(meta, df, actual_result)
+    if notes:
+        lines.append('・クラスの注意（次走を即決めしない）: ' + '／'.join(notes))
+
+    wt_bits = []
+    if df is not None and hasattr(df, 'columns') and not getattr(df, 'empty', True) and 'Weight' in df.columns:
+        import pandas as _pd
+        for _, r in df.iterrows():
+            parsed = _parse_body_weight(r.get('Weight'))
+            if not parsed:
+                continue
+            _kg, dlt = parsed
+            if abs(dlt) >= 8:
+                try:
+                    um = int(_pd.to_numeric(r.get('Umaban'), errors='coerce'))
+                except Exception:
+                    continue
+                wt_bits.append(f"{um}番{str(r.get('Name', '') or '')[:8]}({dlt:+d}kg)")
+    if wt_bits:
+        lines.append('・馬体重の増減が大きい馬: ' + ' / '.join(wt_bits) + '（事実の確認。増減だけで買い・消しにしない）')
+    else:
+        lines.append('・馬体重の増減・休み・裁決の不利／鼻出血: データに無い分はユーザーに聞いてよい')
+
+    lines.append('・映像で見た印象（狭まった・外を回された等）はユーザーの言葉をそのまま聞く。次走の狙いにはしない')
+    return lines
+
+
+def build_context(df=None, magi_pred=None, actual_result=None, meta=None, review_bundle=None):
+    """会話セッション全体で使う、短いレースコンテキスト文字列を作る。
+
+    review_bundle がある場合、購入前判断(A)と事後再計算(C)を混同しない。
+    """
     meta = meta or {}
     lines = []
+    pre = (review_bundle or {}).get('pre_race_snapshot') or {}
+    used_pre = pre.get('status') == 'available'
+    settled = (review_bundle or {}).get('settled_result') if review_bundle else None
+
+    if review_bundle is not None:
+        if used_pre:
+            lines.append('【A. 購入前記録（PRE-RACE SNAPSHOT）※当時の判断はここを正とする】')
+            if pre.get('summary_text'):
+                lines.append(pre['summary_text'])
+            diff = pre.get('diff') or {}
+            if diff.get('summary'):
+                lines.append(f"推奨と実購入の差分: {diff.get('summary')}")
+        else:
+            lines.append('【A. 購入前記録】 pre_race_snapshot = unavailable（推測復元なし）')
 
     # 実結果 上位
     actual_top = []
@@ -183,18 +339,32 @@ def build_context(df=None, magi_pred=None, actual_result=None, meta=None):
                 'passing': h.get('Passing', '-'),
             })
     if actual_top:
-        lines.append('【実際の結果】')
+        hdr = '【B. 確定結果（SETTLED RESULT）】' if review_bundle is not None else '【実際の結果】'
+        lines.append(hdr)
         for h in actual_top:
             lines.append(
                 f"  {h['rank']}着 {h['name']}（{h['pop']}番人気 / 上がり{h['agari']} / 通過{h['passing']}）"
             )
 
-    # MAGI事前予測 TOP3
+    if settled and settled.get('bets'):
+        lines.append('【B. 実購入・精算】')
+        for b in settled['bets']:
+            lines.append(
+                f"  {b.get('bet_type')} {b.get('bamei')} ¥{b.get('stake')} "
+                f"→ {b.get('settlement_state')} 払戻¥{b.get('payout') or 0}")
+        lines.append(
+            f"  レース損益: ¥{settled.get('race_pnl', 0)} "
+            f"(購入¥{settled.get('total_stake', 0)} / 払戻¥{settled.get('total_payout', 0)})")
+
+    # MAGI予測（review_bundle 時は事後再計算として明示）
     pred_ubs = []
     if magi_pred and magi_pred.get('final_prediction'):
         ph = magi_pred['final_prediction'].get('horses', [])
         if ph:
-            lines.append('【MAGIが本命にした馬(事前)】')
+            if review_bundle is not None:
+                lines.append('【C. 事後MAGI deliberation（POST-RACE RECALCULATION）】')
+            else:
+                lines.append('【MAGIが本命にした馬(事前)】')
             for h in ph[:3]:
                 lines.append(f"  馬番{h.get('umaban')} {h.get('name','?')}")
                 pred_ubs.append(str(h.get('umaban')))
@@ -208,15 +378,22 @@ def build_context(df=None, magi_pred=None, actual_result=None, meta=None):
         for h in missed:
             lines.append(f"  {h['rank']}着 {h['name']}（{h['pop']}番人気）")
 
-    # アプリが出した実シグナル(末脚/危険人気馬/総合上位)を抽出して文脈に足す
+    chk = _review_checklist(df, actual_result, meta)
+    if chk:
+        lines.append('')
+        lines.extend(chk)
+
     sig = _extract_signals(df, actual_top)
     if sig['text']:
         lines.append('')
+        if review_bundle is not None:
+            lines.append('【C. レース後再取得dfのシグナル（POST-RACE RECALCULATION）】')
         lines.append(sig['text'])
-    # 全出走馬データ表(厩舎/上がり/スコア等=詳しい質問・事前予想ゲームの素材)
     tbl = _horse_table(df, actual_result)
     if tbl:
         lines.append('')
+        if review_bundle is not None:
+            lines.append('【C. レース後再取得df（出走馬表）】')
         lines.append(tbl)
 
     return {
@@ -225,6 +402,12 @@ def build_context(df=None, magi_pred=None, actual_result=None, meta=None):
         'pred_ubs': pred_ubs,
         'missed': missed,
         'signals': sig,
+        'review_bundle': review_bundle,
+        'used_pre_race_snapshot': used_pre if review_bundle is not None else None,
+        'used_post_race_recalculation': bool(
+            df is not None and not getattr(df, 'empty', True))
+        if review_bundle is not None else None,
+        'review_checklist': chk,
     }
 
 
@@ -294,6 +477,22 @@ _TURN_SYSTEM = """あなたは競馬AI「MAGIシステム」。3人格がレー�
 アプリのシグナル(重要・最優先):
 - コンテキストに【✅アプリが事前に出した検証済みエッジ】があれば、その馬・サインを“MAGIから具体的に”挙げて話を始める。ユーザーに「何かサインあった?」と丸投げしない。
 - 【⚪参考情報】(総合スコア上位など)は買い材料として過信せず補助にとどめる。
+
+回顧の進め方（【回顧の確認リスト】があるとき）:
+- 会話の前半は、リストの順番を意識する。1ターンで全部聞かない。1項目だけやさしく聞く。
+  1) 馬場と流れ（内／外、前が残ったか差しが届いたか）
+  2) 上位の位置取り（通過の数字）
+  3) メンバーの厚み（手薄か、実績馬が揃っていたか）
+  4) 馬体重の増減・休み・裁決の不利や鼻出血（データに無いことはユーザーに聞く）
+  5) クラスの注意があれば「次走の相手が変わりやすい」とだけ触れる
+- 映像はこちらに無い。狭まった・外を回された等は、ユーザーが言った言葉をそのまま受け止める。
+- 次走の即買いを勧めない。1回の回顧で買い方は変えない。
+
+言ってはいけない（検証で否定／隔離）:
+- 展開やバイアスに逆行した馬を次走狙え
+- 折り合いを欠いた馬は距離短縮で一変する
+- 勝った馬は狙うな／5〜6着以下こそ次走の狙い目
+- 通過順や「不利あり」だけで次走の妙味を断言する
 
 データの使い方(質問に必ずデータで答える):
 - 【出走馬データ】表に各馬の 人気/オッズ/厩舎/スコア/上がり3F/通過順/着順 がある。ユーザーが「厩舎は?」「上がり3Fは?」「○番はどうだった?」と聞いたら、必ずこの表の数字を引いて具体的に答える。「分からない」で逃げない。
@@ -366,6 +565,7 @@ _EXTRACT_SYSTEM = """あなたは競馬の学習アシスタント。レース�
 あとで検証(バックテスト)するための学習メモを抽出します。
 ユーザーは初心者なので、本人の言葉(原文)を大切にしつつ、検証できる短い名詞句タグに整理してください。
 誇張や決めつけはしない。会話に無い情報を創作しない。
+「展開逆行を次走狙え」「距離短縮で一変」「着外が狙い目」はタグにしない。
 
 出力は必ず次のJSONのみ(```不要):
 {
@@ -482,7 +682,8 @@ def is_quarantined(tag):
     return any(kw in t for kw in _QUARANTINE_KEYWORDS)
 
 
-def save_record(race_id, meta, ctx, chat, learning, scanner_review=None, scanner_pred=None):
+def save_record(race_id, meta, ctx, chat, learning, scanner_review=None, scanner_pred=None,
+                audit_review_meta=None):
     """1セッションを台帳に追記し、保存後のタグ集計を返す。
 
     scanner_review: {'actual_class': '堅い|通常|波乱|大荒れ',
@@ -504,6 +705,7 @@ def save_record(race_id, meta, ctx, chat, learning, scanner_review=None, scanner
         'learning': learning,
         'scanner_review': scanner_review,
         'scanner_pred': scanner_pred,
+        'audit_review': audit_review_meta,
     }
     ledger.append(rec)
     os.makedirs(os.path.dirname(LEDGER_PATH), exist_ok=True)

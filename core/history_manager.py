@@ -141,7 +141,7 @@ def register_past_races(race_ids):
     """
     Registers past races by fetching data AND results, then saving.
     """
-    import calculator
+    from core import calculator
     
     log = []
     

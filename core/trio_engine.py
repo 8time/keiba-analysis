@@ -280,7 +280,7 @@ def allocate_budget(bets, budget, mode='均等買い', unit=100):
 def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                    pattern='①', n_points=10, pop_th=4, ana_lo=6, ana_hi=12,
                    pool_cap=12, deploy_map=None, combo_flow=0, keep_partners=None,
-                   band=None, fixed_pool=False):
+                   band=None, fixed_pool=False, rank_by_odds=False):
     """
     horses: [{'umaban':int,'name':str,'score':float,'pop':int|None,'alert':str}]
     odds_map: {frozenset({u1,u2,u3}): float} ライブ3連複オッズ（任意）
@@ -299,6 +299,9 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
     fixed_pool: Trueなら auto の人気1-4∪穴6-12 で再除外しない。使う馬として渡された頭を
         そのまま候補プールにし、その中から順位付けする（5番人気の常時追加ではない。
         渡されていない馬は足さない）。既定 False＝従来動作。
+    rank_by_odds: Trueなら1軸の組を3連複オッズの安い順にn_points取る（来やすい順）。
+        パターン加点・狙い目価格帯・穴の必須条件は使わない。オッズが無い組は後ろに回す。
+        1軸以外では使わない。
     戻り値: {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
     horses = [h for h in horses if h.get('umaban')]
@@ -364,6 +367,45 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
         pool = sorted(_pool_src, key=lambda u: -by[u].get('score', 0))[:pool_cap]
         for c in combinations(pool, 3):
             cand.add(frozenset(c))
+
+    # 来やすい順: 1軸×相手2頭を、3連複オッズの安い順に取る。
+    # 能力スコア・本線加点・狙い目価格帯で並べると、使う馬に3着内が揃っていても
+    # 安い組が10点から落ちる（2025-26の近似検証で、安い順が的中率最高だった）。
+    if rank_by_odds:
+        if axis_mode != '1軸' or len(axis_umaban) < 1:
+            return {'bets': [], 'meta': {},
+                    'warning': '来やすい順は軸を1頭決めてから使います'}
+        scored = []
+        for fs in cand:
+            trio = tuple(sorted(fs))
+            if len(trio) != 3:
+                continue
+            n_pop, n_ana = _classify(trio, pop_set, ana_set)
+            odds = odds_map.get(fs) if odds_map else None
+            scored.append({'combo': trio,
+                           'names': tuple(by[u].get('name', '') for u in trio),
+                           'odds': odds, 'in_band': False,
+                           'score': round(-(odds if odds is not None else 1e9), 1),
+                           'pop_ana': (n_pop, n_ana)})
+        if not scored:
+            return {'bets': [], 'meta': {'pop': len(pop_set), 'ana': len(ana_set)},
+                    'warning': '軸と使う馬から3連複の組を作れません'}
+        scored.sort(key=lambda x: (x['odds'] is None, x['odds'] if x['odds'] is not None else 0))
+        bets = scored[:max(1, int(n_points))]
+        syn = None
+        if all(b['odds'] for b in bets):
+            inv = sum(1.0 / b['odds'] for b in bets)
+            syn = round(len(bets) / inv, 1) if inv else None
+        warn = None if odds_map else '3連複オッズが無いため、来やすい順を決められません'
+        if warn:
+            bets = []
+        return {'bets': bets,
+                'meta': {'pattern': '来やすい順', 'axis_mode': '1軸',
+                         'n_points': len(bets), 'target_band': None,
+                         'synthetic_odds': syn, 'rank_by_odds': True,
+                         'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
+                         'fixed_pool': fixed_pool, 'pool_n': len(by)},
+                'warning': warn}
 
     # ── パターン適合でフィルタ＋スコアリング ──
     scored = []
@@ -439,6 +481,158 @@ def recommend_trio(horses, odds_map=None, axis_umaban=None, axis_mode='auto',
                      'target_band': (lo, hi), 'synthetic_odds': syn,
                      'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
                      'fixed_pool': fixed_pool, 'pool_n': len(by)},
+            'warning': None}
+
+
+def _largest_remainder(weights, total):
+    """重みに比例して整数を配る。余りは小数部が大きい順。"""
+    keys = list(weights)
+    if total <= 0 or not keys:
+        return {k: 0 for k in keys}
+    s = sum(max(float(v), 0.0) for v in weights.values())
+    if s <= 0:
+        base = {k: 0 for k in keys}
+        for k in keys[:total]:
+            base[k] = 1
+        return base
+    raw = {k: total * max(float(weights[k]), 0.0) / s for k in keys}
+    base = {k: int(raw[k]) for k in keys}
+    left = total - sum(base.values())
+    order = sorted(keys, key=lambda k: (raw[k] - base[k], weights[k]), reverse=True)
+    for k in order[:max(0, left)]:
+        base[k] += 1
+    return base
+
+
+def _payout_fit(odds, lo, hi):
+    """狙い目の払い戻し帯のどこにいるか。帯の上側寄り（中庸ならおおよそ80〜180倍）を厚くする。"""
+    if odds is None or not hi or hi <= lo:
+        return 1.0
+    if odds < lo:
+        return 0.75
+    if odds > hi:
+        return 0.65
+    t = (odds - lo) / (hi - lo)
+    if t < 0.25:
+        return 1.0
+    if t < 0.76:
+        return 1.35
+    return 1.0
+
+
+def recommend_trio_abc(horses, axis_umaban, ana_umaban, odds_map=None,
+                       n_points=10, band=None, c_umaban=None):
+    """手動フォーメーション。A群・B群・C群は役割。
+
+    買い目は A×B×C（各群から1頭、3頭は別馬）だけ。
+    点数が n_points 以内なら、オッズが安くても高くても削らない。
+    超えたときだけ、B群の評価（馬のスコア）に比例して枠を配り、
+    残りは的中の見込み・穴の評価・配当帯の適合で選ぶ。
+    """
+    horses = [h for h in horses if h.get('umaban')]
+    by = {h['umaban']: h for h in horses}
+    a_set = [int(u) for u in axis_umaban if int(u) in by]
+    b_set = [int(u) for u in ana_umaban if int(u) in by and int(u) not in a_set]
+    if not a_set:
+        return {'bets': [], 'meta': {}, 'warning': 'A群(軸)が未指定です'}
+    if not b_set:
+        return {'bets': [], 'meta': {}, 'warning': 'B群(穴)が未指定です'}
+    a_set = list(dict.fromkeys(a_set))
+    b_set = list(dict.fromkeys(b_set))
+    if c_umaban is not None:
+        c_set = [int(u) for u in c_umaban
+                 if int(u) in by and int(u) not in a_set and int(u) not in b_set]
+        c_set = list(dict.fromkeys(c_set))
+    else:
+        c_set = [u for u in by if u not in a_set and u not in b_set]
+    if not c_set:
+        return {'bets': [], 'meta': {}, 'warning': 'C群(相手)が未指定です'}
+    lo, hi = band if band else (30.0, 228.0)
+    pop_set = {h['umaban'] for h in horses if h.get('pop') and h['pop'] <= 4}
+    ana_set = {h['umaban'] for h in horses if h.get('pop') and 6 <= h['pop'] <= 12}
+    b_score = {b: max(float(by[b].get('score') or 0), 1.0) for b in b_set}
+
+    rows = []
+    for a in a_set:
+        for b in b_set:
+            for c in c_set:
+                trio = tuple(sorted((a, b, c)))
+                if len(set(trio)) != 3:
+                    continue
+                fs = frozenset(trio)
+                odds = odds_map.get(fs) if odds_map else None
+                fit = _payout_fit(odds, lo, hi)
+                chance = (1.0 / odds) ** 0.25 if odds else 0.45
+                al = str(by[b].get('alert', '') or '')
+                taste = 1.15 if any(s in al for s in _VAL_SIGS) else 1.0
+                score = chance * b_score[b] * fit * taste
+                n_pop = sum(1 for u in trio if u in pop_set)
+                n_ana = sum(1 for u in trio if u in ana_set)
+                rows.append({
+                    'combo': trio,
+                    'names': tuple(by[u].get('name', '') for u in trio),
+                    'odds': odds, 'in_band': bool(odds is not None and lo <= odds <= hi),
+                    'score': round(score, 3),
+                    'pop_ana': (n_pop, n_ana),
+                    '_b': b, '_c': c,
+                })
+    if not rows:
+        return {'bets': [], 'meta': {}, 'warning': 'A×B×C の組を作れませんでした'}
+
+    n_points = max(1, int(n_points))
+    kept_all = len(rows) <= n_points
+    if kept_all:
+        chosen = sorted(rows, key=lambda r: -r['score'])
+        quotas = {b: sum(1 for r in rows if r['_b'] == b) for b in b_set}
+    else:
+        free = n_points // 5
+        guarantee = n_points - free
+        if guarantee < len(b_set):
+            guarantee = min(n_points, len(b_set))
+            free = n_points - guarantee
+        # スコアを二乗してから配る。強い穴と弱い穴が同じ枠数にならないようにする。
+        quotas = _largest_remainder({b: s * s for b, s in b_score.items()}, guarantee)
+        chosen = []
+        chosen_fs = set()
+        used_c = {}
+
+        def _rank(r):
+            return r['score'] * (0.85 ** used_c.get(r['_c'], 0))
+
+        for b in sorted(b_set, key=lambda u: -b_score[u]):
+            opts = [r for r in rows if r['_b'] == b and frozenset(r['combo']) not in chosen_fs]
+            take = []
+            for _ in range(quotas.get(b, 0)):
+                if not opts:
+                    break
+                opts.sort(key=_rank, reverse=True)
+                pick = opts.pop(0)
+                take.append(pick)
+                chosen_fs.add(frozenset(pick['combo']))
+                used_c[pick['_c']] = used_c.get(pick['_c'], 0) + 1
+            chosen.extend(take)
+        rest = [r for r in rows if frozenset(r['combo']) not in chosen_fs]
+        rest.sort(key=_rank, reverse=True)
+        for r in rest:
+            if len(chosen) >= n_points:
+                break
+            chosen.append(r)
+            used_c[r['_c']] = used_c.get(r['_c'], 0) + 1
+        chosen = chosen[:n_points]
+
+    for r in chosen:
+        r.pop('_b', None)
+        r.pop('_c', None)
+    syn = None
+    if chosen and all(r.get('odds') for r in chosen):
+        inv = sum(1.0 / r['odds'] for r in chosen)
+        syn = round(len(chosen) / inv, 1) if inv else None
+    return {'bets': chosen,
+            'meta': {'axis_mode': 'formation', 'abc': True,
+                     'n_points': len(chosen), 'generated': len(rows),
+                     'kept_all': kept_all, 'target_band': (lo, hi),
+                     'synthetic_odds': syn, 'b_quota': quotas,
+                     'a_group': a_set, 'b_group': b_set, 'c_group': c_set},
             'warning': None}
 
 
@@ -629,6 +823,22 @@ def default_trifecta_band():
     return _TRIFECTA_BAND
 
 
+# 堅い・中庸の勝ち3連単の払い戻し（2024年以降・画面の妙味度ラベル）。
+# 値は「100円あたりの倍率」。円にするときは100倍。
+# 25%〜75%の範囲。中庸(B)は実測1.2万〜8.6万円で、体感の1万〜8万円と一致。
+# 3連複帯を×5/×6した旧帯は、中庸の上限が約13.7万円まで開いていた。
+_TRIFECTA_LABEL_BAND = {
+    'D': (32.0, 205.0),    # 鉄板  約3,200〜20,500円
+    'C': (70.0, 510.0),    # やや堅い  約7,000〜51,000円
+    'B': (100.0, 800.0),   # 中庸  1万〜8万円
+}
+
+
+def trifecta_band_for_label(label):
+    """堅い(C/D)・中庸(B)の3連単狙い目帯(倍率)。該当しないラベルは None。"""
+    return _TRIFECTA_LABEL_BAND.get(str(label or '')[:1])
+
+
 # 帯別フォーメーション(検証済 verified_formation_roi・scripts/formation_pointopt.py):
 #   荒れ確率で買い方を可変。堅=少点book的(点数絞りが効く帯)/中=wide最良/荒れ=広角・穴頭込み
 #   (荒れで絞る/穴頭カットは逆効果=実配当で確認)。※どの帯も利益(100%)には届かない=損失縮小策。
@@ -657,7 +867,8 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                        pop_th=4, ana_lo=6, ana_hi=12,
                        n_first=3, n_second=5, n_third=9, band=None, arare_prob=None,
                        fragile_fav=False, combo_flow=0, keep_partners=None,
-                       must_include=None, require_axis_all=False):
+                       must_include=None, require_axis_all=False,
+                       market_rank=False):
     """3連単おすすめ(30点以内で当てにいく)。recommend_trio(auto)の順序付き版。
     build_trifecta_formation(手動カーテシアン)と違い、候補列の自動選定＋スコアリング＋点数capを行う。
 
@@ -671,6 +882,8 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
     🧩N重複以上のシグナル馬(＋keep_partners=軸候補◎〇▲)に限定する。1着候補は絞らない。
     must_include: 各買い目が少なくとも1頭含む馬番(フォーメーションB群=穴)。未指定は絞らない。
     require_axis_all: Trueなら軸馬を全点に含める(1軸=その1頭 / 2軸=2頭。3連複の軸流しと同じ)。
+    market_rank: Trueなら狙い目価格帯の外を外し、残った組を3連単オッズの安い順
+        （市場の人気順）に取る。堅い・中庸で帯が広すぎて高い組が残るのを防ぐ。
     最人気の自動固定はしない。呼び出し側がユーザー指定の軸だけを渡す。
     戻り値: recommend_trio と同形 {'bets':[{...}], 'meta':{...}, 'warning':str|None}
     """
@@ -839,6 +1052,15 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
         return {'bets': [], 'meta': {'first': first, 'second': second, 'third': third,
                                      'must_include': must, 'require_axis_all': require_axis_all},
                 'warning': '指定の軸／穴を含む3連単が作れませんでした（候補頭数を確認してください）'}
+    if market_rank and odds_map:
+        scored = [x for x in scored
+                  if x['odds'] is not None and lo <= x['odds'] <= hi]
+        scored.sort(key=lambda x: x['odds'])
+        if not scored:
+            return {'bets': [],
+                    'meta': {'first': first, 'second': second, 'third': third,
+                             'target_band': (lo, hi), 'market_rank': True},
+                    'warning': 'この払い戻しの範囲に入る3連単がありません'}
     bets = scored[:n_points]
     syn = None
     if all(b['odds'] for b in bets):
@@ -849,7 +1071,8 @@ def recommend_trifecta(horses, odds_map=None, axis_umaban=None, n_points=30,
                      'first': first, 'second': second, 'third': third,
                      'axis': axis, 'pop_pool': sorted(pop_set), 'ana_pool': sorted(ana_set),
                      'band_name': band_name, 'arare_prob': arare_prob, 'fragile_fav': fragile_fav,
-                     'must_include': must, 'require_axis_all': require_axis_all},
+                     'must_include': must, 'require_axis_all': require_axis_all,
+                     'market_rank': bool(market_rank and odds_map)},
             'warning': None}
 
 

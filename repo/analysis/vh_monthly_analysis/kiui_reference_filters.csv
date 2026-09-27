@@ -1,0 +1,4 @@
+﻿filter,sep_n,sep_win,sep_win_rate_pct,sep_place_rate_pct,sep_tansho_roi_pct,sep_fukusho_roi_pct,avg_odds,med_odds,kiui_sep_n,kiui_sep_win_rate_pct,kiui_sep_tansho_roi_pct,n_diff_vs_kiui,win_rate_diff_vs_kiui_pt,tansho_roi_diff_vs_kiui_pt
+①精鋭のみ,4628,207,4.47,19.06,88.74,84.6,21.96,19.75,109,3.6999999999999997,61.6,4519,0.77,27.14
+②精鋭×オッズ5倍+,4628,207,4.47,19.06,88.74,84.6,21.96,19.75,109,3.6999999999999997,61.6,4519,0.77,27.14
+③精鋭+広域網×オッズ5倍+,7240,285,3.94,16.63,93.27,83.41,28.15,24.4,109,3.6999999999999997,61.6,7131,0.24,31.67

@@ -1,0 +1,147 @@
+{
+  "全期間": {
+    "period": "全期間",
+    "win_rate_monotonic": true,
+    "place_rate_monotonic": true,
+    "tansho_roi_monotonic": false,
+    "win_rate_breaks": [],
+    "place_rate_breaks": [],
+    "tansho_roi_breaks": [
+      [
+        "上位50%",
+        "上位25%",
+        86.14,
+        83.48
+      ]
+    ],
+    "values": [
+      {
+        "slice": "全精鋭",
+        "n": 67644,
+        "win_rate_pct": 4.55,
+        "place_rate_pct": 18.56,
+        "tansho_roi_pct": 83.3
+      },
+      {
+        "slice": "上位75%",
+        "n": 50733,
+        "win_rate_pct": 4.98,
+        "place_rate_pct": 19.86,
+        "tansho_roi_pct": 84.31
+      },
+      {
+        "slice": "上位50%",
+        "n": 33822,
+        "win_rate_pct": 5.54,
+        "place_rate_pct": 21.42,
+        "tansho_roi_pct": 86.14
+      },
+      {
+        "slice": "上位25%",
+        "n": 16911,
+        "win_rate_pct": 6.08,
+        "place_rate_pct": 23.48,
+        "tansho_roi_pct": 83.48
+      },
+      {
+        "slice": "上位10%",
+        "n": 6765,
+        "win_rate_pct": 7.1,
+        "place_rate_pct": 25.78,
+        "tansho_roi_pct": 86.59
+      },
+      {
+        "slice": "上位5%",
+        "n": 3383,
+        "win_rate_pct": 7.86,
+        "place_rate_pct": 27.34,
+        "tansho_roi_pct": 88.0
+      }
+    ]
+  },
+  "2024年以降": {
+    "period": "2024年以降",
+    "win_rate_monotonic": false,
+    "place_rate_monotonic": true,
+    "tansho_roi_monotonic": false,
+    "win_rate_breaks": [
+      [
+        "上位10%",
+        "上位5%",
+        6.64,
+        6.38
+      ]
+    ],
+    "place_rate_breaks": [],
+    "tansho_roi_breaks": [
+      [
+        "上位75%",
+        "上位50%",
+        85.89,
+        85.54
+      ],
+      [
+        "上位50%",
+        "上位25%",
+        85.54,
+        82.1
+      ],
+      [
+        "上位25%",
+        "上位10%",
+        82.1,
+        81.75
+      ],
+      [
+        "上位10%",
+        "上位5%",
+        81.75,
+        69.88
+      ]
+    ],
+    "values": [
+      {
+        "slice": "全精鋭",
+        "n": 19439,
+        "win_rate_pct": 4.59,
+        "place_rate_pct": 18.84,
+        "tansho_roi_pct": 83.18
+      },
+      {
+        "slice": "上位75%",
+        "n": 14579,
+        "win_rate_pct": 5.08,
+        "place_rate_pct": 20.18,
+        "tansho_roi_pct": 85.89
+      },
+      {
+        "slice": "上位50%",
+        "n": 9720,
+        "win_rate_pct": 5.5,
+        "place_rate_pct": 21.41,
+        "tansho_roi_pct": 85.54
+      },
+      {
+        "slice": "上位25%",
+        "n": 4860,
+        "win_rate_pct": 5.95,
+        "place_rate_pct": 22.76,
+        "tansho_roi_pct": 82.1
+      },
+      {
+        "slice": "上位10%",
+        "n": 1944,
+        "win_rate_pct": 6.64,
+        "place_rate_pct": 25.05,
+        "tansho_roi_pct": 81.75
+      },
+      {
+        "slice": "上位5%",
+        "n": 972,
+        "win_rate_pct": 6.38,
+        "place_rate_pct": 25.82,
+        "tansho_roi_pct": 69.88
+      }
+    ]
+  }
+}

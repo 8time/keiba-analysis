@@ -20,6 +20,7 @@
 - [展開マップ再構築](project_pace_map_rebuild.md) — テン速力実タイム化。事実上完了
 - [トラックバイアス統合](project_trackbias.md) — クッション値/含水率/ABCコースはDB未収録
 - [騎手分析JRA-VAN版](project_jockey_jv.md) — core/jockey_jv.py(J1〜J5)
+- [新馬戦モード](../maiden_mode_design.md) — Phase1表示のみ実装済(core/maiden_mode.py)。Maiden Score設計=../maiden_score_design.md凍結
 - [nankanスクレイパー+NAR修復](project_nankan_scraper.md) — 南関東4場(42浦和/43船橋/44大井/45川崎)
 - [NAR recall比例化](project_nar_recall_proportional.md) — 出走頭数比例に分岐。中央は不変
 - [Gemini 3.x移行](project_gemini3_migration.md) — budget→level移行。gemini_compat.pyで世代振分
@@ -104,6 +105,9 @@
 - [ショッカー理論はリーク](verified_shocker_leak.md) — 事前部分にするとエッジ消滅
 - [前走着差0.6秒/0.8秒は俗説](verified_prior_margin_debunk.md) — 小標本ノイズ/リーク
 - [兄姉のデビュー実績もpriced-in](verified_sibling_debut_rejected.md) — 複勝率9pp差は全て人気で説明。CIが0を跨ぐ
+- [新馬の早生まれもpriced-in](verified_maiden_birth_month_pricedin.md) — 素の差(1月11.7% vs 6月2.3%)は本物だが人気統制後は残差ゼロ。副次発見の遅デビュー(35ヶ月+)も2023前向き再検証で破棄(z-1.57)
+- [新馬限定の黄金ラインは有意でない](verified_maiden_golden_line_rejected.md) — 名門+2.9ppもCI跨ぎ。全レース版を使う
+- [Maiden Score Step A は総合NO-GO](verified_maiden_score_step_a.md) — V1騎手係数は残差蒸発・V2黄金はn不足・V3厩舎当コースのみ採用。1/3のため合成せずPhase1維持
 - [前走レースレベルは効かない](verified_race_level_rejected.md) — 効いているのは着差1.5秒だけ。低レベル戦の方がむしろ良い
 - [母の出産年齢16歳超は効果なし](verified_dam_age_rejected.md) — ベースを期間内で取ると消滅。14-15歳の方が悪い
 - [初勝利理論はpriced-in](verified_first_win_theory.md) — 重賞勝ち率2.1倍は事実だが馬券残差ゼロ。タイム指数95%は数字のマジック
@@ -125,6 +129,7 @@
 - [俗説有効度は作らない](verified_folklore_effectiveness.md) — 生率は市場と混ざる。残差で読む。少頭数×先行も打ち切り
 - [俗説総合TOP5×1-3人気は軸にしない](verified_folklore_top5_axis.md) — holdout残差+2.21ppでバー未達。複数時は人気順の方が良い
 - [俗説TOP5×ハンター重複](verified_folklore_top5_hunter_overlap.md) — 2026年 3着内16.7%。精鋭/広域網そのもの(16.0%)とほぼ同じ。実装しない
+- [不確実性レイヤーは不採用](verified_uncertainty_layer_rejected.md) — 較正は見た目のみ。保守EV/予測幅は無効。再検討条件なし。確率研究は凍結
 
 ## クロス・フォーメーション構造検証
 - [クロステーブル構造](verified_cross_table_structure.md) — VH×人気ρ=0.94二重計上/top-5内ρ=0.16独立。4軸<3軸。R×V列実装済
@@ -139,6 +144,7 @@
 - [3頭目もRankより人気](verified_rank_vs_ninki_legs.md) — D鉄板で人気+7〜9pp
 - [Rankが効くのは下級クラス](verified_class_rank_gradient.md) — 未勝利+4.4pp z+9.9。英国『上級ほどAI』は非再現
 - [荒れゾーンに勝ち筋は無い](verified_arare_zone_buy.md) — 見送りが正解
+- [荒れ帯の馬連/ワイド保険券](verified_arare_wide_umaren.md) — 全候補holdout却下。netkeiba360件の「馬連/ワイド主武器」は事後選択の幻影。least-badは3連複3-5-8のまま
 - [3連単穴上限ana_hi=12](verified_ana_hi_cap.md) — 13番人気以下は的中率-1.3pp
 - [カジノ進行法は全滅](verified_staking_systems.md) — フラットベット一択
 - [日内の流れは無い](verified_hot_hand_selective.md) — ここぞ=選別のこと

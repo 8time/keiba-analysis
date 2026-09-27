@@ -1,0 +1,51 @@
+{
+  "purpose": "P2-D1b expansion map final straight x vs chakujun",
+  "not_in_scope": [
+    "V red frame",
+    "V coords",
+    "pos4",
+    "build_pace_context change",
+    "layout→V wiring",
+    "new thresholds",
+    "ML"
+  ],
+  "comparison": {
+    "A": "layout={} (none)",
+    "B": "layout=get_course_layout (existing)",
+    "ground_truth": "chakujun",
+    "prediction": "estimate_pace_map final phase x",
+    "metric": "Spearman rho (-x vs chakujun)",
+    "primary": "paired mean(B - A)"
+  },
+  "success_gate": "B - A >= 0.02 rho (pre-fixed)",
+  "holdout": {
+    "label": "holdout_2024-2025",
+    "period": "2024-2025",
+    "races_queried": 10913,
+    "paired_n": 10803,
+    "skipped_tosu": 110,
+    "skipped_map": 0,
+    "fc_hit_rate": 0.3344,
+    "rho_A_mean": 0.527325,
+    "rho_B_mean": 0.527325,
+    "rho_A_sd": 0.239076,
+    "rho_B_sd": 0.239076,
+    "paired_delta_mean": 0.0,
+    "paired_delta_sd": 0.0,
+    "paired_t": 0.0,
+    "paired_delta_median": 0.0,
+    "paired_delta_p10": 0.0,
+    "paired_delta_p25": 0.0,
+    "paired_delta_p75": 0.0,
+    "paired_delta_p90": 0.0,
+    "pct_improved": 0.0,
+    "pct_worsened": 0.0,
+    "pct_unchanged": 1.0,
+    "success_delta_ge_002": false
+  },
+  "repro_check": null,
+  "verdict": "NO-GO",
+  "implementation_note": "Improvement is expansion MAP straight phase only. Does NOT justify layout→V baba/pace/coords. build_pace_context/pos4 unchanged by layout in current code.",
+  "root_cause_zero_delta": "estimate_pace_map final phase (直線) uses predict_finish only; gate_w affects スタート only; straight_push is computed but unused. layout on/off yields identical final x → identical Spearman rho.",
+  "original_bt_reproduced": "scripts/layout_effect_backtest.py on same sample also shows +0.0000 delta."
+}

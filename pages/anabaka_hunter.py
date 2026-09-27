@@ -19,12 +19,16 @@
 【今後の予定】最終的にSRA内の『💀消し推奨馬(予測スコア下位30%)』『🎯推奨穴馬(Top Dark Horse)』を
 置き換えてそこへ設置。表示はTop Dark Horseカード形式に寄せる。
 """
+import logging
 import os
 import re
 import html as _html
 from datetime import datetime as _dt
 import streamlit as st
 import pandas as pd
+
+_log = logging.getLogger(__name__)
+_MYTH_DEBUG = os.environ.get('MYTH_COUNT_DEBUG', '').strip().lower() in ('1', 'true', 'yes')
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,6 +52,19 @@ def _html_oneline(s):
     if not s:
         return ''
     return re.sub(r'\s*\n\s*', '', str(s)).strip()
+
+
+def golden_line_visible_labels(edge_reasons):
+    """その他候補の見出し用。黄金ラインだけは expander を開かなくても見える。
+
+    表示専用。妙味スコア・並び・買い目には使わない。
+    """
+    out = []
+    for r in edge_reasons or []:
+        s = str(r).strip()
+        if '黄金ライン' in s:
+            out.append(s)
+    return out
 
 
 def combo_n_of(umaban, combo_map):
@@ -503,6 +520,17 @@ def render():
     except Exception:
         _blood_hi = set()
 
+    # 俗説数（表示専用。VHスコア・順位・買い目には一切使わない）
+    _myth_map = None
+    try:
+        from core import folklore_lib as _fl_myth
+        with st.spinner("俗説ランキングを確認中..."):
+            _folk_results = _fl_myth.evaluate_race(
+                df, race_id=race_id, meta=meta, enrich=True)
+            _myth_map = _fl_myth.build_myth_count_map(_folk_results)
+    except Exception as _e_myth:
+        _log.debug("myth_count unavailable race_id=%s: %s", race_id, _e_myth)
+
     # 『前走内容』モジュール(表示専用・netkeibaのみ/JRA-VAN不使用)
     try:
         from core import prev_race as _prv
@@ -512,6 +540,10 @@ def render():
         from core import gyaku_shocker as _gys
     except Exception:
         _gys = None
+    try:
+        from core import jump_return as _jr
+    except Exception:
+        _jr = None
     _gys_c3_ranks = {}
     if _gys:
         try:
@@ -596,6 +628,72 @@ def render():
             + " ／ ".join(f"{u}番 {nm}（{p}人気）" for p, u, nm, _o, _g in _gyaku_fav)
             + "　本命側なので穴馬カードには出しません。"
         )
+
+    def _jump_from_row(row):
+        """前走障害→今回平地。表示専用。スコア・しきい値には使わない。"""
+        if not _jr:
+            return None
+        past_runs = row.get('PastRuns', []) or []
+        prev = past_runs[0] if past_runs else {}
+        try:
+            hit = _jr.reach(
+                prev.get('Surface'), surface,
+                prev.get('Distance'), dist)
+            return hit if isinstance(hit, dict) else None
+        except Exception:
+            return None
+
+    _jr_by_um = {}
+    _jr_mid = []
+    _jr_fav = []
+    for _, _jr_row in df.iterrows():
+        _ju = _safe_int(_jr_row.get('Umaban'))
+        if not _ju:
+            continue
+        _jh = _jump_from_row(_jr_row)
+        if not _jh:
+            continue
+        _jr_by_um[_ju] = _jh
+        _jp = _safe_int(_jr_row.get('Popularity'), 99)
+        _item = (_jp, _ju, str(_jr_row.get('Name', '')), _safe_float(_jr_row.get('Odds')), _jh)
+        if _GYAKU_MID_LO <= _jp < pop_threshold:
+            _jr_mid.append(_item)
+        elif _jp < _GYAKU_MID_LO:
+            _jr_fav.append(_item)
+    _jr_mid.sort()
+    _jr_fav.sort()
+    if _jr_mid:
+        st.markdown("#### 障害帰り（4〜5番人気）")
+        st.caption(
+            "穴馬しきい値は6のままです。前走が障害で今回が芝またはダートの馬は、"
+            "4・5番人気でもここだけ別枠で出します。俗説の見た目印で、"
+            "穴馬スコア・順番・買い目には入れていません。"
+        )
+        for _jp, _ju, _jn, _jo, _jh in _jr_mid:
+            _od = f"{_jo:.1f}倍" if _jo else "-"
+            st.markdown(
+                f"**{_ju}番 {_html.escape(_jn)}**（{_jp}人気 {_od}）"
+            )
+            if _jr:
+                st.markdown(_jr.block_html(_jh), unsafe_allow_html=True)
+    if _jr_fav:
+        st.caption(
+            "1〜3番人気の障害帰り: "
+            + " ／ ".join(f"{u}番 {nm}（{p}人気）" for p, u, nm, _o, _g in _jr_fav)
+            + "　本命側なので穴馬カードには出しません。"
+        )
+
+    def _flag_blocks_html(gyaku=None, jump=None):
+        parts = []
+        if _gys:
+            h = _gys.block_html(gyaku)
+            if h:
+                parts.append(h)
+        if _jr:
+            h = _jr.block_html(jump)
+            if h:
+                parts.append(h)
+        return '<br>'.join(parts)
 
     _VH_BADGE_PFX = [
         ('🔵補正T', '🔵'), ('🔥末脚', '🔥'), ('⚡33', '⚡'),
@@ -873,6 +971,17 @@ def render():
         except Exception:
             _pv = None
         _gyaku = _gyaku_by_um.get(umaban)
+        _myth_info = (_myth_map or {}).get(umaban) if _myth_map is not None else None
+        _myth_count = _myth_info.get('count') if _myth_info else None
+        if _MYTH_DEBUG and _myth_info is not None:
+            _log.debug(
+                "%s %s番 %s positive=%s composite=%s practical_positive=%s "
+                "practical_composite=%s myth_count=%s",
+                race_id, umaban, name,
+                _myth_info.get('positive'), _myth_info.get('composite'),
+                _myth_info.get('practical_positive'),
+                _myth_info.get('practical_composite'), _myth_count,
+            )
         candidates.append({
             'pop': pop,
             'odds': odds,
@@ -891,10 +1000,14 @@ def render():
             'vh_tier': _vh_tier.get(umaban, ''),
             'badges': _bdg,
             'prev': _pv,
-            # 逆ショッカー／濃い穴／血統注目は表示専用。材料数・ソートには入れない。
+            # 逆ショッカー／障害帰り／濃い穴／血統注目は表示専用。材料数・ソートには入れない。
             'gyaku': _gyaku,
+            'jump_return': _jr_by_um.get(umaban),
             'combo_n': combo_n_of(umaban, _combo_map),
             'blood_hi': umaban in _blood_hi,
+            'myth_info': _myth_info,
+            'myth_count': _myth_count,
+            'edge_reasons': list(_vh_edge_reasons.get(umaban) or []),
         })
 
     if not candidates:
@@ -935,6 +1048,60 @@ def render():
     _net = [c for c in candidates if c['vh_tier'] == '🕸️広域網']
     _other = [c for c in candidates if c['vh_tier'] not in ('🎯精鋭', '🕸️広域網')]
 
+    try:
+        from core import audit_pipeline as _ap_hunt
+        _h_run = _ap_hunt.current_run_id(race_id) or _ap_hunt.ensure_run_id(
+            race_id, 'anabaka_hunter')
+        _h_sig = (pop_threshold, len(candidates), len(_elite), len(_net), len(_other))
+        _h_out = _ap_hunt.record_event_deduped(
+            race_id, 'anabaka_hunter',
+            signature=_h_sig,
+            payload=_ap_hunt.build_hunter_payload(
+                candidates, _elite, _net, _other, race_id, pop_threshold, _h_run),
+            status='ok')
+        if not _h_out.ok:
+            st.warning(f"監査記録(穴馬ハンター)失敗: {_h_out.error}")
+    except Exception as _ap_h_e:
+        st.warning(f"監査記録(穴馬ハンター)失敗: {_ap_h_e}")
+
+    def _render_other_expander_extra(c):
+        """その他候補のexpander内だけ。俗説数・edge_reasons（表示専用）。"""
+        mi = c.get('myth_info')
+        er = c.get('edge_reasons') or []
+        if mi is None and not er:
+            return
+        st.markdown("**俗説・検証済み材料**（表示専用・妙味スコアには影響しません）")
+        if mi is not None:
+            cnt = int(mi.get('count') if mi.get('count') is not None else 0)
+            if cnt:
+                st.markdown(
+                    f'<span style="color:#2e7d32;font-weight:700;">俗説{cnt}</span>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("俗説0")
+            _parts = []
+            if mi.get('positive'):
+                _parts.append('🟢ポジTOP5')
+            if mi.get('composite'):
+                _parts.append('⭐総合TOP5')
+            if mi.get('practical_positive'):
+                _parts.append('🟢ポジTOP5（実戦）')
+            if mi.get('practical_composite'):
+                _parts.append('⭐総合TOP5（実戦）')
+            if _parts:
+                st.caption('掲載: ' + ' / '.join(_parts))
+            else:
+                st.caption('4つの俗説TOP5には掲載されていません')
+        else:
+            st.caption('俗説ランキングは取得できませんでした')
+        if er:
+            for _lab in er:
+                st.markdown(f"- {_lab}")
+        else:
+            st.caption('検証済み材料（血統回収・黄金ライン等）はありません')
+        st.markdown("---")
+
     def _render_prev_detail(pv):
         """『前走内容』の詳細ブロック(見出し→条件→事実行)。表示専用。"""
         st.markdown("**前走内容**（表示専用・妙味スコアには影響しません）")
@@ -974,10 +1141,16 @@ def render():
             c.get('combo_n'), bool(c.get('blood_hi')))
         _badge_html = (f"{_bdg_str}　<b>{len(_bdgs_c)}材料</b>") if _bdgs_c else \
                       '<span style="color:#999">材料 0</span>'
+        _myth_html = ''
+        if c.get('myth_count'):
+            _myth_html = (
+                f'　　<span style="color:#2e7d32;font-weight:700;">'
+                f'俗説{int(c["myth_count"])}</span>'
+            )
         # 『前走内容』行(表示専用・妙味/材料数とは別軸なので区切り線で分ける)
         _pv_c = c.get('prev')
         _pv_html = ''
-        _gys_html = _gys.block_html(c.get('gyaku')) if _gys else ''
+        _gys_html = _flag_blocks_html(c.get('gyaku'), c.get('jump_return'))
         _gys_line = f'<br>{_gys_html}' if _gys_html else ''
         if _prv and _pv_c:
             _pv_sum = _prv.summary_line(_pv_c)
@@ -1014,7 +1187,7 @@ def render():
             </div>
             {_attn_html}
             <div style="margin-top:4px;">
-                {c['pop']}人気　{c['odds']:.1f}倍　　妙味 <b>{_sc}</b>
+                {c['pop']}人気　{c['odds']:.1f}倍　　妙味 <b>{_sc}</b>{_myth_html}
             </div>
             <div style="margin-top:4px;">{_badge_html}</div>
             {_pv_html}
@@ -1022,7 +1195,10 @@ def render():
         with st.expander("前走内容 / 検証済み / 参考 / 基本データ", expanded=False):
             if _gys_html:
                 st.markdown(_html_oneline(_gys_html), unsafe_allow_html=True)
-                st.caption("出走前に分かる条件だけ（前走は後ろめ＋今回は距離が短い）。完成は今回3角8番手以内で、レース後にしか分かりません。下の ↔バウンド／↔芝⇔ダ は読み補助です。点数には入れていません。")
+                if c.get('gyaku'):
+                    st.caption("出走前に分かる条件だけ（前走は後ろめ＋今回は距離が短い）。完成は今回3角8番手以内で、レース後にしか分かりません。下の ↔バウンド／↔芝⇔ダ は読み補助です。点数には入れていません。")
+                if c.get('jump_return'):
+                    st.caption("障害帰り＝前走が障害、今回が芝またはダート。俗説の見た目印です。点数には入れていません。")
             if _prv and _pv_c:
                 _render_prev_detail(_pv_c)
                 st.markdown("---")
@@ -1087,6 +1263,10 @@ def render():
             "4〜5番人気のリーチは上の別枠（穴馬しきい値は6のまま）。"
             " **🟣⏱️** ＝逆ショッカー候補と、前走が4着以下で勝ち馬まで0.3秒以内、が重なった印。"
             "見つけやすくするための見た目だけで、点数・順番・買い目には入れていません。"
+            "緑字 **障害帰り** ＝前走が障害、今回が芝またはダート。"
+            "穴で激走した印象が強い俗説の見た目印です。勝率が高い検証ではありません。"
+            "点数・順番・買い目には入れていません。"
+            "4〜5番人気は上の別枠（穴馬しきい値は6のまま）。"
         )
     else:
         st.info("🎯精鋭・🕸️広域網に該当する穴馬候補はいません。")
@@ -1103,17 +1283,21 @@ def render():
             " 紫字 **🟣 逆ショッカー候補** も同じ（前走は後ろめ＋今回は距離が短い。完成ではない）。"
             "候補の下の ↔バウンド／↔芝⇔ダ と体重・間隔は読み補助の事実です。"
             " **🟣⏱️** が名前の前にある馬は、逆ショッカー候補と前走僅差が重なっています（見るだけ）。"
+            " 緑字 **障害帰り** も同じ見た目印（前走が障害、今回が芝またはダート）。"
         )
         for _c in _other:
             _pv_o = _c.get('prev')
             _pv_sum_o = _prv.summary_line(_pv_o) if (_prv and _pv_o) else ''
             _pv_mgn_o = _prv.margin_line_html(_pv_o) if (_prv and _pv_o) else ''
             _pv_bdg_o = _prv.badge(_pv_o) if (_prv and _pv_o) else ''
-            _gys_o = _gys.block_html(_c.get('gyaku')) if _gys else ''
+            _gys_o = _flag_blocks_html(_c.get('gyaku'), _c.get('jump_return'))
             _nm_o = _html.escape(str(_c['name']))
             _sum_esc = _html.escape(_pv_sum_o) if _pv_sum_o else ''
             _bdg_esc = _html.escape(_pv_bdg_o) if _pv_bdg_o else ''
+            _gold_labs = golden_line_visible_labels(_c.get('edge_reasons'))
+            _gold_esc = '　'.join(_html.escape(x) for x in _gold_labs)
             # expander見出しは色が付けられないので、秒数の赤字・紫字はここに出す。
+            # 黄金ラインも同じ（開かなくても見える）。点数には入れない。
             st.markdown(
                 _html_oneline(
                     f'<div style="padding:8px 12px 4px 12px;border:1px solid #eee;'
@@ -1121,6 +1305,11 @@ def render():
                     f'<b>{_gys.pair_prefix(_c.get("gyaku")) if _gys else ""}{int(_c["umaban"])}番 {_nm_o}</b>　'
                     f'{_c["pop"]}人気 {_c["odds"]:.1f}倍　'
                     f'<span style="color:#888">検証済{_c["n_verified"]} / 参考{_c["n_ref"]}</span>'
+                    + (f'　<span style="color:#2e7d32;font-weight:700;">'
+                       f'俗説{int(_c["myth_count"])}</span>'
+                       if _c.get('myth_count') else '')
+                    + (f'　<span style="color:#c9a227;font-weight:700;">{_gold_esc}</span>'
+                       if _gold_esc else '')
                     + (f'<br><span style="color:#777">前走：</span>{_sum_esc}' if _sum_esc else '')
                     + (f'　{_pv_mgn_o}' if _pv_mgn_o else '')
                     + (f'　<span style="color:#b8860b;font-weight:bold;">{_bdg_esc}</span>'
@@ -1135,9 +1324,13 @@ def render():
                 f"（{_c['umaban']}番 {_c['name']}）",
                 expanded=False
             ):
+                _render_other_expander_extra(_c)
                 if _gys and _c.get('gyaku'):
                     st.markdown(_gys.block_html(_c.get('gyaku')), unsafe_allow_html=True)
                     st.caption("出走前の条件だけ。完成（今回3角8番手以内）はまだ分かりません。")
+                if _jr and _c.get('jump_return'):
+                    st.markdown(_jr.block_html(_c.get('jump_return')), unsafe_allow_html=True)
+                    st.caption("障害帰り＝前走が障害、今回が芝またはダート。俗説の見た目印です。")
                 if _prv and _pv_o:
                     _render_prev_detail(_pv_o)
                     st.markdown("---")
@@ -1167,6 +1360,7 @@ def render():
 | 赤字の秒数（±0.5秒以内） | 表示のみ | 📋その他などで前走の差が0.5秒以内なら秒数を赤字。スコアには足さない |
 | 🟣 逆ショッカー候補 | 表示のみ | 前走3角5番手以降＋今回距離短縮。↔バウンド／↔芝⇔ダは事実メモ（加点しない） |
 | 🟣⏱️ ショッカー×僅差 | 表示のみ | 逆ショッカー候補かつ前走4着以下・勝ち馬まで0.3秒。印だけで加点しない |
+| 障害帰り（緑字） | 表示のみ | 前走が障害、今回が芝またはダート。俗説の見た目印。加点しない |
 | 🎯 濃い穴 | 表示のみ | 精鋭・広域網で検証の印が2つ以上。見る順番用。点数・並びには入れない |
 | 🩸 血統注目 | 表示のみ | 精鋭・広域網かつ血統の見立てが人気より上。見る順番用。点数には足さない |
 | ⚡ 前走上がり上位 | 参考 | 末脚を使えたが展開不向き。次走改善の可能性 |

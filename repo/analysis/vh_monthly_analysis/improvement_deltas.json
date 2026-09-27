@@ -1,0 +1,71 @@
+{
+  "全期間": {
+    "上位25%": {
+      "n_ratio": 0.25,
+      "win_rate_diff_pt": 1.53,
+      "place_rate_diff_pt": 4.92,
+      "tansho_roi_diff_pt": 0.18,
+      "fukusho_roi_diff_pt": 2.1
+    },
+    "上位10%": {
+      "n_ratio": 0.1,
+      "win_rate_diff_pt": 2.55,
+      "place_rate_diff_pt": 7.22,
+      "tansho_roi_diff_pt": 3.29,
+      "fukusho_roi_diff_pt": 3.24
+    },
+    "上位5%": {
+      "n_ratio": 0.05,
+      "win_rate_diff_pt": 3.31,
+      "place_rate_diff_pt": 8.78,
+      "tansho_roi_diff_pt": 4.7,
+      "fukusho_roi_diff_pt": 3.91
+    }
+  },
+  "2024年以降": {
+    "上位25%": {
+      "n_ratio": 0.25,
+      "win_rate_diff_pt": 1.36,
+      "place_rate_diff_pt": 3.92,
+      "tansho_roi_diff_pt": -1.08,
+      "fukusho_roi_diff_pt": -0.93
+    },
+    "上位10%": {
+      "n_ratio": 0.1,
+      "win_rate_diff_pt": 2.05,
+      "place_rate_diff_pt": 6.21,
+      "tansho_roi_diff_pt": -1.43,
+      "fukusho_roi_diff_pt": 1.72
+    },
+    "上位5%": {
+      "n_ratio": 0.05,
+      "win_rate_diff_pt": 1.79,
+      "place_rate_diff_pt": 6.98,
+      "tansho_roi_diff_pt": -13.3,
+      "fukusho_roi_diff_pt": -0.95
+    }
+  },
+  "2025年": {
+    "上位25%": {
+      "n_ratio": 0.25,
+      "win_rate_diff_pt": 0.89,
+      "place_rate_diff_pt": 2.75,
+      "tansho_roi_diff_pt": -8.41,
+      "fukusho_roi_diff_pt": -5.75
+    },
+    "上位10%": {
+      "n_ratio": 0.1,
+      "win_rate_diff_pt": 1.16,
+      "place_rate_diff_pt": 6.69,
+      "tansho_roi_diff_pt": -9.58,
+      "fukusho_roi_diff_pt": 3.25
+    },
+    "上位5%": {
+      "n_ratio": 0.05,
+      "win_rate_diff_pt": 0.28,
+      "place_rate_diff_pt": 9.08,
+      "tansho_roi_diff_pt": -28.26,
+      "fukusho_roi_diff_pt": 3.88
+    }
+  }
+}

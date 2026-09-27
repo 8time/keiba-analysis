@@ -41,20 +41,27 @@ HEARTBEAT_PATH = os.path.join(
 # 超えていたら stale としてスキップ扱いにする(何時間も後に古い枠を記録しないため)。
 GRACE_MIN = 25
 
-# 本線の記録枠。同じレースで「朝一8:40」「発走15分前」「発走10分前」が揃うと
-# 朝一↔直前の観察ができる。12:00 / 発走30分前は任意。発走5分前は混雑しやすいので貯まってから。
+# 本線の記録枠。発走前の5点(15/10/5分前・直前・最終)を毎回貯めるのが本体。
+# これで「直前でオッズ急落」「朝一人気からの置き去り」等の時点別俗説が後日検証できる。
 RECOMMENDED = [
     ('前日22:00', '前日夜', '前日の夜。夜→当日のドリフト(人気の移り変わり)観察の起点'),
     ('08:40', '朝一', '午前8時40分。大衆票が入る前の基準値'),
-    ('発走15分前', 'パドック後', '投票が固まり始めたあと。朝一との比較の本線'),
-    ('発走10分前', '発走直前', '締切間際。パドック終わりで大勢が投票済み=最も実戦的'),
+    ('発走15分前', '15分前', '投票が固まり始めたあと。朝一との比較の本線'),
+    ('発走10分前', '10分前', 'パドック終わりで大勢が投票済み'),
+    ('発走5分前', '5分前', '締切間際。直前急落の検出に必要'),
+    ('発走1分前', '直前', '締切直前の実質オッズ'),
+    ('発走3分後', '最終', '締切後の確定オッズ(発走後でもオッズは確定済みで取れる)'),
 ]
 OPTIONAL = [
     ('12:00', '中間', '正午ごろ。想定人気との比較用（任意）'),
-    ('発走30分前', 'パドック前', 'パドック直前。おおよその投票が固まり始める（任意）'),
+    ('発走30分前', '30分前', 'パドック直前。おおよその投票が固まり始める（任意）'),
 ]
 DEFAULT_CLOCK_TIMES = ['08:40']
-PREPOST_MINUTES = (15, 10)
+# 発走時刻からのオフセット(分)。負=発走後(最終オッズ=締切で確定するので発走3分後に取る)。
+PREPOST_MINUTES = (15, 10, 5, 1, -3)
+
+# DBのphase列に入れる時点ラベル(平仮名表記に統一・分析時のgroupbyキー)
+PHASES = ('前日夜', '朝一', '中間', '30分前', '15分前', '10分前', '5分前', '直前', '最終')
 
 NIGHT_PREFIX = '前日'   # 前日夜枠のスロット表記/recordsキーの接頭辞(例: '前日22:00')
 
@@ -135,7 +142,10 @@ def prepost_hhmm(post_hhmm, minutes=None):
 
 
 def attach_prepost_times(plan, post_by_rid, minutes=None, labels_by_rid=None):
-    """各レースに発走N分前の個別枠を足す。戻り値: (plan, 新規追加した枠の数)。"""
+    """各レースに発走N分前の個別枠を足す。戻り値: (plan, 新規追加した枠の数)。
+
+    発走時刻(post)もレースエントリに保持する。常駐ランナーが記録する時点で
+    『15分前/直前/最終』等のフェーズ名を復元してDBのphase列に入れるため。"""
     n = 0
     labels_by_rid = labels_by_rid or {}
     for rid, post in (post_by_rid or {}).items():
@@ -147,6 +157,11 @@ def attach_prepost_times(plan, post_by_rid, minutes=None, labels_by_rid=None):
             if added and added not in before:
                 n += 1
                 before.add(added)
+        pn = _norm_hhmm(post)
+        if pn:
+            entry = next((r for r in plan.get('races', []) if str(r.get('race_id')) == rid), None)
+            if entry is not None:
+                entry['post'] = pn
     return plan, n
 
 
@@ -245,6 +260,66 @@ def mark_done(plan, race_id, hhmm, n_records, at=None):
     return plan
 
 
+def classify_phase(min_to_post, slot_hhmm=None):
+    """発走までの分数 → 時点ラベル。負=発走後。発走が不明な遠い枠は時計時刻で判断。
+
+    帯: 発走後(<= -1)=最終 / 0-2分前=直前 / 3-7=5分前 / 8-12=10分前 / 13-20=15分前 /
+    21-45=30分前。それより遠い当日枠は時計で 朝一(<9:30) / 中間(それ以外)。
+    """
+    if min_to_post is not None:
+        if min_to_post <= -1:
+            return '最終'
+        if min_to_post <= 2:
+            return '直前'
+        if min_to_post <= 7:
+            return '5分前'
+        if min_to_post <= 12:
+            return '10分前'
+        if min_to_post <= 20:
+            return '15分前'
+        if min_to_post <= 45:
+            return '30分前'
+    if slot_hhmm:
+        return '朝一' if slot_hhmm < '09:30' else '中間'
+    return None
+
+
+def _race_entry(plan, race_id):
+    return next((r for r in plan.get('races', []) if str(r.get('race_id')) == str(race_id)), None)
+
+
+def slot_phase(plan, race_id, token):
+    """予約スロット(token='15:20'/'前日22:00')の時点ラベルを返す。
+
+    レースエントリに保持した発走時刻(post)との差で判定。
+    postが無い旧プランは時計時刻の決め打ち(08:40=朝一 等)にフォールバック。"""
+    if str(token).startswith(NIGHT_PREFIX):
+        return '前日夜'
+    entry = _race_entry(plan, race_id)
+    post = _norm_hhmm((entry or {}).get('post'))
+    tok = _norm_hhmm(token)
+    if post and tok and plan.get('date'):
+        pdt = _slot_dt(plan['date'], post)
+        sdt = _slot_dt(plan['date'], tok)
+        if pdt and sdt:
+            return classify_phase((pdt - sdt).total_seconds() / 60.0, tok)
+    if tok:
+        return classify_phase(None, tok)
+    return None
+
+
+def current_phase(plan, race_id, now=None):
+    """手動『今すぐ記録』用: 現在時刻と発走時刻から時点ラベルを推定。発走不明なら'手動'。"""
+    now = now or datetime.now()
+    entry = _race_entry(plan, race_id)
+    post = _norm_hhmm((entry or {}).get('post'))
+    date_str = plan.get('date', '')
+    pdt = _slot_dt(date_str, post) if (post and date_str) else None
+    if pdt and pdt.date() == now.date():
+        return classify_phase((pdt - now).total_seconds() / 60.0) or '手動'
+    return '手動'
+
+
 def plan_status(plan, now=None):
     """プランの進捗サマリー {'total','done','pending','missed','next'} を返す(UI表示用)。"""
     now = now or datetime.now()
@@ -288,15 +363,18 @@ def runner_alive(max_age_s=90, path=HEARTBEAT_PATH):
         return False
 
 
-def record_one(race_id, base_dir='data'):
+def record_one(race_id, base_dir='data', phase=None):
     """1レースの単複人気オッズをスナップショット記録。戻り値: 記録件数(0=失敗)。
 
     保存先は OddsTracker のSQLite(data/odds_history.db)＝SRAの
     『📈 時系列オッズ・詳細分析』が読む同一DBに統一。これにより予約記録・手動記録・
     SRA内の📥記録がすべて同じ時系列に溜まり、記録内容がSRAにそのまま表示される。
-    (スクレイピングをOCRに置換しない方針は維持=OddsTrackerもnetkeiba API取得)。"""
+    (スクレイピングをOCRに置換しない方針は維持=OddsTrackerもnetkeiba API取得)。
+
+    phase: '15分前'/'直前'/'最終' 等の時点ラベル(slot_phase/current_phaseで決める)。
+           DBのphase列に入り、後日『直前で急落』等の時点別集計ができる。"""
     try:
         from core.odds_tracker import OddsTracker
-        return int(OddsTracker().track(str(race_id)) or 0)
+        return int(OddsTracker().track(str(race_id), phase=phase) or 0)
     except Exception:
         return 0

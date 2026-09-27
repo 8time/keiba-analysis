@@ -396,6 +396,214 @@ def _filter_hits(hits, cat):
     return [h for h in hits if h.get('category') == cat]
 
 
+def _as_umaban(value):
+    try:
+        v = pd.to_numeric(value, errors='coerce')
+        return int(v) if pd.notna(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _sra_compact_order(race_id, df):
+    """SRA保存済みの表示順。無ければスコアキャッシュ、最後に馬番順。"""
+    current = []
+    for _, row in df.iterrows():
+        umaban = _as_umaban(row.get('Umaban'))
+        if umaban is not None and umaban not in current:
+            current.append(umaban)
+    current_set = set(current)
+
+    try:
+        from core import newspaper
+        view = newspaper.load_view(race_id) or {}
+        if view.get('source') == 'view' and view.get('records'):
+            ordered = []
+            ranks = {}
+            for i, row in enumerate(view['records'], 1):
+                umaban = _as_umaban(row.get('Umaban'))
+                if umaban is None or umaban not in current_set or umaban in ordered:
+                    continue
+                ordered.append(umaban)
+                rank = _as_umaban(row.get('Rank'))
+                ranks[umaban] = rank if rank is not None else len(ordered)
+            ordered.extend(u for u in current if u not in ordered)
+            for i, u in enumerate(ordered, 1):
+                ranks.setdefault(u, i)
+            return ordered, ranks, str(view.get('sort_label') or 'SRA保存順'), 'sra'
+    except Exception:
+        pass
+
+    try:
+        from core import score_cache
+        scores = score_cache.read_scores(race_id) or {}
+        if scores:
+            ordered = sorted(
+                current,
+                key=lambda u: (
+                    -(scores.get(u, {}).get('proj')
+                      if scores.get(u, {}).get('proj') is not None else -10**9),
+                    u,
+                ),
+            )
+            return ordered, {u: i for i, u in enumerate(ordered, 1)}, \
+                '⭐予測スコア（SRAキャッシュ）', 'cache'
+    except Exception:
+        pass
+
+    ordered = sorted(current)
+    return ordered, {u: i for i, u in enumerate(ordered, 1)}, '馬番順', 'fallback'
+
+
+def _filter_effective_results(results):
+    """folklore_lib.filter_effective_results への委譲（実戦のみランキング用）。"""
+    return fl.filter_effective_results(results)
+
+
+def _render_sra_compact_table(race_id, df, results, signals=None, title=None, caption=None):
+    """SRAと同じ順に、判断用の項目だけを表示する実験テーブル。"""
+    ordered, ranks, sort_label, source = _sra_compact_order(race_id, df)
+    raw = {}
+    for _, row in df.iterrows():
+        umaban = _as_umaban(row.get('Umaban'))
+        if umaban is not None:
+            raw[umaban] = row
+    result_by_umaban = {
+        _as_umaban(r.get('umaban')): r for r in (results or [])
+        if _as_umaban(r.get('umaban')) is not None
+    }
+    axis_by_umaban = {}
+    try:
+        from core import newspaper
+        view = newspaper.load_view(race_id) or {}
+        if view.get('source') == 'view':
+            for row in view.get('records') or []:
+                umaban = _as_umaban(row.get('Umaban'))
+                mark = str(row.get('AxisMark') or '').strip()
+                if umaban is not None and mark:
+                    axis_by_umaban[umaban] = mark
+    except Exception:
+        pass
+    if not axis_by_umaban and 'AxisMark' in getattr(df, 'columns', []):
+        for _, row in df.iterrows():
+            umaban = _as_umaban(row.get('Umaban'))
+            mark = str(row.get('AxisMark') or '').strip()
+            if umaban is not None and mark:
+                axis_by_umaban[umaban] = mark
+    rows = []
+    for umaban in ordered:
+        src = raw.get(umaban, {})
+        result = result_by_umaban.get(umaban, {})
+        popularity = result.get('ninki')
+        if popularity is None:
+            popularity = src.get('Popularity')
+        try:
+            popularity = str(int(pd.to_numeric(popularity, errors='coerce')))
+        except (TypeError, ValueError):
+            popularity = '—'
+        rows.append({
+            'ランク': ranks.get(umaban),
+            '馬番': umaban,
+            '馬名': str(result.get('name') or src.get('Name') or ''),
+            '軸馬候補': axis_by_umaban.get(umaban, '—'),
+            '騎手名': str(src.get('Jockey') or ''),
+            '人気': popularity,
+            'ポジティブ': int(result.get('n_pos') or 0),
+            'マイナス': int(result.get('n_neg') or 0),
+        })
+
+    table_title = title or "SRAと同じ順の簡易テーブル（実験）"
+    st.markdown(f"### {table_title}")
+    if source == 'fallback':
+        st.warning(
+            "このレースのSRA順位がまだ保存されていないため、現在は馬番順です。"
+            "SRAで一度分析すると、次回から同じ並び順になります。"
+        )
+    else:
+        st.caption(f"並び順: {sort_label}")
+    if caption:
+        st.caption(caption)
+    else:
+        st.caption(
+            "俗説メモは、該当した俗説の件数です。"
+            "緑＝ポジティブ、赤＝マイナス、khaki＝緑の＋と赤の−を足した数。"
+            "確率や危険度ではなく、予測順位・軸・消去・買い目には自動反映しません。"
+        )
+    body = []
+    for row in rows:
+        rank = int(row['ランク'])
+        rank_class = (
+            'folk-rank-top5' if rank <= 5
+            else 'folk-rank-top7' if rank <= 7
+            else 'folk-rank-rest'
+        )
+        try:
+            popularity = int(row['人気'])
+        except (TypeError, ValueError):
+            popularity = None
+        pop_class = f"folk-pop-{popularity}" if popularity in (1, 2, 3, 4) else ''
+        axis_mark = str(row['軸馬候補'])
+        axis_class = (
+            'folk-axis-main' if '◎' in axis_mark
+            else 'folk-axis-second' if '〇' in axis_mark
+            else 'folk-axis-third' if '▲' in axis_mark
+            else ''
+        )
+        n_pos = int(row['ポジティブ'])
+        n_neg = int(row['マイナス'])
+        net_txt = fl.fmt_signed(n_pos - n_neg)
+        body.append(
+            "<tr>"
+            f"<td class='{rank_class}'>{rank}</td>"
+            f"<td>{int(row['馬番'])}</td>"
+            f"<td>{_html.escape(row['馬名'])}</td>"
+            f"<td class='{axis_class}'>{_html.escape(axis_mark)}</td>"
+            f"<td>{_html.escape(row['騎手名'])}</td>"
+            f"<td class='{pop_class}'>{_html.escape(row['人気'])}</td>"
+            "<td class='folk-counts'>"
+            f"<span class='folk-pos'>＋{n_pos}</span>"
+            "<span class='folk-sep'>／</span>"
+            f"<span class='folk-neg'>−{n_neg}</span>"
+            "<span class='folk-sep'>／</span>"
+            f"<span class='folk-net'>{net_txt}</span>"
+            "</td></tr>"
+        )
+    st.markdown(
+        """
+<style>
+.folk-mini-wrap{overflow-x:auto;margin:4px 0 16px}
+.folk-mini{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dbe6f1;
+ border-radius:12px;overflow:hidden;font-size:14px}
+.folk-mini th{background:#edf4fb;color:#455a64;text-align:left;padding:9px 12px;
+ border-bottom:1px solid #dbe6f1;white-space:nowrap}
+.folk-mini td{color:#263238;padding:9px 12px;border-bottom:1px solid #edf1f5}
+.folk-mini tr:last-child td{border-bottom:none}
+.folk-mini th:nth-child(1),.folk-mini th:nth-child(2),.folk-mini th:nth-child(4),
+.folk-mini th:nth-child(6),.folk-mini td:nth-child(1),.folk-mini td:nth-child(2),
+.folk-mini td:nth-child(4),.folk-mini td:nth-child(6){text-align:center}
+.folk-mini td.folk-rank-top5{background:#fab005;color:#111;font-weight:900}
+.folk-mini td.folk-rank-top7{background:#e8590c;color:#fff;font-weight:900}
+.folk-mini td.folk-rank-rest{background:#2b2f32;color:#adb5bd;font-weight:900}
+.folk-mini td.folk-axis-main{color:#d00000;font-weight:900}
+.folk-mini td.folk-axis-second{color:#1971c2;font-weight:900}
+.folk-mini td.folk-axis-third{color:#e8590c;font-weight:900}
+.folk-mini td.folk-pop-1{background:#e03131;color:#fff;font-weight:900}
+.folk-mini td.folk-pop-2{background:#f08c00;color:#fff;font-weight:900}
+.folk-mini td.folk-pop-3{background:#ffd43b;color:#332b00;font-weight:900}
+.folk-mini td.folk-pop-4{background:#74c0fc;color:#102a43;font-weight:900}
+.folk-counts{white-space:nowrap;font-weight:800}
+.folk-pos{color:#168447;background:#e7f6ed;border-radius:999px;padding:3px 9px}
+.folk-neg{color:#c62828;background:#fdecec;border-radius:999px;padding:3px 9px}
+.folk-net{color:#8b4513;background:#f0e68c;border-radius:999px;padding:3px 9px}
+.folk-sep{color:#90a4ae;padding:0 5px}
+</style>
+<div class="folk-mini-wrap"><table class="folk-mini">
+<thead><tr><th>ランク</th><th>馬番</th><th>馬名</th><th>軸馬候補</th><th>騎手名</th>
+<th>人気</th><th>俗説メモ</th></tr></thead>
+<tbody>""" + ''.join(body) + """</tbody></table></div>""",
+        unsafe_allow_html=True,
+    )
+
+
 def _cat_chips(horse):
     items = sorted(horse['by_category'].items(), key=lambda x: -x[1])
     if not items:
@@ -588,6 +796,9 @@ def render():
         captured, hunter_ok = _hunter_captured(df, meta, race_id)
     sigs = fl.folklore_signals(results, captured) if hunter_ok else []
     _render_signals(sigs, hunter_ok)
+    _render_sra_compact_table(race_id, df, results, sigs)
+    from ui import jockey_checklist as _jc_view
+    _jc_view.render(df)
     with st.expander("俗説の読み方（市場を超えたか）", expanded=False):
         _render_market_lens(show_title=False)
 
@@ -710,3 +921,78 @@ def render():
             "読むときは、生の3着以内の多さより **人気をならしたあと** を先に見ます。"
             "0〜100の有効度は作りません。"
         )
+
+    # ──────────────────────────────────────────────
+    # 🧪 「実戦で使う」のみの俗説ランキング＆SRA簡易テーブル（実験）
+    # ──────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🧪 俗説ランキング（各 TOP5・「実戦で使う」のみ）")
+    st.caption(
+        "判定で「実戦で使う」に分類された俗説のみを集計したランキングです（否決済み・未検証を除外）。"
+        " 今は1件＝±1です。人気は見比べ用で、点数には入れていません。"
+    )
+
+    eff_results = _filter_effective_results(results)
+    eff_pos5 = fl.top_pos(eff_results, 5)
+    eff_neg5 = fl.top_neg(eff_results, 5)
+    eff_sc5 = fl.top_score(eff_results, 5)
+
+    eff_pos_rows = [
+        (i, r['umaban'], r['name'], r.get('ninki'), f"＋{r['n_pos']}", '')
+        for i, r in enumerate(eff_pos5, 1)
+    ]
+    eff_neg_rows = [
+        (i, r['umaban'], r['name'], r.get('ninki'), f"−{r['n_neg']}", '')
+        for i, r in enumerate(eff_neg5, 1)
+    ]
+    eff_sc_rows = [
+        (i, r['umaban'], r['name'], r.get('ninki'),
+         fl.fmt_signed(r['score']),
+         f"　＋{r['n_pos']} / −{r['n_neg']}")
+        for i, r in enumerate(eff_sc5, 1)
+    ]
+
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        st.markdown(
+            _rank_card(
+                "🟢 ポジティブ材料 TOP5（実戦のみ）",
+                "「実戦で使う」買い材料の該当数",
+                eff_pos_rows,
+                "買い材料に当たった馬はいません。",
+                'pos',
+            ),
+            unsafe_allow_html=True,
+        )
+    with ec2:
+        st.markdown(
+            _rank_card(
+                "🔴 マイナス材料 TOP5（実戦のみ）",
+                "「実戦で使う」消し・危険材料が多い順",
+                eff_neg_rows,
+                "消し材料に当たった馬はいません。",
+                'neg',
+            ),
+            unsafe_allow_html=True,
+        )
+    with ec3:
+        st.markdown(
+            _rank_card(
+                "⭐ 総合 TOP5（実戦のみ）",
+                "実戦買いの個数 − 実戦消しの個数",
+                eff_sc_rows,
+                "判定できる馬がいません。",
+                'master',
+            ),
+            unsafe_allow_html=True,
+        )
+
+    _render_sra_compact_table(
+        race_id,
+        df,
+        eff_results,
+        title="SRAと同じ順の簡易テーブル（実験・「実戦で使う」のみ）",
+        caption="判定で「実戦で使う」に分類された俗説のみをカウントした俗説メモです。"
+                "緑＝ポジティブ、赤＝マイナス、khaki＝緑の＋と赤の−を足した数。"
+                "確率や危険度ではなく、予測順位・軸・消去・買い目には自動反映しません。",
+    )

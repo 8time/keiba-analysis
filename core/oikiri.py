@@ -39,6 +39,23 @@ def critic_tone(txt):
     return '・普通'
 
 
+_RANK_FW = str.maketrans('ＡＢＣＤＥＦａｂｃｄｅｆ', 'ABCDEFabcdef')
+_LOW_TRAIN = frozenset('CDEF')
+
+
+def normalize_train_rank(grade):
+    """調教評価を半角A-Fの1文字に正規化。不明は空文字。"""
+    if grade is None:
+        return ''
+    g = str(grade).strip().translate(_RANK_FW).upper()[:1]
+    return g if g in 'ABCDEF' else ''
+
+
+def is_c_or_below(grade):
+    """調教評価がC以下(C/D/E/F)ならTrue。"""
+    return normalize_train_rank(grade) in _LOW_TRAIN
+
+
 def _floats(txt):
     return [float(x) for x in re.findall(r'\d+\.\d+', txt or '')]
 

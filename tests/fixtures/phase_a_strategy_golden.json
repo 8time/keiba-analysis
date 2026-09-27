@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "フェーズA step1: 固定入力に対する期待出力（戦略経路の回帰基準）",
+  "playbook_cases": [
+    {
+      "id": "D_trio_2",
+      "zone": "R",
+      "vscore": 30,
+      "cross_n": 0,
+      "expected": {
+        "selected_playbook": "d_ninki_trio_2",
+        "n_points": 2,
+        "skip": false,
+        "has_trio": true,
+        "has_trifecta": false
+      }
+    },
+    {
+      "id": "C_trifecta_247",
+      "zone": "R",
+      "vscore": 55,
+      "cross_n": 2,
+      "expected": {
+        "selected_playbook": "c_ltr_trifecta_247",
+        "n_points": 30,
+        "skip": false,
+        "has_trio": false,
+        "has_trifecta": true
+      }
+    },
+    {
+      "id": "C_trio_236",
+      "zone": "R",
+      "vscore": 55,
+      "cross_n": 3,
+      "expected": {
+        "selected_playbook": "c_ltr_trio_236",
+        "skip": false,
+        "has_trio": true,
+        "has_trifecta": false
+      }
+    },
+    {
+      "id": "BA_skip",
+      "zone": "R",
+      "vscore": 80,
+      "cross_n": 0,
+      "expected": {
+        "selected_playbook": "ba_skip",
+        "skip": true
+      }
+    }
+  ],
+  "bettype_select_cases": [
+    {"zone": "D", "cross_n": 0, "bet_type": "3連複", "playbook": "d_ninki_trio_2"},
+    {"zone": "C", "cross_n": 2, "bet_type": "3連単", "playbook": "c_ltr_trifecta_247"},
+    {"zone": "C", "cross_n": 3, "bet_type": "3連複", "playbook": "c_ltr_trio_236"},
+    {"zone": "BA", "cross_n": 0, "bet_type": null, "playbook": "ba_skip"}
+  ],
+  "elim_verdict": {
+    "race_id": "209901010101",
+    "border_cnt": 1,
+    "n_horses": 8,
+    "expected_keep_umaban": [1, 2, 3, 4, 5],
+    "expected_eliminated_umaban": [6, 7, 8]
+  }
+}

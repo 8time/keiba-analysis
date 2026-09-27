@@ -1151,17 +1151,90 @@ V_PACE_PATTERNS = ['スロー', 'ミドル', 'ハイ']
 # Vエリア判定: (馬場, ペース) → (有利な通り列 0=内 1=中 2=外, 有利な位置行 0=前 1=中 2=後)
 _V_COL = {'フラット': 0, '内2頭目まで荒れ': 1, '内4頭目まで荒れ': 2}
 _V_ROW = {'スロー': 0, 'ミドル': 1, 'ハイ': 2}
+V_FINISH_PUSH_MIN = 0.15
 
 
-def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット', sashikiri=None):
+def _pos4_lookup(pos4, umaban):
+    """pos4 dict のキーを int 正規化して値を取る。"""
+    if not pos4:
+        return None
+    try:
+        u = int(umaban)
+    except (TypeError, ValueError):
+        return None
+    if u in pos4:
+        v = pos4[u]
+    else:
+        v = pos4.get(str(u))
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_v_pos(umaban, name, score, profiles=None, pos4=None):
+    """Vの縦・横混ぜに使う pos（0=前, 1=後）。
+
+    戻り値: (pos: float, source: 'pos4'|'ten'|'score')
+    """
+    p4 = _pos4_lookup(pos4, umaban)
+    if p4 is not None:
+        return p4, 'pos4'
+    prof = (profiles or {}).get(name or '') or {}
+    ten = prof.get('ten')
+    if ten is not None:
+        try:
+            return float(ten), 'ten'
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(score), 'score'
+    except (TypeError, ValueError):
+        return 0.5, 'score'
+
+
+def finish_push_delta(pos, finish, source):
+    """≫用。source!='pos4' or finish is None なら None。それ以外は pos - finish。"""
+    if source != 'pos4' or finish is None:
+        return None
+    try:
+        return float(pos) - float(finish)
+    except (TypeError, ValueError):
+        return None
+
+
+def _finish_lookup(finish, umaban):
+    if not finish:
+        return None
+    try:
+        u = int(umaban)
+    except (TypeError, ValueError):
+        return None
+    if u in finish:
+        v = finish[u]
+    else:
+        v = finish.get(str(u))
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット', sashikiri=None,
+                   pos4=None, finish=None):
     """
     3×3マトリクス（横軸=トラックバイアス 内/中/外、縦軸=隊列位置 前/中/後）に
     出走馬をプロットし、馬場×ペースの組み合わせから導かれる
     Vエリア（最も恵まれるポジション）をハイライトする。
 
-    sashikiri（sashikiri_table の戻り値）を渡すと、差し切り射程（上がり3F実タイムで
-    先頭を物理的に差し切れる余裕=margin）に応じて縦位置を前方へ補正する＝4角の位置でなく
-    『直線での到達位置』でVエリア判定する。強射程(margin≥1.5)には黄色≫を付す。
+    縦は build_pace_context の pos4（展開マップと同じ4角想定）を正本とする。
+    pos4 欠損時のみ ten → 脚質score。finish は座標に入れず、4角より直線で前へ出る
+    想定の ≫ 表示のみ（predict_finish 相当）。
+    sashikiri は互換のため引数に残すが y 補正には使わない。
     ※展開恩恵は人気に織込み済み＝地図としての表示精度向上でありエッジ主張ではない。
 
     戻り値: (plotly Figure, Vエリア該当馬リスト [{'umaban','name','style'}])
@@ -1173,35 +1246,33 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット',
         return None, []
     profiles = profiles or {}
     max_uma = max(h['umaban'] for h in horses)
-    sk_by_uma = {s['umaban']: s for s in (sashikiri or []) if s.get('umaban') is not None}
 
     pts = []
     for h in horses:
         prof = profiles.get(h.get('name', ''))
-        # 縦: 隊列位置（テンの位置取り 0=前）
-        pos = prof['ten'] if prof and prof.get('ten') is not None else h['score']
+        pos, pos_src = resolve_v_pos(
+            h['umaban'], h.get('name', ''), h.get('score', 0.5),
+            profiles=profiles, pos4=pos4)
+        fin = _finish_lookup(finish, h['umaban'])
+        delta = finish_push_delta(pos, fin, pos_src)
         # 横: 想定の通り（枠ベース。先行できる馬ほど内に潜り込める）
         gate = (h['umaban'] - 1) / max(max_uma - 1, 1)
         lane = 0.65 * gate + 0.35 * pos
         y = (1.0 - pos) * 3.0            # 0..3（後→前）4角相当
-        # 差し切り補正: 上がりで先頭を差し切れる余裕(margin)ぶん前方へ引き上げる。
-        # margin<=0(届かない)は据え置き。margin 2.5で+1.25=約1行ぶん前へ。3.0で頭打ち。
-        sk = sk_by_uma.get(h['umaban'])
-        sk_margin = sk.get('margin') if sk else None
-        sk_boost = 0.0
-        if sk_margin is not None and sk_margin > 0:
-            sk_boost = min(sk_margin, 2.5) * 0.5
-        y_adj = min(3.0, y + sk_boost)
+        y_adj = y
+        push = delta is not None and delta >= V_FINISH_PUSH_MIN
+        pos_lbl = ('4角想定(展開マップと同じ)' if pos_src == 'pos4'
+                   else '過去走の位置取り(4角データなし)')
         pts.append({
             'umaban': h['umaban'], 'name': h.get('name', ''),
             'style': h.get('style', '不明'),
             'x': lane * 3.0,            # 0..3（内→外）
-            'y': y_adj,                 # 差し切り補正後の到達位置
-            'y_raw': y,                 # 補正前(4角相当)
-            'sk_margin': sk_margin,
-            'sk_boost': sk_boost,
-            'push': (sk_margin is not None and sk_margin >= 1.5),
-            'sk_rank4': sk.get('rank4') if sk else None,
+            'y': y_adj,
+            'y_raw': y,
+            'pos_src': pos_src,
+            'pos_lbl': pos_lbl,
+            'finish_delta': delta,
+            'push': push,
             'jv': bool(prof),
         })
 
@@ -1232,22 +1303,21 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット',
         ),
         hovertext=[
             f"{p['umaban']}番 {p['name']}<br>脚質: {p['style']}"
+            f"<br>{p['pos_lbl']}"
             f"<br>{'📊 JV実データ' if p['jv'] else '⚙️ 推定'}"
-            + (f"<br>≫差し切り補正: 4角{p['sk_rank4']}番手→直線で前へ(余裕{p['sk_margin']:+.1f}秒)"
-               if p['push'] else
-               (f"<br>差し切り補正: +{p['sk_boost']:.1f}(余裕{p['sk_margin']:+.1f}秒)"
-                if p['sk_boost'] > 0 else ""))
+            + (f"<br>≫直線で前へ（4角より前に出る想定）"
+               if p['push'] else "")
             for p in pts],
         hoverinfo='text',
     ))
-    # 強射程(margin≥1.5)の馬に円の左へ黄色≫（展開MAPと統一）
+    # 4角(pos4)より直線で前へ出る想定の馬に黄色≫（座標は動かさない）
     _push_pts = [p for p in pts if p['push']]
     if _push_pts:
         fig.add_trace(go.Scatter(
             x=[p['x'] - 0.14 for p in _push_pts], y=[p['y'] for p in _push_pts],
             mode='text', text=['≫' for _ in _push_pts],
             textfont=dict(color='#FFD700', size=17, family='Arial Black'),
-            hovertext=[f"{p['umaban']}番 差し切り射程=直線で前へ" for p in _push_pts],
+            hovertext=[f"{p['umaban']}番 直線で前へ（4角より前に出る想定）" for p in _push_pts],
             hoverinfo='text',
         ))
 
@@ -1276,7 +1346,7 @@ def build_v_matrix(horses, profiles=None, pace='ミドル', baba='フラット',
         yaxis=dict(range=[-0.15, 3.15], fixedrange=True,
                    tickvals=[0.5, 1.5, 2.5], ticktext=['後方', '中団', '前'],
                    tickfont=dict(color='#4CAF50', size=14),
-                   title='到達ポジション（4角＋差し切り補正）', showgrid=False, zeroline=False),
+                   title='4角想定位置（展開マップと同じ）', showgrid=False, zeroline=False),
         height=430,
         margin=dict(l=10, r=10, t=45, b=10),
         plot_bgcolor='#20262e',

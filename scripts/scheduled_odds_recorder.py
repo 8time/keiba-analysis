@@ -13,7 +13,7 @@ Race Scannerで保存した記録プラン(data/odds_record_plan.json)を読み�
   ・30秒ごとにプランを読み直し(アプリでプランを更新しても即反映)。
   ・予定時刻を過ぎ、かつ猶予(25分)以内の未記録枠を記録→プランにdone印。
   ・全枠が done/stale になったら待機継続(その日の追加プランに備える)。Ctrl+Cで終了。
-出力: data/odds_history_<race_id>.jsonl(時系列追記・OddsLoggerと同形式)。
+出力: data/odds_history.db の odds_logs(時系列追記・phase列に時点ラベル付き)。
 """
 import os
 import sys
@@ -44,11 +44,12 @@ def process_due(once_note=''):
     due = osch.due_slots(plan)
     n = 0
     for rid, hhmm, label in due:
-        cnt = osch.record_one(rid)
+        phase = osch.slot_phase(plan, rid, hhmm)  # 15分前/直前/最終 等の時点ラベル
+        cnt = osch.record_one(rid, phase=phase)
         if cnt > 0:
             osch.mark_done(plan, rid, hhmm, cnt)
             osch.save_plan(plan)
-            _log(f'✅ 記録 {label}({rid}) {hhmm}枠 → {cnt}頭')
+            _log(f'✅ 記録 {label}({rid}) {hhmm}枠[{phase or "-"}] → {cnt}頭')
             n += 1
         else:
             _log(f'⚠ 取得失敗 {label}({rid}) {hhmm}枠(発売前/終了/通信) — 猶予内で再試行')

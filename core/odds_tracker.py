@@ -54,12 +54,17 @@ class OddsTracker:
                 umaban INTEGER,
                 odds_type TEXT,
                 odds_value REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                phase TEXT
             )
         ''')
         # Add index for faster queries
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_race_id ON odds_logs (race_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON odds_logs (timestamp)')
+        # 既存DBへの後付け: phase列が無ければ追加(既存行はNULL=無ラベル)
+        cols = {r[1] for r in cursor.execute('PRAGMA table_info(odds_logs)')}
+        if 'phase' not in cols:
+            cursor.execute('ALTER TABLE odds_logs ADD COLUMN phase TEXT')
         conn.commit()
         conn.close()
 
@@ -228,15 +233,17 @@ class OddsTracker:
 
         return results
 
-    def track(self, race_id, ticket_types=None):
+    def track(self, race_id, ticket_types=None, phase=None):
         """
         Fetches and saves target odds for a race_id.
         ticket_types: list of 'b1' (Win/Show), 'b3' (Quinella), 'b7' (Trio), etc.
+        phase: '朝一'/'15分前'/'10分前'/'5分前'/'直前'/'最終' などの記録時点ラベル。
+               指定すると全レコードに付く(後日の時点別集計用)。None=無ラベル。
         """
         if ticket_types is None:
             ticket_types = ["b1"] # Default to Win/Show
-            
-        logger.info(f"Tracking odds for {race_id} (types: {ticket_types})...")
+
+        logger.info(f"Tracking odds for {race_id} (types: {ticket_types}, phase: {phase})...")
         
         all_records = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -276,6 +283,9 @@ class OddsTracker:
                         except: continue
         
         if all_records:
+            if phase:
+                for _r in all_records:
+                    _r['phase'] = phase
             self.save_to_db(all_records)
             return len(all_records)
         return 0
@@ -290,13 +300,14 @@ class OddsTracker:
             cursor = conn.cursor()
             
             data_to_insert = [
-                (r['race_id'], r['umaban'], r['odds_type'], r['odds_value'], r['timestamp'])
+                (r['race_id'], r['umaban'], r['odds_type'], r['odds_value'], r['timestamp'],
+                 r.get('phase'))
                 for r in records
             ]
-            
+
             cursor.executemany('''
-                INSERT INTO odds_logs (race_id, umaban, odds_type, odds_value, timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO odds_logs (race_id, umaban, odds_type, odds_value, timestamp, phase)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', data_to_insert)
             
             conn.commit()

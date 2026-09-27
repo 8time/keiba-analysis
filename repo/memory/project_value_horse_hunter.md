@@ -55,3 +55,5 @@ ctfig/spurt/血統/combo/elim/オッズからvh_score算出し返す→integrate
 - 💀消し推奨(予測スコア下位30%・未検証)→「✖消し候補(統合ビュー合議)」=_cv_resのkeshiグループ(消去クロス重複3+強気カット・救済済み)をそのまま表示。
 - 🎯推奨穴馬(Top Dark Horse=適性Y≥60・未検証)→「🎯妙味馬(穴馬ハンター)」=7番人気以下×🎯精鋭をvhスコア降順、筆頭はst.warningカード(人気/オッズ/妙味スコア/根拠edge_reasons)+次点3頭+「+EVではない」注記。build_edge_setsのセッションキャッシュ共有。
 - 残タスク(全てデータ待ち): ①パドック台帳蓄積→仮説4検証 ②オッズ時系列(scheduled_odds_recorder)蓄積→隠れ本命特徴の前向き検証 ③(任意)NAR専用係数fit。実装系の残は無し。
+
+**確率後処理は凍結(2026-09-04)**: Rank softmaxへのVenn-Abers/Beta/保守EV/予測幅はholdoutで馬券判断を改善せず。**再検討条件なし**([[verified_uncertainty_layer_rejected]])。VH側の残りは閾値や較正ではなく、レース内VH1強調などの選択・情報設計（`repo/analysis/vh_monthly_analysis/vh_rank_market_residual.md` / [[verified_vh_badge_selection]]）。

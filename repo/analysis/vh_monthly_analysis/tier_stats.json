@@ -1,0 +1,32 @@
+{
+  "A_精鋭": {
+    "sep_n": 4628,
+    "other_n": 63016,
+    "sep_win_rate_pct": 4.47,
+    "other_win_rate_pct": 4.56,
+    "sep_place_rate_pct": 19.06,
+    "other_place_rate_pct": 18.53,
+    "win_rate_p": 0.7817,
+    "place_rate_p": 0.3714
+  },
+  "B_広域網": {
+    "sep_n": 2612,
+    "other_n": 33664,
+    "sep_win_rate_pct": 2.99,
+    "other_win_rate_pct": 2.37,
+    "sep_place_rate_pct": 12.33,
+    "other_place_rate_pct": 11.49,
+    "win_rate_p": 0.0483,
+    "place_rate_p": 0.1969
+  },
+  "C_精鋭+広域網": {
+    "sep_n": 7240,
+    "other_n": 96680,
+    "sep_win_rate_pct": 3.94,
+    "other_win_rate_pct": 3.8,
+    "sep_place_rate_pct": 16.63,
+    "other_place_rate_pct": 16.08,
+    "win_rate_p": 0.5529,
+    "place_rate_p": 0.2179
+  }
+}

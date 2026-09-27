@@ -361,7 +361,7 @@ def fetch_horse_history(horse_id):
         return None
 
     tables = soup.find_all("table")
-    if len(tables) < 8:
+    if not tables:
         return None
 
     # ── 血統(Table 0) ──
@@ -681,28 +681,156 @@ def enrich_with_nankan(netkeiba_df, nankan_race_id=None, nankan_entries=None):
             continue
 
         history = fetch_horse_history(horse_id)
-        if not history or not history.get("runs"):
+        if not history:
             enriched[name] = {"horse_id": horse_id, "spurt_index": None,
                               "spurt_runs": 0, "history": None}
             continue
 
-        si, sr = compute_spurt_index(history["runs"])
-        enriched[name] = {
+        runs = history.get("runs") or []
+        si, sr = (None, 0)
+        if runs:
+            si, sr = compute_spurt_index(runs)
+        rec = {
             "horse_id": horse_id,
             "spurt_index": si,
             "spurt_runs": sr,
             "sire": history.get("sire", ""),
+            "dam": history.get("dam", ""),
             "dam_sire": history.get("dam_sire", ""),
             "trainer": history.get("trainer", ""),
-            "runs": history["runs"],
-            "pastruns": runs_to_pastruns(history["runs"]),
-            "prev_agari": history["runs"][0].get("agari3f") if history["runs"] else None,
-            "prev_rank": history["runs"][0].get("rank") if history["runs"] else None,
-            "prev_pop": history["runs"][0].get("popularity") if history["runs"] else None,
-            "prev_passing": history["runs"][0].get("passing") if history["runs"] else None,
-            "prev_distance": history["runs"][0].get("distance") if history["runs"] else None,
-            "prev_baba": history["runs"][0].get("baba") if history["runs"] else None,
-            "prev_body_weight": history["runs"][0].get("body_weight") if history["runs"] else None,
+            "runs": runs,
+            "pastruns": runs_to_pastruns(runs) if runs else [],
         }
+        if runs:
+            rec.update({
+                "prev_agari": runs[0].get("agari3f"),
+                "prev_rank": runs[0].get("rank"),
+                "prev_pop": runs[0].get("popularity"),
+                "prev_passing": runs[0].get("passing"),
+                "prev_distance": runs[0].get("distance"),
+                "prev_baba": runs[0].get("baba"),
+                "prev_body_weight": runs[0].get("body_weight"),
+            })
+        enriched[name] = rec
 
     return enriched
+
+
+_BLOOD_EMPTY = ('', '-', '不明', 'nan', 'None', 'NaN')
+
+
+def _horse_ids_from_netkeiba_shutuba(netkeiba_race_id):
+    """nar.netkeiba 出馬表の馬名リンクから {umaban:int: horse_id, name: horse_id} を返す。"""
+    rid = re.sub(r'\D', '', str(netkeiba_race_id or ''))
+    if len(rid) < 12:
+        return {}, {}
+    try:
+        from core.scraper import fetch_robust_html
+    except ImportError:
+        return {}, {}
+    html = fetch_robust_html(
+        f"https://nar.netkeiba.com/race/shutuba.html?race_id={rid}") or ""
+    if not html:
+        return {}, {}
+    soup = BeautifulSoup(html, "html.parser")
+    by_umaban, by_name = {}, {}
+    for row in soup.find_all("tr", class_=re.compile(r"HorseList")):
+        uma_td = row.find("td", class_=re.compile(r"Umaban", re.I))
+        umaban = _safe_int(uma_td.get_text(strip=True)) if uma_td else 0
+        a = row.find("a", href=re.compile(r"/horse/\d+"))
+        if not a:
+            continue
+        m = re.search(r"/horse/(\d+)", a.get("href") or "")
+        if not m:
+            continue
+        hid = m.group(1)
+        name = a.get_text(strip=True)
+        if umaban:
+            by_umaban[umaban] = hid
+        if name:
+            by_name[_normalize_name(name)] = hid
+            by_name[name] = hid
+    return by_umaban, by_name
+
+
+def fill_bloodline_from_nankan(df, enriched=None, netkeiba_race_id=None):
+    """SRAの血統列(sire / broodmareSire)を nankankeiba 馬情報の父/母父で埋める。
+
+    優先順:
+      1. enrich_with_nankan() が既に取った sire / dam_sire（追加リクエストなし）
+      2. df['HorseId'] または出馬表リンクの馬ID → uma_info/{id}.do
+
+    南関4場向け。JRAでは呼ばないこと。
+    戻り値: 父または母父を埋めた頭数。
+    """
+    if df is None or getattr(df, "empty", True):
+        return 0
+    enriched = enriched or {}
+    for col, default in (("sire", "-"), ("broodmareSire", "-"),
+                         ("dam", ""), ("Bloodline", "-")):
+        if col not in df.columns:
+            df[col] = default
+
+    need_ids = False
+    for _, row in df.iterrows():
+        name = str(row.get("Name", "") or "")
+        nk = enriched.get(name) or {}
+        sire = str(nk.get("sire") or "").strip()
+        bms = str(nk.get("dam_sire") or "").strip()
+        hid = str(nk.get("horse_id") or row.get("HorseId") or "").strip()
+        if hid in _BLOOD_EMPTY:
+            hid = ""
+        if (sire in _BLOOD_EMPTY or bms in _BLOOD_EMPTY) and not hid:
+            need_ids = True
+            break
+
+    by_umaban, by_name = {}, {}
+    if need_ids and netkeiba_race_id:
+        by_umaban, by_name = _horse_ids_from_netkeiba_shutuba(netkeiba_race_id)
+
+    hist_cache = {}
+    filled = 0
+    for idx, row in df.iterrows():
+        name = str(row.get("Name", "") or "")
+        nk = enriched.get(name) or {}
+        sire = str(nk.get("sire") or "").strip()
+        dam = str(nk.get("dam") or "").strip()
+        bms = str(nk.get("dam_sire") or "").strip()
+        hid = str(nk.get("horse_id") or row.get("HorseId") or "").strip()
+        if hid in _BLOOD_EMPTY:
+            hid = ""
+        if not hid:
+            try:
+                uma = int(float(row.get("Umaban")))
+            except (TypeError, ValueError):
+                uma = 0
+            hid = str(by_umaban.get(uma) or by_name.get(_normalize_name(name)) or "")
+
+        if (sire in _BLOOD_EMPTY or bms in _BLOOD_EMPTY) and hid:
+            if hid not in hist_cache:
+                hist_cache[hid] = fetch_horse_history(hid)
+            hist = hist_cache[hid] or {}
+            if sire in _BLOOD_EMPTY:
+                sire = str(hist.get("sire") or "").strip()
+            if dam in _BLOOD_EMPTY:
+                dam = str(hist.get("dam") or "").strip()
+            if bms in _BLOOD_EMPTY:
+                bms = str(hist.get("dam_sire") or "").strip()
+
+        wrote = False
+        if sire and sire not in _BLOOD_EMPTY:
+            df.at[idx, "sire"] = sire
+            wrote = True
+        if bms and bms not in _BLOOD_EMPTY:
+            df.at[idx, "broodmareSire"] = bms
+            wrote = True
+        if dam and dam not in _BLOOD_EMPTY:
+            df.at[idx, "dam"] = dam
+        s_now = str(df.at[idx, "sire"] or "").strip()
+        b_now = str(df.at[idx, "broodmareSire"] or "").strip()
+        parts = [x for x in (s_now, b_now) if x and x not in _BLOOD_EMPTY]
+        if parts:
+            df.at[idx, "Bloodline"] = " / ".join(parts)
+        if wrote:
+            filled += 1
+    return filled

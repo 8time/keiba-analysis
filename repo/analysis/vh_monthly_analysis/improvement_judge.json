@@ -1,0 +1,13 @@
+{
+  "abcd": "A",
+  "pct_label": "可能性高い",
+  "strong_feats": [
+    "neg_log_odds"
+  ],
+  "weak_feats": [
+    "pos_front"
+  ],
+  "best_wr_gain": 3.31,
+  "best_roi_gain": 4.7,
+  "best_place_gain": 8.78
+}

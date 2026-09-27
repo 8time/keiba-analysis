@@ -10,6 +10,7 @@
   LTR Rank   → C の 3連単 Rank2-4-7 のみ（高いほど強い。◎〇は組み込まない）
   Projected Score はここでは使わない
 """
+from core import bettype_selector as _bts
 from core import formation_stats as _fs
 from core import trio_engine as _te
 
@@ -33,6 +34,16 @@ _ADVICE = {
             '印や予測スコアは使いません。'
         ),
         'strategy': 'c_ltr_trifecta_247',
+        'rank_logic': 'ltr',
+    },
+    'C_TRIO': {
+        'ui_line': 'C中庸｜Rank型｜3連複 Rank2-3-6',
+        'plain_caption': (
+            'Rank上位とVH上位の共通馬が多い（クロス3頭以上）中庸レースです。'
+            '能力順（検証AI＝LTR）の3連複 Rank2-3-6 フォーメーションを使います。'
+            '印や予測スコアは券には使いません。'
+        ),
+        'strategy': 'c_ltr_trio_236',
         'rank_logic': 'ltr',
     },
     'BA': {
@@ -112,6 +123,26 @@ def _umaban_at_pop(horses, ninki):
     return None
 
 
+def _ninki_skip_detail(horses, ninkis=(1, 2, 3, 4)):
+    """人気1-4の欠損・重複を skip_detail 用文字列で返す。"""
+    counts = {}
+    for h in horses or []:
+        try:
+            p = int(h.get('pop'))
+        except (TypeError, ValueError):
+            continue
+        if p in ninkis:
+            counts[p] = counts.get(p, 0) + 1
+    missing = [p for p in ninkis if counts.get(p, 0) == 0]
+    dup = [p for p in ninkis if counts.get(p, 0) > 1]
+    parts = []
+    if dup:
+        parts.append('dup ninki: %s' % dup)
+    if missing:
+        parts.append('missing ninki: %s' % missing)
+    return ', '.join(parts) if parts else None
+
+
 def _resolve_axis(horses, axis_marks):
     """表示用。券のD軸には使わない（holdout の軸は常に人気1・2）。"""
     pop = _pop_order(horses)
@@ -176,46 +207,95 @@ def _trifecta_rows(combos, names):
     return rows
 
 
-def build_tickets(race_id, vscore, horses, axis_marks=None, ltr_scores=None):
-    """ゾーンに応じたデフォルト買い目。Projected Score は引数に取らない。
+def _apply_selector_meta(rec, sel):
+    """券種セレクター結果を rec に載せる（第1・第2段階を分離したメタ）。"""
+    rec['cross_n'] = sel.get('cross_n', 0)
+    rec['selected_bet_type'] = sel.get('selected_bet_type')
+    rec['selected_playbook'] = sel.get('selected_playbook')
+    rec['selector_rule_version'] = sel.get('selector_rule_version')
+    rec['selection_reason'] = sel.get('selection_reason')
+    rec['skip'] = bool(sel.get('skip'))
+    rec['diag_family'] = sel.get('diag_family')
+    rec['diag_plain'] = sel.get('diag_plain')
+    rec['diag_verdict'] = sel.get('diag_verdict')
+
+
+def _advice_for_playbook(playbook_id, zone):
+    if playbook_id == _bts.PLAYBOOK_C_TRIO_236:
+        a = dict(_ADVICE['C_TRIO'])
+    else:
+        a = dict(_ADVICE.get(zone, _ADVICE['BA']))
+    a['zone'] = zone
+    a['zone_label'] = _fs.ZONE_SHORT.get(_fs.zone_of(50 if zone == 'C' else 30), zone)
+    return a
+
+
+def build_tickets(race_id, vscore, horses, axis_marks=None, ltr_scores=None,
+                  cross_n=None, vh_scores=None, proj_scores=None):
+    """ゾーン×cross_n に応じたデフォルト買い目。Projected Score は引数に取らない。
 
     horses: [{'umaban':int,'name':str,'pop':int|None}, ...]
     axis_marks: {umaban: '◎'|'〇'|'▲'}
-    ltr_scores: {umaban: float} 高いほど強い。C で必須。
+    ltr_scores: {umaban: float} 高いほど強い。C の買い目生成で必須。
+    cross_n: Rank上位4∩VH上位4。None なら proj_scores+vh_scores から算出、
+             それも無ければ 0（C は 3連単 RRR）。
+    vh_scores: {umaban: float} cross_n 自動算出用（consensus_view 同定義）。
+    proj_scores: {umaban: float} Projected Score。cross_n 算出の正本。
     """
     adv = advise(vscore)
+    zone = adv['zone']
     horses = [h for h in (horses or []) if h.get('umaban') is not None]
     names = _name_map(horses)
     axis = _resolve_axis(horses, axis_marks) if horses else []
+    cross_n_given = cross_n is not None
+    if cross_n is None and vh_scores and proj_scores:
+        cross_n = _bts.compute_cross_n(proj_scores, vh_scores, horses)
+        cross_n_source = 'computed'
+    elif cross_n_given:
+        cross_n_source = 'given'
+    else:
+        cross_n = 0
+        cross_n_source = 'unavailable'
+    degraded = cross_n_source == 'unavailable' and zone == 'C'
+    sel = _bts.select(zone, cross_n)
+    pb_id = sel['selected_playbook']
+    meta = _advice_for_playbook(pb_id, zone) if pb_id != _bts.PLAYBOOK_BA_SKIP else adv
     rec = {
         'race_id': str(race_id or ''),
-        'zone': adv['zone'],
+        'zone': zone,
         'zone_label': adv['zone_label'],
         'vscore': adv['vscore'],
-        'strategy': adv['strategy'],
-        'rank_logic': adv['rank_logic'],
-        'ui_line': adv['ui_line'],
-        'plain_caption': adv['plain_caption'],
+        'strategy': meta.get('strategy', adv['strategy']),
+        'rank_logic': meta.get('rank_logic', adv['rank_logic']),
+        'ui_line': meta.get('ui_line', adv['ui_line']),
+        'plain_caption': meta.get('plain_caption', adv['plain_caption']),
         'axis': axis,
         'axis_marks': {int(k): str(v) for k, v in (axis_marks or {}).items()
                        if str(v or '')[:1] in ('◎', '〇', '▲')},
         'trio': [],
         'trifecta': [],
         'n_points': 0,
-        'skip': adv['skip'],
+        'skip': sel['skip'],
         'warning': None,
+        'skip_reason': None,
+        'skip_detail': None,
+        'cross_n_source': cross_n_source,
+        'degraded': degraded,
     }
+    _apply_selector_meta(rec, sel)
     if not horses:
         rec['warning'] = '出走表がありません'
         rec['skip'] = True
+        rec['skip_reason'] = 'no_horses'
         return rec
 
-    if adv['zone'] == 'BA':
+    if zone == 'BA' or pb_id == _bts.PLAYBOOK_BA_SKIP:
         rec['axis'] = axis
         rec['warning'] = None
+        rec['skip_reason'] = 'zone_ba'
         return rec
 
-    if adv['zone'] == 'D':
+    if pb_id == _bts.PLAYBOOK_D_TRIO_2:
         # holdout (rank_vs_ninki_legs.py): ◎=ninki1 / 〇=ninki2 を全券固定し、
         # 3頭目は ninki3 と ninki4（=軸を除いた人気上位2頭。軸が1・2のとき同一）。
         a = _umaban_at_pop(horses, 1)
@@ -228,16 +308,39 @@ def build_tickets(race_id, vscore, horses, axis_marks=None, ltr_scores=None):
         if None in (a, b, p3, p4) or len({a, b, p3, p4}) < 4:
             rec['warning'] = '人気1〜4番が揃わないため D の2点を出せません'
             rec['skip'] = True
+            rec['skip_reason'] = 'ninki_missing'
+            rec['skip_detail'] = _ninki_skip_detail(horses)
             return rec
         rec['trio'] = _trio_rows(
             [tuple(sorted((a, b, p3))), tuple(sorted((a, b, p4)))], names)
         rec['n_points'] = 2
         return rec
 
-    # C: holdout (c_zone_rank_holdout.tri_shape / vscore_zone_formation.trifecta_tickets)
-    # は LTR 上位の集合カーテシアン 2-4-7 のみ。◎〇は使わない。3連複の追加点も無い。
     order, missing = _ltr_order(horses, ltr_scores)
     rec['axis'] = order[:2]
+    if len(order) >= 8:
+        rec['ltr_order_top8'] = order[:8]
+
+    if pb_id == _bts.PLAYBOOK_C_TRIO_236:
+        if len(order) < 6:
+            rec['warning'] = (
+                '能力順（検証AI）が6頭分取れないため C の3連複 Rank2-3-6 を出せません'
+                '（予測スコアでは代用しません）'
+            )
+            rec['skip'] = True
+            rec['ltr_missing'] = missing
+            rec['skip_reason'] = 'ltr_insufficient'
+            rec['skip_detail'] = 'ltr order %d < 6' % len(order)
+            return rec
+        tri_combos = _te.build_formation(order[:2], order[:3], order[:6])
+        rec['trio'] = _trio_rows(tri_combos, names)
+        rec['ltr_order_top6'] = order[:6]
+        rec['n_points'] = len(rec['trio'])
+        rec['partners_logic'] = 'ltr_nested_2_3_6'
+        rec['skip'] = False
+        return rec
+
+    # C + cross_n < 3: holdout tri_shape 2-4-7（RRR 30点）
     if len(order) < 7:
         rec['warning'] = (
             '能力順（検証AI）が7頭分取れないため C の推奨買い目を出せません'
@@ -245,6 +348,8 @@ def build_tickets(race_id, vscore, horses, axis_marks=None, ltr_scores=None):
         )
         rec['skip'] = True
         rec['ltr_missing'] = missing
+        rec['skip_reason'] = 'ltr_insufficient'
+        rec['skip_detail'] = 'ltr order %d < 7' % len(order)
         return rec
     want = {(x, y, z)
             for x in order[:2] for y in order[:4] for z in order[:7]
@@ -281,6 +386,18 @@ def snapshot_payload(rec):
             'ltr_order_top7': rec.get('ltr_order_top7'),
             'partners': rec.get('partners'),
             'partners_logic': rec.get('partners_logic'),
+            'cross_n': rec.get('cross_n'),
+            'selected_bet_type': rec.get('selected_bet_type'),
+            'selected_playbook': rec.get('selected_playbook'),
+            'selector_rule_version': rec.get('selector_rule_version'),
+            'selection_reason': rec.get('selection_reason'),
+            'skip_reason': rec.get('skip_reason'),
+            'skip_detail': rec.get('skip_detail'),
+            'cross_n_source': rec.get('cross_n_source'),
+            'degraded': rec.get('degraded'),
+            'diag_family': rec.get('diag_family'),
+            'diag_plain': rec.get('diag_plain'),
+            'diag_verdict': rec.get('diag_verdict'),
         },
         'warning': rec.get('warning'),
     }

@@ -1366,8 +1366,8 @@ def _rules():
              note='初ブリンカーは正の妙味ゼロ。注意表示のみ',
              match=_m_first_blinker),
         dict(id='blinker_on', title='ブリンカー着用は集中して買い',
-             category='馬具系', verdict=U,
-             note='着用そのものの集合体は未検証',
+             category='馬具系', verdict=R,
+             note='検証2026-08: 着用馬(初回除く) n=4,409で複勝残差+0.2pp z+0.3。効果なし',
              match=_m_blinker_on),
         dict(id='first_dirt', title='初ダートは買い',
              category='馬場系', verdict=R,
@@ -1450,16 +1450,16 @@ def _rules():
              note='性別×斤量の俗説は残差ゲート未達（gender_folklore）',
              match=_m_light_filly),
         dict(id='age4', title='4歳は完成期で買い',
-             category='性別系', verdict=U,
-             note='年齢だけの買い材料は未検証',
+             category='性別系', verdict=R,
+             note='検証2026-08: n=8,285で残差-0.4pp z-0.9。年齢だけのエッジなし',
              match=_m_age4),
         dict(id='short_rest', title='連闘・中1週は買い',
-             category='ローテ系', verdict=U,
-             note='短間隔の集合体は未検証。人気馬の短間隔は別途否決済み',
+             category='ローテ系', verdict=R,
+             note='検証2026-08: n=5,239で残差+0.1pp z+0.1。買い効果なし（人気馬の短間隔否決と整合）',
              match=_m_short_rest),
         dict(id='dirt_layoff', title='ダートの休み明けは割引',
-             category='ローテ系', verdict=U,
-             note='資料は複勝・回収とも大幅割引。芝との差は未検証。半年休みは既存の消し材料',
+             category='ローテ系', verdict=E,
+             note='検証2026-08: ダート63日+休明 n=7,249で複勝残差-1.1pp z-2.3、recentも-1.1pp同符号。効果は小さくfade側の知識',
              match=_m_dirt_layoff),
         dict(id='prev_close', title='前走僅差の着外は次走買い',
              category='前走系', verdict=U,
@@ -1502,16 +1502,16 @@ def _rules():
              note='1-3番人気×中9週以上は危険側の材料',
              match=_m_rot_fav),
         dict(id='ninki1_solid', title='1番人気は一番強くて堅い',
-             category='人気系', verdict=U,
-             note='新馬に限っては信頼、という俗説は別項目。全体の1番人気は未検証',
+             category='人気系', verdict=R,
+             note='検証2026-08: 1番人気の複勝残差はほぼ±0（n=3,327 z-0.1）=市場は正確。新馬限定は別項目',
              match=_m_ninki1_solid),
         dict(id='filly_fav1_any', title='牝馬の1番人気は信用できない',
              category='人気系', verdict=U,
              note='検証済みなのは牝馬限定戦の1番人気。一般戦の牝馬1番人気は別',
              match=_m_filly_fav1_any),
         dict(id='colt_winter', title='冬は牡馬',
-             category='性別系', verdict=U,
-             note='季節×性はほぼ売れすぎ側。冬牡の単独エッジは未検証',
+             category='性別系', verdict=R,
+             note='検証2026-08: 冬×牡 n=6,103で残差+0.4pp z+0.7。単独エッジなし',
              match=_m_colt_winter),
         dict(id='gelding_summer', title='夏負けは夏キン（セン馬は夏弱い）',
              category='性別系', verdict=U,
@@ -1526,8 +1526,8 @@ def _rules():
              note='昇級そのものは未検証。前走1着の人気馬は別途減点あり',
              match=_m_dirt_class_up),
         dict(id='maiden_up', title='前走未勝利の昇級馬は信頼できない',
-             category='ローテ系', verdict=U,
-             note='未勝利勝ち上がりの集合体は未検証',
+             category='ローテ系', verdict=R,
+             note='検証2026-08: 未勝利勝ち上がり n=2,953で残差+0.5pp z+0.7。むしろ微プラスで危険ではない',
              match=_m_maiden_up),
         dict(id='nige_win_up', title='前走逃げて勝った馬の昇級は負けやすい',
              category='脚質系', verdict=U,
@@ -1542,8 +1542,8 @@ def _rules():
              note='お帰りの逆。未検証',
              match=_m_first_venue),
         dict(id='first_dist', title='初めての距離は不安',
-             category='距離系', verdict=U,
-             note='距離変更は過剰人気側。初距離そのものは未検証',
+             category='距離系', verdict=E,
+             note='検証2026-08: 初距離 n=10,736で複勝残差-1.1pp z-2.8、recentも-1.1pp同符号。人気よりわずかに過剰評価',
              match=_m_first_dist),
         dict(id='local_rensen', title='ローカル開催の連闘は勝負気配',
              category='ローテ系', verdict=U,
@@ -1562,16 +1562,16 @@ def _rules():
              note='鞍上強化は参考表示。スコアには足していない',
              match=_m_jockey_up),
         dict(id='closer_overbet', title='追い込み馬はかっこよくて売れやすい',
-             category='脚質系', verdict=U,
-             note='人気している追い込み型、という見方。未検証',
+             category='脚質系', verdict=E,
+             note='検証2026-08: 5人気以内の追込型 n=1,808で複勝残差-2.9pp z-2.5、recentも-2.7pp同符号。過剰人気を確認',
              match=_m_closer_overbet),
         dict(id='small_field_closer', title='少頭数は差し馬を買え',
              category='脚質系', verdict=U,
              note='少頭数×差しの残差は未検証',
              match=_m_small_field_closer),
         dict(id='closer_blinker', title='追い込み馬のブリンカー装着は危険',
-             category='馬具系', verdict=U,
-             note='未検証',
+             category='馬具系', verdict=R,
+             note='検証2026-08: 追込×ブリンカー n=2,356で残差+0.3pp z+0.4。危険ではない',
              match=_m_closer_blinker),
         dict(id='wet_front', title='悪条件を走り抜けるのは先行馬',
              category='脚質系', verdict=R,
@@ -1586,36 +1586,36 @@ def _rules():
              note='マグレ次走、という減点俗説。未検証',
              match=_m_prev_fluke),
         dict(id='wet_to_good', title='前走道悪好走→良馬場は評価が逆転する',
-             category='馬場系', verdict=U,
-             note='特殊条件からの良馬場替わり。未検証',
+             category='馬場系', verdict=R,
+             note='検証2026-08: 道悪好走→良 n=7,232で残差+0.5pp z+1.0。評価逆転は起きない',
              match=_m_wet_to_good),
         dict(id='inner_to_outer', title='前走内枠好走→今回外枠は同じ脚が使えない',
              category='枠順系', verdict=U,
              note='枠の恩恵が剥がれる、という減点俗説。未検証',
              match=_m_inner_to_outer),
         dict(id='dirt_out_to_in', title='ダートで外枠から内枠に変わると砂を被る',
-             category='枠順系', verdict=U,
-             note='前走外枠好走→今回内枠は砂被り凡走、という俗説。未検証',
+             category='枠順系', verdict=R,
+             note='検証2026-08: ダ外枠→内枠 n=4,633で残差-0.1pp z-0.2。砂被り効果なし',
              match=_m_dirt_out_to_in),
         dict(id='win_up_3win', title='3勝クラス以上の前走1着昇級は壁',
              category='ローテ系', verdict=R,
              note='前走1着の人気馬は複勝-2pp。クラスの壁というより勝ち上がり直後',
              match=_m_win_up_3win),
         dict(id='fav_slow_agari', title='人気馬なのに上がりが遅いのは飛ぶ',
-             category='人気系', verdict=U,
-             note='末脚は人気薄で効く。人気上位の上がり下位は未検証',
+             category='人気系', verdict=R,
+             note='検証2026-08: 3人気内×前走上り下位 n=2,864で残差-0.7pp z-0.8。織込み済み',
              match=_m_fav_slow_agari),
         dict(id='weight_down', title='前走比で絞れていれば好状態',
              category='馬体重系', verdict=R,
              note='減だけで買いにはならない。小柄×大幅減は既存の注意。牝馬の急減は使い減り俗説あり',
              match=_m_weight_down),
         dict(id='dirt_front', title='ダートは逃げ・先行が届く',
-             category='脚質系', verdict=U,
-             note='芝より直線が短く差しは届かない、という俗説。先行全体は売れすぎ（front_runner_overbet）',
+             category='脚質系', verdict=R,
+             note='検証2026-08: ダート先行勢 n=5,996で残差-0.4pp z-0.7。届く有利さはなし（先行売れすぎと整合）',
              match=_m_dirt_front),
         dict(id='dirt_closer_miss', title='ダートの差し・追い込みは届かない',
-             category='脚質系', verdict=U,
-             note='脚を余す、という俗説。未検証',
+             category='脚質系', verdict=R,
+             note='検証2026-08: ダート後方勢 n=10,960で残差-0.1pp z-0.4。「届かない」は非確認',
              match=_m_dirt_closer_miss),
         dict(id='dirt_small', title='ダートの440kg以下は苦戦',
              category='馬体重系', verdict=U,
@@ -1714,8 +1714,8 @@ def _rules():
              note='調教観察が必要',
              match=_tag_m('training_tags', 't_lighter', 'いつもより軽い調整')),
         dict(id='tr_ippai', title='追い切りは一杯だから良く、馬なりだから悪い',
-             category='調教系', verdict=U,
-             note='短評の印象は買い材料ではない（oikiri_critic）。観察が必要',
+             category='調教系', verdict=R,
+             note='検証2026-08(JRDB CHA2025本追切): 追切種類 一杯n=7,914で残差-0.2pp z-0.9、馬なりn=25,612で+0.1pp z1.0。負荷の強弱は完全に織込み済みで効果なし',
              match=_tag_m('training_tags', 't_harder', 'いつもより強い負荷')),
         dict(id='tr_fast_clock', title='調教タイムは速ければ速いほど調子が良い',
              category='調教系', verdict=U,
@@ -1730,24 +1730,24 @@ def _rules():
              note='ショッカー系は事前条件だけだとエッジ消滅。今回の位置は出走前には分からない',
              match=_always_skip),
         dict(id='skip_nf_layoff', title='ノーザンファーム外厩の中9週以上・1番人気は買い',
-             category='ローテ系', verdict=U,
-             note='資料は勝率36.6%対通常29.9%。外厩の所属は出馬表から取れない。生の勝率は人気の織込みを見ていない',
+             category='ローテ系', verdict=R,
+             note='検証2026-08(JRDB KYI2025): NF外厩&中9週&1番人気 n=359で勝率33.4%(非NF対照33.9%)・複勝残差+0.3pp z0.3。資料の36.6%vs29.9%は再現せず。全人気では残差-1.4pp z-4.6と逆方向',
              match=_always_skip),
         dict(id='skip_odds_crash', title='締め切り直前にオッズが急落した馬は買い',
              category='人気系', verdict=U,
-             note='朝一と直前の記録がこのページには無い。オッズ変動の画面で見る',
+             note='2026-08〜スキャナーのオッズ記録に5分前/直前/最終のphase付き蓄積を開始。データが貯まれば検証可能',
              match=_always_skip),
         dict(id='skip_morning_drop', title='朝一1番人気→直前4番人気以下は買い',
              category='人気系', verdict=U,
-             note='朝一と直前の記録がこのページには無い',
+             note='2026-08〜朝一/直前のphase付き記録を開始。データが貯まれば検証可能',
              match=_always_skip),
         dict(id='skip_kikyo', title='レース11〜13日前の最短帰厩でラスト1Fが速い馬は勝負',
              category='調教系', verdict=U,
-             note='帰厩日は出馬表から取れない',
+             note='帰厩日はJRDB KYI(入厩年月日)で検証可能。2026-08検証: 11-13日帰厩 n=1,346で複勝残差-0.8pp z-1.8。CYB追切指数上位半分の精緻化(全年)でもn=751で-1.1pp z-1.9と負方向。jravan生時計版(+1.0pp)とは符号不一致で採用根拠なし。標本不足で却下基準にも未達のため保留',
              match=_always_skip),
         dict(id='skip_wood', title='美浦ウッド11.3秒以下／栗東坂路52.7-12.2は上位争い',
              category='調教系', verdict=U,
-             note='坂路は加速ラップ、ウッドはラスト1Fの時計、という俗説。調教時計の自動判定はしていない',
+             note='検証2026-08(JRDB CHA2025): 栗東坂路52.7-12.2はholdout +4.2pp z6.3で強有意だったが、jravan代理検証のrecent(2026.1-6)で-3.1pp z-2.8に反転。生時計は馬場未補正のため2025馬場偏りの疑い。美浦ウッド11.3も1H+0.6/2H+2.4で不安定。採用不可',
              match=_always_skip),
         dict(id='skip_gyakute', title='直線で逆手前の馬はピークアウトで消し',
              category='調教系', verdict=U,
@@ -1763,7 +1763,7 @@ def _rules():
              match=_always_skip),
         dict(id='skip_oikiri_score', title='調教採点50点未満は馬券に絡まない',
              category='調教系', verdict=U,
-             note='46点以下は消し、という俗説。採点は出馬表に無い',
+             note='46点以下は消し、という俗説。採点は新聞紙面データで、JRDBにも無い（CYB調教評価◎○△は2025実データで充足0%、CHAは指数と時刻のみ）。JRDBでは検証不可',
              match=_always_skip),
         dict(id='skip_sibling', title='母や兄姉の新馬実績が良い馬は初戦から動く',
              category='血統系', verdict=R,
@@ -1931,6 +1931,97 @@ def top_score(results, n=5):
         key=lambda x: (-x['score'], x['n_neg'], -x['n_pos'], x['umaban'] or 0),
     )
     return ranked[:n]
+
+
+def filter_effective_results(results):
+    """判定が『実戦で使う』（VERDICT_EFFECTIVE）の俗説のみで再集計した結果リスト。
+
+    folklore_hunter.py の「実戦のみ」ランキングと同一。
+    """
+    eff_results = []
+    for r in (results or []):
+        hits_eff = [h for h in (r.get('hits') or []) if h.get('verdict') == VERDICT_EFFECTIVE]
+        n_pos = sum(1 for h in hits_eff if h.get('sign', SIGN_POS) > 0)
+        n_neg = sum(1 for h in hits_eff if h.get('sign', SIGN_POS) < 0)
+        score = n_pos - n_neg
+        by_cat = {}
+        for x in hits_eff:
+            cat = x.get('category', 'その他')
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+        eff_r = dict(r)
+        eff_r.update({
+            'hits': hits_eff,
+            'hits_pos': [h for h in hits_eff if h.get('sign', SIGN_POS) > 0],
+            'hits_neg': [h for h in hits_eff if h.get('sign', SIGN_POS) < 0],
+            'n_total': len(hits_eff),
+            'n_pos': n_pos,
+            'n_neg': n_neg,
+            'score': score,
+            'n_effective': len(hits_eff),
+            'n_rejected': 0,
+            'n_unverified': 0,
+            'by_category': by_cat,
+            'balance': f"＋{n_pos} / −{n_neg} → {fmt_signed(score)}",
+        })
+        eff_results.append(eff_r)
+    return eff_results
+
+
+def _myth_ranking_sets(results, eff_results=None):
+    """4つの対象TOP5に載った馬番set。マイナスTOP5は含めない。"""
+    if eff_results is None:
+        eff_results = filter_effective_results(results)
+    def _uma_set(ranked):
+        out = set()
+        for r in ranked or []:
+            um = _i(r.get('umaban'))
+            if um is not None:
+                out.add(um)
+        return out
+    return {
+        'positive': _uma_set(top_pos(results, 5)),
+        'composite': _uma_set(top_score(results, 5)),
+        'practical_positive': _uma_set(top_pos(eff_results, 5)),
+        'practical_composite': _uma_set(top_score(eff_results, 5)),
+    }
+
+
+def myth_info_for_umaban(umaban, sets_dict):
+    """1頭分の俗説TOP5掲載内訳と count(0〜4)。"""
+    um = _i(umaban)
+    if um is None or not sets_dict:
+        return None
+    positive = um in sets_dict.get('positive', set())
+    composite = um in sets_dict.get('composite', set())
+    practical_positive = um in sets_dict.get('practical_positive', set())
+    practical_composite = um in sets_dict.get('practical_composite', set())
+    return {
+        'positive': positive,
+        'composite': composite,
+        'practical_positive': practical_positive,
+        'practical_composite': practical_composite,
+        'count': int(positive) + int(composite) + int(practical_positive) + int(practical_composite),
+    }
+
+
+def build_myth_count_map(results):
+    """俗説TOP5掲載数(0〜4)を馬番→myth_infoで返す。
+
+    evaluate_race が None のときは None（取得失敗。0と区別）。
+    空リストのときも None（ランキング生成不可）。
+    """
+    if results is None or not results:
+        return None
+    sets_dict = _myth_ranking_sets(results)
+    out = {}
+    for r in results:
+        um = _i(r.get('umaban'))
+        if um is None:
+            continue
+        info = myth_info_for_umaban(um, sets_dict)
+        if info is not None:
+            out[um] = info
+    return out
 
 
 HUNTER_CAPTURED_TIERS = frozenset({'🎯精鋭', '🕸️広域網'})
