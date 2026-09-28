@@ -13685,6 +13685,11 @@ if nav == "🧹 消去フィルター":
                                          '_rk', '_vt'):
                                 r.pop(_tmp, None)
                         st.session_state[_xkey] = _xrows
+                        try:
+                            from core import newspaper as _np_excross
+                            _np_excross.write_elim_cross_snapshot(race_id_input, _xrows)
+                        except Exception:
+                            pass
                 _xrows = st.session_state.get(_xkey, [])
                 # --- 📊で残った馬(✅/🛟残し − 📊で外した馬)のみを対象にする ---
                 _surv = None

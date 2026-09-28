@@ -767,7 +767,7 @@ def render():
         sec_elim = _s3[0].checkbox("消去フィルター残馬（ボーダー残しを含む）",
                                    value=bool(prefs.get('sec_elim', True)), key="np_s_elim",
                                    help="🎯強適消去エンジンを実行したレースは、残し/ボーダー残し"
-                                        "以外(消去された馬)の馬名も紙面に載ります。")
+                                        "の馬番・馬名を紙面に載せます。消去クロスの重複4以上は赤文字です。")
         sec_vh = _s3[1].checkbox("穴馬ハンター(妙味馬+根拠)",
                                  value=bool(prefs.get('sec_vh', True)), key="np_s_vh")
         sec_evidence = _s3[2].checkbox("📊判定根拠エビデンス表",

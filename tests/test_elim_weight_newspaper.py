@@ -1,5 +1,6 @@
 """馬体重危険材料の境界値と、PDFの自動消去残馬表示。"""
 import unittest
+import tempfile
 from unittest.mock import patch
 
 import pandas as pd
@@ -78,6 +79,37 @@ class NewspaperSurvivorTests(unittest.TestCase):
              patch('core.score_cache.read_keep', return_value={1}) as manual:
             self.assertEqual(np._elim_html({}, [], 'test'), '')
         manual.assert_not_called()
+
+    def test_cross_red_only_for_four_or_more_and_only_survivors(self):
+        rows = [dict(馬番=i, 馬名=f'馬{i}', 判定='✅残し' if i <= 3 else '🧹消し')
+                for i in range(1, 5)]
+        verdict = {'ts': 10, 'rows': rows}
+        cross = {'counts': {'1': 3, '2': 4, '3': 5, '4': 8}}
+        with patch.object(np, 'load_elim_verdict', return_value=verdict), \
+             patch.object(np, 'load_elim_cross_snapshot', return_value=cross):
+            html = np._elim_html({}, [], 'test')
+        self.assertIn("style='display:inline-block;color:#842029", html)
+        self.assertEqual(html.count('color:#842029'), 2)
+        self.assertNotIn('馬4', html)
+        self.assertIn("<b>1</b> 馬1</span>", html)
+
+    def test_cross_snapshot_tied_to_elim_run_and_race(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(np, 'NP_DIR', tmp):
+            with patch.object(np, 'load_elim_verdict', return_value={'ts': 10}):
+                np.write_elim_cross_snapshot('raceA', [
+                    {'馬番': 1, 'フラグ数': 3}, {'馬番': 2, 'フラグ数': 4}])
+            data = np.load_elim_cross_snapshot('raceA', {'ts': 10})
+            self.assertEqual(data['counts'], {'1': 3, '2': 4})
+            self.assertIsNone(np.load_elim_cross_snapshot('raceA', {'ts': 11}))
+            self.assertIsNone(np.load_elim_cross_snapshot('raceB', {'ts': 10}))
+            self.assertIsNone(np.load_elim_cross_snapshot('raceA', None))
+
+    def test_cv_verified_count_is_not_cross_total(self):
+        verdict = {'ts': 10, 'rows': [dict(馬番=1, 馬名='残馬', 判定='✅残し')]}
+        with patch.object(np, 'load_elim_verdict', return_value=verdict), \
+             patch.object(np, 'load_elim_cross_snapshot', return_value=None):
+            html = np._elim_html({'aim': {'elim': {'1': 8}}}, [], 'test')
+        self.assertNotIn('color:#842029', html)
 
 
 if __name__ == '__main__':

@@ -316,6 +316,46 @@ def load_elim_verdict(race_id):
         return None
 
 
+def _elim_cross_path(race_id):
+    rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
+    return os.path.join(NP_DIR, f"{rid}.elimx.json")
+
+
+def write_elim_cross_snapshot(race_id, rows):
+    """紙面用に消去クロスの総重複数を保存。直近の自動消去判定と結び付ける。"""
+    verdict = load_elim_verdict(race_id)
+    if not race_id or not verdict or not rows:
+        return
+    counts = {}
+    for row in rows:
+        try:
+            counts[str(int(row['馬番']))] = int(row['フラグ数'])
+        except (KeyError, TypeError, ValueError):
+            continue
+    try:
+        os.makedirs(NP_DIR, exist_ok=True)
+        with open(_elim_cross_path(race_id), 'w', encoding='utf-8') as f:
+            json.dump({'race_id': str(race_id), 'source_elim_ts': verdict.get('ts'),
+                       'ts': time.time(), 'counts': counts}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def load_elim_cross_snapshot(race_id, verdict=None):
+    """同じ自動消去判定で作られたクロスだけ返す。再判定後の古い赤表示を防ぐ。"""
+    if not verdict:
+        return None
+    try:
+        with open(_elim_cross_path(race_id), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if (data.get('race_id') == str(race_id)
+                and data.get('source_elim_ts') == verdict.get('ts')):
+            return data
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
 def _bets_path(race_id):
     rid = ''.join(ch for ch in str(race_id) if ch.isalnum())
     return os.path.join(NP_DIR, f"{rid}.bets.json")
@@ -2074,9 +2114,18 @@ def _elim_html(cv, records, race_id):
         if keep is None:
             return ''
         keep_names = {u: by_um.get(u, '') for u in keep}
-    body = ' ・ '.join(
-        f"<span style='display:inline-block'><b>{u}</b> {_esc(name)}</span>"
-        for u, name in sorted(keep_names.items())) or '残馬なし'
+    cross = load_elim_cross_snapshot(race_id, verdict) or {}
+    counts = cross.get('counts') or {}
+    def _survivor(u, name):
+        item = f"<b>{u}</b> {_esc(name)}"
+        try:
+            heavy = int(counts.get(str(u), 0)) >= 4
+        except (TypeError, ValueError):
+            heavy = False
+        style = " style='display:inline-block;color:#842029;font-weight:bold'" if heavy else \
+                " style='display:inline-block'"
+        return f"<span{style}>{item}</span>"
+    body = ' ・ '.join(_survivor(u, name) for u, name in sorted(keep_names.items())) or '残馬なし'
     return _exbox(f"🧹 消去フィルター残馬（{len(keep_names)}頭・ボーダー含む）", body)
 
 
