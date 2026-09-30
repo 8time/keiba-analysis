@@ -2005,9 +2005,7 @@ def _pace_diagram_svg(pos4, labels=None, marker=None):
 
 
 def _pace_html(race_id, records):
-    """展開・隊列: 直線到達(到達=着順)想定の1行図＋レーン図(SVG)＋ペース＋AI展開照合💀。
-    直線到達(finish)は4角位置+決め手+適性+総合力+人気の合成(pace_map.predict_finish)。
-    旧スナップショット(finish未保存)は4角位置(pos4)にフォールバックする。"""
+    """4コーナー隊列を表示。旧finishのみの保存データは着順予想と明記する。"""
     pc = load_pace(race_id)
     rear = None
     try:
@@ -2031,8 +2029,8 @@ def _pace_html(race_id, records):
                 pos4[int(k)] = float(v)
             except Exception:
                 continue
-        disp = finish or pos4
-        disp_label = "《直線到達想定》" if finish else "《4角想定》"
+        disp = pos4 or finish
+        disp_label = "《4コーナー想定》" if pos4 else "《着順予想・旧データ》"
         if disp:
             ordered = sorted(disp.items(), key=lambda kv: kv[1])
             front = [str(u) for u, v in ordered if v < 0.35]
@@ -2071,9 +2069,14 @@ def _pace_html(race_id, records):
     # 他社(netkeiba)の予測に依存する行を載せない方針にした(2026-07-23)。
     # ・アプリ内の🤝照合表示は私的利用のため従来どおり残す(app.py側は変更なし)
     # ・展開恩恵はpriced-in([[verified_tenkai_priced_in]])で紙面価値への寄与も乏しい
-    if rear:
-        lines.append("後方グループ(展開MAP): " + '・'.join(str(u) for u in sorted(rear)))
+    if rear and not (pc or {}).get("pos4"):
+        lines.append("後方グループ(着順予想): " + '・'.join(str(u) for u in sorted(rear)))
         rear_group = rear
+    if (pc or {}).get('pos4') and disp:
+        rear_group = [u for u, v in disp.items() if v > 0.65]
+        if rear_group:
+            lines.append("4コーナー後方想定: " + '・'.join(str(u) for u in sorted(rear_group)))
+        lines.append("位置取りの予測です。着順予想とは異なります。内外は模式図です。")
     if not lines:
         return ''
     body = '<br>'.join(_esc(x) for x in lines)
@@ -2126,7 +2129,7 @@ def _elim_html(cv, records, race_id):
                 " style='display:inline-block'"
         return f"<span{style}>{item}</span>"
     body = ' ・ '.join(_survivor(u, name) for u, name in sorted(keep_names.items())) or '残馬なし'
-    return _exbox(f"🧹 消去フィルター残馬（{len(keep_names)}頭・ボーダー含む）", body)
+    return _exbox("🧹 消去フィルター残馬（赤い馬は消し候補上位）", body)
 
 
 def _vh_html(cv, records):

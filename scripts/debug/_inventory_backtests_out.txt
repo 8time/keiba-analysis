@@ -1,0 +1,13 @@
+﻿FILE|accel_lap_backtest.py
+python : Traceback (most recent call last):
+発生場所 C:\Users\kimnhaty\AppData\Local\Temp\ps-script-2f83c4df-27c8-4ff8-9257-a5cf20ebff0f.ps1:116 文字:188
++ ... ta_out.txt; python scripts/debug/_inventory_backtests.py 2>&1 | Out-F ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\kimnhaty\.gemini\antigravity\scratch\keiba_analysis\scripts\debug\_inventory_backtests.py", line 37, i
+n <module>
+    print(f"DESC|{doc1}")
+    ~~~~~^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'cp932' codec can't encode character '\u2014' in position 18: illegal multibyte sequence

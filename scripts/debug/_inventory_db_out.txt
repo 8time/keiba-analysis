@@ -1,0 +1,62 @@
+﻿
+=== data/odds_history.db (3928064 bytes) ===
+TABLE_COUNT: 2
+TABLES: ['odds_logs', 'sqlite_sequence']
+
+odds_logs: rows=37092
+  cols: ['id:INTEGER', 'race_id:TEXT', 'umaban:INTEGER', 'odds_type:TEXT', 'odds_value:REAL', 'timestamp:DATETIME', 'phase:TEXT']
+  timestamp: ('2026-04-04 11:06:23', '2026-08-30 00:03:12')
+
+sqlite_sequence: rows=1
+  cols: ['name:', 'seq:']
+
+=== data/jravan.db (12633698304 bytes) ===
+TABLE_COUNT: 9
+TABLES: ['horses', 'horses_jrdb', 'odds', 'payouts', 'race_wind', 'races', 'results', 'track_cond', 'training']
+
+horses: rows=206248
+  cols: ['ketto_num:TEXT', 'bamei:TEXT', 'sex:TEXT', 'birth:TEXT', 'sire:TEXT', 'dam:TEXT', 'bms:TEXT']
+
+horses_jrdb: rows=21648
+  cols: ['ketto_num:TEXT', 'sire:TEXT', 'dam:TEXT', 'bms:TEXT', 'sire_birth:TEXT', 'dam_birth:TEXT', 'bms_birth:TEXT', 'sire_line:TEXT', 'bms_line:TEXT', 'src:TEXT']
+
+odds: rows=77192888
+  cols: ['race_key:TEXT', 'race_id:TEXT', 'bet_type:TEXT', 'combo:TEXT', 'odds:REAL', 'odds_max:REAL', 'ninki:INTEGER']
+
+payouts: rows=1312167
+  cols: ['race_key:TEXT', 'race_id:TEXT', 'bet_type:TEXT', 'combo:TEXT', 'payout:INTEGER', 'pop:INTEGER']
+
+race_wind: rows=1500
+  cols: ['race_key:TEXT', 'wind_speed:REAL', 'wind_dir:REAL', 'straight_tail:REAL']
+
+races: rows=240550
+  cols: ['race_key:TEXT', 'race_id:TEXT', 'data_kubun:TEXT', 'year:TEXT', 'monthday:TEXT', 'jyo:TEXT', 'kai:INTEGER', 'nichi:INTEGER', 'race_num:INTEGER', 'race_name:TEXT', 'grade:TEXT', 'shubetsu:TEXT', 'kigo:TEXT', 'juryo:TEXT', 'kyori:INTEGER', 'track_code:TEXT', 'surface:TEXT', 'hasso_time:TEXT', 'toroku_tosu:INTEGER', 'shusso_tosu:INTEGER', 'nyusen_tosu:INTEGER', 'tenko:TEXT', 'baba_shiba:TEXT', 'baba_dirt:TEXT', 'mae3f:INTEGER', 'ato3f:INTEGER']
+  year: ('1954', '2026')
+  monthday: ('0101', '1231')
+
+results: rows=2880928
+  cols: ['race_key:TEXT', 'race_id:TEXT', 'year:TEXT', 'monthday:TEXT', 'jyo:TEXT', 'waku:INTEGER', 'umaban:INTEGER', 'ketto_num:TEXT', 'bamei:TEXT', 'sex:TEXT', 'age:INTEGER', 'tozai:TEXT', 'trainer_code:TEXT', 'futan:INTEGER', 'blinker:TEXT', 'jockey_code:TEXT', 'jockey_name:TEXT', 'minarai:TEXT', 'bataiju:INTEGER', 'zogen:INTEGER', 'ijo:TEXT', 'nyusen:INTEGER', 'chakujun:INTEGER', 'time:TEXT', 'corner1:INTEGER', 'corner2:INTEGER', 'corner3:INTEGER', 'corner4:INTEGER', 'win_odds:REAL', 'ninki:INTEGER', 'ato3f:INTEGER', 'kyakushitsu:TEXT']
+  year: ('1954', '2026')
+  monthday: ('0101', '1231')
+
+track_cond: rows=2346
+  cols: ['year:TEXT', 'monthday:TEXT', 'jyo:TEXT', 'cushion:REAL', 'dirt_moisture:REAL', 'kai:TEXT', 'course:TEXT', 'cushion_time:TEXT', 'moisture_time:TEXT', 'turf_moist_goal:REAL', 'turf_moist_4c:REAL', 'dirt_moist_goal:REAL', 'dirt_moist_4c:REAL']
+  year: ('2018', '2026')
+  monthday: ('0103', '1228')
+
+training: rows=505512
+  cols: ['ketto_num:TEXT', 'center:TEXT', 'cho_date:TEXT', 'cho_time:TEXT', 't4f:INTEGER', 'lap_86:INTEGER', 't3f:INTEGER', 'lap_64:INTEGER', 't2f:INTEGER', 'lap_42:INTEGER', 'lap_20:INTEGER']
+  cho_date: ('20250610', '20260614')
+  cho_time: ('0019', '1242')
+
+=== data/export/races.csv header ===
+race_key,day,jyo,surface_code,kyori,field_size,race_num,baba_code,is_handi1,n_run,cushion,dirt_moisture,month,fav1,fav2,fav3,r21,r31,spread31,odds_entropy,eff_n,syn3,live10,live30,mid515,n_odds,h7_std,h7_mean,h7_best,h7_top2gap,spurt_std,spurt_mean,spurt_best,spurt_top2gap,blood_std,blood_mean,blood_best,blood_top2gap,jk_std,jk_mean,jk_best,jk_top2gap,pt3_std,pt3_mean,pt3_best,pt3_top2gap,marg_std,marg_mean,marg_best,marg_top2gap,vh2_std,vh2_mean,vh2_best,vh2_top2gap,mkt_ability_corr,n_pop7,n_combo2,n_combo3,combo_cov,mean_elim,n_elim3,n_lowelim_pop7,n_front,n_hana,mean_posr,arareA,arareB,ana2,honsen,ninki_top3_logsum,grade,kigo,shubetsu,race_name,fillies,is_2yo,open_cls,vscore,vlabel,lean_score,lean_label,nofav
+ROWS: 34882
+
+=== data/export/horse_races.csv header ===
+race_key,day,jyo,surface_code,kyori_int,race_num,field_size,ketto_num,umaban,waku_n,ninki,win_odds,futan,bataiju,zogen,sex_code,age,is_handi1,h7_fig,h7_rank,h7_pct,spurt_idx,spurt_race_pct,spurt_mean3,prior_top3_rate,avg_chaku5,prior_margin,margin_best3,days_since,dist_change,avg_pos3,pos_ratio3,h_lap33,course_l33,lap_align,lap_fit_bin,sire_surf_t3,sire_dist_t3,bms_surf_t3,blood_race_pct,sire,bms,sire_winroi,jockey_form_t3,jk_race_pct,jockey_jyo_win,jockey_dist_win,trainer_jyo_t3,trainer_form_t3,elim_n,combo,ability_score,vh2_score,chakujun,top3,win
+ROWS: 486002
+
+=== data/history sample ===
+FILES: ['202608020211.json']
+TOP_KEYS: ['RaceID', 'SavedAt', 'Results']

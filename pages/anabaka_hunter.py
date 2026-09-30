@@ -1050,17 +1050,42 @@ def render():
 
     try:
         from core import audit_pipeline as _ap_hunt
-        _h_run = _ap_hunt.current_run_id(race_id) or _ap_hunt.ensure_run_id(
-            race_id, 'anabaka_hunter')
+        from core import prediction_time_machine as _ptm_hunter
+        _h_run = _ap_hunt.current_run_id(race_id)
+        _ptm_hunter.record_component(
+            race_id, 'anabaka_hunter_full',
+            {'pop_threshold': pop_threshold, 'candidate_count': len(candidates)},
+            {'candidates': candidates, 'elite': [c.get('umaban') for c in _elite],
+             'net': [c.get('umaban') for c in _net],
+             'other': [c.get('umaban') for c in _other]},
+            analysis_run_id=_h_run)
+    except Exception as _ptm_hunter_error:
+        st.warning(f"SNAPSHOT_SAVE_FAILED (穴馬): {_ptm_hunter_error}")
+
+    try:
+        from core import audit_pipeline as _ap_hunt
+        _h_run = _ap_hunt.current_run_id(race_id)
         _h_sig = (pop_threshold, len(candidates), len(_elite), len(_net), len(_other))
         _h_out = _ap_hunt.record_event_deduped(
             race_id, 'anabaka_hunter',
             signature=_h_sig,
             payload=_ap_hunt.build_hunter_payload(
-                candidates, _elite, _net, _other, race_id, pop_threshold, _h_run),
-            status='ok')
+                candidates, _elite, _net, _other, race_id, pop_threshold, _h_run or ''),
+            status='ok',
+            analysis_run_id=_h_run)
         if not _h_out.ok:
             st.warning(f"監査記録(穴馬ハンター)失敗: {_h_out.error}")
+        elif _h_out.event_id and _h_out.analysis_run_id:
+            from core import prediction_time_machine as _ptm_hunter_final
+            _fin = _ptm_hunter_final.finalize_run_snapshot_if_base(
+                race_id, _h_out.analysis_run_id)
+            if _fin.get('skipped'):
+                st.caption(
+                    "ℹ️ 統合スナップショットは省略しました（この分析runにSRA snapshotがありません）。"
+                    "メイン画面でSRA分析を実行すると、穴馬・消去を含めて統合保存できます。"
+                    "穴馬候補の observation 自体は記録済みです。")
+            elif not _fin.get('ok'):
+                st.warning(f"SNAPSHOT_SAVE_FAILED (穴馬確定): {_fin.get('reason', 'unknown')}")
     except Exception as _ap_h_e:
         st.warning(f"監査記録(穴馬ハンター)失敗: {_ap_h_e}")
 

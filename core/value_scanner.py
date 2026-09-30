@@ -39,6 +39,27 @@ def _load_arare_logit():
     return _ARARE_LOGIT or None
 
 
+def odds_entropy_struct(odds_list, n_horses=None):
+    """Implied-prob Shannon entropy (natural log) and eff_n=exp(H). Display / audit only."""
+    odds = sorted([float(o) for o in (odds_list or []) if o and float(o) > 0])
+    if len(odds) < 1:
+        return None
+    inv = [1.0 / o for o in odds]
+    total = sum(inv)
+    pn = [i / total for i in inv]
+    entropy = -sum(x * _math.log(x) for x in pn if x > 0)
+    n_field = int(n_horses) if n_horses is not None else len(odds)
+    return {
+        'field_size': n_field,
+        'odds_count': len(odds),
+        'odds_entropy': entropy,
+        'eff_n': _math.exp(entropy),
+        'fav1': odds[0],
+        'fav2': odds[1] if len(odds) > 1 else None,
+        'fav3': odds[2] if len(odds) > 2 else None,
+    }
+
+
 def arare_prob(odds_list, meta=None, n_horses=None):
     """荒れ確率 P(3着内に7番人気以下) を検証済みロジット(凍結係数)で返す。0..1 or None。
     特徴はオッズ構造のみ(fav1/r21/r31/syn3/odds_entropy/eff_n/live10/live30/mid515)＋頭数/ハンデ/牝限定。
@@ -47,20 +68,18 @@ def arare_prob(odds_list, meta=None, n_horses=None):
     p = _load_arare_logit()
     if not p:
         return None
-    odds = sorted([float(o) for o in (odds_list or []) if o and float(o) > 0])
-    if len(odds) < 3:
+    struct = odds_entropy_struct(odds_list, n_horses)
+    if not struct or struct['odds_count'] < 3:
         return None
     meta = meta or {}
+    odds = sorted([float(o) for o in (odds_list or []) if o and float(o) > 0])
     fav1, fav2, fav3 = odds[0], odds[1], odds[2]
-    inv = [1.0 / o for o in odds]
-    s = sum(inv)
-    pn = [i / s for i in inv]
-    entropy = -sum(x * _math.log(x) for x in pn if x > 0)
+    entropy = struct['odds_entropy']
     kigo = str(meta.get('kigo', '') or '')
     feats = {
         'fav1': fav1, 'r21': fav2 / fav1, 'r31': fav3 / fav1,
         'syn3': 3.0 / (1.0 / fav1 + 1.0 / fav2 + 1.0 / fav3),
-        'odds_entropy': entropy, 'eff_n': _math.exp(entropy),
+        'odds_entropy': entropy, 'eff_n': struct['eff_n'],
         'live10': float(sum(1 for o in odds if o < 10)),
         'live30': float(sum(1 for o in odds if o < 30)),
         'mid515': float(sum(1 for o in odds if 5.0 <= o <= 15.0)),

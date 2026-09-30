@@ -43,6 +43,7 @@ def capture_decision(payload: dict, directory: str | None = None) -> None:
     }
     with open(os.path.join(base, 'decisions.jsonl'), 'a', encoding='utf-8') as f:
         f.write(json.dumps(row, ensure_ascii=False, default=str) + '\n')
+    return captured
 
 
 def append_result(race_id: str, race_key: str, finish, payouts, directory: str | None = None,

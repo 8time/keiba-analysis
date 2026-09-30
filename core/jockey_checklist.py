@@ -75,11 +75,12 @@ def lookup(jockey_name):
     return None
 
 
-def display_text(jockey_name):
+def display_text(jockey_name, *, for_j5=False):
     item = lookup(jockey_name)
     if item is None:
-        return '—（記載なし／本人未特定）'
-    return f"画像{item['mark']}：{item['text']}【{item['status']}・条件未判定】"
+        return '' if for_j5 else '—（記載なし／本人未特定）'
+    prefix = '' if for_j5 else '画像'
+    return f"{prefix}{item['mark']}：{item['text']}【{item['status']}・条件未判定】"
 
 
 def race_rows(records):

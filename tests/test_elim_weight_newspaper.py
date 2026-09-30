@@ -52,7 +52,8 @@ class NewspaperSurvivorTests(unittest.TestCase):
         for name in ('残し馬', '境界馬', '復活馬'):
             self.assertIn(name, html)
         self.assertNotIn('消去馬', html)
-        self.assertIn('3頭', html)
+        self.assertIn('🧹 消去フィルター残馬（赤い馬は消し候補上位）', html)
+        self.assertNotIn('ボーダー含む', html)
         self.assertEqual(html.count("class='exbox'"), 1)
 
     def test_old_auto_keep_and_escape(self):
@@ -62,7 +63,7 @@ class NewspaperSurvivorTests(unittest.TestCase):
             html = np._elim_html({}, [{'Umaban': 2, 'Name': '残馬&名'}], 'test')
         manual.assert_not_called()
         self.assertIn('残馬&amp;名', html)
-        self.assertIn('1頭', html)
+        self.assertIn('🧹 消去フィルター残馬（赤い馬は消し候補上位）', html)
 
     def test_all_eliminated_does_not_resurrect_stale_cache(self):
         with patch.object(np, 'load_elim_verdict', return_value={'rows': [

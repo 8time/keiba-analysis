@@ -1899,6 +1899,51 @@ def fill_missing_odds_pop(df, res_odds, res_pop):
     return df
 
 
+def _ptm_same_number(left, right):
+    try:
+        return float(left) == float(right)
+    except (TypeError, ValueError):
+        return left == right
+
+
+def _ptm_number_state(frame):
+    """Horse number to (odds, popularity). Observation only."""
+    state = {}
+    if frame is None or getattr(frame, 'empty', True) or 'Umaban' not in getattr(frame, 'columns', []):
+        return state
+    for _, row in frame.iterrows():
+        try:
+            number = int(row['Umaban'])
+        except (TypeError, ValueError):
+            continue
+        odds = row['Odds'] if 'Odds' in frame.columns else None
+        popularity = row['Popularity'] if 'Popularity' in frame.columns else None
+        state[number] = (odds, popularity)
+    return state
+
+
+def _ptm_market_diff(before, frame, source, fetched_at, value_kind):
+    """Events for values this fetch actually wrote. Unchanged cells stay unbound."""
+    after = _ptm_number_state(frame)
+    odds_values, pop_values = {}, {}
+    for number, (odds, popularity) in after.items():
+        prev_odds, prev_pop = before.get(number, (None, None))
+        if not _ptm_same_number(prev_odds, odds) and odds not in (None, ''):
+            odds_values[str(number)] = odds
+            odds_values[str(number).zfill(2)] = odds
+        if not _ptm_same_number(prev_pop, popularity) and popularity not in (None, ''):
+            pop_values[str(number)] = popularity
+            pop_values[str(number).zfill(2)] = popularity
+    events = []
+    if odds_values:
+        events.append({'field': 'Odds', 'source': source, 'fetched_at': fetched_at,
+                       'value_kind': value_kind, 'values': odds_values})
+    if pop_values:
+        events.append({'field': 'Popularity', 'source': source, 'fetched_at': fetched_at,
+                       'value_kind': value_kind, 'values': pop_values})
+    return events
+
+
 def get_race_data(race_id, use_storage=True):
     """Main function to scrape race card data with ROBUST EXTRACTION.
 
@@ -1961,6 +2006,12 @@ def get_race_data(race_id, use_storage=True):
                                      .fillna(0) <= 0).any()
                             if _need:
                                 _exp_o, _exp_p = fetch_expected_odds(race_id)
+                                try:
+                                    from core.prediction_time_machine import now_jst as _ptm_now_cache
+                                    _exp_at = _ptm_now_cache()
+                                except Exception:
+                                    _exp_at = None
+                                _before_expected = _ptm_number_state(_stored) if _exp_o else {}
                                 if _exp_o:
                                     _stored = _stored.copy()
                                     _um_i = _pd.to_numeric(_stored['Umaban'], errors='coerce')
@@ -1978,12 +2029,36 @@ def get_race_data(race_id, use_storage=True):
                                             (_exp_p.get(int(u), p) if _pd.notna(u) and int(p) == 99 else p)
                                             for u, p in zip(_um_i, _curp)]
                                     _stored.attrs['odds_is_expected'] = True
+                                    _stored.attrs['_ptm_market_events'] = _ptm_market_diff(
+                                        _before_expected, _stored, 'NETKEIBA', _exp_at, 'expected')
                                     logger.info(
                                         f"[Storage] Filled {len(_exp_o)} expected odds for {race_id}")
                         except Exception as _ee:
                             logger.warning(f"[Storage] expected-odds fill failed: {_ee}")
 
+                        _cached_market_events = list(_stored.attrs.get('_ptm_market_events') or [])
                         _res_df = _stored.reset_index(drop=True)
+                        # Observation metadata only. CSV may have been written after the
+                        # race; reading it now does not establish its original as-of time.
+                        try:
+                            from core.prediction_time_machine import now_jst as _ptm_now
+                            _cache_meta = None
+                            try:
+                                from core.prediction_time_machine import recall_cache_source
+                                _cache_meta = recall_cache_source(race_id)
+                            except Exception:
+                                _cache_meta = None
+                            _restored_at = (_cache_meta or {}).get('source_fetched_at')
+                            _res_df.attrs['_ptm_acquisition'] = {
+                                'source': (_cache_meta or {}).get('source') or 'CACHE',
+                                'fetched_at': _restored_at,
+                                'cached_at': (_cache_meta or {}).get('cached_at'),
+                                'read_at': _ptm_now(), 'as_of': None,
+                                'quality': 'RESTORED_SOURCE_FETCH_TIME' if _restored_at else 'UNKNOWN_TIME'}
+                        except Exception:
+                            pass
+                        if _cached_market_events:
+                            _res_df.attrs['_ptm_market_events'] = _cached_market_events
                         # reset_index で attrs が落ちることがあるので明示的に引き継ぐ
                         if _stored.attrs.get('odds_is_expected'):
                             _res_df.attrs['odds_is_expected'] = True
@@ -2016,6 +2091,11 @@ def get_race_data(race_id, use_storage=True):
     logger.info(f"Fetching {'NAR' if is_nar else 'JRA'} Race Data: {url}")
     html = fetch_robust_html(url)
     if not html: return pd.DataFrame()
+    try:
+        from core.prediction_time_machine import now_jst as _ptm_now
+        _ptm_html_fetched_at = _ptm_now()
+    except Exception:
+        _ptm_html_fetched_at = None
 
     soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
 
@@ -2026,6 +2106,10 @@ def get_race_data(race_id, use_storage=True):
         html_fallback = fetch_robust_html(url_fallback)
         if html_fallback:
             html = html_fallback
+            try:
+                _ptm_html_fetched_at = _ptm_now()
+            except Exception:
+                _ptm_html_fetched_at = None
             soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
     
     # --- Race Info ---
@@ -2061,7 +2145,15 @@ def get_race_data(race_id, use_storage=True):
             
     # --- Fetch Supplemental Data ---
     win_odds_map = fetch_win_odds(race_id) 
+    try:
+        _ptm_win_at = _ptm_now()
+    except Exception:
+        _ptm_win_at = None
     popularity_map = fetch_popularity(race_id) 
+    try:
+        _ptm_pop_at = _ptm_now()
+    except Exception:
+        _ptm_pop_at = None
     
     # --- Horses ---
     # Robust table detection: search for any of the common classes or the sort_table ID
@@ -2096,6 +2188,8 @@ def get_race_data(race_id, use_storage=True):
              rows = table.find_all('tr')[1:] # Assume first row is header
         
     horses = []
+    _ptm_html_odds = {}
+    _ptm_html_pop = {}
     
     for row in rows:
         h_data = {
@@ -2280,6 +2374,8 @@ def get_race_data(race_id, use_storage=True):
                 m_pop = re.search(r'(\d+)', txt)
                 if h_data['Popularity'] == 99 and m_pop:
                     h_data['Popularity'] = int(m_pop.group(1))
+                    _ptm_html_pop[str(h_data['Umaban'])] = h_data['Popularity']
+                    _ptm_html_pop[str(h_data['Umaban']).zfill(2)] = h_data['Popularity']
 
             odds_td = row.find('td', class_=re.compile(r'Odds'))
             if odds_td and h_data['Odds'] == 0.0:
@@ -2287,6 +2383,8 @@ def get_race_data(race_id, use_storage=True):
                 m_odds = re.search(r'(\d+\.?\d*)', txt)
                 if m_odds:
                     h_data['Odds'] = float(m_odds.group(1))
+                    _ptm_html_odds[str(h_data['Umaban'])] = h_data['Odds']
+                    _ptm_html_odds[str(h_data['Umaban']).zfill(2)] = h_data['Odds']
 
         # --- Past Runs Extraction ---
         past_runs = []
@@ -2446,20 +2544,29 @@ def get_race_data(race_id, use_storage=True):
         
     df = pd.DataFrame(horses)
     missing_odds = False  # Initialize here for absolute safety
+    _ptm_fallback_events = []
     
     # --- Check for missing odds/popularity globally ---
     if not df.empty:
         # Condition: some horses are missing data (0.0 or 99)
         has_missing = (df['Odds'] == 0.0).any() or (df['Popularity'] == 99).any() or ('Odds' not in df.columns)
         
+        _ptm_fallback_events = []
         if has_missing:
             missing_odds = True
             # 1. Try Official Realtime API (Best for live races)
             logger.info(f"Attempting to fetch/fill realtime odds/pop via API for {race_id}")
             api_data = fetch_realtime_odds_api(race_id)
+            try:
+                _ptm_api_at = _ptm_now()
+            except Exception:
+                _ptm_api_at = None
             if api_data:
+                _before_api = _ptm_number_state(df)
                 # Use robust mapping function
                 df = sync_odds_to_df(df, api_data)
+                _ptm_fallback_events.extend(_ptm_market_diff(
+                    _before_api, df, 'LIVE', _ptm_api_at, 'realtime_api'))
                 
                 missing_odds = (df['Odds'] == 0.0).any()
                 logger.info(f"Successfully merged realtime odds/popularity from API using sync_odds_to_df")
@@ -2469,6 +2576,11 @@ def get_race_data(race_id, use_storage=True):
         if missing_odds:
             logger.info("Using result.html fallback for Odds and Popularity")
             res_odds, res_pop = fetch_result_odds_pop(race_id)
+            try:
+                _ptm_result_at = _ptm_now()
+            except Exception:
+                _ptm_result_at = None
+            _before_result = _ptm_number_state(df)
             
             # --- [Phase E: Logging the type of res_odds] ---
             logger.info(f"res_odds runtime type: {utils_type.describe_runtime_type(res_odds)}")
@@ -2476,6 +2588,8 @@ def get_race_data(race_id, use_storage=True):
             except: pass
             
             fill_missing_odds_pop(df, res_odds, res_pop)
+            _ptm_fallback_events.extend(_ptm_market_diff(
+                _before_result, df, 'NETKEIBA', _ptm_result_at, 'result'))
 
         # 3. 発走前(投票締切前)の最終手段: 出馬表の『予想オッズ』
         #    確定オッズAPIもresult.htmlも空になる時間帯で、ここが唯一の供給源。
@@ -2483,6 +2597,11 @@ def get_race_data(race_id, use_storage=True):
         if (df['Odds'] == 0.0).any():
             try:
                 exp_odds, exp_pop = fetch_expected_odds(race_id)
+                try:
+                    _ptm_expected_at = _ptm_now()
+                except Exception:
+                    _ptm_expected_at = None
+                _before_expected = _ptm_number_state(df) if exp_odds else {}
                 if exp_odds:
                     _um_i = pd.to_numeric(df['Umaban'], errors='coerce')
                     df['Odds'] = [
@@ -2495,6 +2614,8 @@ def get_race_data(race_id, use_storage=True):
                              else p)
                             for u, p in zip(_um_i, df['Popularity'])]
                     df.attrs['odds_is_expected'] = True
+                    _ptm_fallback_events.extend(_ptm_market_diff(
+                        _before_expected, df, 'NETKEIBA', _ptm_expected_at, 'expected'))
                     logger.info(f"Filled {len(exp_odds)} expected odds for {race_id}")
             except Exception as _ee:
                 logger.warning(f"expected-odds fallback failed: {_ee}")
@@ -2502,6 +2623,31 @@ def get_race_data(race_id, use_storage=True):
     # --- [NEW] Extract Metadata for Dashboard ---
     metadata = extract_race_metadata(soup, race_date_val)
     df.attrs['metadata'] = metadata
+    df.attrs['_ptm_acquisition'] = {
+        'source': 'NETKEIBA', 'fetched_at': _ptm_html_fetched_at,
+        'as_of': None, 'quality': 'RECEIVED_AT_NETWORK_RETURN',
+        'url': url_fallback if 'url_fallback' in locals() and html is html_fallback else url}
+    try:
+        df.attrs['_ptm_market_events'] = [
+            {'field': 'Odds', 'source': 'NETKEIBA', 'fetched_at': _ptm_win_at,
+             'value_kind': 'win_odds_endpoint',
+             'values': {str(k): float(v) for k, v in win_odds_map.items()}},
+            {'field': 'Popularity', 'source': 'NETKEIBA', 'fetched_at': _ptm_pop_at,
+             'value_kind': 'win_odds_endpoint',
+             'values': {str(k): int(v) for k, v in popularity_map.items()}},
+        ]
+        if _ptm_html_odds:
+            df.attrs['_ptm_market_events'].append({
+                'field': 'Odds', 'source': 'NETKEIBA', 'fetched_at': _ptm_html_fetched_at,
+                'value_kind': 'html_table', 'values': _ptm_html_odds})
+        if _ptm_html_pop:
+            df.attrs['_ptm_market_events'].append({
+                'field': 'Popularity', 'source': 'NETKEIBA',
+                'fetched_at': _ptm_html_fetched_at,
+                'value_kind': 'html_table', 'values': _ptm_html_pop})
+        df.attrs['_ptm_market_events'].extend(_ptm_fallback_events)
+    except Exception:
+        df.attrs['_ptm_market_events'] = []
 
     if df.empty:
         logger.warning("Debug: Compiled DataFrame is empty.")

@@ -35,6 +35,14 @@ class ChecklistTests(unittest.TestCase):
         self.assertIn('条件未判定', text)
         self.assertIn('既存検証で不採用', jc.display_text('池添謙一'))
 
+    def test_j5_compact_display(self):
+        self.assertEqual(
+            jc.display_text('岩田望来', for_j5=True),
+            '◎：人気していたら全部軸（阪神・京都・中京）。【未検証・条件未判定】')
+        self.assertEqual(jc.display_text('北村', for_j5=True), '')
+        self.assertEqual(jc.display_text('画像にない騎手', for_j5=True), '')
+        self.assertTrue(jc.display_text('岩田望来').startswith('画像◎：'))
+
     def test_input_unchanged_and_no_score_output(self):
         records = [dict(Umaban=1, Name='試験馬', Jockey='松若',
                         Waku=1, Popularity=1, **{'Projected Score': 123})]

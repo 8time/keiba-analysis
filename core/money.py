@@ -784,6 +784,68 @@ def ticket_line(kind, odds, p=None, balance=0, kelly_frac=0.25,
 # ──────────────────────────────────────────────
 # ⑤ 収支台帳（予測→結果→反省 / ROI・Brier）
 # ──────────────────────────────────────────────
+
+def brier_score_mean(pred_probs, outcomes):
+    """Mean squared error of binary probabilistic forecasts (same as Ledger brier)."""
+    pairs = [(float(p), 1 if int(o) else 0) for p, o in zip(pred_probs, outcomes)
+             if p is not None]
+    if not pairs:
+        return None
+    return sum((p - y) ** 2 for p, y in pairs) / len(pairs)
+
+
+def brier_decomposition(pred_probs, outcomes, n_bins=10):
+    """Murphy (1973) decomposition: BS = reliability - resolution + uncertainty."""
+    pairs = [(float(p), 1 if int(o) else 0) for p, o in zip(pred_probs, outcomes)
+             if p is not None]
+    n = len(pairs)
+    if n == 0:
+        return None
+    brier = sum((p - y) ** 2 for p, y in pairs) / n
+    o_bar = sum(y for _, y in pairs) / n
+    uncertainty = o_bar * (1.0 - o_bar)
+    # One forecast per bin preserves Murphy's identity; fewer bins still share the same mean BS.
+    nb = max(1, min(int(n_bins), n))
+    bins = [[] for _ in range(nb)]
+    for p, y in pairs:
+        idx = 0 if p <= 0 else (min(nb - 1, int(p * nb)) if p < 1.0 else nb - 1)
+        bins[idx].append((p, y))
+    rel = res = 0.0
+    for items in bins:
+        if not items:
+            continue
+        nk = len(items)
+        f_bar = sum(p for p, _ in items) / nk
+        o_hat = sum(y for _, y in items) / nk
+        rel += nk * (f_bar - o_hat) ** 2
+        res += nk * (o_hat - o_bar) ** 2
+    rel /= n
+    res /= n
+    recomposed = rel - res + uncertainty
+    return {
+        'brier': round(brier, 6),
+        'reliability': round(rel, 6),
+        'resolution': round(res, 6),
+        'uncertainty': round(uncertainty, 6),
+        'n': n,
+        'n_bins': nb,
+        'recomposed_brier': round(recomposed, 6),
+        'identity_delta': round(brier - recomposed, 9),
+    }
+
+
+def evaluation_sample_label(n):
+    """Display-only caption for metric sample size (does not affect predictions)."""
+    n = int(n or 0)
+    if n <= 0:
+        return {'n': 0, 'label': '評価データなし', 'detail': None}
+    detail = None
+    if n < 5:
+        detail = ('5件未満: 台帳のGate別成績と同様、件数が少ないため参考程度'
+                  '（roi_by_gate は n>=5 のみ分析）')
+    return {'n': n, 'label': f'評価 n={n}', 'detail': detail}
+
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS bets (
   bet_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1271,15 +1333,22 @@ class Ledger:
         brier_rows = [r for r in (calib or all_settled)
                       if r.get('pred_prob') is not None]
         if brier_rows:
-            brier = sum(
-                (float(r['pred_prob']) - int(r.get('won') or 0)) ** 2
-                for r in brier_rows) / len(brier_rows)
-            out['brier'] = round(brier, 4)
+            probs = [float(r['pred_prob']) for r in brier_rows]
+            wins = [int(r.get('won') or 0) for r in brier_rows]
+            brier = brier_score_mean(probs, wins)
+            out['brier'] = round(brier, 4) if brier is not None else None
             out['brier_n'] = len(brier_rows)
+            decomp = brier_decomposition(probs, wins)
+            if decomp:
+                out['brier_decomposition'] = decomp
         else:
             out['brier'] = None
             out['brier_n'] = 0
         out['calibration_settled'] = len(calib)
+        if actual:
+            out['actual_sample'] = evaluation_sample_label(len(actual))
+        if out.get('brier_n'):
+            out['brier_sample'] = evaluation_sample_label(out['brier_n'])
         return out
 
     # ── ② 見送りレースの記録・集計 ─────────────────────

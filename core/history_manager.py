@@ -135,6 +135,13 @@ def save_race_data(df, race_id, memo=""):
         
     updated_df.to_csv(HISTORY_FILE, index=False, encoding='utf-8')
     print(f"Saved entry to {HISTORY_FILE}")
+    try:
+        from core.prediction_time_machine import remember_cache_source
+        _acq = getattr(df, 'attrs', {}).get('_ptm_acquisition') or {}
+        remember_cache_source(race_id_str, _acq.get('source') or 'UNKNOWN',
+                              _acq.get('fetched_at'))
+    except Exception as _cache_err:
+        print(f"Cache provenance was not stored: {_cache_err}")
     return "Saved"
 
 def register_past_races(race_ids):

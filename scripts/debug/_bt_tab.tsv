@@ -1,0 +1,176 @@
+﻿accel_lap_backtest.py	other	jravan.db	複勝,残差	stdout	調教『加速ラップ』の検証 — 最終追い切りでラスト1Fが加速しているか。  資料(『データ駆動型・競馬予想の極意』)の主張:   「勝ち馬の50%以上が最終追い切りで加速ラップを記録」「ラスト1Fが12秒台前半なら軸」   「13秒台での失速は加速ラップでも信頼度が著しく低下」 
+ana_hi_backtest.py	other	?	ROI,回収,的中	stdout	3連単エンジンの『穴の人気上限 ana_hi=12』を実配当で検証する。  発端(実査 202603020611・荒れ確率78%・●大穴): 結果11-6-9。3連複エンジンは2軸[11,9]で的中 (14点中6位/combo流しなら7点中4位)。しかし3連単は全336点を生成し
+arare_entropy_backtest.py	arare	jravan.db	残差	stdout	オッズ本命不在フラグ(コンピ大穴の等価再現)の荒れ残差検証。  大谷式: コンピ1位<=79 & 1-3位差<15 & 単勝30倍未満10頭 = 大穴レース。 これをオッズで等価再現:   fav1_odds >= N (抜けた本命不在) & odds3/odds1 <= R (
+arare_signal_backtest.py	arare	?	回収,的中,複勝	stdout	荒れ予報(trio_lean②穴妙味向き)発火時、強適テーブルのどの項目が 『top7圏外(人気8+)の3着内馬』を捕まえるのに有効かを検証する。  ユーザー仮説(強適テーブルの8項目): 展開適合度/血統スコア上位/血統実績回収率100%超/ Alert初ブリンカー/補正T上位
+axis_filters_backtest.py	axis	jravan.db	ROI,複勝	stdout	軸フィルタ検証 #3 #4 — 軸選定に効くかをjravan.dbで検証。 ───────────────────────────────────────────── #3 オッズ2.5倍の境界線(Racing Quant p2):    「1番人気はオッズ2.5倍以下でのみ軸と
+axis_fix_formation_backtest.py	formation	?	ROI,的中,複勝	stdout	軸信頼度による1着頭数の動的切替バックテスト。  仮説: 補正T×人気の重複数(overlap)が高い＝軸が堅い→1着を1頭固定(1-4-7=12点)。       重複が低い＝軸が不安→1着を2頭(2-4-7=30点)のまま。       点数を減らせる分、ROIが上がるのでは
+axis_h2h_backtest.py	axis	jravan.db	ROI,複勝	stdout	軸選定 head-to-head: ◎〇ルール vs 固定軸(人気上位2頭) ───────────────────────────────────────────── 3連複の土台＝『軸2頭が両方3着内(ダブル複勝)』。これが高いほど良い軸。  比較:   [固定]  軸 = 
+axis_ng_backtest.py	axis	export CSV	複勝,残差	stdout	軸馬NG説の検証 — 資料『絶対にNGな軸馬の選び方』の主張を人気/オッズ統制で検定する。  対象(既存台帳で未検証のものだけ):   A 昇級初戦の過剰人気     → 近似: 前走1着(勝ち上がり直後)の人気馬   B 距離延長は折り合い/スタミナ切れ → dist_chan
+axis_vh_trio_backtest.py	trio	?	ROI,的中,recall	stdout	「◎ + 〇 + 穴馬ハンター精鋭1位」の3頭が実際に来ているかを検証。  ユーザー観測(2026-08-02の7レース紙面): 軸候補◎・〇・穴馬ハンター精鋭1位の組合せが けっこう当たっている → 少点数の3連単/3連複で定期的に買えるのでは。  紙面の定義をそのまま再現する
+baba_bias_backtest.py	other	jravan.db	複勝,残差	stdout	馬場状態(良/稍重/重/不良)別バイアス検証 — scripts/baba_bias_backtest.py 2016-2026・芝/ダ別。重馬場で『枠順』『人気帯』がオッズを超えて偏るか(=事前に使える構造バイアス)。  指標: win_oddsバンドで複勝(3着内)期待を統制
+baba_blood_backtest.py	blood	?	ROI,回収,recall,複勝,残差	stdout	道悪×血統(国型) 残差バックテスト — NotebookLM血統資料(情報ABC+α)の検証。  検証する仮説(資料の主張・事前登録):   資料は「血統→予測器(recall@7)」ではなく「血統→人気帯別の残差/回収率」を主張している(p12)。   cond6で潰したのは
+backtest.py	other	jravan.db	ROI,回収,的中,複勝	stdout	① バックテスト＆最適化エンジン（jravan.db / 64bit）  買い目戦略を過去データで「回収率(ROI)・的中率・最大ドローダウン」で検証。 重要: 時系列(年)順で評価＝データリーク防止。コンセプトドリフト確認のため年代別も集計。 払戻は payouts の実配当(
+benter_calibration_backtest.py	other	?	recall	stdout	Benter較正バックテスト — Qiita記事の手法を自プロジェクトで検証。  仮説: オッズ無しLTRの出力をBenter較正(P_model^α × P_market^β)で       市場オッズと事後合成すれば、オッズを特徴量に直接食わせた現行LTRより       r
+bettype_roi_backtest.py	other	jravan.db	ROI,的中,複勝	stdout	券種別ROI検証 — 単勝以外(複勝/馬連/ワイド/馬単/3連複/3連単)に市場の歪み(+ROI)が 残っていないか。人気で機械的に買う標準戦略を実払戻(payouts)でバックテスト。 scripts/bettype_roi_backtest.py  2016-2026  pa
+blinker_backtest.py	other	?	残差	stdout	初ブリンカー(初装着)が着順を予測するか＝オッズを超える妙味かを検証。 test=2023-2025(JRA平地)。各馬の当該レースより前のブリンカー着用回数を数え、  ・初ブリ   : 今回blinker=1 かつ 過去blinker=0  ・ブリ継続 : 今回blinker=
+blood_course_backtest.py	blood	jravan.db	複勝,残差	stdout	血統×コース(コースバイアス)の組み合わせ検証 — 血統SP強化の土台。  質問: 父系統×コース形状(直線長/坂)・父×当該場コースの適性は、 人気(市場)を超える複勝シグナルを持つか?(=軸/消去に使えるか)  方針(リーク無し・過去の教訓遵守):   ・血統は予測(LTR)
+blood_ev_backtest.py	blood	?	ROI,回収,残差	stdout	実験『血統期待値』の答え合わせ。通常の期待値・血統期待値・両方高い、を比較する。  使う式は core/blood_ev.py と同じ。スマート出馬表のデータは使わない。 見る期間=2023-2025 / 確認=2026年1〜6月。残差z>=2 かつ 回収が母集団より良い、だけ採
+cha_wood_ippai_backtest.py	other	jravan.db	複勝,残差	stdout	CHA(調教本追切)で既存U俗説をholdout検証。新規条件の発掘はしない。  対象:   skip_wood 「美浦ウッド11.3秒以下／栗東坂路52.7-12.2は上位争い」       → 02(美浦ウッド系)&終いＦ<=11.3 / 11(栗東坂路)&推定4F<=52.
+chaos_predictor_backtest.py	other	jravan.db	-	stdout	荒れ予測 バックテスト — 「ペース/トラックバイアスは荒れ(人気下位馬が勝つ)を予測できるか」 ────────────────────────────────────────────────────────────────────────── ユーザー要望: 「トラックバイア
+chaos_prerace_backtest.py	other	?	-	stdout	荒れ予測【事前版】 — レース前に分かる情報だけで荒れ(人気下位馬勝利)を読めるか ────────────────────────────────────────────────────────────────────────── chaos_predictor_backtes
+comeback_backtest.py	other	?	ROI,複勝,残差	stdout	🔄バイアス巻き返し候補(core/track_bias.comeback_flag)の検証。 仮説: 直近走で当日バイアスに逆らって好走した馬は『次走の妙味』。 測るもの: フラグ発火馬の【その対象レース】での 勝率/複勝率/単複ROI と、           人気(オッズ)補
+condition_arare_backtest.py	arare	jravan.db	残差	stdout	荒れ条件(牝馬限定/新馬/ハンデ)の妙味検証。  問い: インフォグラフィックの「牝馬限定/新馬/ハンデ=荒れる」は、       1番人気オッズ(=市場の堅さ)を統制してもなお       『本線決着(①型:1・2番人気が両方3着内=鉄板)』を減らし       『②型決着(人
+consensus_backtest.py	other	jravan.db	ROI,的中,複勝	stdout	MAGI 合議ゲート バックテスト — 「承認数が多いほど的中率/ROIは上がるか？」の実測 ────────────────────────────────────────────────────────────────────────── 背景: core/magi_cons
+corrected_time_backtest.py	other	jravan.db	複勝,残差	stdout	自前「補正タイム」の妙味検証 (Corrected-Time / speed-figure backtest)  JRA-VANに補正タイムは無い(生の走破タイムと馬場状態コードのみ)。 そこで馬場コードの解釈に依存しない方法で補正タイムを自作する:    1) sec     
+course_arare_backtest.py	arare	jravan.db	残差	stdout	動画『荒れやすいレースの条件』の未検証3項目 ―― コース/距離/馬場は独立エッジか。  【結論(2026-07-23)】3つとも不採用。全窓(2021-25)では②型残差 z2〜3で効くが、 **副窓(2025単年)で全て z<2 に崩落**＝両窓一貫の基準を満たさない。pri
+cushion_blood_backtest.py	blood	jravan.db	回収,複勝	stdout	前日比クッション値 × 種牡馬シフト適性 バックテスト  track_cond + jravan.db(races/results/horses) を使い、 前日比[+]硬化 / [△]軟化 の日に _SIRE_CUSHION_AFFINITY の各種牡馬産駒が 実際にどの程度の
+cushion_theory_backtest.py	other	?	残差	stdout	クッション値理論(ユーザー提供資料 2026-07)の検証バックテスト。  検証する主張:   A. 高クッション値(硬い馬場)は前残り=先行有利になる   B. 種牡馬×クッション9.5閾値で成績が激変する(資料の名指し種牡馬)   C. 前走「標準(8-10)」→今走「硬め(
+cyb_training_eval_backtest.py	training	jravan.db	複勝,残差	stdout	CYB(調教分析)で既存U俗説の検証可能性を確認し、該当するものだけholdout検証。  対象(カタログ既存U項目のみ。新規条件の発掘はしない):   skip_oikiri_score 「調教採点50点未満は馬券に絡まない」       → CYBに100点満点の採点は無い。
+dam_age_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	『母の出産年齢が16歳を超えると回収率が下がる』は本当か  主張(PDF新聞の資料・若駒戦のリスク管理):   母の出産年齢が16歳を超えている高齢出産馬は、統計的に回収率が低下する傾向にある。  データ: JRDB UKC(scripts/jrdb_ukc_ingest.py 
+danger_stack_backtest.py	other	?	複勝,残差	stdout	#5 危険人気馬 severity校正バックテスト。 core/danger_gate.danger_veto の severity(危険理由数)が、人気上位(1-3番)の複勝残差を どれだけ単調に押し下げるかを検証し、「完全消し(相手からも外す)まで踏み込むか」を判断する。  
+dangerfav_backtest.py	other	?	回収,残差	stdout	「危険な人気馬」候補シグナルを一括検証(test=2023-2025・JRA平地)。 資料(危険な人気馬の解体新書/2026 Playbook)の消し材料が、市場を超えて凡走するか= オッズ補正残差で確認。対象は人気上位(ninki<=3、押し出しはninki==1)。 残差<0
+dbkeiba_condition_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	db-keiba.com の『騎手×条件』買い/消し条件は本当に効くのか ―― 初の検証。  【結論(2026-07-23)】不採用。**集計期間の中でしか効かない＝多重検定の産物**。 表示は残すが「参考であって根拠ではない」の位置づけを変えない(スコア非連動を維持)。    
+_inventory_backtests.py	other	jravan.db	ROI,回収,的中,recall,capture,複勝,残差	CSV	Extract backtest script summaries.
+arare_msg_condition_backtest.py	arare	?	recall	stdout	荒れ予報メッセージの発火条件検証: 現行lean=='②' vs lean OR arare_prob>=θ。 target=arareA(3着内に7番人気以下=メッセージ文言と一致)。holdoutで recall/precision/lift。
+deploy_blood_and_backtest.py	blood	jravan.db	ROI,回収,残差	stdout	展開適合度 × 血統回収100%+ のAND検証。  ユーザー仮説(アパタイトテソーロ=展開84.7・父回収109%・12番人気・3着):   「展開適合が高い AND 血統回収100%以上」の人気薄は、   通常の穴馬より3着以内に来やすいか。  測る段階:   1. 展開適合
+deploy_filter_backtest.py	other	?	複勝,残差	stdout	展開フィルター改善の検証。検証済みエンジン(build_pace_context: pace+pos4)で 『展開恩恵スコア』を定義し、恩恵の高い馬が人気以上に3着内へ来るかを測る。   恩恵: スロー→前(pos4小)が恵まれる / ハイ→差し(pos4大) / ミドル→好位中
+dirt_blueprint_backtest.py	other	?	ROI,複勝,残差	stdout	ダート設計図(The Dirt Blueprint)の主張を残差ベースで検証。  検証項目(すべてダート平地・事前確定変数のみ):   [D1] 枠順残差: 外枠(6-8枠)が内枠(1-3枠)よりオッズ補正後に妙味があるか   [D2] 大型馬残差: 500kg+×ダートの残差(
+dirt_moisture_backtest.py	other	jravan.db	回収,複勝	stdout	ダート含水率 × 血統型（米国/欧州） バックテスト  仮説: 乾燥(≤3.5%)=欧州型有利、湿潤(≥8.0%)=米国型有利
+distance_affinity_backtest.py	other	?	残差	stdout	『その馬の得意なレース距離』は人気を超えて効くか? の検証(ロジック置き場より)。  ユーザー仮説: そのレース距離での過去3着内実績が高い馬は来やすいのでは。  設計(リーク無し):   各馬の過去走(その日より前のみ)から2種の事前3着内率を算出:     - prior_b
+dominant_fav_second_backtest.py	other	?	ROI,複勝,残差	stdout	『圧倒的1番人気がいる時の2番手』を詰めて検証する。  scripts/odds_structure_hunt.py で最大の残差(+7.5/+9.4pp・z+12.7/+6.5)が出た仮説。 実用に足るか(絶対複勝率・ROI・本命の強さ別・頭数別)を確かめ、 『買える』のか『軸
+elim_border_regime_backtest.py	elim	?	-	stdout	🛟ボーダー残しを『レース条件で可変』にすると得か ―― 実装前の漏れ率確認。  現行(app.py 強適消去エンジン): 下位半分カット → ボーダー3頭を相手に戻す(固定3)。 案: 荒れ予報(core/value_scanner.trio_lean の lean)で戻す頭数を
+elim_column_rank_backtest.py	elim	jravan.db	複勝,残差	stdout	消去クロス強化検証 — 『強適ランキング表の 上り3F / 平均位置 の“列内下位”馬は 3着内に来ないか?』をjravan.dbで検証(leak-free)。  ユーザー要望: 消去クロスをもっと多くのチェック項目でふるいたい。ボーダー残しで 3頭戻すなら3頭以上消したい。列(
+elim_cross_backtest.py	elim	jravan.db	ROI,複勝,残差	stdout	消去クロス・バックテスト — 『下位指標が重なった馬は3着内に来ない』仮説の検証 ───────────────────────────────────────────────────────── ユーザー観測:「調教C以下は高確率で3着内に来ない。様々な指標の下位を集めて 重ね
+elim_frontier_backtest.py	elim	jravan.db	-	stdout	消去フロンティア検証 ―― カード3(ボーダー3廃止の是非)。  現行の消去は『人気で下位半分カット』(支配項=-人気)＋『ボーダーで1頭戻す』。 ボーダーは半分カットが3着内馬をこぼす(≈15%)のを≈10%に戻す後始末。 問い: 弱点フラグ数(elim_cross)を消去順に
+elim_ml_ranking_backtest.py	elim	jravan.db	-	stdout	消去エンジンの高度化検証 ―― 消去順を『人気』から『ML予測』に変えると 3着内の取りこぼしは減るか / 同じこぼし率でもっと多く消せるか。  背景:   現行の消去は支配項=-人気で下位半分カット+ボーダー3頭戻し(こぼし≈15%→≈10%)。   ルール追加路線は検証済みで
+elim_multicol_backtest.py	elim	jravan.db	複勝,残差	stdout	消去クロス強化・拡張版 — 強適表の各"列"の下位を交差/積み上げ(重複)すると どれが独立に効くか・どれが安全に消せるか(jravan.db・leak-free)。  ユーザーの使い方=クロステーブルの「重複」列を見て脳内で交差判断している。 → 各列の下位が『人気以上に来ない
+elim_ranklow_vhout_backtest.py	elim	?	recall	stdout	消去クロス新条件の検証: 「Rank下位56% かつ 穴馬ハンター圏外」。  ユーザー提案: ランク下位の馬（全体の56%）で、かつ穴馬ハンターの 🎯精鋭にも🕸️広域網にも含まれない馬を消去条件に加えたい。  消去クロスは**相手絞り**の道具（[[project_elimina
+elim_vh2_oof_backtest.py	elim	jravan.db	ROI,recall	CSV	消去順ML案の再挑戦 ―― Phase 0で落ちた2列を『正直な版』に作り直して再判定する。  前段(scripts/elim_ml_ranking_backtest.py --phase0)の結論:   E(全43列)の -1.23pp は実質 vh2_score と comb
+elimination_backtest.py	elim	?	ROI,回収,recall,残差	stdout	消去フィルター刷新の3前提を検証(test=2023-2025・JRA平地)。  ① 半分消去の取りこぼし: 人気ランクで下位半分を消すと勝ち馬/3着内を何%失うか(recall下限)  ② 穴救出: 人気薄(ninki>=8)のうち検証済み+ファクター(黄金ライン/厩舎当コース
+ensei_backtest.py	other	jravan.db	ROI,複勝,残差	stdout	遠征(調教師の意思表示)は軸/穴のエッジか? — 英国DM係数・豪州研究の日本版検証  仮説(英国 Southampton 大の『調教師の距離/報酬トレードオフ(DM係数)』):   調教師は遠征コスト(輸送費・人件費・馬の故障リスク)を払ってでも勝算があると   判断した時だけ
+figure_recency_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	#1「5走前理論(記憶ハック)」の検証 — scripts/figure_recency_backtest.py  資料(競馬データサイエンス)の主張:   「Nレース前(特に4走前・5走前)に補正タイム100超え(=好走)を出した馬は、近走不振で    忘れ去られ人気が甘くなる
+finish_spurt_backtest.py	spurt	?	的中	stdout	predict_finish に末脚指数(spurt_index)を投入したときの着順予測精度バックテスト。  検証: spurt_index を w_spurt で加えると、Spearman相関が改善するか？   baseline = w_spurt=0（現行モデル: pos4
+first_win_theory_backtest.py	other	jravan.db	複勝,残差	stdout	『初勝利理論』の検証 — 初勝利時の"上がり差"は将来の走りを予告するか  主張(プレミアム予想の動画):   G1/重賞を勝つ馬は初勝利時(新馬/未勝利の勝ち上がり)に共通点がある。     ① 上がり最速であること     ② 上がり2位の馬に対して大きな差(芝なら0.6秒以
+fixed_pool_trio_backtest.py	trio	?	ROI,的中	stdout	使う馬プール固定(fixed_pool) vs 現行 人気1-4∪穴6-12 の3連複比較。  5番人気の常時追加ではない。各レースで『ユーザーがK頭残した』代理を作り、 そのK頭を recommend_trio に渡す:   old  = 人気条件で再フィルター (fixed_
+folk_signals_backtest.py	other	?	複勝,残差	stdout	競馬俗説5案を一括検証(test=2023-2025・JRA平地)。 results を race_key昇順で時系列スキャンし、各馬の「当該レースより前」の履歴のみで特徴量を作る(リーク防止)。 オッズ補正残差(実績 − オッズ別期待)で層別。残差>0=人気以上に来る=妙味。 
+folklore_effectiveness_backtest.py	folklore	?	ROI,複勝,残差	stdout	俗説有効度の成立可否 — 実装しない。生データだけで判定する。  repo/brief_folklore_effectiveness.md の指示書どおり。  見るのは3点:   1. 予測した効果量の五分位が、実現残差で単調か   2. 人気ならし残差が、生の複勝率差と食い違う
+folklore_top5_axis_backtest.py	folklore	export CSV	ROI,複勝,残差	stdout	俗説総合TOP5 × 1〜3番人気は軸か — 実装しない。  定義は repo/brief_folklore_top5_axis.md。 画面の evaluate_horse と同じ差し引き。CSV に無い前走通過・パドックは当てない。  Usage: python script
+folklore_unverified_backtest.py	folklore	jravan.db	ROI,複勝,残差	stdout	俗説ハンター「未検証(U)だが出馬表系データで検証可能」39項目の一括バックテスト。  対象: core/folklore_lib.py の CATALOG で verdict=unverified かつ match が _always_skip / _tag_m(パドック・調教
+formation_backtest.py	formation	?	ROI,回収,的中,recall	stdout	3連単フォーメーション 実配当ROIバックテスト(買い方研究)。  CSV特徴ストア(scripts/csv_data)＋DBのpayouts表(実際の3連単配当)で、買い方を実配当で直接対決:   Rank源 : 人気(ninki) vs 実力(ability_score=LT
+formation_hires_backtest.py	formation	?	ROI,的中	stdout	高解像度フォーメーション分析：各列に人気/Rank/VHのどれを使うかのゾーン別最適化。  既存分析(Rank2-4-7 ROI92%等)の深掘り:   Q1 各列(1着/2着/3着)に別々の基準(人気/Rank/VH)を割り当てる「混合戦略」は純粋戦略に勝てるか   Q2 2-
+forum_weight_backtest.py	other	?	的中	stdout	集合知Brier加重の CV 検証 ―― カード8(⑩)。  leave-one-out: 各精算済みレースを1件抜き、残りでエージェント重みを学習→ そのレースの合議を『重み付き』と『均等』で作り、◎/合議top3の的中Brierを比較。 採用ゲート(カード8): 加重合議Br
+fukusho_combo_backtest.py	other	?	ROI,複勝	stdout	複勝×高combo人気薄 の実配当ROI検証(買い方研究の突破口)。  3連単は全帯で控除率floor(75%)は超えるが利益(100%)未満だった(verified_formation_roi・市場効率的)。 しかし我々の検証済みエッジ(末脚/combo/荒れ)は全て『3着内率
+gender_age_surface_backtest.py	other	?	ROI,複勝,残差	stdout	性別 × 年齢 × 芝ダ × 距離 — 穴馬ハンター候補の残差検証。  俗説の「牝馬だから」は、年齢・完成度・距離適性に吸収されている可能性がある。 6番人気以下で見る+確認の両方 z>=+2 かつ n>=200 かつ残差>0 だけを VH 候補にする。  Usage: pyth
+gender_folklore_backtest.py	folklore	?	ROI,複勝,残差	stdout	性別俗説の残差検証 — 優先1から順に。  資料: 「夏は牝馬」は芝短距離限定・ダート例外 / 軽ハンデ牝は買い /       性別×馬場×距離 / セン馬 / 牝×ローテ / 斤量比12.11% / 牝×馬体重  判定:   穴馬ハンター = 6番人気以下・見る+確認で z>
+golden_line_backtest.py	other	jravan.db	ROI,残差	stdout	黄金ライン(騎手×調教師 連対率40%+×騎乗10回+)は軽視されているか？の検証。  きっかけ: 202609011010(阪神ダ1800 レグルスS)で黄金ライン該当3頭が1-2-3着を独占し、 「黄金ラインの馬を軽視したから当たらないのでは」との指摘。1レースの一致は過学習
+h2h_backtest.py	other	?	-	stdout	直接対決(H2H)仮説の検証: 「過去にAがBに先着していると、再戦でもAが先着しやすいか」。 特に『迷う2頭＝現在のオッズが近い』ケースで、過去の対戦結果がタイブレークに使えるか。  各レースの全2頭ペアについて、それ以前の『共通出走レース(最新)』での先着馬=prior_wi
+h2h_backtest2.py	other	?	-	stdout	H2H仮説の追加検証（C）: 接戦(オッズ近い)ケースで、 (1)複数回の連続先着(一貫した優位) (2)前回対戦の着差(タイム差)が大きい 場合に、過去先着馬が再戦でも勝つ率が50%を有意に超えるか。 超えればその条件付きでタイブレークに使える。
+h7_refine_backtest.py	other	jravan.db	recall,複勝,残差	stdout	#2 H7化リファインの検証 — scripts/h7_refine_backtest.py  補正T図(過去走の最高=最速corrected)の定義を3通りで比較し、どれが 「フィールド内 図トップ3」の複勝予測力(人気を超える残差)を最大化するか測る。    A: best_
+hunter_combo_backtest.py	hunter	?	ROI,回収,残差	stdout	穴馬ハンター掲載の事前材料を、複合条件で測る。  問い: 1つでは回収が上がらない材料も、A×B / A×B×C が重なった時だけ妙味になるか。 母集団: 6番人気以下。各レースの穴馬スコア1位(🎯精鋭1位)は外す。 ③今回3角は使わない。パドックの返し馬はDBに無いので、ページ
+hunter_display_flags_backtest.py	hunter	?	回収,複勝,残差	stdout	穴馬ハンター表示馬（精鋭以外も含む）× 逆ショッカー / 血統期待値高 / 期待値高。  表示 = 6番人気以下（ページに出る馬。精鋭・広域網・圏外すべて）。 逆ショッカー = 前走3角≥5 かつ 今回距離短縮（①②のみ。③は使わない）。 期待値高 = 帯の単勝回収 ≥0.90（
+hunter_gold_combo_backtest.py	hunter	jravan.db	複勝,残差	stdout	穴馬ハンター網 × 🥇(騎手×厩舎) / combo≥2 / 馬連携上位 の残差。  優先:   ① VH網 × 🥇（35-40%）   ② VH網 × combo≥2 × 🥇   ③ VH網 × combo≥2 × 馬連携上位（USM≥115）   ④ VH網 × 🥇 × 馬連
+intraday_bias_backtest.py	other	jravan.db	ROI,複勝,残差	stdout	日内バイアス逆張り(危険人気馬)の train/holdout 検証 ―― カード2の第1タスク。  既存 tenkai_bias_backtest.py はpooled(2021-25 一括)で 「外有利日(confident)×内枠×1-3人気=複勝残差-4.6pp/z-3.
+jockey_backtest.py	jockey	?	複勝,残差	stdout	J4: 騎手の「連敗ストリーク／調子」が次走を予測するかの検証。 馬の質をオッズ期待値で補正した残差 residual=(勝ったか)-(オッズ別期待勝率) を、 騎乗直前の連敗数・直近調子で層別して、平均残差が動くかを見る。   residual>0 = 期待(人気)以上に勝って
+jockey_coef_recall7_backtest.py	jockey	jravan.db	recall,残差	stdout	騎手係数の黄金ライン段(0.30/0.40)を検証結果の形に変えるべきかを recall@7 で検証。  背景: golden_line_backtest.py で連対率帯の3着内残差は 35-40% が最強・40%+ は弱い・ 50%+ はほぼゼロ(織込み済み)と判明。一方 j
+jockey_power_backtest.py	jockey	jravan.db	複勝,残差	stdout	騎手力(JPower)の持続性検証 — 『騎手のみの力』の数値化の土台。  考え方: オッズは馬の質(＋騎手評価)を織り込む。よって『オッズ期待値に対する 実複勝率の上振れ(USM)』は騎手の寄与に最も近い。ただし過去のUSMが未来も 続く(=実力でありノイズでない)ことを示さな
+jockey_skill_backtest.py	jockey	?	複勝,残差	stdout	J4検証: 「USM(騎手の実力) / 黄金ライン(騎手×調教師) の上位は、人気(オッズ)以上に来るか」。  各騎乗の『直前まで』の実績でUSM・コンビ強度を算出（リーク無し）し、 オッズ期待値で補正した残差 = (実績) − (オッズ別期待) を層別平均。   residua
+jrdb_base_odds_backtest.py	jrdb	jravan.db	ROI,複勝,残差	stdout	JRDBの「基準複勝オッズ」と市場オッズの乖離に妙味があるか検証。  なぜ有望に見えたか:   [[verified_r40_place_ev]]は「オッズから作った推定値をオッズと比べる」構造だったので、   確定オッズを知らないと成立せず実装不可になった。   JRDBの**
+jrdb_c_fields_backtest.py	jrdb	?	ROI,複勝,残差	stdout	JRDBの「C分類」=人力・独自ルートで収集した情報を検証する。  他サービス(JRA-VAN/netkeiba)に**存在しない**のはこの層だけ。 指数系(B分類)は全て検証済みでゼロだった ([[verified_jrdb_kyi_fields]] [[verified_j
+jrdb_cyb_backtest.py	jrdb	jravan.db	ROI,複勝,残差	stdout	CYB(調教分析データ)を検証する。「調教を強化できないか」への回答。  これまでの調教まわりの結論:   ・調教**時計**(jravan.db training 50万件・自己相対) → 4.4万頭で完全にゼロ     ([[verified_training_and_sir
+jrdb_kyi_backtest.py	jrdb	?	ROI,複勝,残差	stdout	KYI(競走馬データ)の主要項目に妙味があるか検証。外厩(放牧先ランク)が本命。  KYIは128項目・レコード長1024。充足率100%の項目が多い:   放牧先 / 放牧先ランク(A-E) … **外厩**。台帳に全く無い新情報   調教矢印コード / 厩舎評価コード … 調
+jrdb_paddock_backtest.py	jrdb	?	複勝,残差	stdout	JRDBのパドック評価（馬体コード/気配コード）に妙味があるか検証。  [[verified_paddock_weight]]で「主観項目(歩様/発汗)は履歴が無く検証不可」として 諦めていた領域。JRDB直前情報(TYB)に**充足率100%**で入っていたので初検証。  コー
+kawasaki_backtest_collect.py	other	scrape	複勝	stdout	川崎(venue=21)の過去レースデータを収集し、バックテスト用JSONに保存。  nankan_pci_legtype_backtest.pyと同じフォーマットで出力。 大井の nankan_backtest_rows.json に kawasaki_backtest_row
+kawasaki_backtest_phase2.py	other	scrape	複勝	stdout	Phase 2: 川崎レース結果から馬歴を取得し、バックテスト用JSONを構築。  Phase 1で収集したkawasaki_races_phase1.jsonから、各馬の過去走を取得し、 末脚指数・PCI・脚質を算出。大井版(nankan_backtest_rows.json)
+keepmore_backtest.py	other	?	ROI,recall,残差	stdout	半分カット後に「何頭まで戻すと得か」逓減を測る(test=2023-2025・JRA平地)。 各 keep+k の馬(人気rank=keep+k=消去ゾーンのk番目)単体の 3着内率/単勝ROI/人気補正残差 と、 keep..keep+k まで戻したときの累積recall(3着
+keepone_backtest.py	other	?	ROI,recall,残差	stdout	「半分消去のあと1頭だけ残しに戻す」と勝率/取りこぼしは改善するか(test=2023-2025・JRA平地)。  エンジンの消去スコアは支配項が -人気 なので、戻す1頭 ≒ 人気で (keep+1) 番目の馬(消去ゾーン最上位)。   keep_base = (n+1)//2
+kyi_layoff_kikyo_backtest.py	other	jravan.db	複勝,残差	stdout	KYI(外厩/帰厩)データを使った2俗説の追加検証。  対象:   skip_nf_layoff  「ノーザンファーム外厩の中9週以上・1番人気は買い」   skip_kikyo      「レース11〜13日前の最短帰厩でラスト1Fが速い馬は勝負」  設計:   - KYI_2
+lap33_backtest.py	other	?	複勝,残差	stdout	33ラップ理論(鈴木ショータ氏)の検証 — core/lap33.py の実力測定。  原典の主張: 馬の得意33ラップ(過去の好走時の傾向)と、今回のコース平均33ラップが 一致(適合)すれば好走しやすく、逆(不適合)なら凡走しやすい。  方針(リーク無し・過去の教訓遵守): 
+lap33_distance_backtest.py	other	?	複勝,残差	stdout	33ラップ『符号一致』vs『距離±0.5秒ルール』の比較 — 該当馬が多すぎる問題の検証  ユーザーの懸念: 現行の33ラップ適合は該当馬が多すぎて使い方が合っているか不安。  原因(コード確認済): core/lap33.fit_match() は **符号が一致するかだけ**
+layoff_dirt_sprint_backtest.py	other	?	ROI,複勝,残差	stdout	ダート／短距離 × 休み明け — 消去フラグ候補の検証。  資料主張:   ダート休み明け 複勝16.9%(10-25週) / 14.3%(半年+) → 大幅割引   1300m以下休み明け 複勝15.3% / 13.6%(長期) → 大幅マイナス   芝・2500m以上は休み明
+layout_effect_backtest.py	other	?	-	stdout	コースレイアウト拡充(94エントリ+内/外バグ修正)の効果測定。  比較:   A) layout = get_course_layout(venue, surf, dist)  ← 拡充済み   B) layout = {}                           
+legtype_axis_backtest.py	axis	jravan.db	ROI,複勝	stdout	脚質と軸馬の信頼度バックテスト ───────────────────────────────────────────── 資料(Racing Quant p4)の主張:   「追い込みは罠。4角10番手以内の先行馬を選ぶ(複勝率27.4% vs 11番手以下5.2%)」  重要
+longshot_threshold_backtest.py	other	?	的中,capture	stdout	穴馬しきい値の自動切替(少頭数×堅い→4番人気以降)は妥当か  提案: 出走10頭以下 かつ 市場が堅い(1番人気≤3.5倍 or 上位3頭の合成≤4.0倍)なら       穴馬しきい値を既定の『6番人気以降』から『4番人気以降』へ自動で下げる。 実装: core/longsh
+ltr_fieldsize_split_backtest.py	other	?	recall	stdout	頭数でLTRモデルを分割すべきか検証する（資料『少頭数/多頭数でモデル分割』の是非）。  主張(NotebookLM資料): 少頭数レース(8頭以下)と多頭数レース(13頭以上)は決まり方が 違うので、モデルを分けて重要特徴量に別々の重みを付けると穴馬を拾える。  検証設計:  
+makuri_backtest.py	other	jravan.db	複勝,残差	stdout	マクリ指数の検証 — 3→4角で位置を押し上げる脚質は人気を超えて来るか?  末脚指数(上がり3F=直線の脚)に対し、マクリ=3〜4角で外を回して順位を上げる動き。 metric(リーク無し・過去走のみ): push = (corner3/頭数 − corner4/頭数) の直近
+manji_factors_backtest.py	other	jravan.db	回収,複勝	stdout	卍氏ファクターの未検証2項目を検証。  1. 芝×馬体重が重い馬の加点(卍: 芝で重い馬は回収率が高い) 2. 遠征バイアス(関東馬が関西場へ/関西馬が関東場へ)  データ: jravan.db results (2016-2025, ~25万頭)
+margin_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	前走着差(0.6秒境界・0.8秒スイートスポット)仮説の検証。 資料(The_0.6s_Alpha)の主張:   (A) 前走0.6秒以上負け = 巻き返し困難 → 切り捨て   (B) 前走0.8秒差負け = 過小評価で単勝回収155%(スイートスポット)   (C) 前走0.
+nankan_keepmore_backtest.py	other	?	複勝,残差	stdout	NAR(大井)版「ボーダー残しは何頭まで得か」逓減検証(JRA版scripts/keepmore_backtest.pyの対応版)。  JRA版はオッズ帯別期待値(calibrate_odds_expectation)を基準残差にしているが、 nankankeiba.comの確定
+nankan_pci_legtype_backtest.py	pci	scrape	複勝	stdout	NARでのPCI/末脚指数/脚質分類の予測力バックテスト(パイロット版)。  core/nankan_scraper.pyのPastRunsブリッジで計算できるようになった AvgPCI(race_analysis_tools)・末脚指数(compute_spurt_index)
+nar_draw_style_backtest.py	nar	scrape	複勝	stdout	NAR 逃げ×内枠バイアスの検証バックテスト。  keiba.go.jpの過去レース結果を取得し、 枠番(内/中/外) × 1角通過順(逃げ/先行/差し追込) の勝率・複勝率を検証する。  結果はdata/nar_results_cache.jsonにキャッシュし、再実行時はHT
+nar_home_jockey_backtest.py	nar	?	複勝	stdout	NAR 庭騎手(地元所属×当場)バイアスの検証バックテスト。  キャッシュ済みの南関東4場レース結果(data/nar_results_cache.json)を使用。 騎手の所属場 = 開催場（庭騎手）が勝率・複勝率で有利かを検証する。 追加のHTTPリクエストは不要。
+nar_interval_backtest.py	nar	scrape	複勝	stdout	NAR 出走間隔(中間日)バイアスの検証バックテスト。  キャッシュ済み結果 + 出馬表から前走日を追加取得して間隔を計算。 間隔帯別の勝率・複勝率を検証する。
+nar_jra_signal_backtest.py	nar	?	複勝,残差	stdout	NAR在庫データでJRA検証済みシグナルを再検証(P1+P2バッチ)。  大井(nankan_backtest_rows.json) + 川崎(kawasaki_backtest_rows.json)を読み、 JRAで「検証済エッジ」として発火しているシグナルがNARでも有意かを
+nar_lap33_backtest.py	nar	?	複勝,残差	stdout	33ラップ理論のNAR横展開バックテスト。  JRAでの検証結果: 人気薄(6番人気+)×適合=複勝残差+0.9pp(train/holdout安定・z+6.8/+3.3)  NARデータ形式(nar_official.db): - racelist.lap_N: 200m毎のラ
+nar_venue_draw_backtest.py	nar	scrape	複勝,残差	stdout	南関4場の枠順バイアス検証(場別)。  keiba.go.jpの過去レース結果から枠番×人気帯の複勝残差をz検定。 川崎のみ既検証(内枠有利 z+2.55)。大井・船橋・浦和を追加検証。  結果はdata/nar_results_cache.jsonにキャッシュし再実行時はHTT
+nar_weight_backtest.py	nar	?	複勝	stdout	NAR 大型馬(500kg+)バイアスの検証バックテスト。  キャッシュ済みの南関東4場レース結果(data/nar_results_cache.json)を使用。 馬体重500kg+の馬が勝率・複勝率で有利かを検証する。 追加のHTTPリクエストは不要。
+narrow_n_backtest.py	nar	?	capture	stdout	推奨絞り頭数: 『5着以内の8割を捕まえるには何頭に絞ればよいか』をレース性質別に実測。  背景: scripts/top5_capture_ceiling.py で全体平均では上位7頭で81.3%と分かった。       ただし堅いレースならもっと少なく済み、荒れるレースでは7
+ohtani_trap_backtest.py	other	jravan.db	ROI,回収,複勝	stdout	圧勝の罠（大谷トラップ）バックテスト ───────────────────────────────────────────── 資料(Racing Quant p4)の主張:   「前走1.0秒以上の差をつけて圧勝した馬は、過剰人気により単勝回収が66%に急落する危険人気馬」 
+oikiri_critic_backtest.py	other	scrape	ROI,的中,複勝,残差	stdout	netkeiba調教短評が、人気帯ごとに好走とつながるか。  短評は決まった一言（気配上々／平行線 等）。見た目のプラス語が、 同じ人気の馬よりよく来るか（複勝残差）を測る。 見る期間=〜2024 / 確認=2025。残差z>=+2 かつ確認n>=80 だけ採用。 スコアには入れ
+oikiri_grade_backtest.py	other	jravan.db	複勝,残差	stdout	netkeiba 調教評価ランク(A-D)が着順を予測するか検証。 重賞(grade A/B/C)を ~100レース抽出し、各馬の oikiri(type=3)評価ランクを scrape。 jravan.db の results(着順・単勝オッズ)に umaban で結合し、  
+owner_roi_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	馬主特徴の検証 ―― カード4(④)①馬主ROI/複勝残差 ＋ ③馬主×厩舎。  owner_cache.json(scripts/owner_pilot_collect.py)+jravan.db で、各レース時点の 馬主の"過去"成績を逐次計算(リーク無し)。純粋な馬主シグナ
+pace_congestion_arare_backtest.py	pace	?	残差	stdout	『テン3F(前半スピード)混雑→展開崩壊→荒れ』は既存オッズ荒れモデルを超えて効くか?  ロジック置き場「レース予測難易度高精度化(前半のみ)」の検証。 仮説: 前傾/先行馬が多い(テン速上位が多い)レースはペースが速く崩壊し荒れやすい。  前傾混雑度は既に export_fea
+pace_predict_backtest.py	pace	?	-	stdout	Path1: 事前ペース予測器の検証 — テン速力(実時計)で事前ペースを読み、オッズを超えるか ────────────────────────────────────────────────────────────────────────── chaos系の検証で判明したこと
+pace_pressure_arare_backtest.py	pace	jravan.db	残差	stdout	ペース圧力(騎手・厩舎の前受け意図)は荒れを予測するか ―― 展開MAP案B。  仮説: 逃げ/先行を好む騎手・厩舎が多く集まったレース=前受け意図が過密=ペース速化・ 先行総崩れ=荒れ寄り。展開恩恵/脚質は織込み済み([[verified_tenkai_priced_in]] 
+pace_tenspeed_arare_backtest.py	pace	jravan.db	残差	stdout	展開マップ再構築 ―― 『テン混雑→荒れ』を"実タイム由来のテン速力"で再検証する。  前段(scripts/pace_congestion_arare_backtest.py)の結果:   位置取り代理(n_front=avg_pos3<=3の頭数 / n_hana=pos_r
+paddock_weight_backtest.py	other	?	ROI,回収,複勝,残差	stdout	パドック定量(馬体重/増減)の回収率検証。 「パドックで馬のここを見ろ」のうち、過去データで検証できる唯一の定量=馬体重(bataiju)/ 増減(zogen)。発走前公開＝事前確定でリーク無し。複勝残差(オッズ統制)＋z＋単勝ROIで、 オッズに織込まれていない妙味があるかを測
+pair_gate_backtest.py	other	?	ROI,的中	stdout	#6 馬連/馬単 軸Veto バックテスト。 P0危険人気Vetoを馬連/馬単の自動軸に入れた効果を検証。FEATURE_STATUSで🟡だった両券種を、 危険軸を避けた時に的中率/ROI/トリガミがどう動くかで評価(ダメならUIは参考表示に降格)。  戦略: 軸1頭流し(相手=
+pci_combo_interaction_backtest.py	pci	jravan.db	残差	stdout	PCIは『他の弱い/検証済みシグナルが重なった時だけ』要因になるか? の検証。  ユーザー仮説: 単体では要因になりえないもの(PCI)も、複数重なれば要因になるのでは?   (comboがまさにその発想=検証済みシグナルの同時発火数)。  問い: PCIの主効果はゼロ(veri
+pci_course_shape_backtest.py	pci	jravan.db	複勝,残差	stdout	PCI傾向×コース形状の交互作用検証 ―― カード6(⑦ PCIの最終検証)。  動画仮説: 馬のPCI傾向(高=後傾/瞬発/ギアチェンジ型・低=前傾/持続型)を コース形状にマッチさせる。   O字コース(トップスピード維持有利) ↔ 低PCI(持続型)     = match
+pci_elim_backtest.py	elim	jravan.db	複勝,残差	stdout	PCI乖離は消去フィルターに使えるか? の検証。 仮説: 各馬の事前平均PCIが「フィールド平均PCI」「想定RPCI」から大きく乖離する馬は       想定ペースに不適合で3着内に来にくい → 消去候補。  方法: jravan.db results+races。各馬の今走P
+pci_front_axis_backtest.py	pci	export CSV	複勝,残差	stdout	ユーザー仮説の検証: 『フィールド平均PCIに近い × 本物の先行 × 軸候補』は入着しやすいか。  背景: PCI単体は軸/相手/消しのいずれもエッジ無しで再提案打ち切り([[verified_pci_pricedin]])。       脚質単体も人気に織込み済み([[ver
+pop5_pool_gap_backtest.py	other	?	-	stdout	3連複 autoプールの『5番人気の空白』を測る。  現行 recommend_trio(auto, 20点未満):   人気枠 = 1-4番人気   穴枠   = 6-12番人気   相手候補(4-5番) = 少頭数×堅いだけ → 11頭以上では 5番人気が原理的にプール外。 
+popularity_pattern_backtest.py	other	?	ROI,回収,的中	stdout	3連単の「人気パターン」に高期待値の定数があるかを検証。  資料の主張:   (A) 「1番人気-3番人気-13番人気」の3連単は期待値121円   (B) 「1着が3番人気」となる順列は発生確率3.56%・**期待値163円**       → これら24通りを買い続けるのが「
+pos_neighbor_backtest.py	other	?	回収,複勝	stdout	位置関係シグナルの仮説検証（予装ロジック追加なし）。  対象1: 勝ち馬の隣・周辺に穴馬が来るか（事後現象。勝ち馬は事前に未知） 対象2: 1番人気の反対側に穴馬が来るか（事前に既知）  比較:   - 同一人気帯の全馬ベースライン   - 非勝ち馬に限ったベースライン（対象1の
+quinella_ninki_div_backtest.py	other	jravan.db	複勝,残差	stdout	馬連支持順位 vs 単勝人気のズレ — holdout 残差。  単勝人気より馬連で売れている馬（お宝候補）/嫌われている馬（消し候補）が、 同じオッズ帯の他馬より3着内に来やすいか。ガラス人気と同じ「券種の意見のズレ」。  判定: 見る(〜2024) と 確認(2025) の両
+race_level_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	『前走のレースレベル』は使えるか — PDF新聞『ハイレベル戦』の検証  主張(資料):   「ハイレベル戦(オレンジ表記)で1.5秒差以内に走っていた馬の次走は     単回収率93% / 複回収率92%。逆に低レベル戦上がりは単回収率62%まで落ちる」  ⚠ 主張の数字自体が
+revival_backtest.py	other	?	回収,複勝	stdout	敗者復活フィルターの検証: 消去クロスで『切る』と判定された人気薄馬のうち、 検証済みシグナルの合議(combo)が強い馬は実際に3着内に来るか。  ユーザー案(強い条件): 切る帯(消去クロス重複≥3)に落ちた人気薄(6+)でも、荒れ予報6シグナルが 複数(combo2/3+)
+roi_pattern_backtest.py	other	jravan.db	ROI,的中	stdout	第2弾(賢い金の学習) — どの条件×券種(まず単勝)が歴史的に+ROIか scripts/roi_pattern_backtest.py  「成功者の買い方」を直接学習するデータ(個人の馬券履歴)は公開されていない。代わりに jravan.dbの実払戻(payouts)40年で
+scanner_priority_backtest.py	other	jravan.db	-	stdout	③Gate Scanner Priority バックテスト。 Gate階層ソート(見送り→軸フロア→危険なし→相手質→trio_lean明確)が 実際のレース結果と正の相関を持つかを検証する。  計測 (per gate tier = buy / wait / axis_warn
+senko_small_field_backtest.py	other	?	ROI,残差	stdout	少頭数×先行 1セル — 実装しない。定義は repo/brief_senko_small_field.md。  CELL: pos_ratio3<=0.28 かつ field_size<=11 採否は B_cell（少頭数の中の人気ベース）の残差。 頭数閾値は動かさない。2セル
+shocker_backtest.py	other	?	ROI,回収,複勝,残差	stdout	Mの法則「短縮ショッカー」「逆ショッカー」の検証。 主張: 短縮ショッカー=馬連回収600%超 / 逆ショッカー=単勝回収100%超。 測るもの: 該当馬の【その対象レース】での 勝率/複勝率/単ROI と 人気(オッズ)補正残差。 残差≈0=人気に織込み済み(妙味なし) / 負
+sibling_debut_backtest.py	other	jravan.db	複勝,残差	stdout	『兄姉の新馬戦実績』は使えるか — デビュー戦の予想ファクター検証  主張(PDF新聞の資料):   情報の少ない若駒戦では、種牡馬(父)以上に **兄姉の新馬戦実績** を重視すべき。   兄弟が1着・2着でデビューしているなら、その馬は『Ready-to-Fire(準備万端)
+sire_course_popbucket_backtest.py	other	?	ROI,複勝,残差	stdout	人気薄×父×コース条件に妙味はあるか（新潟直線1000mの観察を一般化して検証）。  きっかけ: 2026-08-02 アイビスSD(新潟芝1000m直線)で   4番カウスリップ(10番人気)・11番ロードトレイル(14番人気)が2-3着。   両馬とも父ロードカナロア＝「人気
+slow3f_distance_backtest.py	other	?	複勝	stdout	末脚下位フラグ(消去クロス slow3f)が短距離で来にくさ予測力を持つか検証。  ユーザー観測: 北九州記念(芝1200m)で1番人気すら末脚下位フラグに該当=スプリントは末脚でなく 前半スピードで決まるので、末脚下位フラグがほぼ全馬に出て非識別では?  検証: 距離帯別に「末
+solid_race_inverse_backtest.py	other	?	残差	stdout	堅いレース条件の逆転検証 — scripts/solid_race_inverse_backtest.py  ユーザー仮説(逆転の発想): 『鉄板/堅いレースの条件が正確に分かれば、その裏返しで 荒れ・大荒れの精度も上がるのでは?』 インフォグラフィック『データで勝つ競馬』/PD
+spurt_index_backtest.py	spurt	jravan.db	ROI,回収,recall,複勝	stdout	末脚指数（上がり3F偏差）バックテスト ───────────────────────────────────────────── 目的: 「指数が高いのに人気がない馬＝妙味」(過小評価の勝ち馬)を、       jravan.db の results.ato3f(個別上がり3F
+spurt_pace_backtest.py	pace	?	ROI,回収,複勝,残差	stdout	上がり3F×レースペースの検証 — scripts/spurt_pace_backtest.py  動画『真の上がり3ハロンの使い方』の主張を検証:   ・上がり3Fはスローペースの時だけ評価すべき(ハイの上がり上位は"バテ差し"で次走危険)   ・狙い目=前走スロー×先行×上が
+spurt_place_backtest.py	spurt	jravan.db	ROI,複勝	stdout	末脚指数 × 複勝ROI 追検証 ＋ 単複乖離との重ね掛け ───────────────────────────────────────────── step1: spurt_index_backtest で出た「6番人気以下×末脚top3 = 複勝率13.4%」を      
+staking_systems_backtest.py	other	?	ROI,的中	stdout	カジノ式の資金管理法(オスカーズグラインド/ダランベール/パーレー/マーチン)を 実際の3連複4点(D鉄板)の結果列で回し、フラットベットと比較する。  きっかけ: 「3連複4点の的中31.5%はルーレットのダズン32.43%とほぼ同じだから           ダズン用の資金管
+stress2_bottomk_backtest.py	other	?	複勝,残差	stdout	スト2(🐎Stress Analystの最終予測が全馬中『下から3』)の閾値を検証する。  ユーザー指摘: 「下から3」は目視でいくつか見て決めただけで根拠が無い。 JV-VANの実データ(leak-free)で本当に良い閾値か、そもそも意味のある切り口かを検証する。  方法: 
+stress_debuff_backtest.py	other	?	ROI,複勝,残差	stdout	🐎 Stress Analyst(乗算デバフ)の各条件を検証する。 仮説: 当日環境ストレス条件に該当する馬は『能力にリミッターが掛かり、人気のわりに走らない』        =過剰評価(危険人気)。 測るもの: 条件発火馬の 複勝率/単ROI と 人気(オッズ)補正残差。 残差
+summer_backtest.py	other	jravan.db	複勝,残差	stdout	夏競馬バックテスト — scripts/summer_backtest.py  検証対象:   ① ハンデ戦×斤量帯別の複勝残差（軽ハンデ消去 / 重ハンデ軸補強）   ② 昇級初戦×季節別の複勝残差（夏の昇級馬は消去候補か）   ③ 洋芝(北海道)×特定種牡馬の複勝残差（キズナ
+tactic1_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	#3 戦術①「前走 補正102-109 スイートスポット × 次走人気落ち」の検証 — tactic1_backtest.py  資料の主張:   前走で補正タイム「102～109」(=基準100より0.2～0.9秒速い)を出して勝った馬は、   次走で昇級戦以外・人気落ち(4～
+tenkai_alert_backtest.py	other	?	ROI,複勝,残差	stdout	🔍 展開妙味アラートの検証（大標本＋z値＋アラート実ロジック）。 ユーザー報告「展開妙味アラートが当たらなすぎる」を裏取りする。  検証する仮説:   (A) 展開恩恵スコア帯別の複勝残差（恩恵高い=人気以上に来るか）   (B) アラート実ロジック=『恩恵ゾーン該当 × 人気薄
+tenkai_bias_backtest.py	other	jravan.db	ROI,複勝,残差	stdout	当日バイアス逆算(empirical_bias)の妙味エッジ検証。  問い: 「同日同場同馬場の前半レースから内枠有利/外枠有利/前残り/差しと判明した日に、        その傾向に合致する馬(枠は事前確定)は人気を超えて好走するか?」 - 描画(傾向の持続)は検証済(trac
+ticket_prune_backtest.py	other	?	ROI,的中	stdout	チケットプルーニング バックテスト。  2-4-7フォーメーション(30点)の全組合せを生成し、各チケットのHarville確率から 期待配当を推定。期待配当がコスト(30×100=¥3,000)未満のトリガミ圏チケットを 間引いてROIが改善するか検証する。ゾーン別(D鉄板/C
+time_pop_overlap_backtest.py	other	?	複勝,残差	stdout	『補正Tトップ3 ∩ 人気トップ3』の重複数は"見送るレース"を当てられるか。  【結論(2026-07-23)】荒れ予測としては priced-in。ただし**軸信頼度の表示としては有効**。    重複数別(holdout2025 / recent2026)     重複0(
+top5_plus_longshot_backtest.py	other	?	-	stdout	ユーザー観測の検証: 3着内のうち2頭が上位ランク(≤5)・残り1頭が伏兵(ランク≥8=7圏外)の 決着が最近/夏競馬に多いか。  『ランク』=強適Ranking Tableの順位(予測スコア順)だが、これは各レースのnetkeibaライブ取得が 必要でオフライン再現不可。→ 人
+toto_escalation_backtest.py	other	jravan.db	的中	stdout	3連複10点×追い上げ(マーチンゲール風)の現実検証。 ユーザー資料: 36倍固定toto風の10段エスカレーション(1点stake=100,100,100,200,200,300,500,600,900,1200/ 累積最大42,000円・10連敗で全損)。これを3連複10点(
+track_change_backtest.py	other	jravan.db	ROI,回収,複勝,残差	stdout	動画『軸馬の選び方』の主張検証: トラック変更(前走→今走の芝/ダ)は軸エッジか? 特に「ダート→芝は単勝回収88%」。  生の単勝ROIは市場効率的で全帯<100%(FLBの再検出)なので、ここでは 人気補正した勝率/複勝率の残差で「人気を超えるエッジか」を厳密に見る。  設計
+trainer_backtest.py	other	?	残差	stdout	調教師(単体)の勝率が着順を予測するか＝オッズを超える妙味があるか検証。 リーク防止のため train(〜2022)で調教師の成績を構築し、test(2023-2025)で評価。 各馬について調教師の「全体勝率」「当コース(場×馬場)勝率」「当距離帯勝率」を引き、 オッズ補正残差
+trainer_shrinkage_backtest.py	other	?	残差	stdout	厩舎「当コース勝率」の妙味ゲートを 生の勝率 → 縮小推定(shrinkage) に変えて劣化しないか検証。  背景: 生の勝率は 5戦1勝でも 20% と出るため 🔴(妙味マーク・閾値≥20%) が誤発火する。 縮小推定は少ない出走数を『そのコースの全体平均勝率』へ引き寄せ、過
+training_backtest.py	training	?	複勝,残差	stdout	調教(坂路HC)が着順を予測するか検証。各馬のレース直前の最終坂路追い切りから  ①4F全体タイムの同日同トレセン偏差(z) ②加速ラップ(終いに向けラップ短縮) を作り、オッズ補正残差(3着内 − オッズ別期待複勝率)で層別。残差>0=人気以上に来る。
+training_signal_backtest.py	training	jravan.db	ROI,複勝,残差	stdout	調教(追い切り時計)は人気を超えるエッジになるか。jravan.db の training を初検証。  発見: jravan.db に training テーブルが505,512件あった(過去メモの「DBに過去調教なし」は誤り)。       ただし cho_date は 20
+trifecta30_cover_backtest.py	trifecta	?	回収,的中	stdout	3連単おすすめエンジン 30点の『表示カバー』測定(アプリは未変更)。  目標(ユーザー): 30点を出したとき、的中3頭が順不同でも表示に出ること。 対象帯: 3連単払戻 0〜70,000円(普通の難易度)。  比較:   現行     … recommend_trifecta
+trifecta_top4_backtest.py	trifecta	jravan.db	ROI,回収,的中	stdout	堅いレース×ランク上位4頭 3連単BOX バックテスト。  仮説: 堅いレース(vlabel D/C)でability_score上位4頭の3連単BOX(24点)は       配当が十分高くROI 100%超えになるか？
+trio_ana_value_backtest.py	trio	jravan.db	ROI,的中	stdout	②穴妙味 バックテスト — 「人気1-穴2の穴を末脚シグナルで選別すると②は良くなるか」 ────────────────────────────────────────────────────────────────────────── 背景: 盲目的な②(人気1-穴2)は検証
+trio_combo_set_backtest.py	trio	?	ROI,複勝	stdout	3連複10点: 馬の点数ではなく『3頭セット』を評価する。  加点対象は馬ではなく組み合わせ。   ① 人気合計   ② 複勝率の積   ③ 積 × 展開相性（レースの先行数に対して、組の前後が噛むか）   ④ 積 × 脚質相性（3頭の脚質がバラけているか。逃げ重複は減点）   
+trio_edge_flow_backtest.py	trio	jravan.db	ROI,的中,複勝	stdout	本丸: 消去軸1頭+検証エッジ流し の3連複ROI検証(追い上げ無し)。 仮説(ユーザー): 相手を人気順でなく『検証エッジで過小評価された穴』で選べばROIが上がる。 最強の穴エッジ=末脚偏差([[verified_spurt_index]]: 6番人気以下×末脚top3が複勝
+trio_flat_roi_backtest.py	trio	jravan.db	ROI,回収,的中	stdout	3連複フラット掛けROI検証(追い上げ無し)。 toto_escalation(追い上げ)で破産確定を示した後の本筋: 『選択そのものに正味の価値があるか』を フラット掛けROIで評価する。3連複の平均回収率は控除率で約75-80%。これを超える (できれば100%超)選択×レー
+trio_gate_ticket_backtest.py	trio	?	ROI,回収,的中	stdout	#3 3連複Gate チケット実ROIバックテスト。 Scanner/3連複Gateの「決着タイプtier × 可変点数」で、実際に買い目を組んで3連複配当に当てる。 tier別に 点数/的中率/ROI/トリガミ率/最大連敗 を出す(回収率ゴール直撃の現実評価)。  tier(t
+trio_partner_select_backtest.py	trio	?	ROI,的中,複勝	stdout	6-7番人気Xの『相手2頭』選び。  馬Xを3着候補にしたとき、どのペアと組むかをレース前特徴でスコアする。 ルールは「6-7番が3着だったレース」からは作らない。 脚質・位置の実測テーブルは train の全3連複正解（人気不問）から凍結。  見るもの:   1) 実際の相手ペ
+trio_pattern_backtest.py	trio	?	ROI,回収,的中	stdout	3連複パターン検証: 勝ち3頭(1-2-3着)の人気構成で  ①人気-人気-穴 ②人気-穴-穴 等の出現頻度・配当・戦略ROIを測る。 人気=ninki<=POP_TH, 穴=ninki>=ANA_TH。payout は100円あたり配当(円)。 戦略ROI = Σ(的中レースの
+trio_prune_keep_backtest.py	trio	?	ROI,複勝	stdout	3連複10点: 9頭から『どの馬を落とすか』で全体捕捉が上がるか。  加点ではない。C群（3着候補として弱い馬）を外して 8/7/6 頭にし、 残った箱を複勝率の積で10点にする。  評価 = 候補選定率 × 残し内10点 = 全体捕捉。 基準は「人気の薄い順に落とす」（＝人気1
+trio_rank10_backtest.py	trio	?	ROI,的中,複勝	stdout	3連複 10点圧縮: 順位付けモデル比較。  主指標 = 使う馬(人気1-K)に正解3頭が揃っているレースの **10点的中**。 20点は救済性能。ROIは1点100円フラット。 現行エンジンは変えず、並べ方だけ holdout で比較する。  モデル:   ①能力+本線   
+trio_selector_backtest.py	trio	?	的中	stdout	3連複パターン・セレクター検証 — 「①/②/鉄板のどれを買うかを当てる」 ────────────────────────────────────────────────────────────────────────── 背景: 勝ち3連複の形は 鉄板(人気3)37% / ①
+trio_third_leg_backtest.py	trio	?	ROI,的中,複勝	stdout	3連複10点: 3着候補だけにデータを足して、人気/複勝の基準を超えられるか。  アプリの順位付けは変えない。holdout・10点的中が採用判定。 目標: 人気1-7・残し内10点が 65.8% → 70%台。67%では複雑化の価値が怪しい。 ROIが大きく崩れないこと。全体捕
+trio_yellow_promote_backtest.py	trio	?	ROI,的中,複勝	stdout	🟡中穴3着型: 6-7番人気を3着役として、複勝積の11-20位から10点へ繰り上げる。  通常レース（3着が5番以内）は、条件が点火しなければ複勝積のまま。 条件は「6-7番が実際に3着だったレース」から作らない。 6-7番人気の馬すべてにレース前の条件を掛け、 満たす馬が3着
+value_factors_backtest.py	other	?	回収,残差	stdout	妙味スキャナの『+ファクター』候補を現代データ(2023-2025)で検証。 資料(Data_Driven_Racing/解体新書)の未検証シグナルが市場を超えて好走するか=オッズ補正残差で確認。 残差>0かつz有意なら『妙味馬の+ファクター』として採用。  検証シグナル(前走=
+value_score_band_backtest.py	other	jravan.db	-	stdout	妙味度(race_value_score)で3連複の狙い目価格帯(オッズ帯)を動かす案の検証。  ユーザー案: レースの妙味度(荒れ度)に応じて3連複の狙い目オッズ帯を可変にしたい。 検証すべき前提: 『妙味度が高いレースほど、実際の勝ち3連複の配当が系統的に高いか』。   YE
+venue_switch_backtest.py	other	jravan.db	ROI,複勝,残差	stdout	地方・中央の使い分け検証 ―― カード4②(ユーザー関心)。  jravan.dbはNAR結果(jyo 30-55・100万走・ketto_num付)も含むので、追加スクレイプ無しで 馬ごとの地方↔中央タイムラインが引ける。各JRA出走の『前走が地方だったか』は前走=発走前に 確
+vh_badge_backtest.py	vh	export CSV	回収,recall	stdout	穴馬ハンター候補の中でバッジ数(検証済みシグナル数)が選別に使えるか検証。  問い: VH精鋭/広域網の中でバッジが多い馬を選ぶと、VHスコア1位をそのまま選ぶより当たるか？ バッジ = 🔵補正T上位/🔥末脚top3/⚡33ラップ/👑騎手top3/🧬血統top3/💰血統回収/🏠厩
+vmatrix_pos_backtest.py	other	jravan.db	-	stdout	Vマトリクス Y軸(隊列ポジション)の予測精度検証。  問い: 『今走の早い位置取り(corner1の相対位置)』を事前に当てるには、   (A) 習性コーナー位置 = 過去走の平均corner1位置(=現build_v_matrixのprof['ten']相当)   (B) 習
+weather_mood_backtest.py	other	jravan.db	ROI,複勝,残差	stdout	②天候×大衆心理の歪みは日本競馬にあるか — 英国EC/SADモデルの日本版検証  仮説(英国 2002-2016年87,402レース):   天候そのものが馬に効くのではなく、**天候がベッターの気分に影響してオッズを歪める**。   英国では雨の日-18.65%ROI/冬のS
+weight_sweep_backtest.py	other	?	recall,複勝	stdout	影響率(ウェイト)を上げると本当に精度が上がるのかを全レースで測る。  発端: 1レース(202603020611・結果11→6→9→10→1)の結果に合わせて 「Lap33の上位3頭に+15、末脚指数の上位3頭に+20…」というウェイト調整案が出た。 これは典型的な後知恵の過学
+weight_video_claim_backtest.py	other	?	ROI,回収,複勝,残差	stdout	動画「馬体重増減だけで消すな」主張の検証。  主張の核:   1) 大型馬ほど有利（400kg未満複勝~7% / 500kg台~25% / 540kg超は回収優秀）   2) -10〜-19kg は切るほど悪くない（複17.3% / 単回収68）      -20kg以上は警戒（
+wind_backtest.py	other	?	ROI,複勝,残差	stdout	風の影響 再検証バックテスト (verified 再調査・改良版)。  旧版は2023-24芝・勝ち馬4角位置のみでr≈+0.049(ほぼ無効)と結論。標本が小さく閾値/交互作用未検証。 今回:   - Open-Meteo archive(ERA5・無料) で 10場×2016

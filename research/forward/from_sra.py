@@ -28,7 +28,7 @@ def _rank_map(scores: dict) -> dict:
     return {u: i + 1 for i, (u, _) in enumerate(ordered)}
 
 
-def capture_sra(race_id, df, extra: dict | None = None) -> None:
+def capture_sra(race_id, df, extra: dict | None = None, directory: str | None = None) -> str | None:
     extra = extra or {}
     ltr_scores = extra.get('ltr_scores') or {}
     vh_scores = extra.get('vh_scores') or {}
@@ -59,12 +59,13 @@ def capture_sra(race_id, df, extra: dict | None = None) -> None:
                 'jockey': row.get('Jockey'),
                 'signal': row.get('Signal'),
             })
-    capture_decision({
+    return capture_decision({
         'odds_source': 'netkeiba_shutuba_scrape',
         'gate': extra.get('gate'),
         'ltr_rank_note': 'ranks stored per horse when scores are passed',
         'race_id': str(race_id),
         'race_key': str(race_id),
+        'analysis_run_id': extra.get('analysis_run_id'),
         'rule_version': extra.get('rule_version') or 'live_sra_observe',
         'score_weights': extra.get('score_weights'),
         'model_versions': extra.get('model_versions'),
@@ -79,5 +80,5 @@ def capture_sra(race_id, df, extra: dict | None = None) -> None:
         'elim_keep': extra.get('elim_keep'),
         'elim_rows': extra.get('elim_rows'),
         'horses': horses,
-    })
+    }, directory)
     del pd

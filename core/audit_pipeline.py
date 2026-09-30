@@ -187,6 +187,19 @@ def record_event(
             payload=json_safe(payload),
             status=status,
         )
+        if owned:
+            # Separate research evidence. Failure must not alter the existing audit
+            # result or a racing decision, but must remain visible to the operator.
+            try:
+                from core import prediction_time_machine as _ptm
+                _ptm.observe_stage(event_id, rid, run_id, stage,
+                                   {'status': status, 'payload': json_safe(payload)})
+            except Exception as snap_error:
+                _append_error(ss, rid, 'SNAPSHOT_SAVE_FAILED', snap_error)
+                import logging
+                logging.getLogger(__name__).error(
+                    'SNAPSHOT_SAVE_FAILED race_id=%s stage=%s: %s',
+                    rid, stage, snap_error)
         return RecordOutcome(True, event_id=event_id, analysis_run_id=run_id)
     except Exception as e:
         _append_error(ss, rid, stage, e)
@@ -794,6 +807,20 @@ def record_recommendation(
         ss = _session_state(session)
         ss[_recommendation_key(rid)] = out.event_id
         ss[f'audit_recommendation_payload_{rid}'] = payload
+        if store is None:
+            try:
+                from core import prediction_time_machine as _ptm
+                fin = _ptm.finalize_run_snapshot_if_base(rid, out.analysis_run_id)
+                if fin.get('skipped'):
+                    _append_error(ss, rid, 'SNAPSHOT_ASSEMBLE_SKIPPED',
+                                  fin.get('reason') or 'no_sra_snapshot')
+                elif not fin.get('ok'):
+                    raise ValueError(fin.get('reason') or 'finalize failed')
+            except Exception as snap_error:
+                _append_error(ss, rid, 'SNAPSHOT_SAVE_FAILED', snap_error)
+                import logging
+                logging.getLogger(__name__).error(
+                    'SNAPSHOT_SAVE_FAILED finalize race_id=%s: %s', rid, snap_error)
     return out
 
 

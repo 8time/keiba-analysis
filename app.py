@@ -2164,13 +2164,32 @@ if nav == "💰 BetSync（資金管理）":
                     st.info("精算済みベットがまだありません。下のフォームで予測→結果を記録してください。")
                 else:
                     lm1, lm2, lm3, lm4 = st.columns(4)
-                    lm1.metric("実購入(精算済)", f"{_rep.get('bets', 0)}件")
-                    lm2.metric("的中率(実購入)", f"{_rep.get('hit_rate', 0)}%")
+                    _act_n = _rep.get('bets', 0)
+                    lm1.metric("実購入(精算済)", f"{_act_n}件",
+                               help=money.evaluation_sample_label(_act_n).get('detail') or '')
+                    lm2.metric("的中率(実購入)", f"{_rep.get('hit_rate', 0)}%",
+                               help=f"評価 n={_act_n}")
                     lm3.metric("回収率(実購入)", f"{_rep.get('roi', 0)}%",
-                               f"{_rep.get('profit', 0):+,}円")
+                               f"{_rep.get('profit', 0):+,}円",
+                               help=f"評価 n={_act_n}")
                     _brier_v = _rep.get('brier')
+                    _brier_n = _rep.get('brier_n', 0)
                     lm4.metric("Brier(較正)", f"{_brier_v}" if _brier_v is not None else "—",
                                help="較正用予測のみ。0に近いほど予測確率が正確（≤0.25が目安）")
+                    st.caption(money.evaluation_sample_label(_brier_n)['label']
+                               + ('（較正用ベット件数）' if _brier_n else ''))
+                    _bd = _rep.get('brier_decomposition')
+                    if _bd:
+                        with st.expander("Brier分解（監査用・購入ロジックには未使用）", expanded=False):
+                            st.caption("Reliability=予測確率の較正ズレ / Resolution=勝ち負けの識別力 / "
+                                       "Uncertainty=結果そのものの不確実性。"
+                                       " BS ≈ Reliability − Resolution + Uncertainty")
+                            bd1, bd2, bd3, bd4 = st.columns(4)
+                            bd1.metric("Reliability", f"{_bd['reliability']:.4f}")
+                            bd2.metric("Resolution", f"{_bd['resolution']:.4f}")
+                            bd3.metric("Uncertainty", f"{_bd['uncertainty']:.4f}")
+                            bd4.metric("整合Δ", f"{_bd['identity_delta']:.2e}",
+                                       help="元Brierと分解の差（0に近いほど一致）")
                     _srows = _lg.settled_rows()
                     if _srows:
                         _lc = 0; _lb = 0; _lt = []
@@ -2708,6 +2727,15 @@ if nav == "🏠 Single Race Analysis":
         if must_fetch:
             with st.spinner("Fetching data from web..."):
                 df = scraper.get_race_data(race_id_input)
+                # Prediction Time Machine: retain the returned input before enrichment.
+                # A completion timestamp is not proof of each upstream source's fetch time.
+                try:
+                    import copy as _ptm_copy
+                    st.session_state[f'_ptm_raw_{race_id_input}'] = _ptm_copy.deepcopy(df)
+                    st.session_state[f'_ptm_fetch_completed_{race_id_input}'] = datetime.now().astimezone().isoformat()
+                    st.session_state[f'_ptm_enrichment_{race_id_input}'] = []
+                except Exception as _ptm_raw_e:
+                    st.warning(f"SNAPSHOT_SAVE_FAILED (raw capture): {_ptm_raw_e}")
                 # Keep metadata safe from pandas operations that wipe .attrs
                 _meta = df.attrs.get('metadata', {}) if hasattr(df, 'attrs') else {}
                 
@@ -2718,6 +2746,18 @@ if nav == "🏠 Single Race Analysis":
                     d_val = df['CurrentDistance'].iloc[0] if 'CurrentDistance' in df.columns else None
                     
                     blood_json = main.get_bloodline_data(str(race_id_input), track_override=t_type, dist_override=d_val)
+                    try:
+                        from core import prediction_time_machine as _ptm_blood
+                        st.session_state[f'_ptm_enrichment_{race_id_input}'].append({
+                            'source': 'NETKEIBA', 'provider': 'main.get_bloodline_data',
+                            'fetched_at': _ptm_blood.now_jst(),
+                            'timestamp_semantics': 'available_no_later_than',
+                            'values': {str(x.get('number')): {
+                                'sire': x.get('sire'), 'broodmareSire': x.get('broodmareSire'),
+                                'bonus': x.get('bonus')}
+                                for x in (blood_json or {}).get('data', [])}})
+                    except Exception:
+                        pass
                     if blood_json and "data" in blood_json:
                         blood_data_list = blood_json.get("data", [])
                         if blood_data_list and df is not None and not df.empty:
@@ -2785,6 +2825,15 @@ if nav == "🏠 Single Race Analysis":
                 # --- [NEW] Fetch detailed shutuba data (Barei, Futan, Weight, etc.) ---
                 try:
                     shutuba_extra = scraper.fetch_shutuba_data(race_id_input)
+                    try:
+                        from core import prediction_time_machine as _ptm_shutuba
+                        st.session_state[f'_ptm_enrichment_{race_id_input}'].append({
+                            'source': 'NETKEIBA', 'provider': 'scraper.fetch_shutuba_data',
+                            'fetched_at': _ptm_shutuba.now_jst(),
+                            'timestamp_semantics': 'available_no_later_than',
+                            'values': {str(k): v for k, v in (shutuba_extra or {}).items()}})
+                    except Exception:
+                        pass
                     if shutuba_extra and df is not None and not df.empty:
                         for umaban, info in shutuba_extra.items():
                             # Find matching horse in df by Umaban
@@ -2815,6 +2864,16 @@ if nav == "🏠 Single Race Analysis":
                     
                     logger.info(f"[LabFetcher] Converted Netkeiba ID {race_id_input} to KeibaLab ID {lab_race_id}")
                     lab_weights = lab_fetcher.fetch_horse_weights(lab_race_id)
+                    try:
+                        from core import prediction_time_machine as _ptm_lab
+                        st.session_state[f'_ptm_enrichment_{race_id_input}'].append({
+                            'source': 'LIVE', 'provider': 'core.lab_fetcher.fetch_horse_weights',
+                            'fetched_at': _ptm_lab.now_jst(),
+                            'timestamp_semantics': 'available_no_later_than',
+                            'values': {str(k): {'馬体重': v}
+                                       for k, v in (lab_weights or {}).items()}})
+                    except Exception:
+                        pass
                     if lab_weights and df is not None and not df.empty:
                         if '馬体重' not in df.columns:
                             df['馬体重'] = "-"
@@ -2926,6 +2985,18 @@ if nav == "🏠 Single Race Analysis":
                         # 展開適合度スコア / 前崩れ影響度 / 密集ペナルティラベル を計算
                         try:
                             _pace_pre = calculator.analyze_pace_profile(df)
+                            try:
+                                from core import prediction_time_machine as _ptm_pre
+                                from core import audit_pipeline as _ap_pos
+                                _ptm_pre.record_component(
+                                    race_id_input, 'position_stage',
+                                    {'horse_rows': df.to_dict('records')},
+                                    {'position_score_map': _pace_pre.get('position_score_map'),
+                                     'positional_map': _pace_pre.get('positional_map'),
+                                     'pace_label': _pace_pre.get('pace_label')},
+                                    analysis_run_id=_ap_pos.current_run_id(race_id_input))
+                            except Exception as _ptm_pre_error:
+                                logger.error('SNAPSHOT_SAVE_FAILED position_stage: %s', _ptm_pre_error)
                             _deploy_info = race_analysis_tools.get_deployment_match_rate(
                                 df, _pace_pre['positional_map'], _pace_pre['pace_label']
                             )
@@ -3188,6 +3259,9 @@ if nav == "🏠 Single Race Analysis":
                             _sum_olist, meta=meta, jyo=str(race_id_input)[4:6],
                             surface=str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '',
                             dist=_sum_dist, n_horses=len(df), pace_z=_sum_pz)
+                        _ent = _vs_sum.odds_entropy_struct(_sum_olist, len(df))
+                        if _ent:
+                            st.session_state[f'_odds_entropy_{race_id_input}'] = _ent
                         st.session_state[f'_race_value_{race_id_input}'] = _rv  # 3連複エンジンの帯連動用に共有
                         _rv_col = {'S': '#E63946', 'A': '#F4A261', 'B': '#2A9D8F',
                                    'C': '#457B9D', 'D': '#888'}.get(str(_rv['label'])[:1], '#888')
@@ -3203,6 +3277,16 @@ if nav == "🏠 Single Race Analysis":
                         with _rv_c2:
                             st.caption("**🔍 妙味度**=Race Scannerと同じ荒れ妙味指標(0-100)。高いほど1番人気が信頼しにくく"
                                        "中穴が来やすい＝②穴妙味向き。予想時の『どこまで手を広げるか』の目安に。")
+                            if _ent:
+                                st.markdown(
+                                    f"<div style='background:#FFEB3B;border-radius:8px;padding:10px 14px;"
+                                    f"margin:6px 0;line-height:1.45;'>"
+                                    f"<span style='color:#1B5E20;font-weight:700;font-size:15px;'>"
+                                    f"市場の争い頭数: 出走 <strong>{int(_ent['field_size'])}</strong> 頭 / "
+                                    f"有効頭数 <strong>{_ent['eff_n']:.2f}</strong> 頭 "
+                                    f"（オッズのばらつきから見た『実質何頭の争いか』。数が大きいほど混戦）"
+                                    f"</span></div>",
+                                    unsafe_allow_html=True)
                             if _rv['breakdown']:
                                 st.caption("内訳: " + " / ".join(_rv['breakdown']))
                     except Exception:
@@ -3933,14 +4017,20 @@ if nav == "🏠 Single Race Analysis":
                         # 📰 新聞発行: 展開分析&波乱確率を紙面用に保存
                         try:
                             from core import newspaper as _np_up
-                            _np_up.write_analysis_snapshot(race_id_input, 'pace_upset', {
+                            _pu_snap = {
                                 k: _pace.get(k) for k in (
                                     'pace_label', 'pace_estimate', 'upset_prob',
                                     'front_collapse_risk', 'closer_advantage', 'scenario',
                                     'upset_factors', 'front_count', 'weighted_front_density',
                                     'front_density', 'makuri_count', 'ability_variance',
                                     'odds_concentration', 'upset_breakdown',
-                                    'positional_map', 'front_threshold')})
+                                    'positional_map', 'front_threshold')}
+                            _pu_ent = st.session_state.get(f'_odds_entropy_{race_id_input}')
+                            if isinstance(_pu_ent, dict):
+                                _pu_snap['odds_entropy'] = _pu_ent.get('odds_entropy')
+                                _pu_snap['eff_n'] = _pu_ent.get('eff_n')
+                                _pu_snap['field_size'] = _pu_ent.get('field_size')
+                            _np_up.write_analysis_snapshot(race_id_input, 'pace_upset', _pu_snap)
                         except Exception:
                             pass
 
@@ -4607,72 +4697,6 @@ if nav == "🏠 Single Race Analysis":
                                     'trainer': str(_pm_r.get('Trainer', '') or ''),
                                 })
 
-                            # --- 🤝 netkeiba AI展開予測(4コーナー)との照合(表示のみ・エッジ主張なし) ---
-                            # netkeiba「AI展開予測」の4コーナー隊列帯と、当アプリ展開マップの到達位置帯を
-                            # 前40%/後35%で比較。両AIが同帯なら🏆(前=有利)/💀(後=危険)を点灯する。
-                            # 展開恩恵はpriced-in([[verified_tenkai_priced_in]])のため合意の可視化のみ。
-                            try:
-                                st.markdown("**🤝 netkeiba AI展開予測との照合（4コーナー隊列 × 到達位置）**")
-                                st.caption("netkeibaのAI展開予測『4コーナー隊列』と当アプリの到達位置を"
-                                           "前40%/後35%の帯で比較。両AIが同帯なら 🏆(前=有利) / 💀(後=危険)。"
-                                           "※展開恩恵はpriced-inのため合意の可視化のみ・エッジ主張なし。")
-                                _nkt_key = f"nkt_bands_{race_id_input}"
-                                if st.button("🔄 netkeiba AI展開を取得して照合", key=f"btn_nkt_{race_id_input}"):
-                                    with st.spinner("netkeiba AI展開予測を取得中..."):
-                                        try:
-                                            from core import ai_tenkai as _ait
-                                            _nkt_pos = _ait.fetch_tenkai_positions(race_id_input)
-                                            st.session_state[f"nkt_pos_{race_id_input}"] = _nkt_pos
-                                            _nkt_c4 = {u: (v or {}).get("corner4")
-                                                       for u, v in (_nkt_pos or {}).items()
-                                                       if (v or {}).get("corner4") is not None}
-                                            st.session_state[_nkt_key] = _ait.band_by_left(_nkt_c4)
-                                        except Exception as _nkt_e:
-                                            st.session_state[_nkt_key] = {}
-                                            st.warning(f"netkeiba AI展開の取得に失敗: {_nkt_e}")
-                                if st.session_state.get(_nkt_key):
-                                    from core import ai_tenkai as _ait
-                                    _nkt_bands = st.session_state[_nkt_key]
-                                    _app_left = {h['umaban']: h['score'] for h in _pm_horses}
-                                    _app_bands = _ait.band_by_left(_app_left)
-                                    _icons = _ait.agreement_icons(_nkt_bands, _app_bands)
-                                    # 💀(危険位置一致)を🧹消去クロス『展開2』へディスク橋渡し
-                                    try:
-                                        from core import score_cache as _sc_t2
-                                        _sc_t2.write_tenkai_danger(
-                                            race_id_input,
-                                            {u for u, v in _icons.items() if v == '💀'})
-                                    except Exception:
-                                        pass
-                                    _nkt_rows = []
-                                    for _h in sorted(_pm_horses, key=lambda x: x['umaban']):
-                                        _u = _h['umaban']
-                                        _nkt_rows.append({
-                                            '馬番': _u, '馬名': _h['name'],
-                                            'アプリ帯': _app_bands.get(_u, '—'),
-                                            'netkeiba4角': _nkt_bands.get(_u, '—'),
-                                            '合意': _icons.get(_u, ''),
-                                        })
-                                    _nkt_df = pd.DataFrame(_nkt_rows)
-                                    def _nkt_dan_row(_r):  # 💀(危険位置一致)の行を薄紫で塗る
-                                        return (['background-color:#DCC2FF'] * len(_r)
-                                                if _r.get('合意') == '💀' else [''] * len(_r))
-                                    try:
-                                        st.dataframe(_nkt_df.style.apply(_nkt_dan_row, axis=1),
-                                                     hide_index=True, use_container_width=True)
-                                    except Exception:
-                                        st.dataframe(_nkt_df, hide_index=True, use_container_width=True)
-                                    _n_win = sum(1 for v in _icons.values() if v == '🏆')
-                                    _n_dan = sum(1 for v in _icons.values() if v == '💀')
-                                    st.caption(f"🏆 有利位置一致 {_n_win}頭 ／ 💀 危険位置一致 {_n_dan}頭")
-                                elif _nkt_key in st.session_state:
-                                    st.caption("netkeiba AI展開予測の位置データが取得できませんでした"
-                                               "（未公開レース/AI展開非対応の可能性）。")
-                                st.markdown("---")
-                            except Exception as _nkt_outer:
-                                import logging as _lg
-                                _lg.getLogger(__name__).warning(f"[AITenkai] {_nkt_outer}")
-
                             # 距離: metadata → CurrentDistance 列の順でフォールバック
                             _pm_dist = meta.get('distance')
                             if not _pm_dist and 'CurrentDistance' in df.columns and not df.empty:
@@ -4688,12 +4712,19 @@ if nav == "🏠 Single Race Analysis":
                             _pm_surf = str(df['CurrentSurface'].iloc[0]) if 'CurrentSurface' in df.columns and not df.empty else '芝'
                             _pm_layout = _pmap.get_course_layout(_pm_venue, _pm_surf, _pm_dist)
                             # JRA-VAN実データをDBから取得（同馬場・距離近接の過去8走を条件・直近重みで集計。レース単位でキャッシュ）
-                            _pm_prof_key = f"jv_pace_prof_{race_id_input}_{_pm_surf}_{_pm_dist}"
+                            _pm_date = df['RaceDate'].iloc[0] if 'RaceDate' in df.columns and not df.empty else meta.get('date')
+                            _pm_cutoff = _pmap.history_cutoff(_pm_date)
+                            _pm_prof_key = f"jv_pace_prof_v2_{race_id_input}_{_pm_surf}_{_pm_dist}_{_pm_cutoff}"
                             if _pm_prof_key not in st.session_state:
                                 st.session_state[_pm_prof_key] = _pmap.fetch_jv_profiles(
                                     [h['name'] for h in _pm_horses], max_runs=8,
-                                    surface=_pm_surf, distance=_pm_dist,
+                                    surface=_pm_surf, distance=_pm_dist, before_key=_pm_cutoff,
                                 )
+                                try:
+                                    from core import prediction_time_machine as _ptm_jv
+                                    st.session_state[_pm_prof_key + '_fetched_at'] = _ptm_jv.now_jst()
+                                except Exception:
+                                    pass
                             _pm_profiles = st.session_state[_pm_prof_key]
 
                             # 直線の風補正（任意・5m/s以上＆向かい/追い風で発火）。
@@ -4747,12 +4778,16 @@ if nav == "🏠 Single Race Analysis":
 
                             # 強適Ranking Table由来の決め手・適性・総合力を直線(到達=着順)位置へ反映
                             def _pm_num(v):
+                                if isinstance(v, bool):
+                                    return None
                                 try:
                                     f = float(v)
-                                    return f if f == f else None  # NaN除外
+                                    return f if math.isfinite(f) else None
                                 except (TypeError, ValueError):
                                     return None
                             _pm_extras = {}
+                            _pm_popularity = {}
+                            _pm_odds = {}
                             for _, _er in df.iterrows():
                                 try:
                                     _eu = int(_er['Umaban'])
@@ -4770,8 +4805,12 @@ if nav == "🏠 Single Race Analysis":
                                     _ex['power'] = -_bv              # 総合戦闘力: 大きいほど良い→反転
                                 # 人気/単勝オッズ: 市場の総意（最強の単一指標）。小さいほど上位人気=良い
                                 _pv = _pm_num(_er.get('Popularity')) if 'Popularity' in df.columns else None
+                                _ov = _pm_num(_er.get('Odds')) if 'Odds' in df.columns else None
+                                if _pv is not None and 0 < _pv < 99:
+                                    _pm_popularity[_eu] = _pv
+                                if _ov is not None and 0 < _ov < 999:
+                                    _pm_odds[_eu] = _ov
                                 if _pv is None or _pv >= 99:
-                                    _ov = _pm_num(_er.get('Odds')) if 'Odds' in df.columns else None
                                     _pv = _ov if (_ov is not None and _ov > 0 and _ov < 999) else None
                                 if _pv is not None:
                                     _ex['pop'] = _pv
@@ -4781,14 +4820,110 @@ if nav == "🏠 Single Race Analysis":
                             _pm_ctx = _pmap.build_pace_context(
                                 _pm_horses, _pm_profiles, _pm_dist, _pm_surf,
                                 _pm_layout, _pm_wind)
+                            try:
+                                from core import prediction_time_machine as _ptm_pace
+                                _ptm_pace.record_component(
+                                    race_id_input, 'pace_4corner',
+                                    {'horses': _pm_horses, 'jv_profiles': _pm_profiles,
+                                     'distance': _pm_dist, 'surface': _pm_surf,
+                                     'layout': _pm_layout, 'wind': _pm_wind,
+                                     'history_cutoff': _pm_cutoff},
+                                    _pm_ctx,
+                                    provenance={'jv_profiles': {'source': 'JV',
+                                                               'fetched_at': st.session_state.get(
+                                                                   _pm_prof_key + '_fetched_at'),
+                                                               'as_of': _pm_cutoff}})
+                            except Exception as _ptm_pace_error:
+                                logger.error('SNAPSHOT_SAVE_FAILED pace_4corner: %s', _ptm_pace_error)
                             # 3連複エンジン等から参照するため展開コンテキストを保存
                             st.session_state[f'_pace_ctx_{race_id_input}'] = _pm_ctx
-                            # 直線(到達=着順)位置: 4角位置+決め手+適性+総合力+人気の合成(紙面の展開図はこちらを表示)
+                            # 直線(到達=着順)位置: 4角位置+決め手+適性+総合力+人気の合成(アプリ直線局面用。紙面は4角位置を表示)
+                            _pm_diagnostics = {}
                             try:
                                 _pm_finish = _pmap.predict_finish(
-                                    _pm_horses, _pm_profiles, _pm_ctx, extras=_pm_extras)
+                                    _pm_horses, _pm_profiles, _pm_ctx,
+                                    extras=_pm_extras, diagnostics=_pm_diagnostics)
                             except Exception:
                                 _pm_finish = {}
+                            try:
+                                from core import prediction_time_machine as _ptm_goal
+                                _ptm_goal.record_component(
+                                    race_id_input, 'pace_map_goal',
+                                    {'horses': _pm_horses, 'jv_profiles': _pm_profiles,
+                                     'pace_context': _pm_ctx, 'extras': _pm_extras,
+                                     'popularity': _pm_popularity, 'odds': _pm_odds},
+                                    {'finish': _pm_finish,
+                                     'decomposition': _pm_diagnostics,
+                                     'order': sorted(_pm_finish,
+                                                     key=lambda u: (_pm_finish[u], u))})
+                            except Exception as _ptm_goal_error:
+                                logger.error('SNAPSHOT_SAVE_FAILED pace_map_goal: %s', _ptm_goal_error)
+                            # --- 🤝 netkeiba AI展開予測(4コーナー)との照合(表示のみ・エッジ主張なし) ---
+                            # netkeiba「AI展開予測」の4コーナー隊列帯と、当アプリ展開マップの4コーナー位置帯を
+                            # 前40%/後35%で比較。両AIが同帯なら🏆(前=有利)/💀(後=危険)を点灯する。
+                            # 展開恩恵はpriced-in([[verified_tenkai_priced_in]])のため合意の可視化のみ。
+                            try:
+                                st.markdown("**🤝 netkeiba AI展開予測との照合（4コーナー隊列同士）**")
+                                st.caption("netkeibaのAI展開予測『4コーナー隊列』と当アプリの4コーナー位置を"
+                                           "前40%/後35%の帯で比較。両AIが同帯なら 🏆(前=有利) / 💀(後=危険)。"
+                                           "※展開恩恵はpriced-inのため合意の可視化のみ・エッジ主張なし。")
+                                _nkt_key = f"nkt_bands_{race_id_input}"
+                                if st.button("🔄 netkeiba AI展開を取得して照合", key=f"btn_nkt_{race_id_input}"):
+                                    with st.spinner("netkeiba AI展開予測を取得中..."):
+                                        try:
+                                            from core import ai_tenkai as _ait
+                                            _nkt_pos = _ait.fetch_tenkai_positions(race_id_input)
+                                            st.session_state[f"nkt_pos_{race_id_input}"] = _nkt_pos
+                                            _nkt_c4 = {u: (v or {}).get("corner4")
+                                                       for u, v in (_nkt_pos or {}).items()
+                                                       if (v or {}).get("corner4") is not None}
+                                            st.session_state[_nkt_key] = _ait.band_by_left(_nkt_c4)
+                                        except Exception as _nkt_e:
+                                            st.session_state[_nkt_key] = {}
+                                            st.warning(f"netkeiba AI展開の取得に失敗: {_nkt_e}")
+                                if st.session_state.get(_nkt_key):
+                                    from core import ai_tenkai as _ait
+                                    _nkt_bands = st.session_state[_nkt_key]
+                                    _app_left = _pm_ctx['pos4']
+                                    _app_bands = _ait.band_by_left(_app_left)
+                                    _icons = _ait.agreement_icons(_nkt_bands, _app_bands)
+                                    # 💀(危険位置一致)を🧹消去クロス『展開2』へディスク橋渡し
+                                    try:
+                                        from core import score_cache as _sc_t2
+                                        _sc_t2.write_tenkai_danger(
+                                            race_id_input,
+                                            {u for u, v in _icons.items() if v == '💀'})
+                                    except Exception:
+                                        pass
+                                    _nkt_rows = []
+                                    for _h in sorted(_pm_horses, key=lambda x: x['umaban']):
+                                        _u = _h['umaban']
+                                        _nkt_rows.append({
+                                            '馬番': _u, '馬名': _h['name'],
+                                            'アプリ帯': _app_bands.get(_u, '—'),
+                                            'netkeiba4角': _nkt_bands.get(_u, '—'),
+                                            '合意': _icons.get(_u, ''),
+                                        })
+                                    _nkt_df = pd.DataFrame(_nkt_rows)
+                                    def _nkt_dan_row(_r):  # 💀(危険位置一致)の行を薄紫で塗る
+                                        return (['background-color:#DCC2FF'] * len(_r)
+                                                if _r.get('合意') == '💀' else [''] * len(_r))
+                                    try:
+                                        st.dataframe(_nkt_df.style.apply(_nkt_dan_row, axis=1),
+                                                     hide_index=True, use_container_width=True)
+                                    except Exception:
+                                        st.dataframe(_nkt_df, hide_index=True, use_container_width=True)
+                                    _n_win = sum(1 for v in _icons.values() if v == '🏆')
+                                    _n_dan = sum(1 for v in _icons.values() if v == '💀')
+                                    st.caption(f"🏆 有利位置一致 {_n_win}頭 ／ 💀 危険位置一致 {_n_dan}頭")
+                                elif _nkt_key in st.session_state:
+                                    st.caption("netkeiba AI展開予測の位置データが取得できませんでした"
+                                               "（未公開レース/AI展開非対応の可能性）。")
+                                st.markdown("---")
+                            except Exception as _nkt_outer:
+                                import logging as _lg
+                                _lg.getLogger(__name__).warning(f"[AITenkai] {_nkt_outer}")
+
                             # 📰 新聞発行: 想定隊列/ペースを紙面用に保存
                             try:
                                 from core import newspaper as _np_pm
@@ -4828,6 +4963,37 @@ if nav == "🏠 Single Race Analysis":
                                 _pm_fig = _pmap.build_figure(_pm_data, turn=_pm_turn, title=_pm_title,
                                                              push_umabans=_pm_push)
                                 st.plotly_chart(_pm_fig, use_container_width=True, key="pace_map_fig")
+                                # Shadow only: never pass these ranks to the plotted map, rear cache,
+                                # elimination, tickets, or purchase pipeline.
+                                try:
+                                    _pm_shadow = _pmap.predict_finish_shadow(
+                                        _pm_horses, _pm_profiles, _pm_ctx, _pm_extras,
+                                        popularity=_pm_popularity, odds=_pm_odds)
+                                    with st.expander("🧪 ゴール予想の入力整合性（参考・判定には未使用）"):
+                                        _old_order = sorted(_pm_finish, key=lambda u: (_pm_finish[u], u))
+                                        _new_order = sorted(_pm_shadow['finish'],
+                                                            key=lambda u: (_pm_shadow['finish'][u], u))
+                                        _old_rank = {u: i + 1 for i, u in enumerate(_old_order)}
+                                        _new_rank = {u: i + 1 for i, u in enumerate(_new_order)}
+                                        st.dataframe(pd.DataFrame([
+                                            {'馬番': h['umaban'], '馬名': h['name'],
+                                             '現行ゴール予想': _old_rank.get(h['umaban']),
+                                             '尺度統一shadow': _new_rank.get(h['umaban'])}
+                                            for h in _pm_horses
+                                        ]), hide_index=True, use_container_width=True)
+                                        _sources = _pm_shadow['provenance']
+                                        st.caption('入力元（観測頭数/全頭）: ' + ' / '.join(
+                                            f"{k}={v['source']}({v['observed']}/{v['total']})"
+                                            for k, v in _sources.items()))
+                                        st.caption(f"比較版: {_pm_shadow['model_version']} ｜ "
+                                                   f"JV履歴の対象日: {_pm_cutoff}より前 ｜ "
+                                                   "オッズ取得時刻: 保存情報なし")
+                                        st.caption("shadowは購入・消去・PDF・保存値に反映しません。"
+                                                   "異なる尺度の馬ごとの混合を避けた比較であり、精度改善は未検証です。")
+                                except Exception as _shadow_error:
+                                    import logging as _pm_logging
+                                    _pm_logging.getLogger(__name__).warning(
+                                        "[PaceShadow] %s", _shadow_error)
                                 # 最終直線で後方の馬を🧹消去クロステーブルへ橋渡し(ディスク保存)
                                 try:
                                     from core import score_cache as _sc_rear
@@ -4840,9 +5006,9 @@ if nav == "🏠 Single Race Analysis":
                                     "（同馬場・近距離の過去8走を条件＆直近重みで集計。テン速力＝(走破タイム−上がり3F)/(距離−600)×600 を"
                                     "メンバー内z-score化し、コーナー履歴と合成して局面別ポジションを推定）｜ "
                                     "🔴逃げ 🟠先行 🔵差し 🟣追込 ｜ 下=内ラチ・右=前方。"
-                                    "**【直線】は4角位置に強適Ranking Tableの〈決め手(上がり3F)・適性・総合戦闘力〉を合成した"
-                                    "到達(着順)イメージ＝後方一気の差し馬も前方に描画**します。"
-                                    "**円の左の黄色≫＝差し切り限界ラインで余裕+1.5秒以上＝直線で前へ大きく差し込む脚**"
+                                    "**【直線→ゴール予想】は4角位置と人気・決め手・適性・総合力を合成した着順イメージ**です。"
+                                    "**黄色≫は仮定した馬身差と自己ベスト上がりに基づく参考表示で、"
+                                    "描画順位・3着内可能性の判定には使いません。**"
                                     "(展開恩恵は人気に織込み済み＝表示精度の向上でエッジ主張ではない)。"
                                     "スライダーで局面を切替。想定であり実際の隊列を保証するものではありません。"
                                 ))
@@ -6605,14 +6771,19 @@ if nav == "🏠 Single Race Analysis":
                     except Exception:
                         pass
                     # Track A: 判断時点の観測のみ。買い目・閾値は変えない。失敗しても SRA は継続。
+                    _fwd_captured_at = None
+                    _fwd_run_id = None
                     try:
+                        from core import audit_pipeline as _ap_fwd
                         from core import score_cache as _sc_fwd
                         from research.forward.from_sra import capture_sra as _fwd_sra
-                        _fwd_sra(race_id_input, df, {
+                        _fwd_run_id = _ap_fwd.current_run_id(race_id_input)
+                        _fwd_captured_at = _fwd_sra(race_id_input, df, {
                             'score_weights': st.session_state.get('score_weights_main'),
                             'elim_keep': sorted(_sc_fwd.read_elim_keep(race_id_input) or []),
                             'gate': _sc_fwd.read_gate(race_id_input),
                             'ltr_scores': st.session_state.get(f'_ltr_raw_{race_id_input}') or {},
+                            'analysis_run_id': _fwd_run_id,
                         })
                     except Exception:
                         pass
@@ -6629,6 +6800,41 @@ if nav == "🏠 Single Race Analysis":
                                 status='ok')
                             if not _sra_out.ok:
                                 st.warning(f"監査記録(SRA)失敗: {_sra_out.error}")
+                            # Observation only: no saved value feeds a prediction or purchase.
+                            try:
+                                from core import prediction_time_machine as _ptm
+                                _ptm_sid = _ptm.capture_sra(
+                                    race_id_input,
+                                    st.session_state.get(f'_ptm_raw_{race_id_input}'),
+                                    df, st.session_state.get('race_metadata'),
+                                    capture_origin='production',
+                                    analysis_run_id=_sra_out.analysis_run_id,
+                                    source_fetched_at=st.session_state.get(
+                                        f'_ptm_fetch_completed_{race_id_input}'),
+                                    enrichment_events=st.session_state.get(
+                                        f'_ptm_enrichment_{race_id_input}'),
+                                    audit_payload=_ap_sra.build_sra_payload(
+                                        df, race_id_input, _elim_before_sra,
+                                        _elim_after_sra,
+                                        meta=st.session_state.get('race_metadata')))
+                                try:
+                                    from research.forward.ptm_link import record_link
+                                    record_link(
+                                        race_id_input, _sra_out.analysis_run_id,
+                                        ptm_snapshot_id=_ptm_sid,
+                                        forward_captured_at=_fwd_captured_at)
+                                except Exception as _link_e:
+                                    logger.error('forward/ptm link failed: %s', _link_e)
+                            except Exception as _ptm_e:
+                                st.warning(f"SNAPSHOT_SAVE_FAILED: {_ptm_e}")
+                            else:
+                                try:
+                                    _ptm.finalize_run_snapshot(
+                                        race_id_input, _sra_out.analysis_run_id)
+                                except Exception as _ptm_fin_e:
+                                    logger.error(
+                                        'SNAPSHOT_SAVE_FAILED finalize after SRA race_id=%s: %s',
+                                        race_id_input, _ptm_fin_e)
                         except Exception as _ap_sra_e:
                             st.warning(f"監査記録(SRA)失敗: {_ap_sra_e}")
                     try:
@@ -9054,7 +9260,8 @@ if nav == "🏠 Single Race Analysis":
                                     '黄金ライン': _mi['gold'] or '-',
                                     '騎手込みスコア': round(_ps * _adj, 1),
                                     '内訳': _mi['note'],
-                                    '騎手チェック表（参考）': _j5_checklist.display_text(_rr.get('Jockey')),
+                                    '騎手チェック表（参考）': _j5_checklist.display_text(
+                                        _rr.get('Jockey'), for_j5=True),
                                     '_base': _base_rank.get(_u5, 99),
                                 })
                             _j5_df = pd.DataFrame(_j5_rows).sort_values('騎手込みスコア', ascending=False).reset_index(drop=True)
@@ -9540,6 +9747,17 @@ if nav == "🏠 Single Race Analysis":
                         if _aim_key0 not in st.session_state:
                             st.session_state[_aim_key0] = _cv.build_edge_sets(df, meta, race_id_input)
                         _aim0 = st.session_state[_aim_key0]
+                        try:
+                            from core import prediction_time_machine as _ptm_vh
+                            _ptm_vh.record_component(
+                                race_id_input, 'vh_edge_sets',
+                                {'horse_rows': df.to_dict('records'), 'race_metadata': meta},
+                                _aim0,
+                                provenance={'market': {'source': 'UNKNOWN',
+                                                       'fetched_at': None},
+                                            'model': 'core.consensus_view.build_edge_sets'})
+                        except Exception as _ptm_vh_error:
+                            logger.error('SNAPSHOT_SAVE_FAILED vh_edge_sets: %s', _ptm_vh_error)
                         # 荒れ予報レジーム(trio_lean)
                         _cv_olist = pd.to_numeric(df['Odds'], errors='coerce').dropna().tolist() if 'Odds' in df.columns else []
                         try:
@@ -12998,7 +13216,6 @@ if nav == "🧹 消去フィルター":
             _edf = _ee_kf.apply_verdict(_erows, race_id_input, border_cnt=_border_cnt)
             try:
                 from core import audit_pipeline as _ap_elim
-                _ap_elim.ensure_run_id(race_id_input, 'elim_page')
                 _elim_sig = (_border_cnt, tuple(_ap_elim.build_elim_payload(
                     _erows, _edf, _border_cnt, race_id_input).get('after_set') or []))
                 _el_out = _ap_elim.record_event_deduped(
@@ -13009,6 +13226,18 @@ if nav == "🧹 消去フィルター":
                     status='ok' if _erows else 'not_run')
                 if not _el_out.ok:
                     st.warning(f"監査記録(消去)失敗: {_el_out.error}")
+                elif _el_out.event_id and _el_out.analysis_run_id:
+                    from core import prediction_time_machine as _ptm_elim
+                    _fin = _ptm_elim.finalize_run_snapshot_if_base(
+                        race_id_input, _el_out.analysis_run_id)
+                    if _fin.get('skipped'):
+                        st.caption(
+                            "ℹ️ 統合スナップショットは省略しました（この分析runにSRA snapshotがありません）。"
+                            "メイン画面でSRA分析を実行後、消去を再度表示すると統合保存できます。"
+                            "消去結果の observation は記録済みです。")
+                    elif not _fin.get('ok'):
+                        st.warning(
+                            f"SNAPSHOT_SAVE_FAILED (消去): {_fin.get('reason', 'unknown')}")
             except Exception as _ap_el_e:
                 st.warning(f"監査記録(消去)失敗: {_ap_el_e}")
             _cut = _edf[_edf['判定'] == '🧹消し']
@@ -19276,6 +19505,3 @@ if nav == "📒 プレイブック成績":
 # --- Footer ---
 st.divider()
 st.caption("Keiba Analysis v2.5 - Powered by Streamlit & Gemini API")
-
-
-

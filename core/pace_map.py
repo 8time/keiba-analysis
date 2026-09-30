@@ -192,18 +192,23 @@ def infer_turn(venue):
 def score_from_pastruns(past_runs, max_runs=5):
     """
     PastRuns（scraper形式）から脚質スコアを推定するフォールバック。
-    Passing '3-3-2-1' の最終コーナー値の平均 / 14頭想定 で 0〜1 に正規化。
+    実際の出走頭数で最終コーナー順位を正規化（頭数不明時のみ14頭想定）。
     """
     vals = []
     for run in (past_runs or [])[:max_runs]:
         passing = str(run.get('Passing', '') or '')
         nums = [int(x) for x in passing.replace('→', '-').split('-') if x.strip().isdigit()]
         if nums:
-            vals.append(nums[-1])
+            try:
+                field = int(run.get('FieldSize') or 14)
+            except (ValueError, TypeError):
+                field = 14
+            if field > 1 and 1 <= nums[-1] <= field:
+                vals.append((nums[-1] - 1) / (field - 1))
     if not vals:
         return 0.5
     avg = sum(vals) / len(vals)
-    return max(0.05, min(0.95, avg / 14.0))
+    return max(0.05, min(0.95, avg))
 
 
 def style_from_score(score):
@@ -231,8 +236,21 @@ def _parse_jv_time(s):
 _KYAKU_POS = {'1': 0.06, '2': 0.30, '3': 0.62, '4': 0.85}
 
 
+def history_cutoff(race_date):
+    """Exclude the target date and later results; fail closed for unknown dates."""
+    from datetime import datetime
+    text = str(race_date or '').strip()[:10].replace('/', '-').replace('.', '-')
+    for fmt in ('%Y-%m-%d', '%Y%m%d'):
+        try:
+            return datetime.strptime(text, fmt).strftime('%Y%m%d')
+        except ValueError:
+            pass
+    return '00000000'
+
+
 def fetch_jv_profiles(names, db_path=None, max_runs=5,
-                      surface=None, distance=None, before_key=None):
+                      surface=None, distance=None, before_key=None,
+                      read_only=False):
     """
     JRA-VAN DB から各馬の「コーナー別 実トラジェクトリ＋テン速力＋脚質」を取得する。
 
@@ -240,6 +258,7 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
     surface/distance: 指定すると、テン速力は同馬場・距離±400mの過去走を優先採用する。
     before_key: race_key 文字列。指定するとそれ未満の過去走のみ使う（バックテスト用に
                 「未来のデータ」を遮断する。Noneなら全走歴）。
+    read_only: 調査スクリプトから使うときSQLiteを書込み不可で開く。
     戻り値: {name: {
         'c1','c2','c3','c4': コーナー別平均位置 0〜1（0=先頭, None=データなし）,
         'ten': テン位置（最初に記録があるコーナーの平均・0〜1）,
@@ -265,7 +284,11 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
 
     out = {}
     try:
-        con = sqlite3.connect(db)
+        if read_only:
+            from pathlib import Path
+            con = sqlite3.connect(Path(db).resolve().as_uri() + '?mode=ro', uri=True)
+        else:
+            con = sqlite3.connect(db)
         cur = con.cursor()
         for raw_name in names:
             name = str(raw_name).strip().replace('　', '').replace(' ', '')
@@ -293,6 +316,7 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
             ten_speeds = []          # (ten_speed, 条件一致度) のリスト
             kyaku_counts = {'1': 0, '2': 0, '3': 0, '4': 0}
             kyaku_total = 0
+            early_sum = early_weight = 0.0
             front3 = [0, 0]          # [3番手以内回数, 判定可能回数]
             for idx, (c1, c2, c3, c4, ato, tosu, rkey, rtime, rkyori, rsurf, kyaku, chaku) in enumerate(rows):
                 tosu = tosu or 0
@@ -316,6 +340,8 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
                 # 道中3番手以内（最初に記録のあるコーナーの実順位で判定）
                 early_rank = next((v for v in (c1, c2, c3, c4) if v and v > 0), None)
                 if early_rank is not None:
+                    early_sum += min(1.0, (early_rank - 1) / (tosu - 1)) * run_w
+                    early_weight += run_w
                     front3[1] += 1
                     if early_rank <= 3:
                         front3[0] += 1
@@ -347,7 +373,7 @@ def fetch_jv_profiles(names, db_path=None, max_runs=5,
                 prof[k] = round(sums[k][0] / sums[k][1], 3) if sums[k][1] else None
             prof['finish_hist'] = prof.pop('finish')   # 過去相対着順（能力proxy・0=勝利）
             prof['agari_best'] = round(agari_best, 2) if agari_best is not None else None
-            prof['ten'] = next((prof[k] for k in ('c1', 'c2', 'c3', 'c4') if prof[k] is not None), None)
+            prof['ten'] = round(early_sum / early_weight, 3) if early_weight else None
             prof['n_runs'] = len(rows)
             if ten_speeds:
                 wsum = sum(w for _, w in ten_speeds)
@@ -813,13 +839,22 @@ def _rank_norm(d):
         return {u: 0.5 for u in d}
     order = sorted(items, key=lambda kv: (kv[1], kv[0]))
     n = len(order)
-    rn = {u: i / (n - 1) for i, (u, _) in enumerate(order)}
+    rn = {}
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and order[j][1] == order[i][1]:
+            j += 1
+        for u, _ in order[i:j]:
+            rn[u] = (i + j - 1) / (2 * (n - 1))
+        i = j
     for u in d:
         rn.setdefault(u, 0.5)
     return rn
 
 
-def predict_finish(horses, profiles=None, ctx=None, extras=None, tune=None):
+def predict_finish(horses, profiles=None, ctx=None, extras=None, tune=None,
+                   diagnostics=None):
     """
     直線での到達位置（≒着順）を {umaban: 0〜1（0=勝ち）} で推定する。
     4角のトラック位置(pos4) に、決め手(上がり3F)・適性・総合力を合成し、
@@ -853,7 +888,8 @@ def predict_finish(horses, profiles=None, ctx=None, extras=None, tune=None):
                 out[u] = (profiles.get(name_of[u]) or {}).get(field_prof)
         return out
 
-    kick_n = _rank_norm(_from('kick', 'agari'))
+    kick_raw = _from('kick', 'agari')
+    kick_n = _rank_norm(kick_raw)
     power_raw = _from('power', 'finish_hist')
     power_n = (_rank_norm(power_raw) if any(v is not None for v in power_raw.values())
                else {u: 0.5 for u in us})
@@ -868,6 +904,27 @@ def predict_finish(horses, profiles=None, ctx=None, extras=None, tune=None):
                else {u: 0.5 for u in us})
 
     wsum = t['w_pos4'] + t['w_kick'] + t['w_apt'] + t['w_power'] + t['w_pop'] + t['w_spurt']
+    if diagnostics is not None:
+        diagnostics.update({
+            'weights': dict(t), 'weight_sum': wsum,
+            'raw': {'kick': dict(kick_raw), 'power': dict(power_raw),
+                    'apt': dict(apt_raw), 'pop': dict(pop_raw),
+                    'spurt': dict(spurt_raw), 'pos4': dict(pos4)},
+            'normalized': {'kick': dict(kick_n), 'power': dict(power_n),
+                           'apt': dict(apt_n), 'pop': dict(pop_n),
+                           'spurt': dict(spurt_n)},
+            'source_by_horse': {
+                str(u): {
+                    'kick': 'LIVE' if extras.get(u, {}).get('kick') is not None
+                    else ('JV' if (profiles.get(name_of[u]) or {}).get('agari') is not None else 'MISSING'),
+                    'power': 'LIVE' if extras.get(u, {}).get('power') is not None
+                    else ('JV' if (profiles.get(name_of[u]) or {}).get('finish_hist') is not None else 'MISSING'),
+                    'apt': 'LIVE' if extras.get(u, {}).get('apt') is not None else 'MISSING',
+                    'pop': 'MARKET' if extras.get(u, {}).get('pop') is not None else 'MISSING',
+                    'spurt': 'LIVE' if extras.get(u, {}).get('spurt') is not None else 'MISSING',
+                } for u in us},
+            'contributions': {},
+        })
     finish = {}
     for u in us:
         p4 = pos4.get(u, 0.5)
@@ -878,11 +935,118 @@ def predict_finish(horses, profiles=None, ctx=None, extras=None, tune=None):
         if p4 > 0.6 and kick_n[u] > 0.5:
             base += (p4 - 0.6) * (kick_n[u] - 0.5) * t['reach_penalty']
         finish[u] = max(0.0, min(1.0, base))
+        if diagnostics is not None:
+            penalty = ((p4 - 0.6) * (kick_n[u] - 0.5) * t['reach_penalty']
+                       if p4 > 0.6 and kick_n[u] > 0.5 else 0.0)
+            diagnostics['contributions'][str(u)] = {
+                'pos4': t['w_pos4'] * p4 / wsum,
+                'kick': t['w_kick'] * kick_n[u] / wsum,
+                'apt': t['w_apt'] * apt_n[u] / wsum,
+                'power': t['w_power'] * power_n[u] / wsum,
+                'popularity': t['w_pop'] * pop_n[u] / wsum,
+                'spurt': t['w_spurt'] * spurt_n[u] / wsum,
+                'reach_penalty': penalty,
+                'final': finish[u],
+            }
     return finish
+
+
+def predict_finish_shadow(horses, profiles=None, ctx=None, extras=None,
+                          popularity=None, odds=None, tune=None):
+    """Compare a unit-consistent finish estimate without changing production output.
+
+    One source is chosen for the *whole field* for each signal. Partial live
+    coverage is never merged with a differently measured JV proxy. Missing
+    horses receive the neutral rank. The returned diagnostics make that choice
+    visible to the caller; nothing here writes a cache or an elimination flag.
+    """
+    import math
+
+    horses = [h for h in horses if h.get('umaban')]
+    profiles, extras, ctx = profiles or {}, extras or {}, ctx or {}
+    us = [h['umaban'] for h in horses]
+    names = {h['umaban']: h.get('name', '') for h in horses}
+
+    def finite(value):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def source(signal, live_key, jv_key=None):
+        live = {u: finite((extras.get(u) or {}).get(live_key)) for u in us}
+        jv = {u: finite((profiles.get(names[u]) or {}).get(jv_key)) for u in us} if jv_key else {}
+        # Prefer the fully observed live field; otherwise use the source with
+        # greater coverage. In a tie, live values have the pre-race provenance.
+        n_live = sum(v is not None for v in live.values())
+        n_jv = sum(v is not None for v in jv.values())
+        if n_live == len(us) or n_live >= n_jv:
+            return live, {'source': 'live' if n_live else 'missing', 'observed': n_live,
+                          'total': len(us), 'signal': signal}
+        return jv, {'source': 'jv', 'observed': n_jv,
+                     'total': len(us), 'signal': signal}
+
+    raw = {}
+    provenance = {}
+    for signal, live, jv in (('kick', 'kick', 'agari'),
+                             ('power', 'power', 'finish_hist'),
+                             ('apt', 'apt', None),
+                             ('spurt', 'spurt', None)):
+        raw[signal], provenance[signal] = source(signal, live, jv)
+
+    popularity = popularity or {}
+    odds = odds or {}
+    rank_values = {u: finite(popularity.get(u)) for u in us}
+    odds_values = {u: finite(odds.get(u)) for u in us}
+    rank_count = sum(v is not None and 0 < v < 99 for v in rank_values.values())
+    odds_count = sum(v is not None and 0 < v < 999 for v in odds_values.values())
+    if rank_count >= odds_count:
+        raw['pop'] = {u: v if v is not None and 0 < v < 99 else None
+                      for u, v in rank_values.items()}
+        pop_source, pop_count = 'popularity', rank_count
+    else:
+        raw['pop'] = {u: v if v is not None and 0 < v < 999 else None
+                      for u, v in odds_values.items()}
+        pop_source, pop_count = 'odds', odds_count
+    provenance['pop'] = {'source': pop_source if pop_count else 'missing',
+                         'observed': pop_count, 'total': len(us), 'signal': 'pop'}
+
+    norms = {key: _rank_norm(values) for key, values in raw.items()}
+    t = dict(_FINISH_TUNE)
+    if tune:
+        t.update(tune)
+    total = sum(t['w_' + key] for key in ('pos4', 'kick', 'apt', 'power', 'pop', 'spurt'))
+    if total <= 0:
+        raise ValueError('finish weights must have a positive sum')
+    finish, contributions = {}, {}
+    for u in us:
+        p4 = finite((ctx.get('pos4') or {}).get(u))
+        p4 = .5 if p4 is None else max(0., min(1., p4))
+        parts = {'pos4': t['w_pos4'] * p4 / total}
+        parts.update({key: t['w_' + key] * norms[key][u] / total for key in norms})
+        penalty = ((p4 - .6) * (norms['kick'][u] - .5) * t['reach_penalty']
+                   if p4 > .6 and norms['kick'][u] > .5 else 0.)
+        parts['reach_penalty'] = penalty
+        contributions[u] = parts
+        finish[u] = max(0., min(1., sum(parts.values())))
+    return {'finish': finish, 'provenance': provenance,
+            'contributions': contributions, 'model_version': 'unit_consistent_shadow_v1'}
 
 
 # 各フェーズで「4角想定位置(pos4)」へどれだけ寄せるか（スタートは枠・forward主体）
 _PHASE_TO4 = {'スタート': 0.0, '1角': 0.5, '2角': 0.78, '3角': 0.93, '4角': 1.0, '直線': 1.0}
+
+
+def phase_position(phase, profile, forward, pos4):
+    """Use the matching historical corner; retain the joint context as shrinkage."""
+    weight = _PHASE_TO4.get(phase, 0.0)
+    fallback = (1 - weight) * forward + weight * pos4
+    key = {'1角': 'c1', '2角': 'c2', '3角': 'c3'}.get(phase)
+    historical = profile.get(key) if key else None
+    return fallback if historical is None else (historical + fallback) / 2
 
 
 def estimate_pace_map(horses, distance=None, profiles=None, layout=None,
@@ -915,13 +1079,6 @@ def estimate_pace_map(horses, distance=None, profiles=None, layout=None,
         gate_w = 0.62 if fc < 200 else 0.50 if fc < 350 else 0.40 if fc < 550 else 0.28
     else:
         gate_w = 0.45
-    # 直線の長さ → 上がり3Fの押し上げ係数
-    straight = layout.get('straight')
-    if straight is not None:
-        straight_push = 0.28 if straight < 330 else 0.45 if straight < 450 else 0.60
-    else:
-        straight_push = 0.45
-
     max_uma = max(h['umaban'] for h in horses)
     gate_fracs = {h['umaban']: (h['umaban'] - 1) / max(max_uma - 1, 1) for h in horses}
 
@@ -945,7 +1102,7 @@ def estimate_pace_map(horses, distance=None, profiles=None, layout=None,
                 if wind_eff:       # 風: 有利脚質を前方へ、不利脚質を後方へ
                     base += wind_eff['shift'].get(h.get('style', '不明'), 0.0)
             else:
-                base = (1 - w4) * forward[u] + w4 * pos4[u]
+                base = phase_position(phase, prof, forward[u], pos4[u])
             fracs[u] = max(0.0, min(1.0, base))
 
         # 隊列の縦長/一団をX全長に反映（位置のばらつきが大きい=縦長）
@@ -1515,9 +1672,8 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
     Plotly Figure を生成する。右上にコース全体図インセットを表示し、
     現在見ている局面（コーナー）を赤マーカーでハイライトする。
 
-    push_umabans: 差し切り限界ラインで前方に大きく押し上げる強い差し脚(margin≥+1.5)の馬番集合。
-        該当馬の馬番ラベルに『>>>』を付け黄色文字にする(netkeiba風・直線で差し込む馬の明示)。
-        ※展開恩恵は人気に織込み済み(priced-in)=表示の精度向上であってエッジ主張ではない。
+    push_umabans: 仮定の馬身差・自己ベスト上がりによる参考表示。
+        着順予想や馬券圏内判定には使用しない。
     """
     import plotly.graph_objects as go
 
@@ -1545,7 +1701,7 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
             ),
             hovertext=[
                 f"{r['umaban']}番 {r['name']}<br>脚質: {r['style']} (score {r['score']})"
-                + ('<br>>>> 差し切り射程(直線で前へ)' if r['umaban'] in push_umabans else '')
+                + ('<br>≫ 仮定に基づく差し切り参考値' if r['umaban'] in push_umabans else '')
                 + f"<br>{'📊 JV-VAN実データ' if r.get('jv') else '⚙️ 推定（実データなし）'}"
                 for r in rows
             ],
@@ -1565,7 +1721,7 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
             mode='text',
             text=['≫' for _ in pr],
             textfont=dict(color='#FFD700', size=20, family='Arial Black'),
-            hovertext=[f"{r['umaban']}番 差し切り射程=直線で前へ" for r in pr],
+            hovertext=[f"{r['umaban']}番 仮定に基づく差し切り参考値" for r in pr],
             hoverinfo='text',
         )
 
@@ -1638,7 +1794,7 @@ def build_figure(pace_map, turn='右', title='想定展開マップ', push_umaba
     )
 
     steps = [
-        dict(method='animate', label=ph,
+        dict(method='animate', label='直線→ゴール予想' if ph == '直線' else ph,
              args=[[ph], dict(mode='immediate',
                               frame=dict(duration=900, redraw=False),
                               transition=dict(duration=800, easing='cubic-in-out'))])
